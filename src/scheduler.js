@@ -1,5 +1,6 @@
 const { checkRecurringCustomers } = require('./kra3');
 const { checkWeeklyVisits } = require('./kra9');
+const { checkPayments } = require('./kra5');
 
 function startScheduler() {
   console.log('Scheduler started');
@@ -63,6 +64,37 @@ function startScheduler() {
   }
 
   scheduleWeeklyVisitCheck();
+
+  // KRA 5 — Payment check twice daily (9 AM and 3 PM IST)
+  function schedulePaymentChecks() {
+    function msUntilNext(hour) {
+      const now = new Date();
+      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+      const istNow = new Date(now.getTime() + IST_OFFSET);
+      const next = new Date(istNow);
+      next.setHours(hour, 0, 0, 0);
+      if (istNow.getHours() >= hour) {
+        next.setDate(next.getDate() + 1);
+      }
+      return next.getTime() - istNow.getTime();
+    }
+
+    // 9 AM IST check
+    setTimeout(async () => {
+      await checkPayments();
+      setInterval(checkPayments, 24 * 60 * 60 * 1000);
+    }, msUntilNext(9));
+
+    // 3 PM IST check
+    setTimeout(async () => {
+      await checkPayments();
+      setInterval(checkPayments, 24 * 60 * 60 * 1000);
+    }, msUntilNext(15));
+
+    console.log('Payment checks scheduled: 9 AM and 3 PM IST daily');
+  }
+
+  schedulePaymentChecks();
 }
 
 // For manual trigger (testing)

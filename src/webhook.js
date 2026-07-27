@@ -7,6 +7,7 @@ const { transcribeAudio } = require('./assemblyai');
 const { isQuery, handleQuery } = require('./queryhandler');
 const { handleFollowUpReply } = require('./kra3');
 const { isVisitLog, handleVisitLog } = require('./kra9');
+const { isPaymentUpdate, handlePaymentUpdate } = require('./kra5');
 
 /**
  * GET /webhook
@@ -129,6 +130,19 @@ router.post('/', async (req, res) => {
           }
         }
         // --- END VISIT LOG DETECTION ---
+
+        // --- PAYMENT UPDATE DETECTION ---
+        if (messageType === 'text') {
+          if (isPaymentUpdate(raw_text)) {
+            console.log('Payment update detected:', raw_text);
+            const paymentReply = await handlePaymentUpdate(
+              raw_text, senderPhone
+            );
+            await sendTextMessage(senderPhone, paymentReply);
+            return;
+          }
+        }
+        // --- END PAYMENT UPDATE DETECTION ---
 
         // --- QUERY DETECTION ---
         // Check if this is a query (salesperson asking for data)
