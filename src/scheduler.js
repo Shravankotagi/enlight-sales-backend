@@ -1,6 +1,7 @@
 const { checkRecurringCustomers } = require('./kra3');
 const { checkWeeklyVisits } = require('./kra9');
 const { checkPayments } = require('./kra5');
+const { checkComplaints } = require('./kra8');
 
 function startScheduler() {
   console.log('Scheduler started');
@@ -95,6 +96,16 @@ function startScheduler() {
   }
 
   schedulePaymentChecks();
+
+  // KRA 8 — Complaint check every 6 hours
+  async function runComplaintCheck() {
+    await checkComplaints();
+  }
+
+  // Run immediately and then every 6 hours
+  runComplaintCheck();
+  setInterval(runComplaintCheck, 6 * 60 * 60 * 1000);
+  console.log('Complaint check scheduled: every 6 hours');
 }
 
 // For manual trigger (testing)

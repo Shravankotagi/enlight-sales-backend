@@ -8,6 +8,7 @@ const { isQuery, handleQuery } = require('./queryhandler');
 const { handleFollowUpReply } = require('./kra3');
 const { isVisitLog, handleVisitLog } = require('./kra9');
 const { isPaymentUpdate, handlePaymentUpdate } = require('./kra5');
+const { isComplaintReport, isComplaintResolution, handleComplaintLog, handleComplaintResolution } = require('./kra8');
 
 /**
  * GET /webhook
@@ -143,6 +144,30 @@ router.post('/', async (req, res) => {
           }
         }
         // --- END PAYMENT UPDATE DETECTION ---
+
+        // --- COMPLAINT DETECTION ---
+        if (messageType === 'text') {
+          // Check resolution first
+          if (isComplaintResolution(raw_text)) {
+            console.log('Complaint resolution detected:', raw_text);
+            const resolutionReply = await handleComplaintResolution(
+              raw_text, senderPhone
+            );
+            await sendTextMessage(senderPhone, resolutionReply);
+            return;
+          }
+
+          // Check new complaint
+          if (isComplaintReport(raw_text)) {
+            console.log('Complaint report detected:', raw_text);
+            const complaintReply = await handleComplaintLog(
+              raw_text, senderPhone
+            );
+            await sendTextMessage(senderPhone, complaintReply);
+            return;
+          }
+        }
+        // --- END COMPLAINT DETECTION ---
 
         // --- QUERY DETECTION ---
         // Check if this is a query (salesperson asking for data)

@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { getPaymentSummary } = require('./kra5');
+const { getComplaintSummary } = require('./kra8');
 
 function getSupabase() {
   return createClient(
@@ -288,6 +289,12 @@ async function handleQuery(text, senderPhone) {
       lower.includes('overdue') || lower.includes('baaki') ||
       lower.includes('due') || lower.includes('collection')) {
     return await getPaymentSummary(senderPhone);
+  }
+
+  // KRA 8 - Complaint summary
+  if (lower.includes('complaint') || lower.includes('complain') ||
+      lower.includes('shikayat') || lower.includes('kra 8')) {
+    return await getComplaintSummary(senderPhone);
   }
 
   // KRA status
