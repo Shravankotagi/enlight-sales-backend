@@ -276,6 +276,12 @@ async function handleQuery(text, senderPhone) {
     return await getPendingInquiries();
   }
 
+  // KRA 9 - Visit summary
+  if (lower.includes('visit') || lower.includes('visits') ||
+      lower.includes('customer visit') || lower.includes('kra 9')) {
+    return await getVisitSummary(senderPhone);
+  }
+
   // KRA status
   if (lower.includes('kra') || lower.includes('target') || 
       lower.includes('performance') || lower.includes('achievement')) {
@@ -286,4 +292,35 @@ async function handleQuery(text, senderPhone) {
   return await getSalesThisMonth(senderPhone);
 }
 
-module.exports = { isQuery, handleQuery };
+async function getVisitSummary(senderPhone) {
+  try {
+    const supabase = getSupabase();
+    const { start, end, monthName, year } = getMonthRange();
+
+    const { data: visits } = await supabase
+      .from('customer_visits')
+      .select('*')
+      .eq('salesperson_phone', senderPhone)
+      .gte('visited_at', start)
+      .lte('visited_at', end)
+      .order('visited_at', { ascending: false });
+
+    if (!visits || visits.length === 0) {
+      return `📊 *KRA 9 — ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
+    }
+
+    const visitList = visits.slice(0, 5).map((v, i) =>
+      `${i + 1}. ${v.customer_name || 'Unknown'} — ${new Date(v.visited_at).toLocaleDateString('en-IN')}`
+    ).join('\n');
+
+    return `📊 *KRA 9 — ${monthName} ${year}*\n\n` +
+      `Total visits: ${visits.length}\n\n` +
+      `Recent visits:\n${visitList}\n\n` +
+      `_Target: 10 visits/week, 3 field days/week_`;
+  } catch (error) {
+    console.error('getVisitSummary error:', error);
+    return '❌ Could not fetch visit summary.';
+  }
+}
+
+module.exports = { isQuery, handleQuery, getVisitSummary };

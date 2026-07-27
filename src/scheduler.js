@@ -1,4 +1,5 @@
 const { checkRecurringCustomers } = require('./kra3');
+const { checkWeeklyVisits } = require('./kra9');
 
 function startScheduler() {
   console.log('Scheduler started');
@@ -34,6 +35,34 @@ function startScheduler() {
     // Then run every 24 hours
     setInterval(checkRecurringCustomers, TWENTY_FOUR_HOURS);
   }, timeToFirstRun);
+
+  // KRA 9 — Weekly visit reminder every Friday at 5 PM IST
+  function scheduleWeeklyVisitCheck() {
+    function getNextFriday5PM() {
+      const now = new Date();
+      const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+      const istNow = new Date(now.getTime() + IST_OFFSET);
+      
+      const day = istNow.getDay();
+      const daysUntilFriday = (5 - day + 7) % 7 || 7;
+      
+      const nextFriday = new Date(istNow);
+      nextFriday.setDate(istNow.getDate() + daysUntilFriday);
+      nextFriday.setHours(17, 0, 0, 0);
+      
+      return nextFriday.getTime() - istNow.getTime();
+    }
+
+    const msToFriday = getNextFriday5PM();
+    console.log(`Next KRA 9 check in ${Math.round(msToFriday / 1000 / 60)} minutes`);
+    
+    setTimeout(async () => {
+      await checkWeeklyVisits();
+      setInterval(checkWeeklyVisits, 7 * 24 * 60 * 60 * 1000);
+    }, msToFriday);
+  }
+
+  scheduleWeeklyVisitCheck();
 }
 
 // For manual trigger (testing)

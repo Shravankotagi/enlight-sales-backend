@@ -6,6 +6,7 @@ const { extractFromText, extractFromImage } = require('./gemini');
 const { transcribeAudio } = require('./assemblyai');
 const { isQuery, handleQuery } = require('./queryhandler');
 const { handleFollowUpReply } = require('./kra3');
+const { isVisitLog, handleVisitLog } = require('./kra9');
 
 /**
  * GET /webhook
@@ -117,6 +118,17 @@ router.post('/', async (req, res) => {
           }
         }
         // --- END FOLLOW-UP REPLY DETECTION ---
+
+        // --- VISIT LOG DETECTION ---
+        if (messageType === 'text') {
+          if (isVisitLog(raw_text)) {
+            console.log('Visit log detected:', raw_text);
+            const visitReply = await handleVisitLog(raw_text, senderPhone);
+            await sendTextMessage(senderPhone, visitReply);
+            return;
+          }
+        }
+        // --- END VISIT LOG DETECTION ---
 
         // --- QUERY DETECTION ---
         // Check if this is a query (salesperson asking for data)

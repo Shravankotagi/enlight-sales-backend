@@ -1,0 +1,265 @@
+const { createClient } = require('@supabase/supabase-js');
+const { sendTextMessage } = require('./whatsapp');
+
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
+
+// Detect if message is a visit log
+function isVisitLog(text) {
+  const visitKeywords = [
+    'visited', 'visit kiya', 'gaya tha', 'mil ke aaya',
+    'customer visit', 'site visit', 'meeting done',
+    'met with', 'mil gaye', 'gaya', 'visited today',
+    'aaj gaya', 'site pe gaya', 'office gaya',
+    'visited at', 'reached', 'factory visit'
+  ];
+  const lower = text.toLowerCase();
+  return visitKeywords.some(k => lower.includes(k));
+}
+
+// Extract visit details from message using simple parsing
+async function extractVisitDetails(text, senderPhone) {
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+
+    const prompt = `
+Extract visit details from this salesperson message.
+Return ONLY a JSON object, no markdown, no backticks:
+
+{
+  "customer_name": "",
+  "customer_address": "",
+  "person_met": "",
+  "contact_no": "",
+  "remarks": "",
+  "outcome": ""
+}
+
+Rules:
+- customer_name: company or person visited
+- person_met: name of person they met (if mentioned)
+- contact_no: phone number if mentioned, else null
+- remarks: what was discussed or outcome
+- outcome: one of "positive|neutral|negative|order_received|follow_up_needed"
+- Return null for fields not mentioned
+- Return ONLY the JSON object
+
+Message: "${text}"
+    `;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const raw = response.text().trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error('extractVisitDetails error:', error.message);
+    // Fallback: save raw text as remarks
+    return {
+      customer_name: null,
+      customer_address: null,
+      person_met: null,
+      contact_no: null,
+      remarks: text,
+      outcome: 'neutral'
+    };
+  }
+}
+
+// Save visit to database
+async function saveVisit(details, senderPhone) {
+  const supabase = getSupabase();
+  try {
+    const { data, error } = await supabase
+      .from('customer_visits')
+      .insert({
+        salesperson_phone: senderPhone,
+        customer_name: details.customer_name,
+        customer_address: details.customer_address,
+        person_met: details.person_met,
+        contact_no: details.contact_no,
+        remarks: details.remarks,
+        visited_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('Visit saved:', data.id);
+    return data;
+  } catch (error) {
+    console.error('saveVisit error:', error.message);
+    return null;
+  }
+}
+
+// Get visit count for current week
+async function getWeeklyVisitCount(senderPhone) {
+  const supabase = getSupabase();
+  try {
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay());
+    weekStart.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
+      .from('customer_visits')
+      .select('id, visited_at, customer_name')
+      .eq('salesperson_phone', senderPhone)
+      .gte('visited_at', weekStart.toISOString());
+
+    if (error) throw error;
+
+    // Count unique visit days
+    const visitDays = new Set(
+      data?.map(v => new Date(v.visited_at).toDateString())
+    );
+
+    return {
+      count: data?.length || 0,
+      days: visitDays.size,
+      visits: data || []
+    };
+  } catch (error) {
+    console.error('getWeeklyVisitCount error:', error.message);
+    return { count: 0, days: 0, visits: [] };
+  }
+}
+
+// Build confirmation message after visit logged
+function buildVisitConfirmation(details, weekStats) {
+  const remaining = Math.max(0, 10 - weekStats.count);
+  const daysRemaining = Math.max(0, 3 - weekStats.days);
+  
+  const outcomeEmoji = {
+    'positive': '😊',
+    'order_received': '🎉',
+    'follow_up_needed': '📞',
+    'negative': '😔',
+    'neutral': '👍'
+  }[details.outcome] || '👍';
+
+  return `✅ *Visit Logged — KRA 9*\n\n` +
+    `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
+    (details.person_met ? `👤 Met: ${details.person_met}\n` : '') +
+    (details.remarks ? `💬 Remarks: ${details.remarks}\n` : '') +
+    `${outcomeEmoji} Outcome: ${details.outcome || 'neutral'}\n\n` +
+    `📊 *This Week's Progress*\n` +
+    `Visits: ${weekStats.count}/10` +
+    (remaining > 0 ? ` (${remaining} more needed)` : ' ✅ Target met!') + '\n' +
+    `Field days: ${weekStats.days}/3` +
+    (daysRemaining > 0 ? ` (${daysRemaining} more days needed)` : ' ✅') + '\n\n' +
+    `_Keep it up! 💪_`;
+}
+
+// Weekly KRA 9 check — send reminder if below target
+async function checkWeeklyVisits() {
+  const supabase = getSupabase();
+  try {
+    console.log('Running KRA 9 weekly visit check...');
+
+    // Get all unique salesperson phones
+    const { data: salespeople } = await supabase
+      .from('customer_visits')
+      .select('salesperson_phone')
+      .limit(100);
+
+    // Also get from recurring_customers
+    const { data: rcSalespeople } = await supabase
+      .from('recurring_customers')
+      .select('assigned_salesperson_phone')
+      .eq('is_active', true);
+
+    // Combine unique phones
+    const phones = new Set([
+      ...(salespeople?.map(s => s.salesperson_phone) || []),
+      ...(rcSalespeople?.map(s => s.assigned_salesperson_phone) || [])
+    ]);
+
+    for (const phone of phones) {
+      if (!phone) continue;
+      const stats = await getWeeklyVisitCount(phone);
+
+      if (stats.count < 10 || stats.days < 3) {
+        const remaining = Math.max(0, 10 - stats.count);
+        const daysRemaining = Math.max(0, 3 - stats.days);
+
+        // Calculate days left in week
+        const now = new Date();
+        const daysLeftInWeek = 6 - now.getDay();
+
+        const message =
+          `📊 *KRA 9 Weekly Visit Update*\n\n` +
+          `Visits this week: ${stats.count}/10\n` +
+          `Field days: ${stats.days}/3\n\n` +
+          (remaining > 0 ? `⚠️ ${remaining} more visits needed\n` : '✅ Visit target met!\n') +
+          (daysRemaining > 0 ? `⚠️ ${daysRemaining} more field days needed\n` : '✅ Field days target met!\n') +
+          `\n📅 ${daysLeftInWeek} days left this week\n\n` +
+          `Log a visit by sending:\n` +
+          `"visited [Company] today, met [Person], [outcome]"`;
+
+        await sendTextMessage(phone, message);
+        console.log(`KRA 9 reminder sent to ${phone}`);
+
+        // Small delay
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
+    console.log('KRA 9 check complete');
+  } catch (error) {
+    console.error('checkWeeklyVisits error:', error.message);
+  }
+}
+
+// Handle visit log from webhook
+async function handleVisitLog(text, senderPhone) {
+  try {
+    console.log('Visit log detected:', text);
+
+    // Extract visit details using Gemini
+    const details = await extractVisitDetails(text, senderPhone);
+    console.log('Visit details extracted:', JSON.stringify(details, null, 2));
+
+    // Save to database
+    const visit = await saveVisit(details, senderPhone);
+
+    // Log to KRA logs
+    const supabase = getSupabase();
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number: 9,
+      kra_type: 'customer_visit',
+      description: `Visited ${details.customer_name || 'customer'}: ${details.remarks || ''}`,
+      customer_name: details.customer_name,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear()
+    });
+
+    // Get weekly stats
+    const weekStats = await getWeeklyVisitCount(senderPhone);
+
+    // Build and return confirmation
+    return buildVisitConfirmation(details, weekStats);
+  } catch (error) {
+    console.error('handleVisitLog error:', error.message);
+    return '❌ Could not log visit. Please try again.';
+  }
+}
+
+module.exports = {
+  isVisitLog,
+  handleVisitLog,
+  checkWeeklyVisits,
+  getWeeklyVisitCount
+};
