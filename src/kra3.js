@@ -1,0 +1,283 @@
+const { createClient } = require('@supabase/supabase-js');
+const { sendTextMessage } = require('./whatsapp');
+
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
+
+// Check which recurring customers haven't ordered this month
+async function checkRecurringCustomers() {
+  const supabase = getSupabase();
+  
+  try {
+    console.log('Running KRA 3 check — recurring customers...');
+    
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      .toISOString();
+    
+    // Get all active recurring customers
+    const { data: customers, error } = await supabase
+      .from('recurring_customers')
+      .select('*')
+      .eq('is_active', true);
+    
+    if (error) throw error;
+    if (!customers || customers.length === 0) {
+      console.log('No recurring customers found');
+      return;
+    }
+    
+    console.log(`Checking ${customers.length} recurring customers...`);
+    
+    for (const customer of customers) {
+      await checkCustomer(customer, monthStart, now, supabase);
+      // Small delay between customers to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    console.log('KRA 3 check complete');
+  } catch (error) {
+    console.error('checkRecurringCustomers error:', error);
+  }
+}
+
+async function checkCustomer(customer, monthStart, now, supabase) {
+  try {
+    // Check if this customer has a deal this month
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('id, created_at, total_amount')
+      .ilike('customer_name', `%${customer.customer_name}%`)
+      .gte('created_at', monthStart);
+    
+    const hasOrderThisMonth = deals && deals.length > 0;
+    
+    if (hasOrderThisMonth) {
+      console.log(`✅ ${customer.customer_name} — has order this month`);
+      
+      // Update last_order_date
+      await supabase
+        .from('recurring_customers')
+        .update({ 
+          last_order_date: new Date().toISOString().split('T')[0],
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', customer.id);
+      return;
+    }
+    
+    // Calculate days since last order
+    const lastOrderDate = customer.last_order_date 
+      ? new Date(customer.last_order_date) 
+      : null;
+    const daysSinceOrder = lastOrderDate 
+      ? Math.floor((now - lastOrderDate) / (1000 * 60 * 60 * 24))
+      : null;
+    
+    console.log(`⚠️ ${customer.customer_name} — no order this month. Days since last order: ${daysSinceOrder}`);
+    
+    // Check if we already sent a follow-up task this month
+    const { data: existingTask } = await supabase
+      .from('followup_tasks')
+      .select('id, follow_up_count, reminder_sent_at, status')
+      .eq('customer_name', customer.customer_name)
+      .eq('task_type', 'kra3_retention')
+      .gte('created_at', monthStart)
+      .single();
+    
+    if (existingTask) {
+      // Task exists — check if we need to send a reminder
+      await handleExistingTask(existingTask, customer, daysSinceOrder, supabase);
+    } else {
+      // Create new follow-up task and send first alert
+      await createFollowUpTask(customer, daysSinceOrder, supabase);
+    }
+  } catch (error) {
+    console.error(`checkCustomer error for ${customer.customer_name}:`, error.message);
+  }
+}
+
+async function createFollowUpTask(customer, daysSinceOrder, supabase) {
+  try {
+    // Create follow-up task
+    const { data: task } = await supabase
+      .from('followup_tasks')
+      .insert({
+        task_type: 'kra3_retention',
+        customer_name: customer.customer_name,
+        customer_phone: customer.customer_phone,
+        salesperson_phone: customer.assigned_salesperson_phone,
+        due_date: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        status: 'pending',
+        reminder_sent_at: new Date().toISOString(),
+        follow_up_count: 1
+      })
+      .select()
+      .single();
+    
+    // Send WhatsApp alert to salesperson
+    const message = buildFollowUpMessage(customer, daysSinceOrder, 1, task?.id);
+    console.log('Sending to phone:', customer.assigned_salesperson_phone);
+    await sendTextMessage(customer.assigned_salesperson_phone, message);
+    
+    console.log(`📱 Follow-up sent to ${customer.assigned_salesperson_phone} for ${customer.customer_name}`);
+  } catch (error) {
+    console.error('createFollowUpTask error:', error.message);
+  }
+}
+
+async function handleExistingTask(task, customer, daysSinceOrder, supabase) {
+  try {
+    if (task.status === 'resolved') return;
+    
+    const lastReminder = new Date(task.reminder_sent_at);
+    const hoursSinceReminder = (Date.now() - lastReminder) / (1000 * 60 * 60);
+    
+    // Send reminder every 48 hours
+    if (hoursSinceReminder < 48) {
+      console.log(`⏳ ${customer.customer_name} — reminder sent ${Math.round(hoursSinceReminder)}h ago, skipping`);
+      return;
+    }
+    
+    const newCount = (task.follow_up_count || 1) + 1;
+    
+    // Update task
+    await supabase
+      .from('followup_tasks')
+      .update({
+        follow_up_count: newCount,
+        reminder_sent_at: new Date().toISOString(),
+        escalated_at: newCount >= 3 
+          ? new Date().toISOString() 
+          : null
+      })
+      .eq('id', task.id);
+    
+    // Send escalation to Sales Lead if 3rd reminder
+    if (newCount >= 3) {
+      const salesLeadPhone = process.env.SALES_LEAD_PHONE;
+      if (salesLeadPhone) {
+        const escalationMsg = 
+          `🚨 *KRA 3 Escalation*\n\n` +
+          `${customer.customer_name} has not ordered this month.\n` +
+          `Assigned salesperson has been reminded ${newCount} times.\n` +
+          `Days since last order: ${daysSinceOrder || 'Unknown'}\n\n` +
+          `Please follow up with the salesperson.`;
+        await sendTextMessage(salesLeadPhone, escalationMsg);
+      }
+    }
+    
+    // Send follow-up to salesperson
+    const message = buildFollowUpMessage(
+      customer, daysSinceOrder, newCount, task.id
+    );
+    await sendTextMessage(customer.assigned_salesperson_phone, message);
+    
+    console.log(`📱 Reminder #${newCount} sent for ${customer.customer_name}`);
+  } catch (error) {
+    console.error('handleExistingTask error:', error.message);
+  }
+}
+
+function buildFollowUpMessage(customer, daysSinceOrder, reminderCount, taskId) {
+  const shortId = taskId ? taskId.substring(0, 8) : 'N/A';
+  const daysText = daysSinceOrder 
+    ? `Last order: ${daysSinceOrder} days ago` 
+    : 'No recent order on record';
+  const reminderText = reminderCount > 1 
+    ? `\n⚠️ Reminder #${reminderCount}` 
+    : '';
+  
+  return `🔔 *KRA 3 Follow-up Alert*${reminderText}\n\n` +
+    `🏢 *${customer.customer_name}*\n` +
+    `${daysText}\n` +
+    `Usual order: every ${customer.avg_order_frequency_days} days\n\n` +
+    `No order logged this month.\n\n` +
+    `Please follow up and reply:\n` +
+    `✅ *VISITED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
+    `📞 *CALLED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
+    `❌ *LOST ${customer.customer_name.split(' ')[0].toUpperCase()} [reason]*\n` +
+    `🔄 *ORDERED ${customer.customer_name.split(' ')[0].toUpperCase()} [amount]*\n\n` +
+    `Ref: ${shortId}`;
+}
+
+// Handle salesperson reply to follow-up
+async function handleFollowUpReply(text, senderPhone) {
+  const supabase = getSupabase();
+  const upper = text.toUpperCase().trim();
+  
+  const actions = ['VISITED', 'CALLED', 'LOST', 'ORDERED'];
+  const matchedAction = actions.find(a => upper.startsWith(a));
+  
+  if (!matchedAction) return null;
+  
+  // Extract customer name and outcome
+  const parts = text.trim().split(' ');
+  const customerKeyword = parts[1] || '';
+  const outcome = parts.slice(2).join(' ') || 'No details provided';
+  
+  try {
+    // Find matching follow-up task
+    const { data: tasks } = await supabase
+      .from('followup_tasks')
+      .select('*')
+      .eq('salesperson_phone', senderPhone)
+      .eq('status', 'pending')
+      .eq('task_type', 'kra3_retention')
+      .ilike('customer_name', `%${customerKeyword}%`)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    const task = tasks?.[0];
+    
+    if (task) {
+      // Resolve the task
+      await supabase
+        .from('followup_tasks')
+        .update({
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          resolution_notes: `${matchedAction}: ${outcome}`
+        })
+        .eq('id', task.id);
+    }
+    
+    // Log KRA activity
+    await supabase
+      .from('kra_logs')
+      .insert({
+        salesperson_phone: senderPhone,
+        kra_number: 3,
+        kra_type: 'customer_retention',
+        description: `${matchedAction} ${customerKeyword}: ${outcome}`,
+        customer_name: task?.customer_name || customerKeyword,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
+      });
+    
+    // Build confirmation message
+    const emoji = {
+      'VISITED': '🏢', 'CALLED': '📞', 
+      'LOST': '❌', 'ORDERED': '✅'
+    }[matchedAction];
+    
+    return `${emoji} *KRA 3 Updated*\n\n` +
+      `Action: ${matchedAction}\n` +
+      `Customer: ${task?.customer_name || customerKeyword}\n` +
+      `Outcome: ${outcome}\n\n` +
+      `Logged to KRA 3 ✅`;
+  } catch (error) {
+    console.error('handleFollowUpReply error:', error);
+    return '❌ Could not log follow-up. Please try again.';
+  }
+}
+
+module.exports = { 
+  checkRecurringCustomers, 
+  handleFollowUpReply,
+  buildFollowUpMessage
+};
