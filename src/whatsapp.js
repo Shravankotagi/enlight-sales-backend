@@ -14,7 +14,7 @@ async function sendTextMessage(to, message) {
       throw new Error("Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment variables");
     }
 
-    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+    const url = `${process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0'}/${phoneNumberId}/messages`;
     const response = await axios.post(
       url,
       {
@@ -52,7 +52,7 @@ async function downloadMedia(mediaId) {
   try {
     // Step 1: Get media URL from Meta API
     const metaResponse = await axios.get(
-      `https://graph.facebook.com/v18.0/${mediaId}`,
+      `${process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0'}/${mediaId}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
