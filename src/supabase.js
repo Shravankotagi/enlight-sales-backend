@@ -131,5 +131,20 @@ async function saveDeal(inquiryId, extraction, senderPhone) {
   }
 }
 
+async function checkAndLogNewCustomer(deal, senderPhone) {
+  try {
+    const { isNewCustomer, logNewCustomer } = require('./kra2');
+    if (deal && deal.customer_name && senderPhone) {
+      const newCustomer = await isNewCustomer(deal.customer_name);
+      if (newCustomer) {
+        console.log('New customer detected:', deal.customer_name);
+        await logNewCustomer(deal, senderPhone);
+      }
+    }
+  } catch (error) {
+    console.error('checkAndLogNewCustomer error:', error.message);
+  }
+}
+
 // Export default and named exports
-module.exports = { supabase, saveInquiry, getInquiries, saveDeal };
+module.exports = { supabase, saveInquiry, getInquiries, saveDeal, checkAndLogNewCustomer };

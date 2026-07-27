@@ -1,0 +1,135 @@
+const { createClient } = require('@supabase/supabase-js');
+const { sendTextMessage } = require('./whatsapp');
+
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
+
+function getMonthRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    monthName: now.toLocaleString('en-IN', { month: 'long' }),
+    year: now.getFullYear()
+  };
+}
+
+// Check if customer is new (no deals before this month)
+async function isNewCustomer(customerName) {
+  if (!customerName) return false;
+  const supabase = getSupabase();
+  try {
+    const { start } = getMonthRange();
+
+    // Check deals before this month
+    const { data: previousDeals } = await supabase
+      .from('deals')
+      .select('id')
+      .ilike('customer_name', `%${customerName}%`)
+      .lt('created_at', start);
+
+    return !previousDeals || previousDeals.length === 0;
+  } catch (error) {
+    console.error('isNewCustomer error:', error.message);
+    return false;
+  }
+}
+
+// Log new customer acquisition to KRA 2
+async function logNewCustomer(deal, senderPhone) {
+  const supabase = getSupabase();
+  try {
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number: 2,
+      kra_type: 'new_customer',
+      description: `New customer: ${deal.customer_name} — ${deal.inquiry_type}`,
+      customer_name: deal.customer_name,
+      value: deal.total_amount || 0,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear()
+    });
+
+    console.log('KRA 2 logged for new customer:', deal.customer_name);
+
+    // Get current month new customer count
+    const { start, end, monthName } = getMonthRange();
+    const { data: newCustomers } = await supabase
+      .from('kra_logs')
+      .select('id')
+      .eq('kra_number', 2)
+      .eq('kra_type', 'new_customer')
+      .eq('salesperson_phone', senderPhone)
+      .gte('created_at', start)
+      .lte('created_at', end);
+
+    const count = newCustomers?.length || 1;
+    const remaining = Math.max(0, 3 - count);
+
+    // Send notification to salesperson
+    const message =
+      `🆕 *KRA 2 — New Customer Detected!*\n\n` +
+      `🏢 ${deal.customer_name}\n` +
+      `📋 Type: ${deal.inquiry_type}\n` +
+      (deal.total_amount
+        ? `💰 Value: ₹${Number(deal.total_amount).toLocaleString('en-IN')}\n`
+        : '') +
+      `\n📊 *${monthName} Progress*\n` +
+      `New customers: ${count}/3\n` +
+      (remaining > 0
+        ? `${remaining} more needed to meet target`
+        : `✅ Monthly target achieved!`);
+
+    await sendTextMessage(senderPhone, message);
+    return count;
+  } catch (error) {
+    console.error('logNewCustomer error:', error.message);
+    return 0;
+  }
+}
+
+// Get KRA 2 summary
+async function getNewCustomerSummary(senderPhone) {
+  const supabase = getSupabase();
+  try {
+    const { start, end, monthName, year } = getMonthRange();
+
+    const { data: logs } = await supabase
+      .from('kra_logs')
+      .select('*')
+      .eq('kra_number', 2)
+      .eq('kra_type', 'new_customer')
+      .gte('created_at', start)
+      .lte('created_at', end);
+
+    const count = logs?.length || 0;
+    const remaining = Math.max(0, 3 - count);
+
+    let msg = `👥 *KRA 2 — New Customers*\n` +
+      `${monthName} ${year}\n\n` +
+      `Acquired: ${count}/3\n` +
+      (remaining > 0
+        ? `⚠️ ${remaining} more needed\n`
+        : `✅ Target achieved!\n`);
+
+    if (logs && logs.length > 0) {
+      msg += `\nNew customers this month:\n`;
+      logs.forEach((l, i) => {
+        msg += `${i + 1}. ${l.customer_name || 'Unknown'}\n`;
+      });
+    }
+
+    return msg;
+  } catch (error) {
+    console.error('getNewCustomerSummary error:', error.message);
+    return '❌ Could not fetch KRA 2 data.';
+  }
+}
+
+module.exports = { isNewCustomer, logNewCustomer, getNewCustomerSummary };

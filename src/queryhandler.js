@@ -1,6 +1,8 @@
 const { createClient } = require('@supabase/supabase-js');
 const { getPaymentSummary } = require('./kra5');
 const { getComplaintSummary } = require('./kra8');
+const { generateFullKRAReport } = require('./kraReport');
+const { getNewCustomerSummary } = require('./kra2');
 
 function getSupabase() {
   return createClient(
@@ -295,6 +297,22 @@ async function handleQuery(text, senderPhone) {
   if (lower.includes('complaint') || lower.includes('complain') ||
       lower.includes('shikayat') || lower.includes('kra 8')) {
     return await getComplaintSummary(senderPhone);
+  }
+
+  // Full monthly report
+  if (lower.includes('monthly report') || 
+      lower.includes('full report') ||
+      lower.includes('mahine ki report') ||
+      lower.includes('kra report') ||
+      lower.includes('monthly kra')) {
+    return await generateFullKRAReport(senderPhone);
+  }
+
+  // KRA 2 new customers
+  if (lower.includes('new customer') || 
+      lower.includes('naya customer') ||
+      lower.includes('kra 2')) {
+    return await getNewCustomerSummary(senderPhone);
   }
 
   // KRA status

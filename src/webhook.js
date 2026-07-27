@@ -264,6 +264,13 @@ router.post('/', async (req, res) => {
 
           // Save deal + line items
           deal = await saveDeal(savedInquiry.id, extraction, senderPhone);
+
+          // --- KRA 2 NEW CUSTOMER CHECK ---
+          if (deal && deal.customer_name) {
+            const { checkAndLogNewCustomer } = require('./supabase');
+            await checkAndLogNewCustomer(deal, senderPhone);
+          }
+          // --- END KRA 2 CHECK ---
         }
 
         // Build smart reply based on extraction
