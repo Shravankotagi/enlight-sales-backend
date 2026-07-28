@@ -54,7 +54,7 @@ async function bootstrap() {
 
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  await app.listen(3000, '0.0.0.0');
+  await app.listen(4000, '0.0.0.0');
 
   if (module.hot) {
     module.hot.accept();

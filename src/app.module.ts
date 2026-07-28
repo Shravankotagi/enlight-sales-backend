@@ -14,6 +14,12 @@ import { CompaniesModule } from './modules/companies/companies.module';
 import { InterestsModule } from './modules/interests/interests.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { HealthModule } from './health/health.module';
+import { DealsModule } from './modules/deals/deals.module';
+import { InquiriesModule } from './modules/inquiries/inquiries.module';
+import { CustomersModule } from './modules/customers/customers.module';
+import { KraModule } from './modules/kra/kra.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { ZohoModule } from './modules/zoho/zoho.module';
 
 @Module({
   imports: [
@@ -30,6 +36,12 @@ import { HealthModule } from './health/health.module';
     InterestsModule,
     AddressesModule,
     HealthModule,
+    DealsModule,
+    InquiriesModule,
+    CustomersModule,
+    KraModule,
+    ReportsModule,
+    ZohoModule,
   ],
   controllers: [AppController],
   providers: [AppService],
