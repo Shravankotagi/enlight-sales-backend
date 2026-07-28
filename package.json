@@ -10,6 +10,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "prebuild": "rimraf dist",
+    "postinstall": "prisma generate",
     "build": "nest build --builder swc",
     "start": "nest start --builder swc",
     "start:dev": "nest build --webpack --webpackPath webpack-hmr.config.js --watch",
