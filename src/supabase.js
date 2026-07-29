@@ -25,7 +25,9 @@ async function saveInquiry(data) {
       sender_name: data.sender_name || null,
       whatsapp_message_id: data.message_id,
       status: "pending",
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      salesperson_phone: data.sender_phone || null,
+      employee_id: data.employee_id || null,
     };
 
     const { data: savedRow, error } = await supabase
@@ -87,7 +89,9 @@ async function saveDeal(inquiryId, extraction, senderPhone) {
         inquiry_type: extraction.inquiry_type || 'unknown',
         overall_confidence: extraction.overall_confidence || 0,
         status: extraction.overall_confidence >= 0.85 ? 'auto_created' : 'needs_review',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        salesperson_phone: senderPhone || null,
+        employee_id: null,
       })
       .select()
       .single();
