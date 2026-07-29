@@ -1,3 +1,6 @@
+packages:
+  - '.'
+
 allowBuilds:
-  '@compodoc/compodoc': set this to true or false
+  '@compodoc/compodoc': false
   bcrypt: true
