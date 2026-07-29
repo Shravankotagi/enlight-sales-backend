@@ -20,6 +20,8 @@ import { CustomersModule } from './modules/customers/customers.module';
 import { KraModule } from './modules/kra/kra.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ZohoModule } from './modules/zoho/zoho.module';
+import { EmployeesModule } from './modules/employees/employees.module';
+import { OtpModule } from './modules/otp/otp.module';
 
 @Module({
   imports: [
@@ -42,6 +44,8 @@ import { ZohoModule } from './modules/zoho/zoho.module';
     KraModule,
     ReportsModule,
     ZohoModule,
+    EmployeesModule,
+    OtpModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,0 +1,3 @@
+allowBuilds:
+  '@compodoc/compodoc': set this to true or false
+  bcrypt: true

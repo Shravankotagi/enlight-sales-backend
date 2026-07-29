@@ -28,6 +28,9 @@ async function bootstrap() {
 
   const logger = app.get(CustomLoggerService);
 
+  // Enable CORS
+  app.enableCors();
+
   // Apply global interceptors
   app.useGlobalInterceptors(
     new LoggingInterceptor(logger),

@@ -7,42 +7,101 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { DealsService } from './deals.service';
+import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('deals')
+@UseGuards(JwtAuthGuard)
 export class DealsController {
   constructor(private readonly dealsService: DealsService) {}
 
-  // GET /deals — list all deals with filters
   @Get()
   async findAll(
+    @CurrentEmployee() employee: any,
     @Query('stage') stage?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    return this.dealsService.findAll({ stage, from, to });
+    const targetPhone =
+      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+
+    const data = await this.dealsService.findAll({ stage, from, to });
+
+    if (targetPhone) {
+      return data.filter((d: any) => d.salesperson_phone === targetPhone);
+    }
+    return data;
   }
 
-  // GET /deals/pipeline — pipeline summary by stage
   @Get('pipeline')
-  async getPipelineSummary() {
-    return this.dealsService.getPipelineSummary();
+  async getPipelineSummary(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const targetPhone =
+      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+
+    const deals = await this.dealsService.findAll();
+    const filtered = targetPhone
+      ? deals.filter((d: any) => d.salesperson_phone === targetPhone)
+      : deals;
+
+    const stages = [
+      'new_inquiry',
+      'qualified',
+      'quoted',
+      'negotiation',
+      'won',
+      'lost',
+    ];
+
+    return stages.map((stage) => ({
+      stage,
+      count: filtered.filter((d: any) => d.stage === stage).length || 0,
+      total_value:
+        filtered
+          .filter((d: any) => d.stage === stage)
+          .reduce((sum: number, d: any) => sum + (d.total_amount || 0), 0) || 0,
+    }));
   }
 
-  // GET /deals/kanban — kanban board data
   @Get('kanban')
-  async getKanbanBoard() {
-    return this.dealsService.getKanbanBoard();
+  async getKanbanBoard(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const targetPhone =
+      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+
+    const deals = await this.dealsService.findAll();
+    const activeDeals = deals.filter(
+      (d: any) => !['won', 'lost'].includes(d.stage),
+    );
+
+    const filtered = targetPhone
+      ? activeDeals.filter((d: any) => d.salesperson_phone === targetPhone)
+      : activeDeals;
+
+    const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
+
+    return stages.reduce(
+      (acc, stage) => {
+        acc[stage] = filtered.filter((d: any) => d.stage === stage);
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
   }
 
-  // GET /deals/:id — single deal
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.dealsService.findOne(id);
   }
 
-  // PATCH /deals/:id/stage — update deal stage
   @Patch(':id/stage')
   @HttpCode(HttpStatus.OK)
   async updateStage(
