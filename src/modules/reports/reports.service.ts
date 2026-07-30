@@ -209,6 +209,18 @@ export class ReportsService {
         ].filter(Boolean),
       );
 
+      const { data: employees } = await this.supabase
+        .from('employees')
+        .select('name, phone');
+
+      const employeeMap = (employees || []).reduce(
+        (acc: any, emp: any) => {
+          acc[emp.phone] = emp.name;
+          return acc;
+        },
+        {} as Record<string, string>,
+      );
+
       const salespersonReports = Array.from(phones).map((phone) => {
         const spDeals = deals.filter((d) => d.customer_phone === phone);
         const spVisits = visits.filter((v) => v.salesperson_phone === phone);
@@ -216,6 +228,7 @@ export class ReportsService {
         const spPayments = payments.filter(
           (p) => p.salesperson_phone === phone,
         );
+
         const spComplaints = complaints.filter((c) => c.reported_by === phone);
 
         const wonDeals = spDeals.filter((d) => d.stage === 'won');
@@ -232,11 +245,13 @@ export class ReportsService {
 
         return {
           salesperson_phone: phone,
+          name: employeeMap[phone] || 'Unknown',
           deals: {
             total: spDeals.length,
             won: wonDeals.length,
             total_value: totalValue,
           },
+
           visits: {
             total: spVisits.length,
             target: 40,
