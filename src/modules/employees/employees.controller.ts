@@ -7,10 +7,13 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
+import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 
 @Controller('employees')
+@UseGuards(JwtAuthGuard)
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 

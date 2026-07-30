@@ -119,7 +119,7 @@ export class EmployeesService {
     try {
       const { data, error } = await this.supabase
         .from('employees')
-        .update({ ...dto, updated_at: new Date().toISOString() })
+        .update({ ...dto })
         .eq('id', id)
         .select()
         .single();
@@ -135,7 +135,7 @@ export class EmployeesService {
     try {
       const { data, error } = await this.supabase
         .from('employees')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .update({ is_active: false })
         .eq('id', id)
         .select()
         .single();

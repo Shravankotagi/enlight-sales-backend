@@ -67,7 +67,7 @@ export class DealsService {
 
   async updateStage(id: string, stage: string, lostReason?: string) {
     try {
-      const updateData: any = { stage, updated_at: new Date().toISOString() };
+      const updateData: any = { stage };
       if (stage === 'lost' && lostReason) {
         updateData.lost_reason = lostReason;
       }

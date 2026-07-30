@@ -1,7 +1,16 @@
-import { Controller, Get, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+} from '@nestjs/common';
 import { ZohoService } from './zoho.service';
+import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 
 @Controller('zoho')
+@UseGuards(JwtAuthGuard)
 export class ZohoController {
   constructor(private readonly zohoService: ZohoService) {}
 
