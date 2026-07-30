@@ -45,9 +45,17 @@ export class KraController {
   }
 
   @Get('action-queue')
-  async getActionQueue(@CurrentEmployee() employee: any) {
+  async getActionQueue(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
     const isAdmin = employee.role === 'admin';
-    const phone = employee.phone;
-    return this.kraService.getActionQueue(phone, isAdmin);
+
+    // If admin is impersonating, use the override phone and treat them as a salesperson
+    if (isAdmin && salespersonPhoneOverride) {
+      return this.kraService.getActionQueue(salespersonPhoneOverride, false);
+    }
+
+    return this.kraService.getActionQueue(employee.phone, isAdmin);
   }
 }
