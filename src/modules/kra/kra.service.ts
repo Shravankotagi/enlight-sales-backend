@@ -254,4 +254,190 @@ export class KraService {
       throw error;
     }
   }
+
+  async getActionQueue(salespersonPhone: string, isAdmin: boolean) {
+    const supabase = this.supabase;
+    const now = new Date();
+    const monthStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+    ).toISOString();
+    const actions: any[] = [];
+
+    // 1. Inquiries needing review
+    try {
+      const { data: reviewInquiries } = await supabase
+        .from('inquiries')
+        .select('id, sender_name, raw_text, created_at')
+        .eq('status', 'review')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (reviewInquiries?.length > 0) {
+        actions.push({
+          type: 'review_queue',
+          priority: 'high',
+          title: `${reviewInquiries.length} inquiries need review`,
+          subtitle: 'Low confidence AI extractions',
+          count: reviewInquiries.length,
+          link: '/inquiries',
+          color: 'orange',
+        });
+      }
+    } catch {}
+
+    // 2. Deals stale for 7+ days
+    try {
+      const sevenDaysAgo = new Date(
+        Date.now() - 7 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      let staleQuery = supabase
+        .from('deals')
+        .select('id, customer_name, stage, created_at')
+        .not('stage', 'in', '("won","lost")')
+        .lte('created_at', sevenDaysAgo)
+        .order('created_at', { ascending: true })
+        .limit(10);
+
+      if (!isAdmin) {
+        staleQuery = staleQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: staleDeals } = await staleQuery;
+      if (staleDeals?.length > 0) {
+        actions.push({
+          type: 'stale_deals',
+          priority: 'high',
+          title: `${staleDeals.length} deals stale 7+ days`,
+          subtitle:
+            (staleDeals[0]?.customer_name || 'Multiple customers') +
+            ' and others',
+          count: staleDeals.length,
+          link: '/',
+          color: 'red',
+        });
+      }
+    } catch {}
+
+    // 3. Pending follow-up tasks
+    try {
+      const { data: followups } = await supabase
+        .from('followup_tasks')
+        .select('id, customer_name, due_date, task_type')
+        .eq('status', 'pending')
+        .lte('due_date', now.toISOString())
+        .order('due_date', { ascending: true })
+        .limit(5);
+
+      if (followups?.length > 0) {
+        actions.push({
+          type: 'followups_due',
+          priority: 'medium',
+          title: `${followups.length} follow-ups due`,
+          subtitle: (followups[0]?.customer_name || 'Multiple') + ' and others',
+          count: followups.length,
+          link: '/customers',
+          color: 'yellow',
+        });
+      }
+    } catch {}
+
+    // 4. KRA 9 — weekly visit check
+    try {
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - now.getDay());
+      weekStart.setHours(0, 0, 0, 0);
+
+      let visitQuery = supabase
+        .from('customer_visits')
+        .select('id')
+        .gte('visited_at', weekStart.toISOString());
+
+      if (!isAdmin) {
+        visitQuery = visitQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: weekVisits } = await visitQuery;
+      const visitCount = weekVisits?.length || 0;
+
+      if (visitCount < 10) {
+        actions.push({
+          type: 'visit_target',
+          priority: 'medium',
+          title: `${visitCount}/10 visits this week`,
+          subtitle: `${10 - visitCount} more needed for KRA 9`,
+          count: 10 - visitCount,
+          link: '/kra',
+          color: 'blue',
+        });
+      }
+    } catch {}
+
+    // 5. Pending complaints past 24h
+    try {
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: oldComplaints } = await supabase
+        .from('complaints')
+        .select('id, customer_name, complaint_type')
+        .eq('status', 'pending')
+        .lte('reported_at', dayAgo)
+        .limit(5);
+
+      if (oldComplaints?.length > 0) {
+        actions.push({
+          type: 'complaints_pending',
+          priority: 'high',
+          title: `${oldComplaints.length} complaints unresolved 24h+`,
+          subtitle:
+            (oldComplaints[0]?.customer_name || '') +
+            ' — ' +
+            (oldComplaints[0]?.complaint_type || ''),
+          count: oldComplaints.length,
+          link: '/inquiries',
+          color: 'red',
+        });
+      }
+    } catch {}
+
+    // 6. Monthly KRA 1 progress
+    try {
+      let dealsQuery = supabase
+        .from('deals')
+        .select('total_amount, stage')
+        .gte('created_at', monthStart);
+
+      if (!isAdmin) {
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: monthDeals } = await dealsQuery;
+      const monthValue =
+        monthDeals?.reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0;
+      const wonDeals = monthDeals?.filter((d) => d.stage === 'won').length || 0;
+
+      actions.push({
+        type: 'monthly_progress',
+        priority: 'low',
+        title: `${monthDeals?.length || 0} deals this month`,
+        subtitle: `${wonDeals} won · ₹${Number(monthValue).toLocaleString('en-IN')} value`,
+        count: monthDeals?.length || 0,
+        link: '/reports',
+        color: 'green',
+      });
+    } catch {}
+
+    const priorityOrder: Record<string, number> = {
+      high: 0,
+      medium: 1,
+      low: 2,
+    };
+    return {
+      actions: actions.sort(
+        (a, b) =>
+          (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2),
+      ),
+      generated_at: now.toISOString(),
+    };
+  }
 }

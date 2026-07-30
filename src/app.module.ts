@@ -22,6 +22,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ZohoModule } from './modules/zoho/zoho.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { OtpModule } from './modules/otp/otp.module';
+import { PricingModule } from './modules/pricing/pricing.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { OtpModule } from './modules/otp/otp.module';
     ZohoModule,
     EmployeesModule,
     OtpModule,
+    PricingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

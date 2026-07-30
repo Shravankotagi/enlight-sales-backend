@@ -152,4 +152,110 @@ export class CustomersService {
       throw error;
     }
   }
+
+  async getReorderQueue(salespersonPhone?: string) {
+    try {
+      const now = new Date();
+      let query = this.supabase
+        .from('recurring_customers')
+        .select('*')
+        .eq('is_active', true);
+
+      if (salespersonPhone) {
+        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+      }
+
+      const { data: customers, error } = await query;
+      if (error) throw error;
+
+      const reorderList = (customers || [])
+        .map((customer: any) => {
+          const lastOrder = customer.last_order_date
+            ? new Date(customer.last_order_date)
+            : null;
+          const avgFrequency = customer.avg_order_frequency_days || 30;
+          const predictedDate = lastOrder
+            ? new Date(lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000)
+            : null;
+          const daysUntilReorder = predictedDate
+            ? Math.floor(
+                (predictedDate.getTime() - now.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              )
+            : null;
+
+          return {
+            ...customer,
+            predicted_reorder_date: predictedDate?.toISOString() || null,
+            days_until_reorder: daysUntilReorder,
+            is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
+            is_due_soon:
+              daysUntilReorder !== null &&
+              daysUntilReorder >= 0 &&
+              daysUntilReorder <= 7,
+          };
+        })
+        .filter(
+          (c: any) =>
+            c.days_until_reorder !== null && c.days_until_reorder <= 14,
+        )
+        .sort(
+          (a: any, b: any) =>
+            (a.days_until_reorder || 0) - (b.days_until_reorder || 0),
+        );
+
+      return reorderList;
+    } catch (error) {
+      this.logger.error('Error in getReorderQueue:', error);
+      throw error;
+    }
+  }
+
+  async getLossAnalytics(salespersonPhone?: string) {
+    try {
+      const now = new Date();
+      const threeMonthsAgo = new Date(
+        now.getFullYear(),
+        now.getMonth() - 3,
+        1,
+      ).toISOString();
+
+      let query = this.supabase
+        .from('deals')
+        .select('lost_reason, total_amount, customer_name, created_at')
+        .eq('stage', 'lost')
+        .gte('created_at', threeMonthsAgo);
+
+      if (salespersonPhone) {
+        query = query.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: lostDeals, error } = await query;
+      if (error) throw error;
+
+      const byReason = (lostDeals || []).reduce((acc: any, deal: any) => {
+        const reason = deal.lost_reason || 'Unknown';
+        if (!acc[reason]) acc[reason] = { count: 0, value: 0 };
+        acc[reason].count++;
+        acc[reason].value += deal.total_amount || 0;
+        return acc;
+      }, {});
+
+      return {
+        total_lost: lostDeals?.length || 0,
+        total_lost_value:
+          lostDeals?.reduce(
+            (sum: number, d: any) => sum + (d.total_amount || 0),
+            0,
+          ) || 0,
+        by_reason: Object.entries(byReason)
+          .map(([reason, data]: [string, any]) => ({ reason, ...data }))
+          .sort((a, b) => b.count - a.count),
+        recent_losses: (lostDeals || []).slice(0, 5),
+      };
+    } catch (error) {
+      this.logger.error('Error in getLossAnalytics:', error);
+      throw error;
+    }
+  }
 }

@@ -34,6 +34,18 @@ export class CustomersController {
     return this.customersService.getChurnRisk(salesperson_phone);
   }
 
+  @Get('reorder-queue')
+  async getReorderQueue(@CurrentEmployee() employee: any) {
+    const phone = employee.role === 'admin' ? undefined : employee.phone;
+    return this.customersService.getReorderQueue(phone);
+  }
+
+  @Get('loss-analytics')
+  async getLossAnalytics(@CurrentEmployee() employee: any) {
+    const phone = employee.role === 'admin' ? undefined : employee.phone;
+    return this.customersService.getLossAnalytics(phone);
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.customersService.findOne(id);

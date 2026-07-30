@@ -43,4 +43,11 @@ export class KraController {
       salesperson_phone,
     );
   }
+
+  @Get('action-queue')
+  async getActionQueue(@CurrentEmployee() employee: any) {
+    const isAdmin = employee.role === 'admin';
+    const phone = employee.phone;
+    return this.kraService.getActionQueue(phone, isAdmin);
+  }
 }
