@@ -267,10 +267,16 @@ export class KraService {
 
     // 1. Inquiries needing review
     try {
-      const { data: reviewInquiries } = await supabase
+      let inquiryQuery = supabase
         .from('inquiries')
         .select('id, sender_name, raw_text, created_at')
-        .eq('status', 'review')
+        .eq('status', 'review');
+
+      if (!isAdmin) {
+        inquiryQuery = inquiryQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: reviewInquiries } = await inquiryQuery
         .order('created_at', { ascending: false })
         .limit(5);
 

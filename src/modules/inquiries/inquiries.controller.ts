@@ -31,7 +31,7 @@ export class InquiriesController {
       employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
 
     if (targetPhone) {
-      return data.filter((inq: any) => inq.sender_phone === targetPhone);
+      return data.filter((inq: any) => inq.salesperson_phone === targetPhone);
     }
     return data;
   }
@@ -40,7 +40,9 @@ export class InquiriesController {
   async getReviewQueue(@CurrentEmployee() employee: any) {
     const data = await this.inquiriesService.findReviewQueue();
     if (employee.role !== 'admin') {
-      return data.filter((inq: any) => inq.sender_phone === employee.phone);
+      return data.filter(
+        (inq: any) => inq.salesperson_phone === employee.phone,
+      );
     }
     return data;
   }
@@ -55,7 +57,7 @@ export class InquiriesController {
 
     const data = await this.inquiriesService.findAll();
     const filtered = targetPhone
-      ? data.filter((inq: any) => inq.sender_phone === targetPhone)
+      ? data.filter((inq: any) => inq.salesperson_phone === targetPhone)
       : data;
 
     return {
