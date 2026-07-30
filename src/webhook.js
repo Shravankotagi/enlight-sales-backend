@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase, saveInquiry, saveDeal } = require('./supabase');
+const { supabase, saveInquiry, saveDeal, getEmployeeByPhone } = require('./supabase');
 const { sendTextMessage, downloadMedia } = require('./whatsapp');
 const { extractFromText, extractFromImage } = require('./gemini');
 const { transcribeAudio } = require('./assemblyai');
@@ -60,6 +60,15 @@ router.post('/', async (req, res) => {
         const senderName = (value.contacts && value.contacts[0] && value.contacts[0].profile && value.contacts[0].profile.name) || "Customer";
         const messageType = message.type;
 
+        // Look up employee record for this sender phone
+        const employeeRecord = await getEmployeeByPhone(senderPhone);
+        const employeeId = employeeRecord ? employeeRecord.employee_id : null;
+        if (employeeRecord) {
+          console.log(`Employee lookup: ${employeeRecord.name} (${employeeId})`);
+        } else {
+          console.log(`No employee found for phone: ${senderPhone}`);
+        }
+
         let raw_text = "";
         let media_urls = [];
         let voice_url = null;
@@ -100,7 +109,8 @@ router.post('/', async (req, res) => {
           voice_url,
           sender_phone: senderPhone,
           sender_name: senderName,
-          message_id: messageId
+          message_id: messageId,
+          employee_id: employeeId,
         });
 
         // --- FOLLOW-UP REPLY DETECTION ---
@@ -263,7 +273,7 @@ router.post('/', async (req, res) => {
             .eq('id', savedInquiry.id);
 
           // Save deal + line items
-          deal = await saveDeal(savedInquiry.id, extraction, senderPhone);
+          deal = await saveDeal(savedInquiry.id, extraction, senderPhone, employeeId);
 
           // --- KRA 2 NEW CUSTOMER CHECK ---
           if (deal && deal.customer_name) {

@@ -11,6 +11,28 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceRoleKey || 'placeholder');
 
 /**
+ * Looks up an employee record by their phone number.
+ * @param {string} phone - The sender phone number (e.g. '919876543210')
+ * @returns {{ employee_id, name, role } | null}
+ */
+async function getEmployeeByPhone(phone) {
+  try {
+    if (!phone) return null;
+    const { data, error } = await supabase
+      .from('employees')
+      .select('employee_id, name, role')
+      .eq('phone', phone)
+      .eq('is_active', true)
+      .single();
+    if (error || !data) return null;
+    return data;
+  } catch (err) {
+    console.warn('getEmployeeByPhone error:', err.message);
+    return null;
+  }
+}
+
+/**
  * Saves a raw inquiry to the Supabase inquiries table.
  * @param {Object} data - The inquiry data to save.
  */
@@ -68,7 +90,7 @@ async function getInquiries() {
   }
 }
 
-async function saveDeal(inquiryId, extraction, senderPhone) {
+async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
   try {
     // Save deal
     const { data: deal, error: dealError } = await supabase
@@ -91,7 +113,7 @@ async function saveDeal(inquiryId, extraction, senderPhone) {
         status: extraction.overall_confidence >= 0.85 ? 'auto_created' : 'needs_review',
         created_at: new Date().toISOString(),
         salesperson_phone: senderPhone || null,
-        employee_id: null,
+        employee_id: employeeId || null,
       })
       .select()
       .single();
@@ -151,4 +173,4 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
 }
 
 // Export default and named exports
-module.exports = { supabase, saveInquiry, getInquiries, saveDeal, checkAndLogNewCustomer };
+module.exports = { supabase, saveInquiry, getInquiries, saveDeal, getEmployeeByPhone, checkAndLogNewCustomer };
