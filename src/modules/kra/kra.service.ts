@@ -29,7 +29,7 @@ export class KraService {
         .select('*')
         .gte('created_at', start)
         .lte('created_at', end);
-      const inquiriesQuery = this.supabase
+      let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
         .gte('created_at', start)
@@ -66,7 +66,11 @@ export class KraService {
 
       if (salespersonPhone) {
         // filter queries by salesperson phone if relevant
-        dealsQuery = dealsQuery.eq('customer_phone', salespersonPhone);
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+        inquiriesQuery = inquiriesQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
         kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
         visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
         complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);

@@ -11,12 +11,18 @@ export class CustomersService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll() {
+  async findAll(salespersonPhone?: string) {
     try {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('recurring_customers')
         .select('*')
         .order('customer_name', { ascending: true });
+
+      if (salespersonPhone) {
+        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     } catch (error) {
@@ -78,12 +84,18 @@ export class CustomersService {
     }
   }
 
-  async getChurnRisk() {
+  async getChurnRisk(salespersonPhone?: string) {
     try {
-      const { data: customers, error } = await this.supabase
+      let query = this.supabase
         .from('recurring_customers')
         .select('*')
         .eq('is_active', true);
+
+      if (salespersonPhone) {
+        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+      }
+
+      const { data: customers, error } = await query;
 
       if (error) throw error;
 

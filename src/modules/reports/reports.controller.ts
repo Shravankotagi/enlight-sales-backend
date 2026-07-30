@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
@@ -10,12 +11,20 @@ export class ReportsController {
   // GET /reports/monthly
   @Get('monthly')
   async getMonthlySales(
+    @CurrentEmployee() employee: any,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
     return this.reportsService.getMonthlySalesReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      salesperson_phone,
     );
   }
 
@@ -34,21 +43,40 @@ export class ReportsController {
   // GET /reports/funnel
   @Get('funnel')
   async getFunnel(
+    @CurrentEmployee() employee: any,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
     return this.reportsService.getFunnelReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      salesperson_phone,
     );
   }
 
   // GET /reports/sku
   @Get('sku')
-  async getSku(@Query('month') month?: string, @Query('year') year?: string) {
+  async getSku(
+    @CurrentEmployee() employee: any,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
     return this.reportsService.getSkuReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      salesperson_phone,
     );
   }
 }

@@ -1,6 +1,7 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
@@ -8,13 +9,29 @@ export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
   @Get()
-  async findAll() {
-    return this.customersService.findAll();
+  async findAll(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
+    return this.customersService.findAll(salesperson_phone);
   }
 
   @Get('churn-risk')
-  async getChurnRisk() {
-    return this.customersService.getChurnRisk();
+  async getChurnRisk(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
+    return this.customersService.getChurnRisk(salesperson_phone);
   }
 
   @Get(':id')

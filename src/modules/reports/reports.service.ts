@@ -24,7 +24,11 @@ export class ReportsService {
   }
 
   // Monthly sales report
-  async getMonthlySalesReport(month?: number, year?: number) {
+  async getMonthlySalesReport(
+    month?: number,
+    year?: number,
+    salespersonPhone?: string,
+  ) {
     try {
       const {
         start,
@@ -33,17 +37,28 @@ export class ReportsService {
         year: y,
       } = this.getMonthRange(month, year);
 
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      if (salespersonPhone) {
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+        inquiriesQuery = inquiriesQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
+      }
+
       const [dealsResult, inquiriesResult] = await Promise.all([
-        this.supabase
-          .from('deals')
-          .select('*')
-          .gte('created_at', start)
-          .lte('created_at', end),
-        this.supabase
-          .from('inquiries')
-          .select('*')
-          .gte('created_at', start)
-          .lte('created_at', end),
+        dealsQuery,
+        inquiriesQuery,
       ]);
 
       if (dealsResult.error) throw dealsResult.error;
@@ -270,7 +285,11 @@ export class ReportsService {
   }
 
   // Funnel report
-  async getFunnelReport(month?: number, year?: number) {
+  async getFunnelReport(
+    month?: number,
+    year?: number,
+    salespersonPhone?: string,
+  ) {
     try {
       const {
         start,
@@ -279,11 +298,17 @@ export class ReportsService {
         year: y,
       } = this.getMonthRange(month, year);
 
-      const { data: deals, error } = await this.supabase
+      let dealsQuery = this.supabase
         .from('deals')
         .select('*')
         .gte('created_at', start)
         .lte('created_at', end);
+
+      if (salespersonPhone) {
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const { data: deals, error } = await dealsQuery;
 
       if (error) throw error;
 
@@ -337,7 +362,7 @@ export class ReportsService {
   }
 
   // SKU / product report
-  async getSkuReport(month?: number, year?: number) {
+  async getSkuReport(month?: number, year?: number, salespersonPhone?: string) {
     try {
       const {
         start,
@@ -346,11 +371,17 @@ export class ReportsService {
         year: y,
       } = this.getMonthRange(month, year);
 
-      const { data: items, error } = await this.supabase
+      let itemsQuery = this.supabase
         .from('deal_items')
-        .select('*, deals!inner(created_at, stage)')
+        .select('*, deals!inner(created_at, stage, salesperson_phone)')
         .gte('deals.created_at', start)
         .lte('deals.created_at', end);
+
+      if (salespersonPhone) {
+        itemsQuery = itemsQuery.eq('deals.salesperson_phone', salespersonPhone);
+      }
+
+      const { data: items, error } = await itemsQuery;
 
       if (error) throw error;
 
