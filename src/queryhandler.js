@@ -46,7 +46,9 @@ function isQuery(text) {
     'my inquiries', 'meri inquiries', 'pending inquiries',
     'review queue', 'kitni inquiries',
     // General / Command phrases
-    'monthly report', 'sales report', 'status report', 'show me sales'
+    'monthly report', 'sales report', 'status report', 'show me sales',
+    'my reports', 'my report', 'all reports', 'show reports', 'report card',
+    'report', 'reports'
   ];
 
   return queryKeywords.some(keyword => lowerText.includes(keyword));
@@ -316,7 +318,15 @@ async function handleQuery(text, senderPhone) {
       lower.includes('full report') ||
       lower.includes('mahine ki report') ||
       lower.includes('kra report') ||
-      lower.includes('monthly kra')) {
+      lower.includes('monthly kra') ||
+      lower.includes('my reports') ||
+      lower.includes('my report') ||
+      lower.includes('all reports') ||
+      lower.includes('show reports') ||
+      lower.includes('report card') ||
+      lower === 'report' ||
+      lower === 'reports' ||
+      lower.includes('all my reports')) {
     return await generateFullKRAReport(senderPhone);
   }
 
