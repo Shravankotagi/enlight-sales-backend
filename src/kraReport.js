@@ -43,8 +43,11 @@ async function generateFullKRAReport(senderPhone) {
       recurringResult
     ] = await Promise.all([
       supabase.from('deals').select('*, deal_items(*)')
+        .eq('salesperson_phone', senderPhone)
+        .neq('inquiry_type', 'unknown')
         .gte('created_at', start).lte('created_at', end),
       supabase.from('inquiries').select('*')
+        .eq('salesperson_phone', senderPhone)
         .gte('created_at', start).lte('created_at', end),
       supabase.from('kra_logs').select('*')
         .eq('salesperson_phone', senderPhone)
@@ -53,10 +56,13 @@ async function generateFullKRAReport(senderPhone) {
         .eq('salesperson_phone', senderPhone)
         .gte('visited_at', start).lte('visited_at', end),
       supabase.from('complaints').select('*')
+        .eq('reported_by', senderPhone)
         .gte('reported_at', start).lte('reported_at', end),
       supabase.from('payment_tracking').select('*')
+        .eq('salesperson_phone', senderPhone)
         .gte('created_at', start).lte('created_at', end),
       supabase.from('recurring_customers').select('*')
+        .eq('assigned_salesperson_phone', senderPhone)
         .eq('is_active', true)
     ]);
 
@@ -70,8 +76,9 @@ async function generateFullKRAReport(senderPhone) {
 
     // KRA 1 — Sales Achievement
     const totalDeals = deals.length;
-    const wonDeals = deals.filter(d => d.stage === 'won').length;
-    const totalValue = deals.reduce(
+    const wonDealsList = deals.filter(d => d.stage === 'won');
+    const wonDeals = wonDealsList.length;
+    const totalValue = wonDealsList.reduce(
       (sum, d) => sum + (d.total_amount || 0), 0
     );
 
