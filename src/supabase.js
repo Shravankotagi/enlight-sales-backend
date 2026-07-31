@@ -11,6 +11,23 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceRoleKey || 'placeholder');
 
 /**
+ * Safely parses any value (string, number, formatting) into a numeric float or null.
+ * Prevents database crashes when LLM outputs currency symbols, commas, or text.
+ */
+function sanitizeNumber(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'number') {
+    return isNaN(val) ? null : val;
+  }
+  const cleanStr = String(val)
+    .replace(/[₹$,]/g, '') // remove currency symbols and commas
+    .replace(/[^\d.-]/g, '') // strip any remaining non-numeric characters (except decimals and minus)
+    .trim();
+  const parsed = parseFloat(cleanStr);
+  return isNaN(parsed) ? null : parsed;
+}
+
+/**
  * Looks up an employee record by their phone number.
  * @param {string} phone - The sender phone number (e.g. '919876543210')
  * @returns {{ employee_id, name, role } | null}
@@ -107,7 +124,7 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
         delivery_location: extraction.delivery_location || null,
         delivery_date: extraction.delivery_date || null,
         payment_terms: extraction.payment_terms || null,
-        total_amount: extraction.total_amount || null,
+        total_amount: sanitizeNumber(extraction.total_amount),
         inquiry_type: extraction.inquiry_type || 'unknown',
         overall_confidence: extraction.overall_confidence || 0,
         status: extraction.overall_confidence >= 0.85 ? 'auto_created' : 'needs_review',
@@ -132,10 +149,10 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
         sku_text: item.sku_text || null,
         grade: item.grade || null,
         dimensions: item.dimensions || null,
-        quantity: item.quantity || null,
+        quantity: sanitizeNumber(item.quantity),
         unit: item.unit || null,
-        rate: item.rate || null,
-        amount: item.amount || null,
+        rate: sanitizeNumber(item.rate),
+        amount: sanitizeNumber(item.amount),
         confidence: item.confidence || 0,
         created_at: new Date().toISOString()
       }));

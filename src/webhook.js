@@ -101,6 +101,34 @@ router.post('/', async (req, res) => {
             break;
         }
 
+        // Truncate raw_text if it is extremely long to prevent LLM timeouts (Edge Case 4)
+        if (raw_text && raw_text.length > 2000) {
+          raw_text = raw_text.substring(0, 2000) + "... (truncated)";
+        }
+
+        // Check if sender is attempting salesperson actions but is unregistered (Edge Case 3)
+        if (!employeeRecord) {
+          const isSalespersonCommand = 
+            messageType === 'text' && (
+              isVisitLog(raw_text) || 
+              isPaymentUpdate(raw_text) || 
+              isComplaintReport(raw_text) || 
+              isComplaintResolution(raw_text) || 
+              isQuery(raw_text)
+            );
+            
+          if (isSalespersonCommand) {
+            console.log(`Unregistered salesperson attempt from phone: ${senderPhone}`);
+            await sendTextMessage(
+              senderPhone, 
+              `⚠️ *Registration Warning*\n\n` +
+              `Your phone number (+${senderPhone}) is not registered as an active salesperson in the system.\n\n` +
+              `Please ask the Admin to add your WhatsApp number under the "Employees" list in the dashboard first.`
+            );
+            return;
+          }
+        }
+
         // Save raw inquiry data to Supabase and capture the returned row
         const savedInquiry = await saveInquiry({
           source_channel: "whatsapp",
@@ -192,6 +220,7 @@ router.post('/', async (req, res) => {
 
         // --- GEMINI EXTRACTION ---
         let extraction = null;
+        let mediaDownloadFailed = false;
 
         if (messageType === 'text' && raw_text && raw_text.length > 5) {
           // Extract from text
@@ -203,6 +232,8 @@ router.post('/', async (req, res) => {
           console.log('Media download result:', mediaData ? 'success' : 'failed');
           if (mediaData && mediaData.buffer) {
             extraction = await extractFromImage(mediaData.buffer, mediaData.mimeType);
+          } else {
+            mediaDownloadFailed = true;
           }
         } else if (messageType === 'document' && media_urls.length > 0) {
           const mediaId = media_urls[0];
@@ -220,6 +251,8 @@ router.post('/', async (req, res) => {
                 mediaData.mimeType
               );
             }
+          } else {
+            mediaDownloadFailed = true;
           }
         } else if (messageType === 'audio' && voice_url) {
           console.log('Voice note received, downloading...');
@@ -256,6 +289,8 @@ router.post('/', async (req, res) => {
             } else {
               console.log('Transcription failed or returned empty');
             }
+          } else {
+            mediaDownloadFailed = true;
           }
         }
 
@@ -302,7 +337,10 @@ router.post('/', async (req, res) => {
             (extraction.delivery_date ? `📅 Delivery: ${extraction.delivery_date}\n` : '') +
             `\n🎯 Confidence: ${confidence}%`;
         } else {
-          if (messageType === 'audio' && !extraction) {
+          if (mediaDownloadFailed) {
+            replyMessage = `⚠️ *Download Error*\n\n` +
+              `Failed to download the attachment from WhatsApp. Please check the file and try sending it again.`;
+          } else if (messageType === 'audio' && !extraction) {
             replyMessage = `Voice note received but transcription failed. Please send as text.`;
           } else {
             replyMessage = `✅ Received! Reference: ${messageId.substring(0, 8)}\nWe have logged your message.`;
