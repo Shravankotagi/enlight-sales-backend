@@ -146,7 +146,11 @@ export class ReportsService {
   }
 
   // Salesperson performance report
-  async getSalespersonReport(month?: number, year?: number) {
+  async getSalespersonReport(
+    month?: number,
+    year?: number,
+    salespersonPhone?: string,
+  ) {
     try {
       const {
         start,
@@ -202,12 +206,17 @@ export class ReportsService {
       const payments = paymentsResult.data || [];
 
       // Get unique salesperson phones
-      const phones = new Set(
+      let phones = new Set(
         [
           ...visits.map((v) => v.salesperson_phone),
           ...kraLogs.map((k) => k.salesperson_phone),
+          ...deals.map((d) => d.salesperson_phone),
         ].filter(Boolean),
       );
+
+      if (salespersonPhone) {
+        phones = new Set([salespersonPhone]);
+      }
 
       const { data: employees } = await this.supabase
         .from('employees')
@@ -222,7 +231,7 @@ export class ReportsService {
       );
 
       const salespersonReports = Array.from(phones).map((phone) => {
-        const spDeals = deals.filter((d) => d.customer_phone === phone);
+        const spDeals = deals.filter((d) => d.salesperson_phone === phone);
         const spVisits = visits.filter((v) => v.salesperson_phone === phone);
         const spKraLogs = kraLogs.filter((k) => k.salesperson_phone === phone);
         const spPayments = payments.filter(

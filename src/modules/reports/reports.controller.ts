@@ -31,12 +31,20 @@ export class ReportsController {
   // GET /reports/salesperson
   @Get('salesperson')
   async getSalesperson(
+    @CurrentEmployee() employee: any,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
     return this.reportsService.getSalespersonReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      salesperson_phone,
     );
   }
 
