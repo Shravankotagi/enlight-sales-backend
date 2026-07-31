@@ -74,17 +74,14 @@ export class ReportsService {
         (d) => !['won', 'lost'].includes(d.stage),
       );
 
-      const totalValue = deals.reduce(
+      const totalValue = wonDeals.reduce(
         (sum, d) => sum + (d.total_amount || 0),
         0,
       );
-      const wonValue = wonDeals.reduce(
-        (sum, d) => sum + (d.total_amount || 0),
-        0,
-      );
+      const wonValue = totalValue; // wonValue matches totalValue now
 
-      // Group deals by customer
-      const byCustomer = deals.reduce(
+      // Group deals by customer (only count won deals for sales revenue value)
+      const byCustomer = wonDeals.reduce(
         (acc, deal) => {
           const name = deal.customer_name || 'Unknown';
           if (!acc[name]) {
@@ -97,8 +94,8 @@ export class ReportsService {
         {} as Record<string, any>,
       );
 
-      // Group by inquiry type
-      const byType = deals.reduce(
+      // Group by inquiry type (only count won deals for product type revenue breakdown)
+      const byType = wonDeals.reduce(
         (acc, deal) => {
           const type = deal.inquiry_type || 'unknown';
           if (!acc[type]) acc[type] = { type, count: 0, value: 0 };
@@ -243,7 +240,7 @@ export class ReportsService {
         const spComplaints = complaints.filter((c) => c.reported_by === phone);
 
         const wonDeals = spDeals.filter((d) => d.stage === 'won');
-        const totalValue = spDeals.reduce(
+        const totalValue = wonDeals.reduce(
           (sum, d) => sum + (d.total_amount || 0),
           0,
         );
@@ -404,6 +401,7 @@ export class ReportsService {
           '*, deals!inner(created_at, stage, salesperson_phone, inquiry_type)',
         )
         .neq('deals.inquiry_type', 'unknown')
+        .eq('deals.stage', 'won')
         .gte('deals.created_at', start)
         .lte('deals.created_at', end);
 
