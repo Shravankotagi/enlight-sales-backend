@@ -13,30 +13,42 @@ function getSupabase() {
 
 // Detect if message is a query or an inquiry
 function isQuery(text) {
+  const lowerText = text.toLowerCase();
+
+  // If it looks like a steel order/inquiry (e.g. contains quantity and units or pricing request), it is NOT a dashboard query!
+  const hasInquiryPatterns = 
+    /\b\d+\s*(mt|kg|ton|pcs|sheet|coil|bar|flat|plate|mm|mtr)\b/i.test(lowerText) || 
+    lowerText.includes('rate is') || 
+    lowerText.includes('price is') ||
+    lowerText.includes('target rate') ||
+    /\b\d+\s*x\s*\d+/i.test(lowerText);
+    
+  if (hasInquiryPatterns) {
+    return false;
+  }
+
   const queryKeywords = [
     // Sales queries
     'my sales', 'meri sales', 'kitni sales', 'sales this month',
     'is mahine', 'this month', 'last month', 'pichle mahine',
     // Deal queries  
-    'pending', 'pending deals', 'open deals', 'meri deals',
+    'pending deals', 'open deals', 'meri deals',
     'my deals', 'deals this week', 'is hafte',
     // Customer queries
-    'customers', 'customer list', 'which customers', 'kaun se customer',
+    'customer list', 'which customers', 'kaun se customer',
     'not ordered', 'order nahi', 'inactive customers',
     // Payment queries
-    'payment', 'outstanding', 'overdue', 'due payment',
+    'outstanding', 'overdue', 'due payment',
     'pending payment', 'baaki payment',
     // KRA queries
-    'kra', 'my kra', 'performance', 'target', 'achievement',
+    'my kra', 'performance report', 'target achievements',
     // Inquiry queries
     'my inquiries', 'meri inquiries', 'pending inquiries',
     'review queue', 'kitni inquiries',
-    // General
-    'report', 'summary', 'status', 'show me', 'batao',
-    'kitna', 'how many', 'total', 'count'
+    // General / Command phrases
+    'monthly report', 'sales report', 'status report', 'show me sales'
   ];
 
-  const lowerText = text.toLowerCase();
   return queryKeywords.some(keyword => lowerText.includes(keyword));
 }
 
