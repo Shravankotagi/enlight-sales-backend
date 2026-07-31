@@ -48,7 +48,7 @@ function isQuery(text) {
     // General / Command phrases
     'monthly report', 'sales report', 'status report', 'show me sales',
     'my reports', 'my report', 'all reports', 'show reports', 'report card',
-    'report', 'reports'
+    'report', 'reports', 'dashboard', 'login', 'link', 'website', 'portal', 'url'
   ];
 
   return queryKeywords.some(keyword => lowerText.includes(keyword));
@@ -270,6 +270,27 @@ async function getKRAStatus(senderPhone) {
 async function handleQuery(text, senderPhone) {
   const lower = text.toLowerCase();
 
+  // Dashboard Link / Login request
+  const isLinkRequest = 
+    lower.includes('link') || 
+    lower.includes('login') || 
+    lower.includes('website') || 
+    lower.includes('portal') || 
+    lower.includes('url') || 
+    lower.includes('open dashboard') ||
+    lower.includes('dashboard link');
+    
+  if (isLinkRequest) {
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+    return `🔗 *Enlight Sales OS Portal*\n\n` +
+      `You can access the web dashboard here:\n` +
+      `👉 ${dashboardUrl}\n\n` +
+      `🔑 *Login instructions*:\n` +
+      `1. Enter your registered WhatsApp number.\n` +
+      `2. Request and verify the OTP sent to your phone.\n` +
+      `3. Keep track of your deals, rate sheets, and KRA dashboards in real-time!`;
+  }
+
   // Sales this month
   if (lower.includes('sales') || lower.includes('is mahine') || 
       lower.includes('this month') || lower.includes('monthly')) {
@@ -339,7 +360,8 @@ async function handleQuery(text, senderPhone) {
 
   // KRA status
   if (lower.includes('kra') || lower.includes('target') || 
-      lower.includes('performance') || lower.includes('achievement')) {
+      lower.includes('performance') || lower.includes('achievement') ||
+      lower.includes('dashboard') || lower.includes('status') || lower.includes('summary')) {
     return await getKRAStatus(senderPhone);
   }
 
