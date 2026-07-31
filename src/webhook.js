@@ -259,9 +259,9 @@ router.post('/', async (req, res) => {
           }
         }
 
-        // Save deal if extraction succeeded
+        // Save deal if extraction succeeded and it is a valid inquiry or PO
         let deal = null;
-        if (extraction && !extraction.error) {
+        if (extraction && !extraction.error && extraction.inquiry_type && extraction.inquiry_type !== 'unknown') {
           // Update inquiry with extraction result
           await supabase
             .from('inquiries')
