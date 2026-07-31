@@ -40,6 +40,7 @@ export class ReportsService {
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
+        .neq('inquiry_type', 'unknown')
         .gte('created_at', start)
         .lte('created_at', end);
       let inquiriesQuery = this.supabase
@@ -169,6 +170,7 @@ export class ReportsService {
         this.supabase
           .from('deals')
           .select('*')
+          .neq('inquiry_type', 'unknown')
           .gte('created_at', start)
           .lte('created_at', end),
         this.supabase
@@ -325,6 +327,7 @@ export class ReportsService {
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
+        .neq('inquiry_type', 'unknown')
         .gte('created_at', start)
         .lte('created_at', end);
 
@@ -397,7 +400,10 @@ export class ReportsService {
 
       let itemsQuery = this.supabase
         .from('deal_items')
-        .select('*, deals!inner(created_at, stage, salesperson_phone)')
+        .select(
+          '*, deals!inner(created_at, stage, salesperson_phone, inquiry_type)',
+        )
+        .neq('deals.inquiry_type', 'unknown')
         .gte('deals.created_at', start)
         .lte('deals.created_at', end);
 

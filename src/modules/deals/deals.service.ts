@@ -26,6 +26,7 @@ export class DealsService {
           deal_items (*)
         `,
         )
+        .neq('inquiry_type', 'unknown')
         .order('created_at', { ascending: false });
 
       if (filters?.stage) {
