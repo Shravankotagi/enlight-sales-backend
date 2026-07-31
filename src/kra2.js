@@ -20,21 +20,40 @@ function getMonthRange() {
   };
 }
 
-// Check if customer is new (no deals before this month)
-async function isNewCustomer(customerName) {
+// Check if customer is new (no won deals before this month and not already logged in KRA 2)
+async function isNewCustomer(customerName, salespersonPhone) {
   if (!customerName) return false;
   const supabase = getSupabase();
   try {
     const { start } = getMonthRange();
 
-    // Check deals before this month
-    const { data: previousDeals } = await supabase
+    // Check if there are any won deals before the current month
+    const { data: previousWonDeals } = await supabase
       .from('deals')
       .select('id')
       .ilike('customer_name', `%${customerName}%`)
+      .eq('stage', 'won')
       .lt('created_at', start);
 
-    return !previousDeals || previousDeals.length === 0;
+    if (previousWonDeals && previousWonDeals.length > 0) {
+      return false;
+    }
+
+    // Check if salesperson has already logged this customer as a new customer in KRA 2
+    if (salespersonPhone) {
+      const { data: existingLogs } = await supabase
+        .from('kra_logs')
+        .select('id')
+        .eq('kra_number', 2)
+        .eq('salesperson_phone', salespersonPhone)
+        .ilike('customer_name', `%${customerName}%`);
+
+      if (existingLogs && existingLogs.length > 0) {
+        return false;
+      }
+    }
+
+    return true;
   } catch (error) {
     console.error('isNewCustomer error:', error.message);
     return false;

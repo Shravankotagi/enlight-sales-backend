@@ -178,7 +178,12 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
   try {
     const { isNewCustomer, logNewCustomer } = require('./kra2');
     if (deal && deal.customer_name && senderPhone) {
-      const newCustomer = await isNewCustomer(deal.customer_name);
+      // Only treat purchase orders or explicitly won deals as acquisitions
+      if (deal.inquiry_type !== 'purchase_order' && deal.stage !== 'won') {
+        console.log('Skipping KRA 2 check - deal is not a purchase order or won stage:', deal.inquiry_type);
+        return;
+      }
+      const newCustomer = await isNewCustomer(deal.customer_name, senderPhone);
       if (newCustomer) {
         console.log('New customer detected:', deal.customer_name);
         await logNewCustomer(deal, senderPhone);

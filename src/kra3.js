@@ -210,30 +210,82 @@ async function handleFollowUpReply(text, senderPhone) {
   const supabase = getSupabase();
   const upper = text.toUpperCase().trim();
   
-  const actions = ['VISITED', 'CALLED', 'LOST', 'ORDERED'];
+  const actions = ['VISITED', 'CALLED', 'LOST', 'ORDERED', 'FOLLOWED', 'FOLLOW-UP', 'FOLLOWUP'];
   const matchedAction = actions.find(a => upper.startsWith(a));
   
   if (!matchedAction) return null;
   
-  // Extract customer name and outcome
-  const parts = text.trim().split(' ');
-  const customerKeyword = parts[1] || '';
-  const outcome = parts.slice(2).join(' ') || 'No details provided';
-  
   try {
-    // Find matching follow-up task
-    const { data: tasks } = await supabase
+    // 1. Fetch all pending KRA 3 tasks for this salesperson to match customer name dynamically
+    const { data: openTasks } = await supabase
       .from('followup_tasks')
       .select('*')
       .eq('salesperson_phone', senderPhone)
       .eq('status', 'pending')
-      .eq('task_type', 'kra3_retention')
-      .ilike('customer_name', `%${customerKeyword}%`)
-      .order('created_at', { ascending: false })
-      .limit(1);
-    
-    const task = tasks?.[0];
-    
+      .eq('task_type', 'kra3_retention');
+
+    let task = null;
+    let customerKeyword = '';
+    let outcome = '';
+
+    if (openTasks && openTasks.length > 0) {
+      // Find a task whose customer name is mentioned in the text (case-insensitive)
+      task = openTasks.find(t => {
+        if (!t.customer_name) return false;
+        const nameLower = t.customer_name.toLowerCase();
+        // Check if full customer name is in the message
+        if (text.toLowerCase().includes(nameLower)) return true;
+        // Check if any word of length > 3 of the customer name is in the message (e.g. "Supreme")
+        const words = nameLower.split(/\s+/);
+        return words.some(word => word.length > 3 && text.toLowerCase().includes(word));
+      });
+    }
+
+    if (task) {
+      customerKeyword = task.customer_name;
+      // The outcome is everything in the text except action and customer name
+      let tempOutcome = text;
+      // Remove action keyword and common filler words immediately following it
+      const regexAction = new RegExp(`^${matchedAction}\\s*(up|with|about|for|recurring|customer|client|on)*\\s*`, 'i');
+      tempOutcome = tempOutcome.replace(regexAction, '');
+      // Remove customer name (if present)
+      if (tempOutcome.toLowerCase().includes(task.customer_name.toLowerCase())) {
+        tempOutcome = tempOutcome.replace(new RegExp(task.customer_name, 'gi'), '');
+      } else {
+        // Remove first word of customer name
+        const firstWord = task.customer_name.split(' ')[0];
+        if (firstWord.length > 3) {
+          tempOutcome = tempOutcome.replace(new RegExp(firstWord, 'gi'), '');
+        }
+      }
+      // Clean up punctuation at the start or end of outcome
+      outcome = tempOutcome.replace(/^[\s:,\-]+/, '').trim() || 'Completed follow-up';
+    } else {
+      // FALLBACK: Clean action and filler words to extract customer keyword and outcome
+      let cleanText = text;
+      const regexPrefix = /^(visited|called|lost|ordered|followed up with recurring customer|followed up with customer|followed up with|follow up with|followed|followup|follow-up|following up)\s+/i;
+      cleanText = cleanText.replace(regexPrefix, '');
+      cleanText = cleanText.replace(/^(customer|client|company)\s+/i, '');
+
+      const parts = cleanText.split(/[\s:,\-]+/);
+      customerKeyword = parts[0] || '';
+      outcome = cleanText.replace(new RegExp(`^${customerKeyword}`, 'i'), '').replace(/^[\s:,\-]+/, '').trim() || 'No details provided';
+
+      // Fallback DB query using keyword
+      if (customerKeyword) {
+        const { data: tasks } = await supabase
+          .from('followup_tasks')
+          .select('*')
+          .eq('salesperson_phone', senderPhone)
+          .eq('status', 'pending')
+          .eq('task_type', 'kra3_retention')
+          .ilike('customer_name', `%${customerKeyword}%`)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        task = tasks?.[0];
+      }
+    }
+
     if (task) {
       // Resolve the task
       await supabase
@@ -260,10 +312,12 @@ async function handleFollowUpReply(text, senderPhone) {
       });
     
     // Build confirmation message
-    const emoji = {
+    const emojiMap = {
       'VISITED': '🏢', 'CALLED': '📞', 
-      'LOST': '❌', 'ORDERED': '✅'
-    }[matchedAction];
+      'LOST': '❌', 'ORDERED': '✅',
+      'FOLLOWED': '🔄', 'FOLLOW-UP': '🔄', 'FOLLOWUP': '🔄'
+    };
+    const emoji = emojiMap[matchedAction.toUpperCase()] || '🔄';
     
     return `${emoji} *KRA 3 Updated*\n\n` +
       `Action: ${matchedAction}\n` +

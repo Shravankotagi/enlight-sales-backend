@@ -28,10 +28,15 @@ function isComplaintReport(text) {
 function isComplaintResolution(text) {
   const upper = text.toUpperCase().trim();
   return upper.startsWith('RESOLVED ') ||
+         upper.startsWith('RESOLVE ') ||
          upper.startsWith('CLOSED ') ||
+         upper.startsWith('CLOSE ') ||
          upper.startsWith('FIXED ') ||
+         upper.startsWith('FIX ') ||
          upper === 'RESOLVED' ||
-         upper === 'CLOSED';
+         upper === 'RESOLVE' ||
+         upper === 'CLOSED' ||
+         upper === 'CLOSE';
 }
 
 // Extract complaint details using Gemini
@@ -260,6 +265,21 @@ async function handleComplaintLog(text, senderPhone) {
       year: new Date().getFullYear()
     });
 
+    // If it's a product rejection, ALSO log to KRA 7 (Zero Rejection)
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes('reject') || lowerText.includes('rejection')) {
+      console.log('Logging rejection to KRA 7 for customer:', details.customer_name);
+      await supabase.from('kra_logs').insert({
+        salesperson_phone: senderPhone,
+        kra_number: 7,
+        kra_type: 'rejection',
+        description: `Product rejection: ${details.description}`,
+        customer_name: details.customer_name,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
+      });
+    }
+
     return buildComplaintConfirmation(details, complaint);
   } catch (error) {
     console.error('handleComplaintLog error:', error.message);
@@ -271,21 +291,74 @@ async function handleComplaintLog(text, senderPhone) {
 async function handleComplaintResolution(text, senderPhone) {
   const supabase = getSupabase();
   try {
-    const parts = text.trim().split(' ');
-    const customerKeyword = parts[1] || '';
-    const resolution = parts.slice(2).join(' ') || 'Resolved';
+    const upper = text.toUpperCase().trim();
+    const resolutionActions = ['RESOLVED', 'RESOLVE', 'CLOSED', 'CLOSE', 'FIXED', 'FIX'];
+    const matchedAction = resolutionActions.find(a => upper.startsWith(a)) || 'RESOLVED';
 
-    // Find matching open complaint
-    const { data: complaints } = await supabase
+    // 1. Fetch all pending complaints for this salesperson to match customer name dynamically
+    const { data: openComplaints } = await supabase
       .from('complaints')
       .select('*')
       .eq('reported_by', senderPhone)
-      .eq('status', 'pending')
-      .ilike('customer_name', `%${customerKeyword}%`)
-      .order('reported_at', { ascending: false })
-      .limit(1);
+      .eq('status', 'pending');
 
-    const complaint = complaints?.[0];
+    let complaint = null;
+    let customerKeyword = '';
+    let resolution = '';
+
+    if (openComplaints && openComplaints.length > 0) {
+      // Find a complaint whose customer name is mentioned in the text (case-insensitive)
+      complaint = openComplaints.find(c => {
+        if (!c.customer_name) return false;
+        const nameLower = c.customer_name.toLowerCase();
+        // Check if full customer name is in the message
+        if (text.toLowerCase().includes(nameLower)) return true;
+        // Check if any word of length > 3 of the customer name is in the message (e.g. "Balaji")
+        const words = nameLower.split(/\s+/);
+        return words.some(word => word.length > 3 && text.toLowerCase().includes(word));
+      });
+    }
+
+    if (complaint) {
+      customerKeyword = complaint.customer_name;
+      // Clean resolution text (remove action, customer name, and fillers)
+      let tempResolution = text;
+      const regexAction = new RegExp(`^${matchedAction}\\s*(complaint|issue|problem|ticket)*\\s*(for|about|of|on)*\\s*`, 'i');
+      tempResolution = tempResolution.replace(regexAction, '');
+      
+      if (tempResolution.toLowerCase().includes(complaint.customer_name.toLowerCase())) {
+        tempResolution = tempResolution.replace(new RegExp(complaint.customer_name, 'gi'), '');
+      } else {
+        const firstWord = complaint.customer_name.split(' ')[0];
+        if (firstWord.length > 3) {
+          tempResolution = tempResolution.replace(new RegExp(firstWord, 'gi'), '');
+        }
+      }
+      resolution = tempResolution.replace(/^[\s:,\-]+/, '').trim() || 'Resolved';
+    } else {
+      // FALLBACK: Clean action and filler words to extract customer keyword and resolution
+      let cleanText = text;
+      const regexPrefix = /^(resolved complaint for|resolve complaint for|resolved complaint|resolve complaint|resolved for|resolve for|resolved|resolve|closed|close|fixed|fix)\s+/i;
+      cleanText = cleanText.replace(regexPrefix, '');
+      cleanText = cleanText.replace(/^(customer|client|company)\s+/i, '');
+
+      const parts = cleanText.split(/[\s:,\-]+/);
+      customerKeyword = parts[0] || '';
+      resolution = cleanText.replace(new RegExp(`^${customerKeyword}`, 'i'), '').replace(/^[\s:,\-]+/, '').trim() || 'Resolved';
+
+      // Fallback DB query using keyword
+      if (customerKeyword) {
+        const { data: complaints } = await supabase
+          .from('complaints')
+          .select('*')
+          .eq('reported_by', senderPhone)
+          .eq('status', 'pending')
+          .ilike('customer_name', `%${customerKeyword}%`)
+          .order('reported_at', { ascending: false })
+          .limit(1);
+        complaint = complaints?.[0];
+      }
+    }
 
     if (complaint) {
       const reportedAt = new Date(complaint.reported_at);

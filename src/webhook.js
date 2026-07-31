@@ -145,7 +145,11 @@ router.post('/', async (req, res) => {
         // Check if salesperson is replying to a KRA 3 follow-up
         if (messageType === 'text') {
           const upper = raw_text.toUpperCase().trim();
-          const followUpActions = ['VISITED ', 'CALLED ', 'LOST ', 'ORDERED '];
+          const followUpActions = [
+            'VISITED ', 'CALLED ', 'LOST ', 'ORDERED ',
+            'FOLLOWED ', 'FOLLOW ', 'FOLLOW-UP ', 'FOLLOWUP ',
+            'FOLLOWED UP ', 'FOLLOWING UP '
+          ];
           const isFollowUpReply = followUpActions.some(a => upper.startsWith(a));
           
           if (isFollowUpReply) {
