@@ -194,5 +194,56 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
   }
 }
 
+/**
+ * Uses Gemini to fuzzy match a customer name from a list of customer names.
+ * Useful for handling salesperson typos, Hinglish, or shorthand customer names.
+ * @param {string} text - The raw input text containing the customer name.
+ * @param {string[]} customerList - The list of active customer names to match against.
+ * @returns {Promise<string|null>} The matched customer name, or null if no match.
+ */
+async function fuzzyMatchCustomer(text, customerList) {
+  if (!customerList || customerList.length === 0) return null;
+  
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+
+    const prompt = `
+Given a user message and a list of customer names, identify which customer from the list the message is referring to.
+The user might have spelling mistakes, typos, or written in Hinglish/mix languages.
+
+List of customer names:
+${customerList.map((c, i) => `${i + 1}. "${c}"`).join('\n')}
+
+Message: "${text}"
+
+Rules:
+- If there is a high-confidence match from the list, return ONLY the index of the matched customer (1-based index).
+- If there is absolutely no match or the message is about a different customer, return ONLY "0".
+- Return ONLY the number (e.g. "1" or "0"), do not include any other text, markdown, or explanation.
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const matchIndex = parseInt(response.text().trim());
+    
+    if (matchIndex > 0 && matchIndex <= customerList.length) {
+      return customerList[matchIndex - 1];
+    }
+  } catch (err) {
+    console.error('fuzzyMatchCustomer error:', err.message);
+  }
+  return null;
+}
+
 // Export default and named exports
-module.exports = { supabase, saveInquiry, getInquiries, saveDeal, getEmployeeByPhone, checkAndLogNewCustomer };
+module.exports = { 
+  supabase, 
+  saveInquiry, 
+  getInquiries, 
+  saveDeal, 
+  getEmployeeByPhone, 
+  checkAndLogNewCustomer,
+  fuzzyMatchCustomer 
+};

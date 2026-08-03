@@ -239,6 +239,18 @@ async function handleFollowUpReply(text, senderPhone) {
         const words = nameLower.split(/\s+/);
         return words.some(word => word.length > 3 && text.toLowerCase().includes(word));
       });
+
+      // Fuzzy match fallback using Gemini if no literal match is found
+      if (!task) {
+        console.log('No literal customer match, trying fuzzy matching...');
+        const { fuzzyMatchCustomer } = require('./supabase');
+        const customerList = openTasks.map(t => t.customer_name).filter(Boolean);
+        const matchedName = await fuzzyMatchCustomer(text, customerList);
+        if (matchedName) {
+          console.log(`Fuzzy matched customer: ${matchedName}`);
+          task = openTasks.find(t => t.customer_name === matchedName);
+        }
+      }
     }
 
     if (task) {

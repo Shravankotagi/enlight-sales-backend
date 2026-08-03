@@ -317,6 +317,18 @@ async function handleComplaintResolution(text, senderPhone) {
         const words = nameLower.split(/\s+/);
         return words.some(word => word.length > 3 && text.toLowerCase().includes(word));
       });
+
+      // Fuzzy match fallback using Gemini if no literal match is found
+      if (!complaint) {
+        console.log('No literal complaint customer match, trying fuzzy matching...');
+        const { fuzzyMatchCustomer } = require('./supabase');
+        const customerList = openComplaints.map(c => c.customer_name).filter(Boolean);
+        const matchedName = await fuzzyMatchCustomer(text, customerList);
+        if (matchedName) {
+          console.log(`Fuzzy matched complaint customer: ${matchedName}`);
+          complaint = openComplaints.find(c => c.customer_name === matchedName);
+        }
+      }
     }
 
     if (complaint) {
