@@ -138,6 +138,23 @@ router.post('/', async (req, res) => {
           }
         }
 
+        // Check for duplicate inquiry in the last 1 hour (to prevent double processing/saving)
+        if (raw_text) {
+          const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+          const { data: duplicateInquiries } = await supabase
+            .from('inquiries')
+            .select('id, created_at')
+            .eq('salesperson_phone', senderPhone)
+            .eq('raw_text', raw_text)
+            .gte('created_at', oneHourAgo);
+
+          if (duplicateInquiries && duplicateInquiries.length > 0) {
+            console.log('Duplicate inquiry text detected in the last 1 hour. Skipping processing.');
+            await sendTextMessage(senderPhone, `⚠️ *Duplicate message ignored* - This message/inquiry was already received and processed recently.`);
+            return;
+          }
+        }
+
         // Save raw inquiry data to Supabase and capture the returned row
         const savedInquiry = await saveInquiry({
           source_channel: "whatsapp",

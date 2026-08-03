@@ -372,56 +372,43 @@ async function handleComplaintResolution(text, senderPhone) {
       }
     }
 
-    if (complaint) {
-      const reportedAt = new Date(complaint.reported_at);
-      const resolvedAt = new Date();
-      const resolutionHrs = Math.round(
-        (resolvedAt - reportedAt) / (1000 * 60 * 60)
-      );
-
-      await supabase
-        .from('complaints')
-        .update({
-          status: 'resolved',
-          resolved_at: resolvedAt.toISOString(),
-          resolution_time_hrs: resolutionHrs
-        })
-        .eq('id', complaint.id);
-
-      // Log to KRA 8
-      await supabase.from('kra_logs').insert({
-        salesperson_phone: senderPhone,
-        kra_number: 8,
-        kra_type: 'complaint_resolved',
-        description: `Resolved in ${resolutionHrs}h: ${resolution}`,
-        customer_name: complaint.customer_name,
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear()
-      });
-
-      const withinTarget = resolutionHrs <= 48;
-      return `✅ *KRA 8 — Complaint Resolved*\n\n` +
-        `Customer: ${complaint.customer_name || customerKeyword}\n` +
-        `Resolution: ${resolution}\n` +
-        `Time taken: ${resolutionHrs} hours\n` +
-        `${withinTarget ? '✅ Within 48-hour target!' : '⚠️ Exceeded 48-hour target'}\n\n` +
-        `Logged to KRA 8 ✅`;
+    if (!complaint) {
+      console.log(`No active pending complaint found for customer keyword: ${customerKeyword}`);
+      return `⚠️ *Resolution Update Declined*\n\nCould not find an active pending complaint matching *"${customerKeyword || 'this customer'}"*.\n\nPlease check the dashboard to verify the customer name or if the complaint was already marked as resolved.`;
     }
 
-    // No matching complaint found — still log it
+    const reportedAt = new Date(complaint.reported_at);
+    const resolvedAt = new Date();
+    const resolutionHrs = Math.round(
+      (resolvedAt - reportedAt) / (1000 * 60 * 60)
+    );
+
+    await supabase
+      .from('complaints')
+      .update({
+        status: 'resolved',
+        resolved_at: resolvedAt.toISOString(),
+        resolution_time_hrs: resolutionHrs
+      })
+      .eq('id', complaint.id);
+
+    // Log to KRA 8
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
       kra_number: 8,
       kra_type: 'complaint_resolved',
-      description: `Resolved: ${resolution}`,
-      customer_name: customerKeyword,
+      description: `Resolved in ${resolutionHrs}h: ${resolution}`,
+      customer_name: complaint.customer_name,
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear()
     });
 
-    return `✅ *KRA 8 — Resolution Logged*\n\n` +
-      `Customer: ${customerKeyword}\n` +
-      `Resolution: ${resolution}\n\n` +
+    const withinTarget = resolutionHrs <= 48;
+    return `✅ *KRA 8 — Complaint Resolved*\n\n` +
+      `Customer: ${complaint.customer_name}\n` +
+      `Resolution: ${resolution}\n` +
+      `Time taken: ${resolutionHrs} hours\n` +
+      `${withinTarget ? '✅ Within 48-hour target!' : '⚠️ Exceeded 48-hour target'}\n\n` +
       `Logged to KRA 8 ✅`;
   } catch (error) {
     console.error('handleComplaintResolution error:', error.message);

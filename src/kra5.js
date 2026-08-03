@@ -213,26 +213,29 @@ async function handlePaymentUpdate(text, senderPhone) {
 
     const payment = payments?.[0];
 
+    if (!payment) {
+      console.log(`No active pending payment tracking record found for customer keyword: ${customerKeyword}`);
+      return `⚠️ *Payment Update Declined*\n\nCould not find an active pending payment tracking record matching *"${customerKeyword}"*.\n\nPlease check the dashboard to verify the customer name or if the payment has already been marked as collected.`;
+    }
+
     const isPaid = action === 'PAID' || action === 'COLLECTED';
 
     // Update payment tracking
-    if (payment) {
-      await supabase
-        .from('payment_tracking')
-        .update({
-          status: isPaid ? 'collected' : 'follow_up_done',
-          paid_date: isPaid ? new Date().toISOString().split('T')[0] : null,
-          outstanding: isPaid ? 0 : payment.outstanding
-        })
-        .eq('id', payment.id);
+    await supabase
+      .from('payment_tracking')
+      .update({
+        status: isPaid ? 'collected' : 'follow_up_done',
+        paid_date: isPaid ? new Date().toISOString().split('T')[0] : null,
+        outstanding: isPaid ? 0 : payment.outstanding
+      })
+      .eq('id', payment.id);
 
-      // If paid, update deal status too
-      if (isPaid) {
-        await supabase
-          .from('deals')
-          .update({ status: 'payment_collected' })
-          .eq('id', payment.deal_id);
-      }
+    // If paid, update deal status too
+    if (isPaid) {
+      await supabase
+        .from('deals')
+        .update({ status: 'payment_collected' })
+        .eq('id', payment.deal_id);
     }
 
     // Log to KRA 5
@@ -241,8 +244,8 @@ async function handlePaymentUpdate(text, senderPhone) {
       kra_number: 5,
       kra_type: isPaid ? 'payment_collected' : 'payment_followup',
       description: `${action} ${customerKeyword}: ${details}`,
-      customer_name: payment?.customer_name || customerKeyword,
-      value: isPaid ? (payment?.invoice_amount || 0) : 0,
+      customer_name: payment.customer_name,
+      value: isPaid ? (payment.invoice_amount || 0) : 0,
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear()
     });
