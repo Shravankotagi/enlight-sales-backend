@@ -41,11 +41,13 @@ export class DealsController {
   async getPipelineSummary(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const targetPhone =
       employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
 
-    const deals = await this.dealsService.findAll();
+    const deals = await this.dealsService.findAll({ from, to });
     const filtered = targetPhone
       ? deals.filter((d: any) => d.salesperson_phone === targetPhone)
       : deals;
@@ -73,11 +75,13 @@ export class DealsController {
   async getKanbanBoard(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const targetPhone =
       employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
 
-    const deals = await this.dealsService.findAll();
+    const deals = await this.dealsService.findAll({ from, to });
     const activeDeals = deals.filter(
       (d: any) => !['won', 'lost'].includes(d.stage),
     );
