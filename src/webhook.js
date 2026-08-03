@@ -101,6 +101,15 @@ router.post('/', async (req, res) => {
             break;
         }
 
+        // Remove surrounding quotes if typed by the salesperson (e.g. from copy-pasting test prompts)
+        if (raw_text) {
+          raw_text = raw_text.trim();
+          if ((raw_text.startsWith('"') && raw_text.endsWith('"')) || 
+              (raw_text.startsWith("'") && raw_text.endsWith("'"))) {
+            raw_text = raw_text.substring(1, raw_text.length - 1).trim();
+          }
+        }
+
         // Truncate raw_text if it is extremely long to prevent LLM timeouts (Edge Case 4)
         if (raw_text && raw_text.length > 2000) {
           raw_text = raw_text.substring(0, 2000) + "... (truncated)";
