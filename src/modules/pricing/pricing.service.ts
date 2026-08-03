@@ -60,6 +60,39 @@ export class PricingService {
     return data;
   }
 
+  async updateRateSheet(id: string, items: any[], updatedBy: string) {
+    // 1. Unlock the sheet (clear locked_at and locked_by)
+    const { error: sheetError } = await this.supabase
+      .from('rate_sheets')
+      .update({
+        locked_at: null,
+        locked_by: null,
+        created_by: updatedBy,
+      })
+      .eq('id', id);
+
+    if (sheetError) throw sheetError;
+
+    // 2. Delete old items
+    const { error: deleteError } = await this.supabase
+      .from('rate_sheet_items')
+      .delete()
+      .eq('rate_sheet_id', id);
+
+    if (deleteError) throw deleteError;
+
+    // 3. Insert new items
+    if (items.length > 0) {
+      const { error: insertError } = await this.supabase
+        .from('rate_sheet_items')
+        .insert(items.map((item) => ({ rate_sheet_id: id, ...item })));
+
+      if (insertError) throw insertError;
+    }
+
+    return this.getTodayRateSheet();
+  }
+
   async getFloorMargins() {
     const { data, error } = await this.supabase
       .from('floor_margins')

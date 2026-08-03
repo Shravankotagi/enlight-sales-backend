@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Param,
   Body,
@@ -53,6 +54,20 @@ export class PricingController {
   ) {
     return this.pricingService.lockRateSheet(
       id,
+      employee.name || employee.phone,
+    );
+  }
+
+  @Put('rate-sheet/:id')
+  @HttpCode(HttpStatus.OK)
+  async updateRateSheet(
+    @Param('id') id: string,
+    @Body() body: { items: any[] },
+    @CurrentEmployee() employee: any,
+  ) {
+    return this.pricingService.updateRateSheet(
+      id,
+      body.items || [],
       employee.name || employee.phone,
     );
   }
