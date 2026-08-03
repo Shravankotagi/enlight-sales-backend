@@ -282,8 +282,8 @@ async function handleFollowUpReply(text, senderPhone) {
           .ilike('customer_name', `%${customerKeyword}%`)
           .order('created_at', { ascending: false })
           .limit(1);
-        task = tasks?.[0];
       }
+    }
 
     if (!task) {
       console.log('No active pending KRA 3 retention task found for', customerKeyword);
