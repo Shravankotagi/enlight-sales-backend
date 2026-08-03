@@ -41,7 +41,7 @@ export class PricingController {
   ) {
     return this.pricingService.createRateSheet(
       body.items || [],
-      employee.phone,
+      employee.name || employee.phone,
     );
   }
 
@@ -51,7 +51,10 @@ export class PricingController {
     @Param('id') id: string,
     @CurrentEmployee() employee: any,
   ) {
-    return this.pricingService.lockRateSheet(id, employee.phone);
+    return this.pricingService.lockRateSheet(
+      id,
+      employee.name || employee.phone,
+    );
   }
 
   @Patch('floor-margins/:id')
@@ -63,7 +66,7 @@ export class PricingController {
     return this.pricingService.updateFloorMargin(
       id,
       body.floor_pct,
-      employee.phone,
+      employee.name || employee.phone,
     );
   }
 
