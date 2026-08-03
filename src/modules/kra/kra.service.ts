@@ -328,11 +328,20 @@ export class KraService {
 
     // 3. Pending follow-up tasks
     try {
-      const { data: followups } = await supabase
+      let followupsQuery = supabase
         .from('followup_tasks')
         .select('id, customer_name, due_date, task_type')
         .eq('status', 'pending')
-        .lte('due_date', now.toISOString())
+        .lte('due_date', now.toISOString());
+
+      if (!isAdmin) {
+        followupsQuery = followupsQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
+      }
+
+      const { data: followups } = await followupsQuery
         .order('due_date', { ascending: true })
         .limit(5);
 
@@ -383,12 +392,17 @@ export class KraService {
     // 5. Pending complaints past 24h
     try {
       const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: oldComplaints } = await supabase
+      let complaintsQuery = supabase
         .from('complaints')
         .select('id, customer_name, complaint_type')
         .eq('status', 'pending')
-        .lte('reported_at', dayAgo)
-        .limit(5);
+        .lte('reported_at', dayAgo);
+
+      if (!isAdmin) {
+        complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
+      }
+
+      const { data: oldComplaints } = await complaintsQuery.limit(5);
 
       if (oldComplaints?.length > 0) {
         actions.push({
