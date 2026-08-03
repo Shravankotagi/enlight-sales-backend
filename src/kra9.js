@@ -33,6 +33,7 @@ Extract visit details from this salesperson message.
 Return ONLY a JSON object, no markdown, no backticks:
 
 {
+  "is_valid_visit": true,
   "customer_name": "",
   "customer_address": "",
   "person_met": "",
@@ -42,6 +43,7 @@ Return ONLY a JSON object, no markdown, no backticks:
 }
 
 Rules:
+- is_valid_visit: Set to true if the text describes a completed customer visit that occurred today or in the past. Set to false if the message describes a future plan (e.g. "I will visit tomorrow"), a question (e.g. "Did anyone visit?"), or if it is unrelated to an actual completed visit.
 - customer_name: company or person visited
 - person_met: name of person they met (if mentioned)
 - contact_no: phone number if mentioned, else null
@@ -49,6 +51,7 @@ Rules:
 - outcome: one of "positive|neutral|negative|order_received|follow_up_needed"
 - Return null for fields not mentioned
 - Return ONLY the JSON object
+- Understand and analyze the meaning of the message before populating "is_valid_visit".
 
 Message: "${text}"
     `;
@@ -66,6 +69,7 @@ Message: "${text}"
     console.error('extractVisitDetails error:', error.message);
     // Fallback: save raw text as remarks
     return {
+      is_valid_visit: true,
       customer_name: null,
       customer_address: null,
       person_met: null,
@@ -231,11 +235,42 @@ async function handleVisitLog(text, senderPhone) {
     const details = await extractVisitDetails(text, senderPhone);
     console.log('Visit details extracted:', JSON.stringify(details, null, 2));
 
+    // React to Gemini understanding: only proceed if it is a valid, completed visit log
+    if (!details.is_valid_visit || !details.customer_name) {
+      console.log('Gemini determined this is not a valid completed visit. Skipping save.');
+      return `⚠️ *Visit Not Logged*\n\nYour message does not appear to describe a completed customer visit. Visits can only be logged for completed meetings that have already occurred.`;
+    }
+
+    // Check for same-day duplicates (same customer, same salesperson, same day)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const supabase = getSupabase();
+    const { data: existingVisits, error: dupError } = await supabase
+      .from('customer_visits')
+      .select('id, visited_at')
+      .eq('salesperson_phone', senderPhone)
+      .ilike('customer_name', `%${details.customer_name}%`)
+      .gte('visited_at', todayStart.toISOString())
+      .lte('visited_at', todayEnd.toISOString());
+
+    if (dupError) throw dupError;
+
+    if (existingVisits && existingVisits.length > 0) {
+      console.log(`Duplicate visit detected for ${details.customer_name} today. Skipping database save.`);
+      const weekStats = await getWeeklyVisitCount(senderPhone);
+      return `⚠️ *Duplicate Visit Detected*\n\nA visit for *${details.customer_name}* has already been logged by you today!\n\n` +
+        `📊 *This Week's Progress*\n` +
+        `Visits: ${weekStats.count}/10\n` +
+        `Field days: ${weekStats.days}/3`;
+    }
+
     // Save to database
     const visit = await saveVisit(details, senderPhone);
 
     // Log to KRA logs
-    const supabase = getSupabase();
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
       kra_number: 9,
