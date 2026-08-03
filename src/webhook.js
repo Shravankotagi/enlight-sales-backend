@@ -373,7 +373,11 @@ router.post('/', async (req, res) => {
           } else if (messageType === 'audio' && !extraction) {
             replyMessage = `Voice note received but transcription failed. Please send as text.`;
           } else {
-            replyMessage = `✅ Received! Reference: ${messageId.substring(0, 8)}\nWe have logged your message.`;
+            const cleanRef = messageId.replace('wamid.', '').substring(0, 10);
+            replyMessage = `✅ *Inquiry Received*\n\n` +
+              `Logged by: *${employeeRecord?.name || senderName}*\n` +
+              `Reference: ${cleanRef}\n\n` +
+              `We have logged your message.`;
           }
         }
         // --- END GEMINI EXTRACTION ---
