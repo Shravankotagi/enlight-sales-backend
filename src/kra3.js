@@ -284,6 +284,10 @@ async function handleFollowUpReply(text, senderPhone) {
           .limit(1);
         task = tasks?.[0];
       }
+
+    if (!task) {
+      console.log('No active pending KRA 3 retention task found for', customerKeyword);
+      return null;
     }
 
     if (task) {
