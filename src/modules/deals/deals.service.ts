@@ -72,6 +72,11 @@ export class DealsService {
       if (stage === 'lost' && lostReason) {
         updateData.lost_reason = lostReason;
       }
+      if (stage === 'won') {
+        updateData.won_at = new Date().toISOString();
+      } else {
+        updateData.won_at = null;
+      }
       const { data, error } = await this.supabase
         .from('deals')
         .update(updateData)

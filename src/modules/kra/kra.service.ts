@@ -27,8 +27,9 @@ export class KraService {
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        .or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+        );
       let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
@@ -47,8 +48,9 @@ export class KraService {
       let complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
-        .gte('reported_at', start)
-        .lte('reported_at', end);
+        .or(
+          `and(reported_at.gte.${start},reported_at.lte.${end}),and(resolved_at.gte.${start},resolved_at.lte.${end})`,
+        );
       let paymentsQuery = this.supabase
         .from('payment_tracking')
         .select('*')
@@ -114,8 +116,13 @@ export class KraService {
       const recurring = recurringResult.data || [];
       const followups = followupsResult.data || [];
 
-      const wonDeals = deals.filter((d) => d.stage === 'won');
-      const totalValue = deals.reduce(
+      const dealsCreatedThisMonth = deals.filter(
+        (d) => d.created_at >= start && d.created_at <= end,
+      );
+      const wonDeals = deals.filter(
+        (d) => d.stage === 'won' && d.won_at >= start && d.won_at <= end,
+      );
+      const totalValue = wonDeals.reduce(
         (sum, d) => sum + (d.total_amount || 0),
         0,
       );
@@ -123,8 +130,14 @@ export class KraService {
       const collectedPayments = payments.filter(
         (p) => p.status === 'collected',
       );
+      const reportedThisMonth = complaints.filter(
+        (c) => c.reported_at >= start && c.reported_at <= end,
+      );
       const resolvedComplaints = complaints.filter(
-        (c) => c.status === 'resolved',
+        (c) =>
+          c.status === 'resolved' &&
+          c.resolved_at >= start &&
+          c.resolved_at <= end,
       );
       const withinTarget = resolvedComplaints.filter(
         (c) => (c.resolution_time_hrs || 0) <= 48,
@@ -134,10 +147,10 @@ export class KraService {
         month: start,
         kra1: {
           label: 'Sales Achievement',
-          deals_count: deals.length,
+          deals_count: dealsCreatedThisMonth.length,
           won_count: wonDeals.length,
           total_value: totalValue,
-          status: deals.length > 0 ? 'on_track' : 'at_risk',
+          status: dealsCreatedThisMonth.length > 0 ? 'on_track' : 'at_risk',
         },
         kra2: {
           label: 'New Customer Acquisition',
@@ -199,7 +212,7 @@ export class KraService {
         },
         kra8: {
           label: 'Complaint Resolution',
-          total: complaints.length,
+          total: reportedThisMonth.length,
           resolved: resolvedComplaints.length,
           within_48h: withinTarget.length,
           avg_resolution_hrs:
@@ -212,7 +225,7 @@ export class KraService {
                 )
               : 0,
           status:
-            complaints.length === 0 ||
+            reportedThisMonth.length === 0 ||
             withinTarget.length === resolvedComplaints.length
               ? 'achieved'
               : 'in_progress',
@@ -255,13 +268,27 @@ export class KraService {
     }
   }
 
-  async getActionQueue(salespersonPhone: string, isAdmin: boolean) {
+  async getActionQueue(
+    salespersonPhone: string,
+    isAdmin: boolean,
+    month?: number,
+    year?: number,
+  ) {
     const supabase = this.supabase;
     const now = new Date();
-    const monthStart = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      1,
+
+    const targetYear = year !== undefined ? year : now.getFullYear();
+    const targetMonth = month !== undefined ? month : now.getMonth();
+
+    const monthStart = new Date(targetYear, targetMonth, 1).toISOString();
+    const monthEnd = new Date(
+      targetYear,
+      targetMonth + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
     ).toISOString();
     const actions: any[] = [];
 
@@ -270,7 +297,9 @@ export class KraService {
       let inquiryQuery = supabase
         .from('inquiries')
         .select('id, sender_name, raw_text, created_at')
-        .eq('status', 'review');
+        .eq('status', 'review')
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd);
 
       if (!isAdmin) {
         inquiryQuery = inquiryQuery.eq('salesperson_phone', salespersonPhone);
@@ -303,6 +332,8 @@ export class KraService {
         .select('id, customer_name, stage, created_at')
         .not('stage', 'in', '("won","lost")')
         .lte('created_at', sevenDaysAgo)
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd)
         .order('created_at', { ascending: true })
         .limit(10);
 
@@ -332,7 +363,8 @@ export class KraService {
         .from('followup_tasks')
         .select('id, customer_name, due_date, task_type')
         .eq('status', 'pending')
-        .lte('due_date', now.toISOString());
+        .gte('due_date', monthStart)
+        .lte('due_date', monthEnd);
 
       if (!isAdmin) {
         followupsQuery = followupsQuery.eq(
@@ -358,36 +390,38 @@ export class KraService {
       }
     } catch {}
 
-    // 4. KRA 9 — weekly visit check
-    try {
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - now.getDay());
-      weekStart.setHours(0, 0, 0, 0);
+    // 4. KRA 9 - weekly visit check (only for current month/year)
+    if (targetMonth === now.getMonth() && targetYear === now.getFullYear()) {
+      try {
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - now.getDay());
+        weekStart.setHours(0, 0, 0, 0);
 
-      let visitQuery = supabase
-        .from('customer_visits')
-        .select('id')
-        .gte('visited_at', weekStart.toISOString());
+        let visitQuery = supabase
+          .from('customer_visits')
+          .select('id')
+          .gte('visited_at', weekStart.toISOString());
 
-      if (!isAdmin) {
-        visitQuery = visitQuery.eq('salesperson_phone', salespersonPhone);
-      }
+        if (!isAdmin) {
+          visitQuery = visitQuery.eq('salesperson_phone', salespersonPhone);
+        }
 
-      const { data: weekVisits } = await visitQuery;
-      const visitCount = weekVisits?.length || 0;
+        const { data: weekVisits } = await visitQuery;
+        const visitCount = weekVisits?.length || 0;
 
-      if (visitCount < 10) {
-        actions.push({
-          type: 'visit_target',
-          priority: 'medium',
-          title: `${visitCount}/10 visits this week`,
-          subtitle: `${10 - visitCount} more needed for KRA 9`,
-          count: 10 - visitCount,
-          link: '/kra',
-          color: 'blue',
-        });
-      }
-    } catch {}
+        if (visitCount < 10) {
+          actions.push({
+            type: 'visit_target',
+            priority: 'medium',
+            title: `${visitCount}/10 visits this week`,
+            subtitle: `${10 - visitCount} more needed for KRA 9`,
+            count: 10 - visitCount,
+            link: '/kra',
+            color: 'blue',
+          });
+        }
+      } catch {}
+    }
 
     // 5. Pending complaints past 24h
     try {
@@ -396,7 +430,9 @@ export class KraService {
         .from('complaints')
         .select('id, customer_name, complaint_type')
         .eq('status', 'pending')
-        .lte('reported_at', dayAgo);
+        .lte('reported_at', dayAgo)
+        .gte('reported_at', monthStart)
+        .lte('reported_at', monthEnd);
 
       if (!isAdmin) {
         complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
@@ -411,7 +447,7 @@ export class KraService {
           title: `${oldComplaints.length} complaints unresolved 24h+`,
           subtitle:
             (oldComplaints[0]?.customer_name || '') +
-            ' — ' +
+            ' - ' +
             (oldComplaints[0]?.complaint_type || ''),
           count: oldComplaints.length,
           link: '/inquiries',
@@ -425,7 +461,8 @@ export class KraService {
       let dealsQuery = supabase
         .from('deals')
         .select('total_amount, stage')
-        .gte('created_at', monthStart);
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd);
 
       if (!isAdmin) {
         dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);

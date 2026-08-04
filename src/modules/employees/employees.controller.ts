@@ -17,20 +17,20 @@ import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 
-  // GET /employees — list all employees (admin only)
+  // GET /employees - list all employees (admin only)
   @Get()
   async findAll() {
     return this.employeesService.findAll();
   }
 
-  // GET /employees/next-id — get next auto employee ID
+  // GET /employees/next-id - get next auto employee ID
   @Get('next-id')
   async getNextId() {
     const id = await this.employeesService.generateNextEmployeeId();
     return { next_employee_id: id };
   }
 
-  // POST /employees — create employee (admin only)
+  // POST /employees - create employee (admin only)
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(
@@ -54,13 +54,13 @@ export class EmployeesController {
     });
   }
 
-  // PATCH /employees/:id — update employee
+  // PATCH /employees/:id - update employee
   @Patch(':id')
   async update(@Param('id') id: string, @Body() body: any) {
     return this.employeesService.update(id, body);
   }
 
-  // PATCH /employees/:id/deactivate — deactivate employee
+  // PATCH /employees/:id/deactivate - deactivate employee
   @Patch(':id/deactivate')
   async deactivate(@Param('id') id: string) {
     return this.employeesService.deactivate(id);

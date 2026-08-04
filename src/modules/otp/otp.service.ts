@@ -55,7 +55,7 @@ export class OtpService {
       this.logger.log(`OTP sent to ${phone}`);
     } catch (error) {
       this.logger.error('Failed to send OTP via WhatsApp:', error.message);
-      // Don't throw — log OTP for dev/testing
+      // Don't throw - log OTP for dev/testing
       this.logger.log(`[DEV] OTP for ${phone}: ${otp}`);
     }
   }

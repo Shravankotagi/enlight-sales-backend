@@ -14,20 +14,20 @@ import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 export class ZohoController {
   constructor(private readonly zohoService: ZohoService) {}
 
-  // GET /zoho/status — sync status
+  // GET /zoho/status - sync status
   @Get('status')
   async getStatus() {
     return this.zohoService.getSyncStatus();
   }
 
-  // POST /zoho/sync — trigger manual sync of all pending deals
+  // POST /zoho/sync - trigger manual sync of all pending deals
   @Post('sync')
   @HttpCode(HttpStatus.OK)
   async triggerSync() {
     return this.zohoService.syncAllPendingDeals();
   }
 
-  // POST /zoho/refresh-token — refresh Zoho token manually
+  // POST /zoho/refresh-token - refresh Zoho token manually
   @Post('refresh-token')
   @HttpCode(HttpStatus.OK)
   async refreshToken() {

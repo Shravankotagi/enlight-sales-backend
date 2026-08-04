@@ -19,7 +19,7 @@ console.log('Token response:', JSON.stringify(tokenData));
 
 const token = tokenData.access_token;
 if (!token) {
-  console.log('No token — stopping');
+  console.log('No token - stopping');
   process.exit(1);
 }
 

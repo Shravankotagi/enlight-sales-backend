@@ -52,7 +52,7 @@ export class ZohoService {
       );
 
       this.accessToken = response.data.access_token;
-      // Token expires in 1 hour — set expiry to 55 minutes
+      // Token expires in 1 hour - set expiry to 55 minutes
       this.tokenExpiry = new Date(Date.now() + 55 * 60 * 1000);
 
       this.logger.log('Zoho access token refreshed successfully');
@@ -113,7 +113,7 @@ export class ZohoService {
       const biginDeal = {
         data: [
           {
-            Deal_Name: `${deal.customer_name || 'Unknown'} — ${deal.inquiry_type || 'Inquiry'}`,
+            Deal_Name: `${deal.customer_name || 'Unknown'} - ${deal.inquiry_type || 'Inquiry'}`,
             Stage: this.mapStageToBigin(deal.stage),
             Amount: deal.total_amount || 0,
             Contact_Name: { id: contactId },
@@ -227,7 +227,7 @@ export class ZohoService {
         } else {
           failed++;
         }
-        // Rate limiting — wait 200ms between calls
+        // Rate limiting - wait 200ms between calls
         await new Promise((r) => setTimeout(r, 200));
       }
 
