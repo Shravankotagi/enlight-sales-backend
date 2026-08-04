@@ -144,11 +144,7 @@ export class ReportsService {
   }
 
   // Salesperson performance report
-  async getSalespersonReport(
-    month?: number,
-    year?: number,
-    salespersonPhone?: string,
-  ) {
+  async getSalespersonReport(month?: number, year?: number) {
     try {
       const {
         start,
@@ -223,7 +219,7 @@ export class ReportsService {
         (emp) => emp.phone && emp.role === 'salesperson',
       );
 
-      let phones = new Set<string>(
+      const phones = new Set<string>(
         [
           ...salespersonEmployees.map((e) => e.phone),
           ...visits.map((v) => v.salesperson_phone),
@@ -231,10 +227,6 @@ export class ReportsService {
           ...deals.map((d) => d.salesperson_phone),
         ].filter(Boolean),
       );
-
-      if (salespersonPhone) {
-        phones = new Set([salespersonPhone]);
-      }
 
       const salespersonReports = Array.from(phones).map((phone) => {
         const spDeals = deals.filter((d) => d.salesperson_phone === phone);
