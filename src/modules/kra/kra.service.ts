@@ -129,6 +129,19 @@ export class KraService {
       const collectedPayments = payments.filter(
         (p) => p.status === 'collected',
       );
+      const collectedLogs = kraLogs.filter(
+        (l) =>
+          l.kra_number === 5 &&
+          (l.kra_type === 'payment_collected' ||
+            l.kra_type === 'payment_advance'),
+      );
+      const collectedAmount =
+        collectedLogs.reduce((sum, l) => sum + (l.value || 0), 0) ||
+        collectedPayments.reduce((sum, p) => sum + (p.invoice_amount || 0), 0);
+      const collectedCount = Math.max(
+        collectedPayments.length,
+        collectedLogs.length,
+      );
       const reportedThisMonth = complaints.filter(
         (c) => c.reported_at >= start && c.reported_at <= end,
       );
@@ -188,7 +201,8 @@ export class KraService {
         kra5: {
           label: 'Payment Collection',
           pending_count: pendingPayments.length,
-          collected_count: collectedPayments.length,
+          collected_count: collectedCount,
+          collected_amount: collectedAmount,
           total_outstanding: pendingPayments.reduce(
             (sum, p) => sum + (p.outstanding || 0),
             0,
