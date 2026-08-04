@@ -278,6 +278,18 @@ export class CustomersService {
               ? String(c.customer_phone || c.phone).replace(/\D/g, '')
               : null;
 
+          const contactName = (c.contact_person || c.contact_name || '').trim();
+          const email = (c.customer_email || c.email || '').trim();
+          const industry = (c.industry || c.segment || '').trim();
+
+          const notesParts = [
+            contactName ? `Contact: ${contactName}` : '',
+            email ? `Email: ${email}` : '',
+            industry ? `Industry: ${industry}` : '',
+          ]
+            .filter(Boolean)
+            .join(' | ');
+
           return {
             customer_name: (
               c.customer_name ||
@@ -285,15 +297,13 @@ export class CustomersService {
               c.name ||
               ''
             ).trim(),
-            contact_person:
-              (c.contact_person || c.contact_name || '').trim() || null,
             customer_phone: cleanPhone,
-            customer_email: (c.customer_email || c.email || '').trim() || null,
-            address: (c.address || c.city || '').trim() || null,
             customer_gst:
               (c.customer_gst || c.gstin || c.gst || '').trim() || null,
-            industry: (c.industry || c.segment || 'General').trim(),
+            customer_address:
+              (c.address || c.customer_address || c.city || '').trim() || null,
             assigned_salesperson_phone: assignedPhone,
+            notes: notesParts || 'Bulk imported client',
             is_active: true,
             avg_order_frequency_days: 30,
           };
@@ -304,33 +314,60 @@ export class CustomersService {
         throw new Error('No valid company/customer names found in file');
       }
 
-      // Upsert into recurring_customers
-      const { data, error } = await this.supabase
+      // Query existing customers to safely split into update vs insert
+      const { data: existingCustomers } = await this.supabase
         .from('recurring_customers')
-        .upsert(formattedClients, {
-          onConflict: 'customer_name',
-          ignoreDuplicates: false,
-        })
-        .select();
+        .select('id, customer_name');
 
-      if (error) {
-        this.logger.warn(
-          'Upsert error, trying individual insert:',
-          error.message,
-        );
-        const { data: insertData, error: insertError } = await this.supabase
-          .from('recurring_customers')
-          .insert(formattedClients)
-          .select();
+      const existingMap = new Map<string, string>(
+        (existingCustomers || []).map((c) => [
+          c.customer_name.toLowerCase(),
+          c.id,
+        ]),
+      );
 
-        if (insertError) throw insertError;
-        return {
-          count: insertData?.length || formattedClients.length,
-          data: insertData,
-        };
+      const toUpdate: any[] = [];
+      const toInsert: any[] = [];
+
+      for (const client of formattedClients) {
+        const existingId = existingMap.get(client.customer_name.toLowerCase());
+        if (existingId) {
+          toUpdate.push({ id: existingId, ...client });
+        } else {
+          toInsert.push(client);
+        }
       }
 
-      return { count: data?.length || formattedClients.length, data };
+      let insertedCount = 0;
+      if (toInsert.length > 0) {
+        const { data: insertedData, error: insertError } = await this.supabase
+          .from('recurring_customers')
+          .insert(toInsert)
+          .select();
+
+        if (insertError) {
+          this.logger.error('Error inserting imported clients:', insertError);
+          throw insertError;
+        }
+        insertedCount = insertedData?.length || toInsert.length;
+      }
+
+      for (const updateItem of toUpdate) {
+        const { error: updateError } = await this.supabase
+          .from('recurring_customers')
+          .update(updateItem)
+          .eq('id', updateItem.id);
+
+        if (updateError) {
+          this.logger.warn(
+            `Error updating client ${updateItem.customer_name}:`,
+            updateError.message,
+          );
+        }
+      }
+
+      const totalCount = insertedCount + toUpdate.length;
+      return { count: totalCount };
     } catch (error: any) {
       this.logger.error('Error in importClients:', error);
       throw error;
