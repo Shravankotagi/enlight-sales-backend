@@ -95,10 +95,9 @@ export class OtpService {
       // Send via WhatsApp
       await this.sendOtpWhatsApp(phone, otp);
 
-      const isDev = process.env.NODE_ENV !== 'production';
       return {
         message: 'OTP sent to your WhatsApp number',
-        ...(isDev && { dev_otp: otp }), // Show OTP in dev mode
+        dev_otp: otp, // Show OTP on screen for testing purposes
       };
     } catch (error) {
       this.logger.error(`Error in requestOtp for phone ${phone}:`, error);
