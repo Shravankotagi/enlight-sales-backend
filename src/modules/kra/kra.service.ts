@@ -538,6 +538,18 @@ export class KraService {
         .gte('created_at', start)
         .lte('created_at', end);
 
+      let visitsQuery = this.supabase
+        .from('customer_visits')
+        .select('*')
+        .gte('visited_at', start)
+        .lte('visited_at', end);
+
+      let complaintsQuery = this.supabase
+        .from('complaints')
+        .select('*')
+        .gte('reported_at', start)
+        .lte('reported_at', end);
+
       if (salespersonPhone) {
         dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
         inquiriesQuery = inquiriesQuery.eq(
@@ -546,6 +558,8 @@ export class KraService {
         );
         kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
         paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
+        visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
+        complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
       }
 
       const [
@@ -553,17 +567,23 @@ export class KraService {
         { data: inquiries },
         { data: kraLogs },
         { data: payments },
+        { data: visits },
+        { data: complaints },
       ] = await Promise.all([
         dealsQuery,
         inquiriesQuery,
         kraLogsQuery,
         paymentsQuery,
+        visitsQuery,
+        complaintsQuery,
       ]);
 
       const safeDeals = deals || [];
       const safeInquiries = inquiries || [];
       const safeKraLogs = kraLogs || [];
       const safePayments = payments || [];
+      const safeVisits = visits || [];
+      const safeComplaints = complaints || [];
 
       // KRA 1 Sheet: Sales Achievement
       const wonDeals = safeDeals.filter((d) => d.stage === 'won');
@@ -665,6 +685,55 @@ export class KraService {
               : p.status,
       }));
 
+      // KRA 6 Sheet: CRM Compliance
+      const kra6Rows = safeKraLogs.map((l, index) => ({
+        sr_no: index + 1,
+        activity_date: new Date(l.created_at).toLocaleDateString('en-IN'),
+        activity_type: l.kra_type || 'Activity Log',
+        customer_name: l.customer_name || '-',
+        channel: 'WhatsApp Bot / CRM',
+        logged_status: 'Compliant ✅',
+        remarks: l.description || 'Logged via WhatsApp',
+      }));
+
+      // KRA 7 Sheet: Zero Rejection in Order
+      const kra7Logs = safeKraLogs.filter((l) => l.kra_number === 7);
+      const kra7Rows = kra7Logs.map((l, index) => ({
+        sr_no: index + 1,
+        customer_name: l.customer_name || 'Customer',
+        product: l.description?.split(':')[0] || 'Steel Item',
+        order_date: new Date(l.created_at).toLocaleDateString('en-IN'),
+        reason_for_rejection: l.description || 'Quality / Order Error',
+        corrective_action_taken: 'Replacement Processed',
+        remarks: 'Recorded in KRA 7',
+      }));
+
+      // KRA 8 Sheet: Customer Complaint Resolution
+      const kra8Rows = safeComplaints.map((c, index) => ({
+        sr_no: index + 1,
+        complaint_date: new Date(c.reported_at).toLocaleDateString('en-IN'),
+        customer_name: c.customer_name || 'Customer',
+        complaint_type: c.complaint_type || 'Quality Issue',
+        complaint_description: c.description || '-',
+        resolution_date: c.resolved_at
+          ? new Date(c.resolved_at).toLocaleDateString('en-IN')
+          : '-',
+        resolution_time_hrs: c.resolution_time_hrs
+          ? `${c.resolution_time_hrs}h`
+          : '-',
+        status: c.status === 'resolved' ? 'Closed' : 'Pending',
+      }));
+
+      // KRA 9 Sheet: Customer Visits
+      const kra9Rows = safeVisits.map((v, index) => ({
+        sr_no: index + 1,
+        company_name: v.customer_name || 'Client Site',
+        address: v.location || v.address || 'Field Visit Location',
+        person_met: v.person_met || 'Owner / Buyer',
+        contact_no: v.contact_no || '-',
+        remarks: v.notes || 'Visited & Market Presence Recorded',
+      }));
+
       const kra1Tonnage = kra1Rows.reduce(
         (sum, r) => sum + (r.quantity_mt || 0),
         0,
@@ -764,6 +833,79 @@ export class KraService {
             'Remarks',
           ],
           rows: kra5Rows,
+        },
+        kra6: {
+          number: 6,
+          title: 'KRA 6: CRM Compliance',
+          target: 'Ensure 100% daily updates in Zoho CRM',
+          achieved: `${kra6Rows.length} Logged`,
+          meaning:
+            "This KRA measures the salesperson's discipline in maintaining accurate and timely records of all sales activities in Zoho Bigin CRM. It evaluates whether customer interactions including new company creation, contacts, calls, customer visits, enquiries, quotations, follow-ups, deals, and order updates are recorded on the same day to ensure complete customer data, accurate sales pipeline visibility, and effective sales management.",
+          headers: [
+            'Sr. No.',
+            'Activity Date',
+            'Activity Type',
+            'Customer Name',
+            'Channel (WhatsApp Bot/CRM)',
+            'Logged Status',
+            'Remarks',
+          ],
+          rows: kra6Rows,
+        },
+        kra7: {
+          number: 7,
+          title: 'KRA 7: Zero Rejection in Order',
+          target: 'Ensure zero order rejections due to sales-related errors.',
+          achieved: `${kra7Rows.length} Rejections`,
+          meaning:
+            "This KRA measures the salesperson's accuracy in understanding customer requirements and processing orders correctly. It evaluates whether orders are placed with the correct material specifications, dimensions, quantities, pricing, delivery instructions, and commercial terms, thereby minimizing order cancellations, customer rejections, and internal rework caused by sales-related errors.",
+          headers: [
+            'Sr. No.',
+            'Customer Name',
+            'Product',
+            'Order Date',
+            'Reason for Rejection',
+            'Corrective Action Taken',
+            'Remarks',
+          ],
+          rows: kra7Rows,
+        },
+        kra8: {
+          number: 8,
+          title: 'KRA 8: Customer Complaint Resolution',
+          target: 'Close customer complaints within 48 hours',
+          achieved: `${safeComplaints.filter((c) => c.status === 'resolved').length}/${safeComplaints.length} Closed`,
+          meaning:
+            "This KRA measures the salesperson's responsiveness and effectiveness in resolving customer complaints related to product quality, quantity, pricing, billing, dispatch, delivery, or other service issues within the defined 48-hour resolution timeline. It evaluates timely communication, coordination with internal departments, and customer satisfaction after resolution.",
+          headers: [
+            'Sr. No.',
+            'Complaint Date',
+            'Customer Name',
+            'Complaint Type (Quality / Quantity / Billing / Delivery / Others)',
+            'Complaint Description',
+            'Resolution Date',
+            'Resolution Time (Hrs)',
+            'Status (Closed / Pending)',
+          ],
+          rows: kra8Rows,
+        },
+        kra9: {
+          number: 9,
+          title: 'KRA 9: Customer Visits',
+          target:
+            'Conduct a minimum of 10 customer visits per week, with field visits on at least 3 days per week',
+          achieved: `${kra9Rows.length}/40 Visits`,
+          meaning:
+            "Measures the salesperson's proactive market presence through a defined minimum frequency of customer visits and field days each week.",
+          headers: [
+            'Sr. No.',
+            'Company Name',
+            'Address',
+            'Person Met',
+            'Contact No.',
+            'Remarks',
+          ],
+          rows: kra9Rows,
         },
       };
     } catch (error) {
