@@ -155,7 +155,7 @@ router.post('/', async (req, res) => {
 
             // PAYMENT UPDATE → KRA 5
             if (intent.intent === 'payment' && intent.confidence >= 0.6) {
-              const paymentReply = await handlePaymentUpdate(raw_text, senderPhone);
+              const paymentReply = await handlePaymentUpdate(raw_text, senderPhone, intent);
               await sendTextMessage(senderPhone, paymentReply);
               return;
             }

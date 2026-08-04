@@ -121,13 +121,16 @@ Return ONLY a JSON object with this structure (no prose, no markdown, no backtic
 {
   "intent": "<one of the intents below>",
   "customer_name": "<extracted customer/company name if mentioned, else null>",
+  "amount_paid": <numeric amount paid/collected if mentioned, else 0>,
+  "amount_pending": <numeric amount still pending/outstanding if mentioned, else 0>,
+  "payment_status": "full|partial|pending",
   "confidence": 0.0
 }
 
 Valid intents:
 - "new_customer"    : Salesperson is announcing/reporting they acquired or onboarded a new customer (e.g. "new customer acquired", "new client onboarded", "naya customer mila", "got new business from X")
 - "visit"           : Salesperson is reporting they visited a customer site (e.g. "visited X today", "X ke yahan gaya")
-- "payment"         : Reporting a payment received/collected (e.g. "collected 50000 from X", "payment aaya")
+- "payment"         : Reporting a payment received/collected/advance or pending balance (e.g. "collected 50000 from X", "X paid 20000 advance rest 30000 pending", "payment collected from X")
 - "complaint"       : Reporting a customer complaint or rejection (e.g. "X ne reject kiya", "customer complaint")
 - "complaint_resolve": Reporting a complaint/rejection was resolved (e.g. "resolved complaint", "issue fix ho gaya")
 - "followup"        : Reporting they followed up with a customer (e.g. "followed up with X", "follow up kiya")
@@ -137,7 +140,7 @@ Valid intents:
 
 Rules:
 - Be flexible. Accept Hinglish, broken English, casual phrasing.
-- "new customer" always refers to newly acquired business, not an inquiry from a new customer.
+- "payment_status": "partial" if advance paid or partial amount paid with remaining balance pending; "full" if full payment collected; "pending" if payment is due/pending.
 - Return ONLY the JSON object.
 `;
 

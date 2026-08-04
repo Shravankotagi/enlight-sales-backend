@@ -193,93 +193,137 @@ function buildPaymentAlert(deal, dueDate, daysUntilDue) {
 }
 
 // Handle payment update reply from salesperson
-async function handlePaymentUpdate(text, senderPhone) {
+async function handlePaymentUpdate(text, senderPhone, intentData) {
   const supabase = getSupabase();
   try {
     const upper = text.toUpperCase().trim();
 
-    // Determine action type
-    const isPaid = upper.includes('PAID') || upper.includes('COLLECTED') || upper.includes('RECEIVED');
-
-    // Extract amount using regex
+    // Parse values from intentData or text
     const amountMatch = text.match(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\b/g);
-    let extractedAmount = 0;
+    let numbers = [];
     if (amountMatch) {
-      // Pick the largest integer matching (likely the payment amount)
-      const nums = amountMatch.map(n => parseInt(n.replace(/,/g, ''), 10)).filter(n => n > 100);
-      if (nums.length > 0) extractedAmount = Math.max(...nums);
+      numbers = amountMatch.map(n => parseInt(n.replace(/,/g, ''), 10)).filter(n => n > 100);
     }
 
-    // Extract customer name by removing common payment keywords
-    let cleanText = text
-      .replace(/\b(collected|paid|payment|received|from|for|towards|pending|invoice|rs\.?|inr|rupees|amount|today|done)\b/gi, ' ')
-      .replace(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\b/g, ' ')
-      .replace(/[:,"']/g, ' ')
-      .trim();
+    const amountPaid = intentData?.amount_paid || (numbers.length > 0 ? numbers[0] : 0);
+    const amountPending = intentData?.amount_pending || (numbers.length > 1 ? numbers[1] : 0);
 
-    const customerKeyword = cleanText.split(/\s+/).filter(w => w.length > 2).join(' ') || 'Customer';
+    const isPartial = upper.includes('ADVANCE') || 
+                      upper.includes('PARTIAL') || 
+                      upper.includes('REST PENDING') || 
+                      upper.includes('STILL PENDING') ||
+                      intentData?.payment_status === 'partial' ||
+                      amountPending > 0;
+
+    const isFullPaid = !isPartial && (upper.includes('PAID') || upper.includes('COLLECTED') || upper.includes('RECEIVED') || intentData?.payment_status === 'full');
+
+    // Extract customer name
+    let customerName = intentData?.customer_name;
+    if (!customerName || customerName === 'Customer') {
+      let cleanText = text
+        .replace(/\b(collected|paid|payment|received|from|for|towards|pending|invoice|rs\.?|inr|rupees|amount|today|done|advance|rest|still)\b/gi, ' ')
+        .replace(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\b/g, ' ')
+        .replace(/[:,"']/g, ' ')
+        .trim();
+      customerName = cleanText.split(/\s+/).filter(w => w.length > 2).join(' ') || 'Customer';
+    }
 
     // 1. Try to find matching pending payment tracking record
     const { data: payments } = await supabase
       .from('payment_tracking')
       .select('*, deals(*)')
-      .ilike('customer_name', `%${customerKeyword.split(' ')[0]}%`)
+      .ilike('customer_name', `%${customerName.split(' ')[0]}%`)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(1);
 
     const payment = payments?.[0];
 
-    if (payment) {
-      // Update existing pending payment record
-      await supabase
-        .from('payment_tracking')
-        .update({
-          status: isPaid ? 'collected' : 'follow_up_done',
-          paid_date: isPaid ? new Date().toISOString().split('T')[0] : null,
-          outstanding: isPaid ? 0 : payment.outstanding
-        })
-        .eq('id', payment.id);
-
-      if (isPaid && payment.deal_id) {
+    if (isPartial) {
+      // Record advance / partial payment with remaining pending balance
+      if (payment) {
         await supabase
-          .from('deals')
-          .update({ status: 'payment_collected' })
-          .eq('id', payment.deal_id);
+          .from('payment_tracking')
+          .update({
+            outstanding: amountPending > 0 ? amountPending : Math.max(0, (payment.outstanding || payment.invoice_amount || 0) - amountPaid),
+            status: 'pending'
+          })
+          .eq('id', payment.id);
+      } else {
+        await supabase.from('payment_tracking').insert({
+          salesperson_phone: senderPhone,
+          customer_name: customerName,
+          invoice_amount: amountPaid + amountPending,
+          outstanding: amountPending > 0 ? amountPending : 0,
+          status: 'pending'
+        });
       }
-    } else if (isPaid) {
-      // 2. Fallback: No pending record existed, create a new collected payment tracking record directly
-      console.log(`No pending payment record found for ${customerKeyword}. Creating new collected record.`);
-      await supabase.from('payment_tracking').insert({
+
+      await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
-        customer_name: customerKeyword,
-        invoice_amount: extractedAmount,
-        outstanding: 0,
-        status: 'collected',
-        paid_date: new Date().toISOString().split('T')[0]
+        kra_number: 5,
+        kra_type: 'payment_advance',
+        description: text,
+        customer_name: payment?.customer_name || customerName,
+        value: amountPaid,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
       });
+
+      const remainingStr = amountPending > 0 ? `\n⏳ Outstanding Pending: *₹${Number(amountPending).toLocaleString('en-IN')}*` : '';
+
+      return `💵 *KRA 5 - Advance/Partial Payment Logged!*\n\n` +
+        `🏢 Customer: *${payment?.customer_name || customerName}*\n` +
+        `💰 Amount Paid: *₹${Number(amountPaid).toLocaleString('en-IN')}*` +
+        `${remainingStr}\n\n` +
+        `Recorded in KRA 5 Pending ✅`;
+
+    } else {
+      // Record full payment collection
+      if (payment) {
+        await supabase
+          .from('payment_tracking')
+          .update({
+            status: 'collected',
+            paid_date: new Date().toISOString().split('T')[0],
+            outstanding: 0
+          })
+          .eq('id', payment.id);
+
+        if (payment.deal_id) {
+          await supabase
+            .from('deals')
+            .update({ status: 'payment_collected' })
+            .eq('id', payment.deal_id);
+        }
+      } else {
+        await supabase.from('payment_tracking').insert({
+          salesperson_phone: senderPhone,
+          customer_name: customerName,
+          invoice_amount: amountPaid,
+          outstanding: 0,
+          status: 'collected',
+          paid_date: new Date().toISOString().split('T')[0]
+        });
+      }
+
+      await supabase.from('kra_logs').insert({
+        salesperson_phone: senderPhone,
+        kra_number: 5,
+        kra_type: 'payment_collected',
+        description: text,
+        customer_name: payment?.customer_name || customerName,
+        value: amountPaid || payment?.invoice_amount || 0,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
+      });
+
+      return `💰 *KRA 5 - Full Payment Collected!*\n\n` +
+        `🏢 Customer: *${payment?.customer_name || customerName}*\n` +
+        (amountPaid ? `💵 Amount Collected: *₹${Number(amountPaid).toLocaleString('en-IN')}*\n` : '') +
+        `Status: Marked as FULLY collected ✅\n\n` +
+        `Logged to KRA 5 ✅`;
     }
-
-    // Log to KRA 5
-    await supabase.from('kra_logs').insert({
-      salesperson_phone: senderPhone,
-      kra_number: 5,
-      kra_type: isPaid ? 'payment_collected' : 'payment_followup',
-      description: text,
-      customer_name: payment?.customer_name || customerKeyword,
-      value: isPaid ? (extractedAmount || payment?.invoice_amount || 0) : 0,
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
-    });
-
-    const emoji = isPaid ? '💰' : '📞';
-    const finalCustomer = payment?.customer_name || customerKeyword;
-
-    return `${emoji} *KRA 5 - Payment Collection Logged!*\n\n` +
-      `🏢 Customer: *${finalCustomer}*\n` +
-      (extractedAmount ? `💵 Amount: *₹${Number(extractedAmount).toLocaleString('en-IN')}*\n` : '') +
-      `Status: ${isPaid ? 'Payment marked as collected ✅' : 'Follow-up logged'}\n\n` +
-      `Logged to KRA 5 ✅`;
   } catch (error) {
     console.error('handlePaymentUpdate error:', error.message);
     return '❌ Could not update payment status. Please try again.';
