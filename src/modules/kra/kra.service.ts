@@ -164,11 +164,11 @@ export class KraService {
         kra3: {
           label: 'Customer Retention',
           recurring_total: recurring.length,
-          followups_sent: followups.filter(
-            (f) => f.task_type === 'kra3_retention',
-          ).length,
-          followups_resolved: followups.filter((f) => f.status === 'resolved')
-            .length,
+          followups_sent: Math.max(
+            followups.filter((f) => f.task_type === 'kra3_retention').length,
+            kraLogs.filter((l) => l.kra_number === 3).length,
+          ),
+          followups_resolved: kraLogs.filter((l) => l.kra_number === 3).length,
           status: 'tracked',
         },
         kra4: {
