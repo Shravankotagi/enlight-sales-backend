@@ -134,10 +134,28 @@ router.post('/', async (req, res) => {
 
         // --- GEMINI INTENT CLASSIFICATION (runs FIRST before saving to inquiries) ---
         // This routes KRA action messages immediately without polluting the inquiries table
-        if (messageType === 'text' && raw_text && raw_text.length > 3) {
+        if (messageType === 'text' && raw_text && raw_text.length >= 2) {
 
             const intent = await classifyIntent(raw_text);
             console.log('Routing based on intent:', intent.intent, '| customer:', intent.customer_name, '| confidence:', intent.confidence);
+
+            // GREETING → Friendly welcome message & instructions
+            if (intent.intent === 'greeting' || ['hi', 'hii', 'hello', 'hey', 'namaste'].includes(raw_text.toLowerCase().trim())) {
+              const empName = employeeRecord ? employeeRecord.name : senderName;
+              await sendTextMessage(
+                senderPhone,
+                `👋 *Hello ${empName}!*\n\n` +
+                `Welcome to *Enlight Sales Bot* 🤖\n\n` +
+                `You can update your KRA Dashboard anytime by replying to this bot:\n` +
+                `• 📦 *Deals / PO*: Send PO details or photo\n` +
+                `• 🚗 *Visits*: "Visited Supreme Enterprises met Mr. Sharma"\n` +
+                `• 💰 *Payments*: "Supreme Enterprises paid 20000 advance rest 30000 pending"\n` +
+                `• 🚨 *Complaints*: "Quality complaint for Apex Steel"\n` +
+                `• 👤 *New Client*: "New customer onboarded ABC Steel"\n\n` +
+                `All updates sync live to your KRA Dashboard! ✅`
+              );
+              return;
+            }
 
             // NEW CUSTOMER ACQUISITION → KRA 2
             if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {

@@ -128,6 +128,7 @@ Return ONLY a JSON object with this structure (no prose, no markdown, no backtic
 }
 
 Valid intents:
+- "greeting"        : Salesperson greeting or general hello (e.g. "hi", "hii", "hello", "hey", "namaste", "good morning")
 - "new_customer"    : Salesperson is announcing/reporting they acquired or onboarded a new customer (e.g. "new customer acquired", "new client onboarded", "naya customer mila", "got new business from X")
 - "visit"           : Salesperson is reporting they visited a customer site (e.g. "visited X today", "X ke yahan gaya")
 - "payment"         : Reporting a payment received/collected/advance or pending balance (e.g. "collected 50000 from X", "X paid 20000 advance rest 30000 pending", "payment collected from X")
