@@ -118,14 +118,57 @@ export class KraService {
       const dealsCreatedThisMonth = deals.filter(
         (d) => d.created_at >= start && d.created_at <= end,
       );
-      const wonDeals = deals.filter(
-        (d) => d.stage === 'won' && d.won_at >= start && d.won_at <= end,
+      const wonDeals = deals.filter((d) => {
+        if (d.stage !== 'won') return false;
+        const dealDate = d.won_at || d.created_at;
+        return dealDate >= start && dealDate <= end;
+      });
+
+      const totalValue = wonDeals.reduce((sum, d) => {
+        if (d.total_amount && Number(d.total_amount) > 0) {
+          return sum + Number(d.total_amount);
+        }
+        // Fallback: check if kra_logs or payment_tracking has value for this customer
+        const customerLogs = kraLogs.filter(
+          (l) =>
+            l.customer_name &&
+            d.customer_name &&
+            (d.customer_name
+              .toLowerCase()
+              .includes(l.customer_name.toLowerCase()) ||
+              l.customer_name
+                .toLowerCase()
+                .includes(d.customer_name.toLowerCase())),
+        );
+        const logVal = customerLogs.reduce(
+          (maxVal, l) => Math.max(maxVal, Number(l.value) || 0),
+          0,
+        );
+        if (logVal > 0) return sum + logVal;
+
+        const customerPayments = payments.filter(
+          (p) =>
+            p.customer_name &&
+            d.customer_name &&
+            (d.customer_name
+              .toLowerCase()
+              .includes(p.customer_name.toLowerCase()) ||
+              p.customer_name
+                .toLowerCase()
+                .includes(d.customer_name.toLowerCase())),
+        );
+        const paymentVal = customerPayments.reduce(
+          (pSum, p) => pSum + (Number(p.invoice_amount) || 0),
+          0,
+        );
+        if (paymentVal > 0) return sum + paymentVal;
+
+        return sum;
+      }, 0);
+
+      const pendingPayments = payments.filter(
+        (p) => p.status === 'pending' || p.status === 'partial',
       );
-      const totalValue = wonDeals.reduce(
-        (sum, d) => sum + (d.total_amount || 0),
-        0,
-      );
-      const pendingPayments = payments.filter((p) => p.status === 'pending');
       const collectedPayments = payments.filter(
         (p) => p.status === 'collected',
       );
@@ -135,13 +178,35 @@ export class KraService {
           (l.kra_type === 'payment_collected' ||
             l.kra_type === 'payment_advance'),
       );
-      const collectedAmount =
-        collectedLogs.reduce((sum, l) => sum + (l.value || 0), 0) ||
-        collectedPayments.reduce((sum, p) => sum + (p.invoice_amount || 0), 0);
+
+      const collectedLogsSum = collectedLogs.reduce(
+        (sum, l) => sum + (Number(l.value) || 0),
+        0,
+      );
+      const collectedPaymentsSum = collectedPayments.reduce(
+        (sum, p) => sum + (Number(p.invoice_amount) || 0),
+        0,
+      );
+
+      const collectedAmount = Math.max(
+        collectedLogsSum,
+        collectedPaymentsSum,
+        collectedLogsSum > 0 ? collectedLogsSum : 0,
+      );
       const collectedCount = Math.max(
         collectedPayments.length,
         collectedLogs.length,
       );
+
+      const totalOutstanding = pendingPayments.reduce(
+        (sum, p) =>
+          sum +
+          (p.outstanding !== null && p.outstanding !== undefined
+            ? Number(p.outstanding)
+            : Number(p.invoice_amount || 0)),
+        0,
+      );
+
       const reportedThisMonth = complaints.filter(
         (c) => c.reported_at >= start && c.reported_at <= end,
       );
@@ -203,10 +268,7 @@ export class KraService {
           pending_count: pendingPayments.length,
           collected_count: collectedCount,
           collected_amount: collectedAmount,
-          total_outstanding: pendingPayments.reduce(
-            (sum, p) => sum + (p.outstanding || 0),
-            0,
-          ),
+          total_outstanding: totalOutstanding,
           status: pendingPayments.length === 0 ? 'achieved' : 'in_progress',
         },
         kra6: {
