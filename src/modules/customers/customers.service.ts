@@ -258,4 +258,82 @@ export class CustomersService {
       throw error;
     }
   }
+
+  async importClients(clients: any[], defaultSalespersonPhone?: string) {
+    try {
+      if (!clients || !Array.isArray(clients) || clients.length === 0) {
+        throw new Error('No client records provided for import');
+      }
+
+      const formattedClients = clients
+        .map((c) => {
+          const assignedPhone =
+            c.assigned_salesperson_phone ||
+            c.salesperson_phone ||
+            defaultSalespersonPhone ||
+            null;
+
+          const cleanPhone =
+            c.customer_phone || c.phone
+              ? String(c.customer_phone || c.phone).replace(/\D/g, '')
+              : null;
+
+          return {
+            customer_name: (
+              c.customer_name ||
+              c.company_name ||
+              c.name ||
+              ''
+            ).trim(),
+            contact_person:
+              (c.contact_person || c.contact_name || '').trim() || null,
+            customer_phone: cleanPhone,
+            customer_email: (c.customer_email || c.email || '').trim() || null,
+            address: (c.address || c.city || '').trim() || null,
+            customer_gst:
+              (c.customer_gst || c.gstin || c.gst || '').trim() || null,
+            industry: (c.industry || c.segment || 'General').trim(),
+            assigned_salesperson_phone: assignedPhone,
+            is_active: true,
+            avg_order_frequency_days: 30,
+          };
+        })
+        .filter((c) => c.customer_name.length > 0);
+
+      if (formattedClients.length === 0) {
+        throw new Error('No valid company/customer names found in file');
+      }
+
+      // Upsert into recurring_customers
+      const { data, error } = await this.supabase
+        .from('recurring_customers')
+        .upsert(formattedClients, {
+          onConflict: 'customer_name',
+          ignoreDuplicates: false,
+        })
+        .select();
+
+      if (error) {
+        this.logger.warn(
+          'Upsert error, trying individual insert:',
+          error.message,
+        );
+        const { data: insertData, error: insertError } = await this.supabase
+          .from('recurring_customers')
+          .insert(formattedClients)
+          .select();
+
+        if (insertError) throw insertError;
+        return {
+          count: insertData?.length || formattedClients.length,
+          data: insertData,
+        };
+      }
+
+      return { count: data?.length || formattedClients.length, data };
+    } catch (error: any) {
+      this.logger.error('Error in importClients:', error);
+      throw error;
+    }
+  }
 }

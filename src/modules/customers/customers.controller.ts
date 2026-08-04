@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
@@ -7,6 +15,29 @@ import { CurrentEmployee } from '../../common/decorators/current-employee.decora
 @UseGuards(JwtAuthGuard)
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
+
+  @Post('import')
+  async importClients(
+    @Body()
+    body: {
+      default_salesperson_phone?: string;
+      clients: Array<{
+        customer_name: string;
+        contact_person?: string;
+        customer_phone?: string;
+        customer_email?: string;
+        address?: string;
+        customer_gst?: string;
+        industry?: string;
+        assigned_salesperson_phone?: string;
+      }>;
+    },
+  ) {
+    return this.customersService.importClients(
+      body.clients,
+      body.default_salesperson_phone,
+    );
+  }
 
   @Get()
   async findAll(
