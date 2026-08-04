@@ -197,45 +197,67 @@ async function handlePaymentUpdate(text, senderPhone) {
   const supabase = getSupabase();
   try {
     const upper = text.toUpperCase().trim();
-    const parts = text.trim().split(' ');
-    const action = parts[0].toUpperCase();
-    const customerKeyword = parts[1] || '';
-    const details = parts.slice(2).join(' ') || '';
 
-    // Find matching payment tracking record
+    // Determine action type
+    const isPaid = upper.includes('PAID') || upper.includes('COLLECTED') || upper.includes('RECEIVED');
+
+    // Extract amount using regex
+    const amountMatch = text.match(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\b/g);
+    let extractedAmount = 0;
+    if (amountMatch) {
+      // Pick the largest integer matching (likely the payment amount)
+      const nums = amountMatch.map(n => parseInt(n.replace(/,/g, ''), 10)).filter(n => n > 100);
+      if (nums.length > 0) extractedAmount = Math.max(...nums);
+    }
+
+    // Extract customer name by removing common payment keywords
+    let cleanText = text
+      .replace(/\b(collected|paid|payment|received|from|for|towards|pending|invoice|rs\.?|inr|rupees|amount|today|done)\b/gi, ' ')
+      .replace(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\b/g, ' ')
+      .replace(/[:,"']/g, ' ')
+      .trim();
+
+    const customerKeyword = cleanText.split(/\s+/).filter(w => w.length > 2).join(' ') || 'Customer';
+
+    // 1. Try to find matching pending payment tracking record
     const { data: payments } = await supabase
       .from('payment_tracking')
       .select('*, deals(*)')
-      .ilike('customer_name', `%${customerKeyword}%`)
+      .ilike('customer_name', `%${customerKeyword.split(' ')[0]}%`)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(1);
 
     const payment = payments?.[0];
 
-    if (!payment) {
-      console.log(`No active pending payment tracking record found for customer keyword: ${customerKeyword}`);
-      return `⚠️ *Payment Update Declined*\n\nCould not find an active pending payment tracking record matching *"${customerKeyword}"*.\n\nPlease check the dashboard to verify the customer name or if the payment has already been marked as collected.`;
-    }
-
-    const isPaid = action === 'PAID' || action === 'COLLECTED';
-
-    // Update payment tracking
-    await supabase
-      .from('payment_tracking')
-      .update({
-        status: isPaid ? 'collected' : 'follow_up_done',
-        paid_date: isPaid ? new Date().toISOString().split('T')[0] : null,
-        outstanding: isPaid ? 0 : payment.outstanding
-      })
-      .eq('id', payment.id);
-
-    // If paid, update deal status too
-    if (isPaid) {
+    if (payment) {
+      // Update existing pending payment record
       await supabase
-        .from('deals')
-        .update({ status: 'payment_collected' })
-        .eq('id', payment.deal_id);
+        .from('payment_tracking')
+        .update({
+          status: isPaid ? 'collected' : 'follow_up_done',
+          paid_date: isPaid ? new Date().toISOString().split('T')[0] : null,
+          outstanding: isPaid ? 0 : payment.outstanding
+        })
+        .eq('id', payment.id);
+
+      if (isPaid && payment.deal_id) {
+        await supabase
+          .from('deals')
+          .update({ status: 'payment_collected' })
+          .eq('id', payment.deal_id);
+      }
+    } else if (isPaid) {
+      // 2. Fallback: No pending record existed, create a new collected payment tracking record directly
+      console.log(`No pending payment record found for ${customerKeyword}. Creating new collected record.`);
+      await supabase.from('payment_tracking').insert({
+        salesperson_phone: senderPhone,
+        customer_name: customerKeyword,
+        invoice_amount: extractedAmount,
+        outstanding: 0,
+        status: 'collected',
+        paid_date: new Date().toISOString().split('T')[0]
+      });
     }
 
     // Log to KRA 5
@@ -243,23 +265,21 @@ async function handlePaymentUpdate(text, senderPhone) {
       salesperson_phone: senderPhone,
       kra_number: 5,
       kra_type: isPaid ? 'payment_collected' : 'payment_followup',
-      description: `${action} ${customerKeyword}: ${details}`,
-      customer_name: payment.customer_name,
-      value: isPaid ? (payment.invoice_amount || 0) : 0,
+      description: text,
+      customer_name: payment?.customer_name || customerKeyword,
+      value: isPaid ? (extractedAmount || payment?.invoice_amount || 0) : 0,
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear()
     });
 
-    const emoji = isPaid ? '✅' : '📞';
-    const actionText = isPaid ? 'Payment collected' : 'Follow-up logged';
+    const emoji = isPaid ? '💰' : '📞';
+    const finalCustomer = payment?.customer_name || customerKeyword;
 
-    return `${emoji} *KRA 5 Updated*\n\n` +
-      `Action: ${actionText}\n` +
-      `Customer: ${payment?.customer_name || customerKeyword}\n` +
-      (details ? `Details: ${details}\n` : '') +
-      (isPaid ? `\n💰 Payment marked as collected ✅` : 
-                `\n📞 Follow-up logged. Next reminder in 2 days.`) +
-      `\n\nLogged to KRA 5 ✅`;
+    return `${emoji} *KRA 5 - Payment Collection Logged!*\n\n` +
+      `🏢 Customer: *${finalCustomer}*\n` +
+      (extractedAmount ? `💵 Amount: *₹${Number(extractedAmount).toLocaleString('en-IN')}*\n` : '') +
+      `Status: ${isPaid ? 'Payment marked as collected ✅' : 'Follow-up logged'}\n\n` +
+      `Logged to KRA 5 ✅`;
   } catch (error) {
     console.error('handlePaymentUpdate error:', error.message);
     return '❌ Could not update payment status. Please try again.';
