@@ -335,13 +335,27 @@ export class ReportsService {
         .gte('created_at', start)
         .lte('created_at', end);
 
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
       if (salespersonPhone) {
         dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+        inquiriesQuery = inquiriesQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
       }
 
-      const { data: deals, error } = await dealsQuery;
+      const [{ data: deals }, { data: inquiries }] = await Promise.all([
+        dealsQuery,
+        inquiriesQuery,
+      ]);
 
-      if (error) throw error;
+      const safeDeals = deals || [];
+      const safeInquiries = inquiries || [];
 
       const stages = [
         'new_inquiry',
@@ -353,38 +367,37 @@ export class ReportsService {
       ];
 
       const funnel = stages.map((stage) => {
-        const stageDeals = deals?.filter((d) => d.stage === stage) || [];
+        const stageDeals = safeDeals.filter((d) => d.stage === stage);
+        let count = stageDeals.length;
+        if (
+          stage === 'new_inquiry' &&
+          count === 0 &&
+          safeInquiries.length > 0
+        ) {
+          count = safeInquiries.length;
+        }
         return {
           stage,
-          count: stageDeals.length,
-          value: stageDeals.reduce((sum, d) => sum + (d.total_amount || 0), 0),
+          count,
+          value: stageDeals.reduce(
+            (sum, d) => sum + (Number(d.total_amount) || 0),
+            0,
+          ),
         };
       });
 
-      // Conversion rates between stages
-      const conversions = [];
-      for (let i = 0; i < funnel.length - 2; i++) {
-        const from = funnel[i];
-        const to = funnel[i + 1];
-        conversions.push({
-          from: from.stage,
-          to: to.stage,
-          rate: from.count > 0 ? Math.round((to.count / from.count) * 100) : 0,
-        });
-      }
+      const maxCount = Math.max(...funnel.map((f) => f.count), 1);
+      const wonCount = funnel.find((f) => f.stage === 'won')?.count || 0;
+      const totalBase = Math.max(safeDeals.length, safeInquiries.length);
+
+      const overallWinRate =
+        totalBase > 0 ? Math.round((wonCount / totalBase) * 100) : 0;
 
       return {
         period: { month: monthName, year: y },
         funnel,
-        conversions,
-        overall_win_rate:
-          funnel[0].count > 0
-            ? Math.round(
-                ((funnel.find((f) => f.stage === 'won')?.count || 0) /
-                  funnel[0].count) *
-                  100,
-              )
-            : 0,
+        max_count: maxCount,
+        overall_win_rate: overallWinRate,
       };
     } catch (error) {
       this.logger.error('Error in getFunnelReport:', error);
