@@ -27,6 +27,25 @@ export class KraController {
     );
   }
 
+  @Get('sheets')
+  async getSheets(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const salesperson_phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+
+    return this.kraService.getSheets(
+      salesperson_phone,
+      month ? parseInt(month) : undefined,
+      year ? parseInt(year) : undefined,
+    );
+  }
+
   @Get('logs')
   async getLogs(
     @CurrentEmployee() employee: any,

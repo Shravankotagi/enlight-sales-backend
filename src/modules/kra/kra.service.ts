@@ -509,4 +509,266 @@ export class KraService {
       generated_at: now.toISOString(),
     };
   }
+
+  async getSheets(salespersonPhone?: string, month?: number, year?: number) {
+    try {
+      const { start, end } = this.getMonthRange(month, year);
+
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('*, deal_items(*)')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      let kraLogsQuery = this.supabase
+        .from('kra_logs')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      let paymentsQuery = this.supabase
+        .from('payment_tracking')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      if (salespersonPhone) {
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+        inquiriesQuery = inquiriesQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
+        kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
+        paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
+      }
+
+      const [
+        { data: deals },
+        { data: inquiries },
+        { data: kraLogs },
+        { data: payments },
+      ] = await Promise.all([
+        dealsQuery,
+        inquiriesQuery,
+        kraLogsQuery,
+        paymentsQuery,
+      ]);
+
+      const safeDeals = deals || [];
+      const safeInquiries = inquiries || [];
+      const safeKraLogs = kraLogs || [];
+      const safePayments = payments || [];
+
+      // KRA 1 Sheet: Sales Achievement
+      const wonDeals = safeDeals.filter((d) => d.stage === 'won');
+      const kra1Rows = wonDeals.map((d, index) => {
+        const items = d.deal_items || [];
+        const productText =
+          items
+            .map((i: any) => i.sku_text)
+            .filter(Boolean)
+            .join(', ') ||
+          d.inquiry_type ||
+          'Steel Products';
+        const qtyMT =
+          items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0) ||
+          1;
+        return {
+          sr_no: index + 1,
+          customer_name: d.customer_name || 'Customer',
+          product_supplied: productText,
+          quantity_mt: qtyMT,
+        };
+      });
+
+      // KRA 2 Sheet: New Customer Acquisition
+      const kra2Logs = safeKraLogs.filter(
+        (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
+      );
+      const kra2Rows = kra2Logs.map((l, index) => ({
+        sr_no: index + 1,
+        company_name: l.customer_name || 'New Client',
+        industry_segment: 'Manufacturing / Industrial',
+        contact_person: 'Key Contact',
+        product_ordered: l.description || 'Steel Order',
+        first_order_qty: l.value
+          ? `₹${Number(l.value).toLocaleString('en-IN')}`
+          : '1 Order',
+        billing_date: new Date(l.created_at).toLocaleDateString('en-IN'),
+      }));
+
+      // KRA 3 Sheet: Customer Retention & Recurring Business
+      const kra3Logs = safeKraLogs.filter((l) => l.kra_number === 3);
+      const kra3Rows = kra3Logs.map((l, index) => ({
+        sr_no: index + 1,
+        existing_customer_name: l.customer_name || 'Recurring Customer',
+        product_supplied: l.description || 'Repeat Order / Follow-up',
+        order_quantity: l.value ? `${l.value} MT` : '1 Order',
+        remarks: 'Follow-up / Billing recorded',
+      }));
+
+      // KRA 4 Sheet: Enquiry Conversion
+      const kra4Rows = safeInquiries.map((inq, index) => {
+        const matchingDeal = safeDeals.find((d) => d.inquiry_id === inq.id);
+        const status =
+          matchingDeal?.stage === 'won'
+            ? 'Won'
+            : matchingDeal?.stage === 'lost'
+              ? 'Lost'
+              : 'Pending';
+        return {
+          sr_no: index + 1,
+          enquiry_date: new Date(inq.created_at).toLocaleDateString('en-IN'),
+          company_name:
+            matchingDeal?.customer_name || inq.sender_name || 'Enquiry Client',
+          product_enquired:
+            inq.raw_text?.substring(0, 40) || 'Steel requirement',
+          order_status: status,
+          order_value: matchingDeal?.total_amount
+            ? `₹${Number(matchingDeal.total_amount).toLocaleString('en-IN')}`
+            : '-',
+          reason_loss_pending:
+            matchingDeal?.lost_reason ||
+            (status === 'Pending' ? 'Under Negotiation' : '-'),
+        };
+      });
+
+      // KRA 5 Sheet: Payment Collection & Outstanding Management
+      const kra5Rows = safePayments.map((p, index) => ({
+        sr_no: index + 1,
+        customer_name: p.customer_name || 'Customer',
+        invoice_amount: p.invoice_amount
+          ? `₹${Number(p.invoice_amount).toLocaleString('en-IN')}`
+          : '-',
+        credit_period_days: p.credit_period_days || 30,
+        payment_due_date: p.due_date
+          ? new Date(p.due_date).toLocaleDateString('en-IN')
+          : '-',
+        payment_received_date: p.paid_date
+          ? new Date(p.paid_date).toLocaleDateString('en-IN')
+          : '-',
+        outstanding:
+          p.outstanding !== null && p.outstanding !== undefined
+            ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
+            : '₹0',
+        remarks:
+          p.status === 'collected'
+            ? 'Fully Collected'
+            : p.status === 'pending'
+              ? 'Pending Collection'
+              : p.status,
+      }));
+
+      const kra1Tonnage = kra1Rows.reduce(
+        (sum, r) => sum + (r.quantity_mt || 0),
+        0,
+      );
+
+      return {
+        kra1: {
+          number: 1,
+          title: 'KRA 1: Sales Achievement',
+          target: 'Assigned Monthly Tonnage',
+          achieved: `${kra1Tonnage} MT`,
+          meaning:
+            "This KRA measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat steel, structural steel, TMT Bars, and Value added products.",
+          headers: [
+            'Sr. No.',
+            'Customer Name',
+            'Product Supplied',
+            'Quantity (MT)',
+          ],
+          rows: kra1Rows,
+        },
+        kra2: {
+          number: 2,
+          title: 'KRA 2: New Customer Acquisition',
+          target: 'Minimum 3 new customers per month',
+          achieved: `${kra2Rows.length}/3`,
+          meaning:
+            "Measures the salesperson's ability to expand Enlight Metals' customer base by identifying, approaching, and converting new prospects into active customers. A new customer is defined as a company that has not previously placed a billed order with Enlight Metals.",
+          headers: [
+            'Sr. No.',
+            'Company Name',
+            'Industry / Segment',
+            'Contact Person',
+            'Product Ordered',
+            'First Order Quantity',
+            'Billing Date',
+          ],
+          rows: kra2Rows,
+        },
+        kra3: {
+          number: 3,
+          title: 'KRA 3: Customer Retention & Recurring Business',
+          target:
+            'Ensure at least one bill per month from every active recurring customer, wherever business potential exists.',
+          achieved: `${kra3Rows.length} Orders`,
+          meaning:
+            "This KRA measures the salesperson's ability to maintain strong relationships with existing customers and generate repeat business. It focuses on customer retention by encouraging recurring orders, increasing customer loyalty, and ensuring continuous business growth through repeat billing rather than one-time transactions.",
+          headers: [
+            'Sr. No.',
+            'Existing Customer Name',
+            'Product Supplied',
+            'Order Quantity',
+            'Remarks',
+          ],
+          rows: kra3Rows,
+        },
+        kra4: {
+          number: 4,
+          title: 'KRA 4: Enquiry Conversion',
+          target: 'Achieve a minimum 70-80% enquiry-to-order conversion ratio',
+          achieved:
+            safeInquiries.length > 0
+              ? `${Math.round((wonDeals.length / safeInquiries.length) * 100)}%`
+              : '0%',
+          meaning:
+            "This KRA measures the salesperson's ability to convert customer enquiries into confirmed sales orders. It evaluates the effectiveness of follow-ups, quotation management, customer engagement, and negotiation skills across enquiries received through calls, emails, walk-ins, website leads, Zoho CRM, referrals, exhibitions, and other sales channels.",
+          headers: [
+            'Sr. No.',
+            'Enquiry Date',
+            'Company Name',
+            'Product Enquired',
+            'Order Status (Won/Lost/Pending)',
+            'Order Value',
+            'Reason for Loss / Pending',
+          ],
+          rows: kra4Rows,
+        },
+        kra5: {
+          number: 5,
+          title: 'KRA 5: Payment Collection & Outstanding Management',
+          target:
+            'Ensure 100% payment collection within the agreed credit period',
+          achieved:
+            kra5Rows.filter((r) => r.remarks === 'Fully Collected').length > 0
+              ? '100%'
+              : 'In Progress',
+          meaning:
+            "This KRA measures the salesperson's effectiveness in collecting customer payments within the agreed credit terms and proactively managing outstanding receivables. It evaluates regular follow-ups, timely coordination with customers, and efforts to minimize overdue payments, thereby supporting healthy cash flow and reducing financial risk for the company.",
+          headers: [
+            'Sr. No.',
+            'Customer Name',
+            'Invoice Amount (₹)',
+            'Credit Period (Days)',
+            'Payment Due Date',
+            'Payment Received Date',
+            'Outstanding (₹)',
+            'Remarks',
+          ],
+          rows: kra5Rows,
+        },
+      };
+    } catch (error) {
+      this.logger.error('Error in getSheets:', error);
+      throw error;
+    }
+  }
 }
