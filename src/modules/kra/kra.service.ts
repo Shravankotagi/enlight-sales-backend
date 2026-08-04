@@ -48,9 +48,8 @@ export class KraService {
       let complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
-        .or(
-          `and(reported_at.gte.${start},reported_at.lte.${end}),and(resolved_at.gte.${start},resolved_at.lte.${end})`,
-        );
+        .gte('reported_at', start)
+        .lte('reported_at', end);
       let paymentsQuery = this.supabase
         .from('payment_tracking')
         .select('*')
@@ -133,11 +132,10 @@ export class KraService {
       const reportedThisMonth = complaints.filter(
         (c) => c.reported_at >= start && c.reported_at <= end,
       );
-      const resolvedComplaints = complaints.filter(
-        (c) =>
-          c.status === 'resolved' &&
-          c.resolved_at >= start &&
-          c.resolved_at <= end,
+      // Resolved = complaints that were REPORTED this month AND have been resolved
+      // (does NOT count old month complaints resolved this month — those belong to prev month KRA)
+      const resolvedComplaints = reportedThisMonth.filter(
+        (c) => c.status === 'resolved',
       );
       const withinTarget = resolvedComplaints.filter(
         (c) => (c.resolution_time_hrs || 0) <= 48,
