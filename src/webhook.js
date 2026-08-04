@@ -132,7 +132,88 @@ router.post('/', async (req, res) => {
           }
         }
 
-        // Check for duplicate inquiry in the last 1 hour (to prevent double processing/saving)
+        // --- GEMINI INTENT CLASSIFICATION (runs FIRST before saving to inquiries) ---
+        // This routes KRA action messages immediately without polluting the inquiries table
+        if (messageType === 'text' && raw_text && raw_text.length > 3) {
+
+            const intent = await classifyIntent(raw_text);
+            console.log('Routing based on intent:', intent.intent, '| customer:', intent.customer_name, '| confidence:', intent.confidence);
+
+            // NEW CUSTOMER ACQUISITION → KRA 2
+            if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
+              const reply = await handleNewCustomerAnnouncement(intent.customer_name, senderPhone);
+              await sendTextMessage(senderPhone, reply);
+              return;
+            }
+
+            // VISIT LOG → KRA 9
+            if (intent.intent === 'visit' && intent.confidence >= 0.6) {
+              const visitReply = await handleVisitLog(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, visitReply);
+              return;
+            }
+
+            // PAYMENT UPDATE → KRA 5
+            if (intent.intent === 'payment' && intent.confidence >= 0.6) {
+              const paymentReply = await handlePaymentUpdate(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, paymentReply);
+              return;
+            }
+
+            // COMPLAINT RESOLUTION → KRA 8
+            if (intent.intent === 'complaint_resolve' && intent.confidence >= 0.6) {
+              const resolutionReply = await handleComplaintResolution(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, resolutionReply);
+              return;
+            }
+
+            // COMPLAINT REPORT → KRA 7 + KRA 8
+            if (intent.intent === 'complaint' && intent.confidence >= 0.6) {
+              const complaintReply = await handleComplaintLog(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, complaintReply);
+              return;
+            }
+
+            // FOLLOW-UP → KRA 3
+            if (intent.intent === 'followup' && intent.confidence >= 0.6) {
+              const followReply = await handleFollowUpReply(raw_text, senderPhone);
+              if (followReply) {
+                await sendTextMessage(senderPhone, followReply);
+                return;
+              }
+              // handleFollowUpReply returned null (no keyword match) — log directly
+              const customerName = intent.customer_name || null;
+              await supabase.from('kra_logs').insert({
+                salesperson_phone: senderPhone,
+                kra_number: 3,
+                kra_type: 'customer_retention',
+                description: `Follow-up: ${raw_text}`,
+                customer_name: customerName,
+                month: new Date().getMonth() + 1,
+                year: new Date().getFullYear()
+              });
+              await sendTextMessage(senderPhone,
+                `🔄 *KRA 3 - Follow-up Logged*\n\n` +
+                (customerName ? `Customer: ${customerName}\n` : '') +
+                `Status: Follow-up recorded\n\nLogged to KRA 3 ✅`
+              );
+              return;
+            }
+
+            // QUERY → show stats
+            if (intent.intent === 'query' && intent.confidence >= 0.6) {
+              const queryReply = await handleQuery(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, queryReply);
+              return;
+            }
+
+            // intent === 'inquiry' or 'unknown' → fall through to Gemini extraction below
+            console.log('Intent is inquiry/unknown — proceeding to extraction pipeline...');
+        }
+        // --- END GEMINI INTENT CLASSIFICATION ---
+
+        // Only actual sales inquiries/POs reach here
+        // Apply duplicate check only for inquiry messages
         if (raw_text) {
           const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
           const { data: duplicateInquiries } = await supabase
@@ -144,12 +225,12 @@ router.post('/', async (req, res) => {
 
           if (duplicateInquiries && duplicateInquiries.length > 0) {
             console.log('Duplicate inquiry text detected in the last 1 hour. Skipping processing.');
-            await sendTextMessage(senderPhone, `⚠️ *Duplicate message ignored* - This message/inquiry was already received and processed recently.`);
+            await sendTextMessage(senderPhone, `⚠️ *Duplicate message ignored* - This inquiry was already received and processed recently.`);
             return;
           }
         }
 
-        // Save raw inquiry data to Supabase and capture the returned row
+        // Save raw inquiry data to Supabase
         const savedInquiry = await saveInquiry({
           source_channel: "whatsapp",
           raw_text,
@@ -160,87 +241,6 @@ router.post('/', async (req, res) => {
           message_id: messageId,
           employee_id: employeeId,
         });
-
-        // --- GEMINI INTENT CLASSIFICATION ---
-        // Use Gemini to understand the intent of every text message before routing
-        if (messageType === 'text' && raw_text && raw_text.length > 3) {
-          const intent = await classifyIntent(raw_text);
-          console.log('Routing based on intent:', intent.intent, '| customer:', intent.customer_name);
-
-          // NEW CUSTOMER ACQUISITION
-          if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
-            const reply = await handleNewCustomerAnnouncement(intent.customer_name, senderPhone);
-            await sendTextMessage(senderPhone, reply);
-            return;
-          }
-
-          // VISIT LOG
-          if (intent.intent === 'visit' && intent.confidence >= 0.6) {
-            const visitReply = await handleVisitLog(raw_text, senderPhone);
-            await sendTextMessage(senderPhone, visitReply);
-            return;
-          }
-
-          // PAYMENT UPDATE
-          if (intent.intent === 'payment' && intent.confidence >= 0.6) {
-            const paymentReply = await handlePaymentUpdate(raw_text, senderPhone);
-            await sendTextMessage(senderPhone, paymentReply);
-            return;
-          }
-
-          // COMPLAINT RESOLUTION
-          if (intent.intent === 'complaint_resolve' && intent.confidence >= 0.6) {
-            const resolutionReply = await handleComplaintResolution(raw_text, senderPhone);
-            await sendTextMessage(senderPhone, resolutionReply);
-            return;
-          }
-
-          // COMPLAINT REPORT
-          if (intent.intent === 'complaint' && intent.confidence >= 0.6) {
-            const complaintReply = await handleComplaintLog(raw_text, senderPhone);
-            await sendTextMessage(senderPhone, complaintReply);
-            return;
-          }
-
-          // FOLLOW-UP
-          if (intent.intent === 'followup' && intent.confidence >= 0.6) {
-            const followReply = await handleFollowUpReply(raw_text, senderPhone);
-            if (followReply) {
-              await sendTextMessage(senderPhone, followReply);
-              return;
-            }
-            // handleFollowUpReply returned null (no keyword match) — log directly via KRA 3
-            const { supabase: sb } = require('./supabase');
-            const customerName = intent.customer_name || null;
-            await sb.from('kra_logs').insert({
-              salesperson_phone: senderPhone,
-              kra_number: 3,
-              kra_type: 'customer_retention',
-              description: `Follow-up: ${raw_text}`,
-              customer_name: customerName,
-              month: new Date().getMonth() + 1,
-              year: new Date().getFullYear()
-            });
-            await sendTextMessage(senderPhone,
-              `🔄 *KRA 3 - Follow-up Logged*\n\n` +
-              (customerName ? `Customer: ${customerName}\n` : '') +
-              `Status: Follow-up recorded\n\n` +
-              `Logged to KRA 3 ✅`
-            );
-            return;
-          }
-
-          // QUERY (salesperson asking for stats)
-          if (intent.intent === 'query' && intent.confidence >= 0.6) {
-            const queryReply = await handleQuery(raw_text, senderPhone);
-            await sendTextMessage(senderPhone, queryReply);
-            return;
-          }
-
-          // UNKNOWN - fall through to Gemini extraction (treat as inquiry/PO)
-          console.log('No confident intent match, proceeding to Gemini extraction...');
-        }
-        // --- END GEMINI INTENT CLASSIFICATION ---
 
         // --- GEMINI EXTRACTION ---
         let extraction = null;
