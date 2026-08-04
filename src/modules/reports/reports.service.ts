@@ -204,9 +204,28 @@ export class ReportsService {
       const kraLogs = kraLogsResult.data || [];
       const payments = paymentsResult.data || [];
 
-      // Get unique salesperson phones
-      let phones = new Set(
+      // Fetch all employees from database
+      const { data: employees } = await this.supabase
+        .from('employees')
+        .select('name, phone, role');
+
+      const allEmployees = employees || [];
+      const employeeMap = allEmployees.reduce(
+        (acc: any, emp: any) => {
+          acc[emp.phone] = emp.name;
+          return acc;
+        },
+        {} as Record<string, string>,
+      );
+
+      // Get all salesperson phones from employees table (role === 'salesperson')
+      const salespersonEmployees = allEmployees.filter(
+        (emp) => emp.phone && emp.role === 'salesperson',
+      );
+
+      let phones = new Set<string>(
         [
+          ...salespersonEmployees.map((e) => e.phone),
           ...visits.map((v) => v.salesperson_phone),
           ...kraLogs.map((k) => k.salesperson_phone),
           ...deals.map((d) => d.salesperson_phone),
@@ -216,18 +235,6 @@ export class ReportsService {
       if (salespersonPhone) {
         phones = new Set([salespersonPhone]);
       }
-
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone');
-
-      const employeeMap = (employees || []).reduce(
-        (acc: any, emp: any) => {
-          acc[emp.phone] = emp.name;
-          return acc;
-        },
-        {} as Record<string, string>,
-      );
 
       const salespersonReports = Array.from(phones).map((phone) => {
         const spDeals = deals.filter((d) => d.salesperson_phone === phone);
