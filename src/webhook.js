@@ -209,6 +209,25 @@ router.post('/', async (req, res) => {
               await sendTextMessage(senderPhone, followReply);
               return;
             }
+            // handleFollowUpReply returned null (no keyword match) — log directly via KRA 3
+            const { supabase: sb } = require('./supabase');
+            const customerName = intent.customer_name || null;
+            await sb.from('kra_logs').insert({
+              salesperson_phone: senderPhone,
+              kra_number: 3,
+              kra_type: 'customer_retention',
+              description: `Follow-up: ${raw_text}`,
+              customer_name: customerName,
+              month: new Date().getMonth() + 1,
+              year: new Date().getFullYear()
+            });
+            await sendTextMessage(senderPhone,
+              `🔄 *KRA 3 - Follow-up Logged*\n\n` +
+              (customerName ? `Customer: ${customerName}\n` : '') +
+              `Status: Follow-up recorded\n\n` +
+              `Logged to KRA 3 ✅`
+            );
+            return;
           }
 
           // QUERY (salesperson asking for stats)

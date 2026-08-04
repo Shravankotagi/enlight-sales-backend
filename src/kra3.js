@@ -298,8 +298,23 @@ async function handleFollowUpReply(text, senderPhone) {
     }
 
     if (!task) {
-      console.log('No active pending KRA 3 retention task found for', customerKeyword);
-      return null;
+      // No pending task found — still log the follow-up as a free-form KRA 3 activity
+      console.log('No active pending KRA 3 task found. Logging as free-form follow-up for:', customerKeyword);
+
+      await supabase.from('kra_logs').insert({
+        salesperson_phone: senderPhone,
+        kra_number: 3,
+        kra_type: 'customer_retention',
+        description: `Follow-up: ${text}`,
+        customer_name: customerKeyword || null,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
+      });
+
+      return `🔄 *KRA 3 - Follow-up Logged*\n\n` +
+        (customerKeyword ? `Customer: ${customerKeyword}\n` : '') +
+        `Status: Follow-up recorded\n\n` +
+        `Logged to KRA 3 ✅`;
     }
 
     if (task) {
