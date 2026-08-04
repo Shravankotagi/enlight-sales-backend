@@ -68,7 +68,7 @@ async function logNewCustomer(deal, senderPhone) {
       salesperson_phone: senderPhone,
       kra_number: 2,
       kra_type: 'new_customer',
-      description: `New customer: ${deal.customer_name} — ${deal.inquiry_type}`,
+      description: `New customer: ${deal.customer_name} - ${deal.inquiry_type}`,
       customer_name: deal.customer_name,
       value: deal.total_amount || 0,
       month: new Date().getMonth() + 1,
@@ -93,7 +93,7 @@ async function logNewCustomer(deal, senderPhone) {
 
     // Send notification to salesperson
     const message =
-      `🆕 *KRA 2 — New Customer Detected!*\n\n` +
+      `🆕 *KRA 2 - New Customer Detected!*\n\n` +
       `🏢 ${deal.customer_name}\n` +
       `📋 Type: ${deal.inquiry_type}\n` +
       (deal.total_amount
@@ -130,7 +130,7 @@ async function getNewCustomerSummary(senderPhone) {
     const count = logs?.length || 0;
     const remaining = Math.max(0, 3 - count);
 
-    let msg = `👥 *KRA 2 — New Customers*\n` +
+    let msg = `👥 *KRA 2 - New Customers*\n` +
       `${monthName} ${year}\n\n` +
       `Acquired: ${count}/3\n` +
       (remaining > 0
@@ -151,4 +151,65 @@ async function getNewCustomerSummary(senderPhone) {
   }
 }
 
-module.exports = { isNewCustomer, logNewCustomer, getNewCustomerSummary };
+module.exports = { isNewCustomer, logNewCustomer, getNewCustomerSummary, handleNewCustomerAnnouncement };
+
+// Handle when salesperson directly announces a new customer (via Gemini intent routing)
+async function handleNewCustomerAnnouncement(customerName, senderPhone) {
+  const supabase = getSupabase();
+  try {
+    if (!customerName) {
+      return `⚠️ Could not detect a customer name in your message. Please mention the customer name clearly.\n\nExample: _"New customer acquired: ABC Industries"_`;
+    }
+
+    // Check if already logged this customer in KRA 2
+    const { data: existingLogs } = await supabase
+      .from('kra_logs')
+      .select('id')
+      .eq('kra_number', 2)
+      .eq('salesperson_phone', senderPhone)
+      .ilike('customer_name', `%${customerName}%`);
+
+    if (existingLogs && existingLogs.length > 0) {
+      return `ℹ️ *Already Logged*\n\n${customerName} was already recorded as a new customer acquisition for you this month.`;
+    }
+
+    // Log to KRA 2
+    const { monthName, year, start, end } = getMonthRange();
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number: 2,
+      kra_type: 'new_customer',
+      description: `New customer onboarded: ${customerName}`,
+      customer_name: customerName,
+      value: 0,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear()
+    });
+
+    // Get updated count
+    const { data: allLogs } = await supabase
+      .from('kra_logs')
+      .select('id')
+      .eq('kra_number', 2)
+      .eq('kra_type', 'new_customer')
+      .eq('salesperson_phone', senderPhone)
+      .gte('created_at', start)
+      .lte('created_at', end);
+
+    const count = allLogs?.length || 1;
+    const remaining = Math.max(0, 3 - count);
+
+    return `🆕 *KRA 2 - New Customer Logged!*\n\n` +
+      `🏢 Customer: *${customerName}*\n` +
+      `✅ Recorded as new customer acquisition\n\n` +
+      `📊 *${monthName} ${year} Progress*\n` +
+      `New customers: ${count}/3\n` +
+      (remaining > 0
+        ? `⚠️ ${remaining} more needed to meet target`
+        : `✅ Monthly target achieved!`);
+  } catch (error) {
+    console.error('handleNewCustomerAnnouncement error:', error.message);
+    return '❌ Could not log new customer. Please try again.';
+  }
+}
+

@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { supabase, saveInquiry, saveDeal, getEmployeeByPhone } = require('./supabase');
 const { sendTextMessage, downloadMedia } = require('./whatsapp');
-const { extractFromText, extractFromImage } = require('./gemini');
+const { extractFromText, extractFromImage, classifyIntent } = require('./gemini');
 const { transcribeAudio } = require('./assemblyai');
 const { isQuery, handleQuery } = require('./queryhandler');
 const { handleFollowUpReply } = require('./kra3');
-const { isVisitLog, handleVisitLog } = require('./kra9');
-const { isPaymentUpdate, handlePaymentUpdate } = require('./kra5');
+const { handleVisitLog } = require('./kra9');
+const { handlePaymentUpdate } = require('./kra5');
 const { isComplaintReport, isComplaintResolution, handleComplaintLog, handleComplaintResolution } = require('./kra8');
+const { handleNewCustomerAnnouncement } = require('./kra2');
 
 /**
  * GET /webhook
@@ -117,14 +118,7 @@ router.post('/', async (req, res) => {
 
         // Check if sender is attempting salesperson actions but is unregistered (Edge Case 3)
         if (!employeeRecord) {
-          const isSalespersonCommand = 
-            messageType === 'text' && (
-              isVisitLog(raw_text) || 
-              isPaymentUpdate(raw_text) || 
-              isComplaintReport(raw_text) || 
-              isComplaintResolution(raw_text) || 
-              isQuery(raw_text)
-            );
+          const isSalespersonCommand = messageType === 'text';
             
           if (isSalespersonCommand) {
             console.log(`Unregistered salesperson attempt from phone: ${senderPhone}`);
@@ -167,86 +161,67 @@ router.post('/', async (req, res) => {
           employee_id: employeeId,
         });
 
-        // --- FOLLOW-UP REPLY DETECTION ---
-        // Check if salesperson is replying to a KRA 3 follow-up
-        if (messageType === 'text') {
-          const upper = raw_text.toUpperCase().trim();
-          const followUpActions = [
-            'VISITED ', 'CALLED ', 'LOST ', 'ORDERED ',
-            'FOLLOWED ', 'FOLLOW ', 'FOLLOW-UP ', 'FOLLOWUP ',
-            'FOLLOWED UP ', 'FOLLOWING UP '
-          ];
-          const isFollowUpReply = followUpActions.some(a => upper.startsWith(a));
-          
-          if (isFollowUpReply) {
-            console.log('Follow-up reply detected:', raw_text);
-            const reply = await handleFollowUpReply(raw_text, senderPhone);
-            if (reply) {
-              await sendTextMessage(senderPhone, reply);
-              return;
-            }
-          }
-        }
-        // --- END FOLLOW-UP REPLY DETECTION ---
+        // --- GEMINI INTENT CLASSIFICATION ---
+        // Use Gemini to understand the intent of every text message before routing
+        if (messageType === 'text' && raw_text && raw_text.length > 3) {
+          const intent = await classifyIntent(raw_text);
+          console.log('Routing based on intent:', intent.intent, '| customer:', intent.customer_name);
 
-        // --- VISIT LOG DETECTION ---
-        if (messageType === 'text') {
-          if (isVisitLog(raw_text)) {
-            console.log('Visit log detected:', raw_text);
+          // NEW CUSTOMER ACQUISITION
+          if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
+            const reply = await handleNewCustomerAnnouncement(intent.customer_name, senderPhone);
+            await sendTextMessage(senderPhone, reply);
+            return;
+          }
+
+          // VISIT LOG
+          if (intent.intent === 'visit' && intent.confidence >= 0.6) {
             const visitReply = await handleVisitLog(raw_text, senderPhone);
             await sendTextMessage(senderPhone, visitReply);
             return;
           }
-        }
-        // --- END VISIT LOG DETECTION ---
 
-        // --- PAYMENT UPDATE DETECTION ---
-        if (messageType === 'text') {
-          if (isPaymentUpdate(raw_text)) {
-            console.log('Payment update detected:', raw_text);
-            const paymentReply = await handlePaymentUpdate(
-              raw_text, senderPhone
-            );
+          // PAYMENT UPDATE
+          if (intent.intent === 'payment' && intent.confidence >= 0.6) {
+            const paymentReply = await handlePaymentUpdate(raw_text, senderPhone);
             await sendTextMessage(senderPhone, paymentReply);
             return;
           }
-        }
-        // --- END PAYMENT UPDATE DETECTION ---
 
-        // --- COMPLAINT DETECTION ---
-        if (messageType === 'text') {
-          // Check resolution first
-          if (isComplaintResolution(raw_text)) {
-            console.log('Complaint resolution detected:', raw_text);
-            const resolutionReply = await handleComplaintResolution(
-              raw_text, senderPhone
-            );
+          // COMPLAINT RESOLUTION
+          if (intent.intent === 'complaint_resolve' && intent.confidence >= 0.6) {
+            const resolutionReply = await handleComplaintResolution(raw_text, senderPhone);
             await sendTextMessage(senderPhone, resolutionReply);
             return;
           }
 
-          // Check new complaint
-          if (isComplaintReport(raw_text)) {
-            console.log('Complaint report detected:', raw_text);
-            const complaintReply = await handleComplaintLog(
-              raw_text, senderPhone
-            );
+          // COMPLAINT REPORT
+          if (intent.intent === 'complaint' && intent.confidence >= 0.6) {
+            const complaintReply = await handleComplaintLog(raw_text, senderPhone);
             await sendTextMessage(senderPhone, complaintReply);
             return;
           }
-        }
-        // --- END COMPLAINT DETECTION ---
 
-        // --- QUERY DETECTION ---
-        // Check if this is a query (salesperson asking for data)
-        // vs an inquiry (customer requirement to be extracted)
-        if (messageType === 'text' && isQuery(raw_text)) {
-          console.log('Query detected:', raw_text);
-          const queryReply = await handleQuery(raw_text, senderPhone);
-          await sendTextMessage(senderPhone, queryReply);
-          return; // Skip Gemini extraction for queries
+          // FOLLOW-UP
+          if (intent.intent === 'followup' && intent.confidence >= 0.6) {
+            const followReply = await handleFollowUpReply(raw_text, senderPhone);
+            if (followReply) {
+              await sendTextMessage(senderPhone, followReply);
+              return;
+            }
+          }
+
+          // QUERY (salesperson asking for stats)
+          if (intent.intent === 'query' && intent.confidence >= 0.6) {
+            const queryReply = await handleQuery(raw_text, senderPhone);
+            await sendTextMessage(senderPhone, queryReply);
+            return;
+          }
+
+          // UNKNOWN - fall through to Gemini extraction (treat as inquiry/PO)
+          console.log('No confident intent match, proceeding to Gemini extraction...');
         }
-        // --- END QUERY DETECTION ---
+        // --- END GEMINI INTENT CLASSIFICATION ---
 
         // --- GEMINI EXTRACTION ---
         let extraction = null;

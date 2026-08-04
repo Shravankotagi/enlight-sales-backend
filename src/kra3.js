@@ -13,7 +13,7 @@ async function checkRecurringCustomers() {
   const supabase = getSupabase();
   
   try {
-    console.log('Running KRA 3 check — recurring customers...');
+    console.log('Running KRA 3 check - recurring customers...');
     
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -57,7 +57,7 @@ async function checkCustomer(customer, monthStart, now, supabase) {
     const hasOrderThisMonth = deals && deals.length > 0;
     
     if (hasOrderThisMonth) {
-      console.log(`✅ ${customer.customer_name} — has order this month`);
+      console.log(`✅ ${customer.customer_name} - has order this month`);
       
       // Update last_order_date
       await supabase
@@ -78,7 +78,7 @@ async function checkCustomer(customer, monthStart, now, supabase) {
       ? Math.floor((now - lastOrderDate) / (1000 * 60 * 60 * 24))
       : null;
     
-    console.log(`⚠️ ${customer.customer_name} — no order this month. Days since last order: ${daysSinceOrder}`);
+    console.log(`⚠️ ${customer.customer_name} - no order this month. Days since last order: ${daysSinceOrder}`);
     
     // Check if we already sent a follow-up task this month
     const { data: existingTask } = await supabase
@@ -90,7 +90,7 @@ async function checkCustomer(customer, monthStart, now, supabase) {
       .single();
     
     if (existingTask) {
-      // Task exists — check if we need to send a reminder
+      // Task exists - check if we need to send a reminder
       await handleExistingTask(existingTask, customer, daysSinceOrder, supabase);
     } else {
       // Create new follow-up task and send first alert
@@ -139,7 +139,7 @@ async function handleExistingTask(task, customer, daysSinceOrder, supabase) {
     
     // Send reminder every 48 hours
     if (hoursSinceReminder < 48) {
-      console.log(`⏳ ${customer.customer_name} — reminder sent ${Math.round(hoursSinceReminder)}h ago, skipping`);
+      console.log(`⏳ ${customer.customer_name} - reminder sent ${Math.round(hoursSinceReminder)}h ago, skipping`);
       return;
     }
     

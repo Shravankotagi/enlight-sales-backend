@@ -8,9 +8,9 @@ async function test() {
 
   // Test new customer detection
   const testCustomers = [
-    'Dynamic Industries',    // already in DB — should be false
-    'New XYZ Company Ltd',   // not in DB — should be true
-    'ABC Fabricators'        // already in DB — should be false
+    'Dynamic Industries',    // already in DB - should be false
+    'New XYZ Company Ltd',   // not in DB - should be true
+    'ABC Fabricators'        // already in DB - should be false
   ];
 
   for (const customer of testCustomers) {

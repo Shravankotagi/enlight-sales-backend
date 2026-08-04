@@ -153,7 +153,7 @@ function buildVisitConfirmation(details, weekStats) {
     'neutral': '👍'
   }[details.outcome] || '👍';
 
-  return `✅ *Visit Logged — KRA 9*\n\n` +
+  return `✅ *Visit Logged - KRA 9*\n\n` +
     `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
     (details.person_met ? `👤 Met: ${details.person_met}\n` : '') +
     (details.remarks ? `💬 Remarks: ${details.remarks}\n` : '') +
@@ -166,7 +166,7 @@ function buildVisitConfirmation(details, weekStats) {
     `_Keep it up! 💪_`;
 }
 
-// Weekly KRA 9 check — send reminder if below target
+// Weekly KRA 9 check - send reminder if below target
 async function checkWeeklyVisits() {
   const supabase = getSupabase();
   try {

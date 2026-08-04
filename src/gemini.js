@@ -43,7 +43,7 @@ Extract the following into ONLY a JSON object (no prose, no markdown, no backtic
 Rules:
 - Quantities: normalize to MT where unit is tonnes/ton/MT; keep KG/PCS as stated
 - SKU text: preserve the customer exact words in sku_text
-- If a field is absent return null — never invent values
+- If a field is absent return null - never invent values
 - confidence per line item: 1.0 only when quantity, product, and unit are all explicit
 - overall_confidence: average of all line item confidences
 - inquiry_type: "purchase_order" if PO number present, "inquiry" if just a requirement
@@ -58,7 +58,7 @@ async function extractFromText(text) {
     const response = await result.response;
     const rawText = response.text().trim();
     
-    // Clean response — remove any markdown backticks if present
+    // Clean response - remove any markdown backticks if present
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -113,4 +113,53 @@ async function extractFromImage(imageBuffer, mimeType) {
   }
 }
 
-module.exports = { extractFromText, extractFromImage };
+const INTENT_PROMPT = `
+You are the intelligent message router for an Indian B2B steel distributor's WhatsApp sales bot.
+A salesperson sends a text message. Your job is to understand what action they are reporting and classify it.
+
+Return ONLY a JSON object with this structure (no prose, no markdown, no backticks):
+{
+  "intent": "<one of the intents below>",
+  "customer_name": "<extracted customer/company name if mentioned, else null>",
+  "confidence": 0.0
+}
+
+Valid intents:
+- "new_customer"    : Salesperson is announcing/reporting they acquired or onboarded a new customer (e.g. "new customer acquired", "new client onboarded", "naya customer mila", "got new business from X")
+- "visit"           : Salesperson is reporting they visited a customer site (e.g. "visited X today", "X ke yahan gaya")
+- "payment"         : Reporting a payment received/collected (e.g. "collected 50000 from X", "payment aaya")
+- "complaint"       : Reporting a customer complaint or rejection (e.g. "X ne reject kiya", "customer complaint")
+- "complaint_resolve": Reporting a complaint/rejection was resolved (e.g. "resolved complaint", "issue fix ho gaya")
+- "followup"        : Reporting they followed up with a customer (e.g. "followed up with X", "follow up kiya")
+- "inquiry"         : A customer's product requirement or purchase order (e.g. "5 tons HR coil", "PO from X")
+- "query"           : Asking for their own data/stats (e.g. "show me my visits", "KRA status")
+- "unknown"         : Cannot determine a clear business action
+
+Rules:
+- Be flexible. Accept Hinglish, broken English, casual phrasing.
+- "new customer" always refers to newly acquired business, not an inquiry from a new customer.
+- Return ONLY the JSON object.
+`;
+
+async function classifyIntent(text) {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const prompt = INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const rawText = response.text().trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleaned);
+    console.log('Gemini intent classification:', JSON.stringify(parsed));
+    return parsed;
+  } catch (error) {
+    console.error('Gemini intent classification error:', error.message);
+    return { intent: 'unknown', customer_name: null, confidence: 0 };
+  }
+}
+
+module.exports = { extractFromText, extractFromImage, classifyIntent };

@@ -140,7 +140,7 @@ function buildComplaintConfirmation(details, complaint) {
     'other': '❓'
   }[details.complaint_type] || '❓';
 
-  return `${severityEmoji} *Complaint Logged — KRA 8*\n\n` +
+  return `${severityEmoji} *Complaint Logged - KRA 8*\n\n` +
     `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
     `${typeEmoji} Type: ${details.complaint_type}\n` +
     `📝 Description: ${details.description}\n` +
@@ -148,8 +148,8 @@ function buildComplaintConfirmation(details, complaint) {
     `🔖 Ref: ${shortId}\n\n` +
     `⏰ *48-hour resolution timer started*\n\n` +
     `You will receive reminders at:\n` +
-    `• 24 hours — if still open\n` +
-    `• 48 hours — escalation to Sales Lead\n\n` +
+    `• 24 hours - if still open\n` +
+    `• 48 hours - escalation to Sales Lead\n\n` +
     `To close: Reply *RESOLVED ${details.customer_name?.split(' ')[0]?.toUpperCase() || 'COMPLAINT'} [resolution details]*`;
 }
 
@@ -181,7 +181,7 @@ async function checkComplaints() {
       const salespersonPhone = complaint.reported_by;
       if (!salespersonPhone) continue;
 
-      // 48+ hours — escalate to Sales Lead
+      // 48+ hours - escalate to Sales Lead
       if (hoursElapsed >= 48 && !complaint.escalated) {
         await supabase
           .from('complaints')
@@ -190,7 +190,7 @@ async function checkComplaints() {
 
         // Notify salesperson
         const salespersonMsg =
-          `🚨 *KRA 8 — Complaint Escalated*\n\n` +
+          `🚨 *KRA 8 - Complaint Escalated*\n\n` +
           `Complaint ref: ${complaint.id.substring(0, 8)}\n` +
           `Customer: ${complaint.customer_name || 'Unknown'}\n` +
           `Type: ${complaint.complaint_type}\n` +
@@ -218,10 +218,10 @@ async function checkComplaints() {
 
         console.log(`Complaint ${complaint.id} escalated`);
 
-      // 24 hours — send reminder
+      // 24 hours - send reminder
       } else if (hoursElapsed >= 24 && hoursElapsed < 48) {
         const reminderMsg =
-          `⚠️ *KRA 8 — Complaint Reminder*\n\n` +
+          `⚠️ *KRA 8 - Complaint Reminder*\n\n` +
           `Complaint open for ${Math.round(hoursElapsed)} hours:\n\n` +
           `Customer: ${complaint.customer_name || 'Unknown'}\n` +
           `Type: ${complaint.complaint_type}\n` +
@@ -404,7 +404,7 @@ async function handleComplaintResolution(text, senderPhone) {
     });
 
     const withinTarget = resolutionHrs <= 48;
-    return `✅ *KRA 8 — Complaint Resolved*\n\n` +
+    return `✅ *KRA 8 - Complaint Resolved*\n\n` +
       `Customer: ${complaint.customer_name}\n` +
       `Resolution: ${resolution}\n` +
       `Time taken: ${resolutionHrs} hours\n` +
@@ -446,7 +446,7 @@ async function getComplaintSummary(senderPhone) {
         )
       : null;
 
-    let msg = `📊 *KRA 8 — Complaint Summary*\n\n` +
+    let msg = `📊 *KRA 8 - Complaint Summary*\n\n` +
       `Total this month: ${complaints.length}\n` +
       `✅ Resolved: ${resolved.length}\n` +
       `⏳ Pending: ${pending.length}\n` +
@@ -463,7 +463,7 @@ async function getComplaintSummary(senderPhone) {
         const hrs = Math.round(
           (now - new Date(c.reported_at)) / (1000 * 60 * 60)
         );
-        msg += `• ${c.customer_name || 'Unknown'} — ${c.complaint_type} (${hrs}h open)\n`;
+        msg += `• ${c.customer_name || 'Unknown'} - ${c.complaint_type} (${hrs}h open)\n`;
       });
     }
 

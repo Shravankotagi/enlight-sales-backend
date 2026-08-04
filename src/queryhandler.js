@@ -113,7 +113,7 @@ async function getSalesThisMonth(senderPhone) {
     const totalAmount = allDeals?.reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0;
     const totalItems = allDeals?.reduce((sum, d) => sum + (d.deal_items?.length || 0), 0) || 0;
 
-    return `📊 *Sales Summary — ${monthName} ${year}*\n\n` +
+    return `📊 *Sales Summary - ${monthName} ${year}*\n\n` +
       `📋 Total Deals: ${totalDeals}\n` +
       `✅ Won: ${wonDeals}\n` +
       `📦 Total Line Items: ${totalItems}\n` +
@@ -205,7 +205,7 @@ async function getDealsThisWeek() {
 
     const totalAmount = deals.reduce((sum, d) => sum + (d.total_amount || 0), 0);
     const list = deals.map((d, i) =>
-      `${i + 1}. ${d.customer_name || 'Unknown'} — ${d.inquiry_type}\n` +
+      `${i + 1}. ${d.customer_name || 'Unknown'} - ${d.inquiry_type}\n` +
       `   ${d.deal_items?.length || 0} items | ${formatINR(d.total_amount)}`
     ).join('\n\n');
 
@@ -249,15 +249,15 @@ async function getKRAStatus(senderPhone) {
       d.customer_name && d.inquiry_type === 'purchase_order'
     ).length || 0;
 
-    return `🎯 *KRA Status — ${monthName} ${year}*\n\n` +
-      `📋 KRA 1 — Sales Achievement\n` +
+    return `🎯 *KRA Status - ${monthName} ${year}*\n\n` +
+      `📋 KRA 1 - Sales Achievement\n` +
       `   Deals: ${totalDeals} | Value: ${formatINR(totalAmount)}\n\n` +
-      `👥 KRA 2 — New Customers\n` +
+      `👥 KRA 2 - New Customers\n` +
       `   POs received: ${newCustomers} (target: 3)\n\n` +
-      `🔄 KRA 4 — Enquiry Conversion\n` +
+      `🔄 KRA 4 - Enquiry Conversion\n` +
       `   Inquiries: ${totalInquiries} | Won: ${wonDeals}\n` +
       `   Rate: ${conversionRate}% (target: 70-80%)\n\n` +
-      `📊 KRA 6 — CRM Compliance\n` +
+      `📊 KRA 6 - CRM Compliance\n` +
       `   Logged today via WhatsApp bot ✅\n\n` +
       `_Full KRA report available from Sales Lead_`;
   } catch (error) {
@@ -383,14 +383,14 @@ async function getVisitSummary(senderPhone) {
       .order('visited_at', { ascending: false });
 
     if (!visits || visits.length === 0) {
-      return `📊 *KRA 9 — ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
+      return `📊 *KRA 9 - ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
     }
 
     const visitList = visits.slice(0, 5).map((v, i) =>
-      `${i + 1}. ${v.customer_name || 'Unknown'} — ${new Date(v.visited_at).toLocaleDateString('en-IN')}`
+      `${i + 1}. ${v.customer_name || 'Unknown'} - ${new Date(v.visited_at).toLocaleDateString('en-IN')}`
     ).join('\n');
 
-    return `📊 *KRA 9 — ${monthName} ${year}*\n\n` +
+    return `📊 *KRA 9 - ${monthName} ${year}*\n\n` +
       `Total visits: ${visits.length}\n\n` +
       `Recent visits:\n${visitList}\n\n` +
       `_Target: 10 visits/week, 3 field days/week_`;

@@ -38,7 +38,7 @@ function startScheduler() {
     setInterval(checkRecurringCustomers, TWENTY_FOUR_HOURS);
   }, timeToFirstRun);
 
-  // KRA 9 — Weekly visit reminder every Friday at 5 PM IST
+  // KRA 9 - Weekly visit reminder every Friday at 5 PM IST
   function scheduleWeeklyVisitCheck() {
     function getNextFriday5PM() {
       const now = new Date();
@@ -66,7 +66,7 @@ function startScheduler() {
 
   scheduleWeeklyVisitCheck();
 
-  // KRA 5 — Payment check twice daily (9 AM and 3 PM IST)
+  // KRA 5 - Payment check twice daily (9 AM and 3 PM IST)
   function schedulePaymentChecks() {
     function msUntilNext(hour) {
       const now = new Date();
@@ -97,7 +97,7 @@ function startScheduler() {
 
   schedulePaymentChecks();
 
-  // KRA 8 — Complaint check every 6 hours
+  // KRA 8 - Complaint check every 6 hours
   async function runComplaintCheck() {
     await checkComplaints();
   }

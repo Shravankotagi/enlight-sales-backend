@@ -74,7 +74,7 @@ async function generateFullKRAReport(senderPhone) {
     const payments = paymentsResult.data || [];
     const recurring = recurringResult.data || [];
 
-    // KRA 1 — Sales Achievement
+    // KRA 1 - Sales Achievement
     const totalDeals = deals.length;
     const wonDealsList = deals.filter(d => d.stage === 'won');
     const wonDeals = wonDealsList.length;
@@ -82,12 +82,12 @@ async function generateFullKRAReport(senderPhone) {
       (sum, d) => sum + (d.total_amount || 0), 0
     );
 
-    // KRA 2 — New Customer Acquisition
+    // KRA 2 - New Customer Acquisition
     const newCustomers = kraLogs.filter(
       l => l.kra_number === 2 && l.kra_type === 'new_customer'
     ).length;
 
-    // KRA 3 — Customer Retention
+    // KRA 3 - Customer Retention
     const recurringWithOrder = deals.filter(d =>
       recurring.some(r =>
         r.customer_name?.toLowerCase()
@@ -98,13 +98,13 @@ async function generateFullKRAReport(senderPhone) {
       ? Math.round((recurringWithOrder / recurring.length) * 100)
       : 0;
 
-    // KRA 4 — Enquiry Conversion
+    // KRA 4 - Enquiry Conversion
     const totalInquiries = inquiries.length;
     const conversionRate = totalInquiries > 0
       ? Math.round((wonDeals / totalInquiries) * 100)
       : 0;
 
-    // KRA 5 — Payment Collection
+    // KRA 5 - Payment Collection
     const pendingPayments = payments.filter(
       p => p.status === 'pending'
     );
@@ -118,7 +118,7 @@ async function generateFullKRAReport(senderPhone) {
       (sum, p) => sum + (p.outstanding || 0), 0
     );
 
-    // KRA 6 — CRM Compliance (based on daily logging)
+    // KRA 6 - CRM Compliance (based on daily logging)
     const workingDays = 26;
     const daysWithActivity = new Set(
       [...deals, ...inquiries].map(
@@ -129,12 +129,12 @@ async function generateFullKRAReport(senderPhone) {
       100, Math.round((daysWithActivity / workingDays) * 100)
     );
 
-    // KRA 7 — Zero Rejection
+    // KRA 7 - Zero Rejection
     const rejections = kraLogs.filter(
       l => l.kra_number === 7
     ).length;
 
-    // KRA 8 — Complaint Resolution
+    // KRA 8 - Complaint Resolution
     const totalComplaints = complaints.length;
     const resolvedComplaints = complaints.filter(
       c => c.status === 'resolved'
@@ -150,7 +150,7 @@ async function generateFullKRAReport(senderPhone) {
         )
       : 0;
 
-    // KRA 9 — Customer Visits
+    // KRA 9 - Customer Visits
     const totalVisits = visits.length;
     const visitDays = new Set(
       visits.map(v => new Date(v.visited_at).toDateString())
@@ -165,47 +165,47 @@ async function generateFullKRAReport(senderPhone) {
       `${monthName} ${year}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
 
-      `*KRA 1 — Sales Achievement*\n` +
+      `*KRA 1 - Sales Achievement*\n` +
       `Deals: ${totalDeals} | Won: ${wonDeals}\n` +
       `Value: ${formatINR(totalValue)}\n` +
       `${totalValue > 0 ? '✅' : '⚠️'} ` +
       `${totalValue > 0 ? 'Sales logged' : 'No sales yet'}\n\n` +
 
-      `*KRA 2 — New Customers*\n` +
+      `*KRA 2 - New Customers*\n` +
       `Acquired: ${newCustomers}/3\n` +
       `${newCustomers >= 3 ? '✅ Target met!' : `⚠️ ${3 - newCustomers} more needed`}\n\n` +
 
-      `*KRA 3 — Customer Retention*\n` +
+      `*KRA 3 - Customer Retention*\n` +
       `Recurring customers: ${recurring.length}\n` +
       `Ordered this month: ${recurringWithOrder}\n` +
       `${retentionRate >= 80 ? '✅' : '⚠️'} Retention: ${retentionRate}%\n\n` +
 
-      `*KRA 4 — Enquiry Conversion*\n` +
+      `*KRA 4 - Enquiry Conversion*\n` +
       `Inquiries: ${totalInquiries} | Won: ${wonDeals}\n` +
       `${conversionRate >= 70 ? '✅' : '⚠️'} Rate: ${conversionRate}%` +
       ` (target: 70-80%)\n\n` +
 
-      `*KRA 5 — Payment Collection*\n` +
+      `*KRA 5 - Payment Collection*\n` +
       `Collected: ${collectedPayments.length}\n` +
       `Pending: ${pendingPayments.length}\n` +
       `🔴 Overdue: ${overduePayments.length}\n` +
       `Outstanding: ${formatINR(totalOutstanding)}\n\n` +
 
-      `*KRA 6 — CRM Compliance*\n` +
+      `*KRA 6 - CRM Compliance*\n` +
       `Active days: ${daysWithActivity}/${workingDays}\n` +
       `${crmCompliance >= 90 ? '✅' : '⚠️'} Compliance: ${crmCompliance}%\n\n` +
 
-      `*KRA 7 — Zero Rejection*\n` +
+      `*KRA 7 - Zero Rejection*\n` +
       `${rejections === 0 ? '✅ Zero rejections!' : `⚠️ ${rejections} rejection(s) logged`}\n\n` +
 
-      `*KRA 8 — Complaint Resolution*\n` +
+      `*KRA 8 - Complaint Resolution*\n` +
       `Total: ${totalComplaints} | Resolved: ${resolvedComplaints.length}\n` +
       `Within 48h: ${withinTarget}/${resolvedComplaints.length}\n` +
       `${avgResolutionTime > 0 ? `Avg: ${avgResolutionTime}h\n` : ''}` +
       `${totalComplaints === 0 || withinTarget === resolvedComplaints.length ? '✅' : '⚠️'} ` +
       `${totalComplaints === 0 ? 'No complaints!' : 'Resolution tracked'}\n\n` +
 
-      `*KRA 9 — Customer Visits*\n` +
+      `*KRA 9 - Customer Visits*\n` +
       `Visits: ${totalVisits}/${targetVisits}\n` +
       `Field days: ${visitDays}/${targetDays}\n` +
       `${totalVisits >= targetVisits ? '✅' : '⚠️'} ` +

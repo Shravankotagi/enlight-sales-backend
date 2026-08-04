@@ -179,7 +179,7 @@ function buildPaymentAlert(deal, dueDate, daysUntilDue) {
 
   const customerShort = deal.customer_name.split(' ')[0].toUpperCase();
 
-  return `${emoji} *KRA 5 — Payment Alert*\n\n` +
+  return `${emoji} *KRA 5 - Payment Alert*\n\n` +
     `🏢 ${deal.customer_name}\n` +
     `💵 Amount: ${formatAmount(deal.total_amount)}\n` +
     `📋 Terms: ${deal.payment_terms || '30 days'}\n` +
@@ -294,7 +294,7 @@ async function getPaymentSummary(senderPhone) {
       (sum, p) => sum + (p.outstanding || 0), 0
     );
 
-    let msg = `💰 *KRA 5 — Payment Status*\n\n`;
+    let msg = `💰 *KRA 5 - Payment Status*\n\n`;
 
     if (overdue.length > 0) {
       msg += `🔴 *Overdue (${overdue.length}):*\n`;
@@ -302,7 +302,7 @@ async function getPaymentSummary(senderPhone) {
         const days = Math.floor(
           (now - new Date(p.due_date)) / (1000 * 60 * 60 * 24)
         );
-        msg += `• ${p.customer_name} — ₹${Number(p.outstanding || 0).toLocaleString('en-IN')} (${days}d overdue)\n`;
+        msg += `• ${p.customer_name} - ₹${Number(p.outstanding || 0).toLocaleString('en-IN')} (${days}d overdue)\n`;
       });
       msg += '\n';
     }
@@ -313,7 +313,7 @@ async function getPaymentSummary(senderPhone) {
         const days = Math.floor(
           (new Date(p.due_date) - now) / (1000 * 60 * 60 * 24)
         );
-        msg += `• ${p.customer_name} — ₹${Number(p.outstanding || 0).toLocaleString('en-IN')} (in ${days}d)\n`;
+        msg += `• ${p.customer_name} - ₹${Number(p.outstanding || 0).toLocaleString('en-IN')} (in ${days}d)\n`;
       });
       msg += '\n';
     }
