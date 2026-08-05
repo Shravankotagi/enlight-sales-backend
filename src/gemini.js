@@ -44,8 +44,12 @@ Rules:
 - Quantities: normalize to MT where unit is tonnes/ton/MT; keep KG/PCS as stated
 - SKU text: preserve the customer exact words in sku_text
 - If a field is absent return null - never invent values
-- confidence per line item: 1.0 only when quantity, product, and unit are all explicit
-- overall_confidence: average of all line item confidences
+- DATE RULE: Current Year is 2026. Any date specifying month/day (e.g. "20 August", "25 August") MUST ALWAYS use year 2026 (e.g. 2026-08-20). NEVER output past years like 2024 or 2025.
+- CONFIDENCE RULE:
+  * 1.0 (100%) ONLY when quantity, product, unit, AND explicit rate/price per MT are stated.
+  * 0.85 when rate is auto-derived from rate sheet.
+  * 0.75 - 0.80 when rate or customer details are missing.
+- overall_confidence: average of line item confidences, capped at 0.85 if rate is auto-derived.
 - inquiry_type: "purchase_order" if PO number present, "inquiry" if just a requirement
 - Return ONLY the JSON object. No prose. No markdown. No backticks.
 `;
@@ -76,6 +80,57 @@ async function getLatestActiveRatesText() {
   return '';
 }
 
+function postProcessExtraction(parsed) {
+  if (!parsed) return parsed;
+
+  // 1. Delivery Date Year Correction (Ensure 2026 or future year)
+  if (parsed.delivery_date) {
+    const parts = parsed.delivery_date.split('-');
+    if (parts.length === 3 && parseInt(parts[0]) < 2026) {
+      parsed.delivery_date = `2026-${parts[1]}-${parts[2]}`;
+    }
+  }
+
+  // 2. Line Item Rate and Amount calculation
+  let totalCalculatedAmount = 0;
+  let hasMissingRate = false;
+
+  if (Array.isArray(parsed.line_items) && parsed.line_items.length > 0) {
+    parsed.line_items.forEach((item) => {
+      const qty = Number(item.quantity || 0);
+      let rate = Number(item.rate || 0);
+      let amount = Number(item.amount || 0);
+
+      if (qty > 0 && amount > 0 && rate === 0) {
+        rate = Math.round(amount / qty);
+        item.rate = rate;
+      }
+
+      if (qty > 0 && rate > 0 && amount === 0) {
+        amount = qty * rate;
+        item.amount = amount;
+      }
+
+      if (rate === 0) {
+        hasMissingRate = true;
+      }
+
+      totalCalculatedAmount += amount;
+    });
+  }
+
+  if (totalCalculatedAmount > 0 && (!parsed.total_amount || parsed.total_amount === 0)) {
+    parsed.total_amount = totalCalculatedAmount;
+  }
+
+  // 3. Realistic Confidence Adjustment
+  if (hasMissingRate && parsed.overall_confidence > 0.8) {
+    parsed.overall_confidence = 0.8;
+  }
+
+  return parsed;
+}
+
 async function extractFromText(text) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
@@ -93,8 +148,9 @@ async function extractFromText(text) {
       .trim();
     
     const parsed = JSON.parse(cleaned);
-    console.log('Gemini text extraction successful:', JSON.stringify(parsed, null, 2));
-    return parsed;
+    const postProcessed = postProcessExtraction(parsed);
+    console.log('Gemini text extraction successful:', JSON.stringify(postProcessed, null, 2));
+    return postProcessed;
   } catch (error) {
     console.error('Gemini text extraction error:', error.message);
     return {
@@ -128,8 +184,9 @@ async function extractFromImage(imageBuffer, mimeType) {
       .trim();
     
     const parsed = JSON.parse(cleaned);
-    console.log('Gemini image extraction successful:', JSON.stringify(parsed, null, 2));
-    return parsed;
+    const postProcessed = postProcessExtraction(parsed);
+    console.log('Gemini image extraction successful:', JSON.stringify(postProcessed, null, 2));
+    return postProcessed;
   } catch (error) {
     console.error('Gemini image extraction error:', error.message);
     return {

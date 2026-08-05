@@ -336,7 +336,11 @@ router.post('/', async (req, res) => {
         let replyMessage;
         if (deal && extraction && extraction.line_items && extraction.line_items.length > 0) {
           const itemSummary = extraction.line_items
-            .map(item => `• ${item.sku_text}: ${item.quantity} ${item.unit}`)
+            .map((item) => {
+              const rateStr = item.rate && item.rate > 0 ? ` @ ₹${Number(item.rate).toLocaleString('en-IN')}/MT` : '';
+              const amtStr = item.amount && item.amount > 0 ? `: ₹${Number(item.amount).toLocaleString('en-IN')}` : '';
+              return `• ${item.sku_text || 'Steel'} (${item.quantity} ${item.unit || 'MT'}${rateStr})${amtStr}`;
+            })
             .join('\n');
           
           const confidence = Math.round((extraction.overall_confidence || 0) * 100);

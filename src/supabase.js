@@ -176,17 +176,35 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
 
 async function checkAndLogNewCustomer(deal, senderPhone) {
   try {
-    const { isNewCustomer, logNewCustomer } = require('./kra2');
     if (deal && deal.customer_name && senderPhone) {
-      // Only treat purchase orders or explicitly won deals as acquisitions
-      if (deal.inquiry_type !== 'purchase_order' && deal.stage !== 'won') {
-        console.log('Skipping KRA 2 check - deal is not a purchase order or won stage:', deal.inquiry_type);
-        return;
+      const customerName = deal.customer_name.trim();
+
+      // Always ensure customer exists in recurring_customers table
+      const { data: existing } = await supabase
+        .from('recurring_customers')
+        .select('id')
+        .ilike('customer_name', `%${customerName}%`)
+        .limit(1);
+
+      if (!existing || existing.length === 0) {
+        await supabase.from('recurring_customers').insert({
+          customer_name: customerName,
+          customer_phone: deal.customer_phone || null,
+          customer_address: deal.delivery_location || null,
+          assigned_salesperson_phone: senderPhone,
+          is_active: true,
+          avg_order_frequency_days: 30,
+        });
+        console.log('Auto-created customer in recurring_customers:', customerName);
       }
-      const newCustomer = await isNewCustomer(deal.customer_name, senderPhone);
-      if (newCustomer) {
-        console.log('New customer detected:', deal.customer_name);
-        await logNewCustomer(deal, senderPhone);
+
+      const { isNewCustomer, logNewCustomer } = require('./kra2');
+      if (deal.inquiry_type === 'purchase_order' || deal.stage === 'won') {
+        const newCustomer = await isNewCustomer(customerName, senderPhone);
+        if (newCustomer) {
+          console.log('New customer KRA 2 logged:', customerName);
+          await logNewCustomer(deal, senderPhone);
+        }
       }
     }
   } catch (error) {
