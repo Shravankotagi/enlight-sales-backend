@@ -97,10 +97,21 @@ async function processComplaintMessage(text, senderPhone) {
         `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
 
     } else {
+      // Check assigned salesperson for this customer in recurring_customers
+      const { data: customerRecord } = await supabase
+        .from('recurring_customers')
+        .select('assigned_salesperson_phone, customer_name')
+        .ilike('customer_name', `%${customerName}%`)
+        .limit(1);
+
+      const targetSalespersonPhone =
+        (customerRecord && customerRecord[0] && customerRecord[0].assigned_salesperson_phone) ||
+        senderPhone;
+
       // Report New Complaint (KRA 7)
       await supabase.from('complaints').insert({
         customer_name: customerName,
-        salesperson_phone: senderPhone,
+        salesperson_phone: targetSalespersonPhone,
         complaint_type: data.complaint_type || 'quality',
         description: data.description || text,
         status: 'open',
@@ -108,7 +119,7 @@ async function processComplaintMessage(text, senderPhone) {
       });
 
       await supabase.from('kra_logs').insert({
-        salesperson_phone: senderPhone,
+        salesperson_phone: targetSalespersonPhone,
         kra_number: 7,
         kra_type: 'quality_complaint',
         customer_name: customerName,
@@ -117,11 +128,30 @@ async function processComplaintMessage(text, senderPhone) {
         year: new Date().getFullYear(),
       });
 
+      // Send Instant WhatsApp Alert to the assigned Salesperson if sender is the client
+      if (targetSalespersonPhone && targetSalespersonPhone !== senderPhone) {
+        try {
+          const { sendTextMessage } = require('../whatsapp');
+          await sendTextMessage(
+            targetSalespersonPhone,
+            `🚨 *URGENT CUSTOMER COMPLAINT ALERT!*\n\n` +
+            `Client: *${customerName}*\n` +
+            `Type: *${(data.complaint_type || 'quality').toUpperCase()}*\n` +
+            `Issue: ${data.description || text}\n` +
+            `SLA Target: *48 Hours Resolution ⏱️*\n\n` +
+            `Please contact the client immediately to resolve this issue and reply *"Resolved ${customerName} complaint"* when done!`
+          );
+        } catch (alertError) {
+          console.error('Failed to send complaint alert to salesperson:', alertError.message);
+        }
+      }
+
       return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
         `Customer: *${customerName}*\n` +
         `Type: *${(data.complaint_type || 'quality').toUpperCase()}*\n` +
+        `Assigned Salesperson: *+${targetSalespersonPhone}*\n` +
         `Status: *Open (48-Hour Resolution Clock Started ⏱️)*\n\n` +
-        `Tracked under KRA 7 Quality & Rejections Dashboard!`;
+        `Automated alert sent to the assigned salesperson!`;
     }
 
   } catch (error) {
