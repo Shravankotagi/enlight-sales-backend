@@ -1,11 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class PricingService {
   private readonly logger = new Logger(PricingService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private httpService: HttpService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -43,6 +48,8 @@ export class PricingService {
       await this.supabase
         .from('rate_sheet_items')
         .insert(items.map((item) => ({ rate_sheet_id: sheet.id, ...item })));
+
+      this.broadcastRateSheetToSalespersons(items, today);
     }
 
     return this.getTodayRateSheet();
@@ -53,10 +60,18 @@ export class PricingService {
       .from('rate_sheets')
       .update({ locked_at: new Date().toISOString(), locked_by: lockedBy })
       .eq('id', id)
-      .select()
+      .select('*, rate_sheet_items(*)')
       .single();
 
     if (error) throw error;
+
+    if (data && data.rate_sheet_items) {
+      this.broadcastRateSheetToSalespersons(
+        data.rate_sheet_items,
+        data.date || new Date().toISOString().split('T')[0],
+      );
+    }
+
     return data;
   }
 
@@ -149,5 +164,73 @@ export class PricingService {
       .limit(10);
     if (error) throw error;
     return data || [];
+  }
+
+  private async broadcastRateSheetToSalespersons(
+    items: any[],
+    dateStr: string,
+  ) {
+    try {
+      const { data: salespersons } = await this.supabase
+        .from('employees')
+        .select('phone, name')
+        .eq('role', 'salesperson')
+        .eq('is_active', true);
+
+      if (!salespersons || salespersons.length === 0) return;
+
+      const formattedItems = items
+        .map(
+          (i) =>
+            `• *${i.category || 'Product'}* (${i.grade || 'Standard'}${i.dimensions ? ` ${i.dimensions}` : ''}): *₹${Number(i.price_per_mt || i.price || 0).toLocaleString('en-IN')} / MT*`,
+        )
+        .join('\n');
+
+      const message =
+        `📢 *OFFICIAL RATE SHEET FINALIZED & UPDATED!*\n\n` +
+        `📅 Date: *${dateStr}*\n\n` +
+        `${formattedItems}\n\n` +
+        `All new customer inquiries & bot calculations are now updated to these rates! ✅`;
+
+      const token = process.env.WHATSAPP_TOKEN;
+      const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+      if (!token || !phoneId) return;
+
+      for (const sp of salespersons) {
+        if (!sp.phone) continue;
+        const cleanPhone = sp.phone.replace(/\D/g, '');
+        try {
+          await firstValueFrom(
+            this.httpService.post(
+              `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+              {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: cleanPhone,
+                type: 'text',
+                text: { body: message },
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            ),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Failed to send rate sheet broadcast to ${sp.name}:`,
+            err.message,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        'Error in broadcastRateSheetToSalespersons:',
+        error.message,
+      );
+    }
   }
 }
