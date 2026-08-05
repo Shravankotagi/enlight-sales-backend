@@ -27,6 +27,54 @@ Rules:
 Return ONLY the JSON object.
 `;
 
+async function resolvePaymentBalance(customerName, newAmountPaid) {
+  let dealTotal = 0;
+  let priorCollected = 0;
+
+  // 1. Look up recent deal total amount for this customer
+  const { data: deals } = await supabase
+    .from('deals')
+    .select('total_amount')
+    .ilike('customer_name', `%${customerName}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (deals && deals.length > 0 && deals[0].total_amount) {
+    dealTotal = Number(deals[0].total_amount) || 0;
+  }
+
+  // 2. Sum up all prior payments for this customer
+  const { data: priorPayments } = await supabase
+    .from('payment_tracking')
+    .select('collected_amount')
+    .ilike('customer_name', `%${customerName}%`);
+
+  if (priorPayments && priorPayments.length > 0) {
+    priorCollected = priorPayments.reduce((sum, p) => sum + (Number(p.collected_amount) || 0), 0);
+  }
+
+  const totalCollectedNow = priorCollected + newAmountPaid;
+  let outstanding = 0;
+  let isFullyPaid = false;
+
+  if (dealTotal > 0) {
+    outstanding = Math.max(0, dealTotal - totalCollectedNow);
+    isFullyPaid = totalCollectedNow >= dealTotal;
+  } else {
+    isFullyPaid = false;
+  }
+
+  return {
+    dealTotal,
+    priorCollected,
+    totalCollectedNow,
+    outstanding,
+    isFullyPaid,
+    status: isFullyPaid ? 'collected' : 'partial',
+    paymentType: isFullyPaid ? 'full_settlement' : (priorCollected > 0 ? 'installment' : 'advance')
+  };
+}
+
 async function processPaymentMessage(text, senderPhone) {
   try {
     // Pre-clean formatted numbers (e.g. 10,20,000 -> 1020000)
@@ -65,19 +113,22 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     const amountPaid = Number(data.amount_paid);
-    const amountPending = Number(data.amount_pending || 0);
 
-    const paymentStatus = amountPending > 0 ? 'partial' : 'collected';
+    // Compute balance from deal total and prior payments
+    const balanceInfo = await resolvePaymentBalance(customerName, amountPaid);
+    const amountPending = data.amount_pending && Number(data.amount_pending) > 0 
+      ? Number(data.amount_pending) 
+      : balanceInfo.outstanding;
 
     // Insert into payment_tracking
     await supabase.from('payment_tracking').insert({
       customer_name: customerName,
       salesperson_phone: senderPhone,
-      invoice_amount: amountPaid + amountPending,
+      invoice_amount: balanceInfo.dealTotal || (amountPaid + amountPending),
       collected_amount: amountPaid,
       outstanding: amountPending,
-      status: paymentStatus,
-      payment_type: data.payment_type || 'advance',
+      status: balanceInfo.status,
+      payment_type: balanceInfo.paymentType,
       created_at: new Date().toISOString(),
     });
 
@@ -85,7 +136,7 @@ async function processPaymentMessage(text, senderPhone) {
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
       kra_number: 5,
-      kra_type: data.payment_type === 'advance' ? 'payment_advance' : 'payment_collected',
+      kra_type: balanceInfo.isFullyPaid ? 'payment_collected' : 'payment_advance',
       value: amountPaid,
       customer_name: customerName,
       description: `Payment Received: ${customerName} (₹${amountPaid.toLocaleString('en-IN')}${amountPending > 0 ? ` | Outstanding: ₹${amountPending.toLocaleString('en-IN')}` : ''})`,
@@ -95,9 +146,13 @@ async function processPaymentMessage(text, senderPhone) {
 
     return `💰 *KRA 5 - Payment Collection Logged!*\n\n` +
       `Customer: *${customerName}*\n` +
+      (balanceInfo.dealTotal > 0 ? `Deal Total Value: *₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
       `Amount Received: *₹${amountPaid.toLocaleString('en-IN')}*\n` +
-      (amountPending > 0 ? `Outstanding Balance: *₹${amountPending.toLocaleString('en-IN')}*\n` : `Status: *Fully Paid / Settled 🎉*\n`) +
-      `\nUpdated KRA 5 Payment Collection Dashboard! ✅`;
+      (balanceInfo.dealTotal > 0 ? `Total Collected: *₹${balanceInfo.totalCollectedNow.toLocaleString('en-IN')} / ₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
+      (amountPending > 0 
+        ? `Outstanding Balance Pending: *₹${amountPending.toLocaleString('en-IN')} ⏳*\nStatus: *Advance / Partial Payment Received 💳*` 
+        : `Status: *Fully Paid / Settled 🎉*`) +
+      `\n\nUpdated KRA 5 Payment Collection Dashboard! ✅`;
 
   } catch (error) {
     console.error('Payment Agent Error:', error.message);
@@ -141,22 +196,24 @@ Return ONLY JSON.`;
     const customerName = data.customer_name.trim();
     const amountPaid = Number(data.amount_paid);
 
+    const balanceInfo = await resolvePaymentBalance(customerName, amountPaid);
+
     // Save payment
     await supabase.from('payment_tracking').insert({
       customer_name: customerName,
       salesperson_phone: senderPhone,
-      invoice_amount: amountPaid,
+      invoice_amount: balanceInfo.dealTotal || amountPaid,
       collected_amount: amountPaid,
-      outstanding: 0,
-      status: 'collected',
-      payment_type: data.payment_type || 'advance',
+      outstanding: balanceInfo.outstanding,
+      status: balanceInfo.status,
+      payment_type: balanceInfo.paymentType,
       created_at: new Date().toISOString(),
     });
 
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
       kra_number: 5,
-      kra_type: 'payment_collected',
+      kra_type: balanceInfo.isFullyPaid ? 'payment_collected' : 'payment_advance',
       value: amountPaid,
       customer_name: customerName,
       description: `Payment Receipt Image Logged: ${customerName} (₹${amountPaid.toLocaleString('en-IN')})`,
@@ -166,9 +223,13 @@ Return ONLY JSON.`;
 
     return `💰 *Payment Receipt Image Logged!*\n\n` +
       `Customer: *${customerName}*\n` +
+      (balanceInfo.dealTotal > 0 ? `Deal Total Value: *₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
       `Amount Collected: *₹${amountPaid.toLocaleString('en-IN')}*\n` +
-      `Status: *Collected & Verified ✅*\n\n` +
-      `Updated KRA 5 Payment Collection Dashboard!`;
+      (balanceInfo.dealTotal > 0 ? `Total Collected: *₹${balanceInfo.totalCollectedNow.toLocaleString('en-IN')} / ₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
+      (balanceInfo.outstanding > 0 
+        ? `Outstanding Balance Pending: *₹${balanceInfo.outstanding.toLocaleString('en-IN')} ⏳*\nStatus: *Advance / Partial Payment Received 💳*` 
+        : `Status: *Fully Paid / Settled 🎉*`) +
+      `\n\nUpdated KRA 5 Payment Collection Dashboard! ✅`;
 
   } catch (err) {
     console.error('Payment Image Agent Error:', err.message);
