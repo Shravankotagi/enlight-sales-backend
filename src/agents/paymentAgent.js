@@ -86,6 +86,16 @@ async function resolvePaymentBalance(customerName, newAmountPaid, explicitPendin
   };
 }
 
+function extractPendingAmountRegex(text) {
+  const pendingMatch = text.match(/(?:pending|baki|due|outstanding|balance|rest)\D*?(\d[\d,]*)/i) || 
+                       text.match(/(\d[\d,]*)\D*?(?:pending|baki|due|outstanding|balance|rest)/i);
+  if (pendingMatch && pendingMatch[1]) {
+    const cleanNum = Number(pendingMatch[1].replace(/,/g, ''));
+    if (!isNaN(cleanNum) && cleanNum > 0) return cleanNum;
+  }
+  return 0;
+}
+
 async function processPaymentMessage(text, senderPhone) {
   try {
     // Pre-clean formatted numbers (e.g. 10,20,000 -> 1020000)
@@ -118,8 +128,16 @@ async function processPaymentMessage(text, senderPhone) {
       return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Customer/Company Name* for this payment record so it can be logged accurately into your KRA 5 Dashboard.`;
     }
 
-    const amountPaid = Number(data.amount_paid || 0);
-    const explicitPending = Number(data.amount_pending || 0);
+    let amountPaid = Number(data.amount_paid || 0);
+    let explicitPending = Number(data.amount_pending || 0);
+
+    // Fallback: Deterministic Regex pre-parsing for pending balance
+    if (explicitPending <= 0 && (cleanedText.toLowerCase().includes('pending') || cleanedText.toLowerCase().includes('baki') || cleanedText.toLowerCase().includes('due') || cleanedText.toLowerCase().includes('outstanding'))) {
+      const regexPending = extractPendingAmountRegex(cleanedText);
+      if (regexPending > 0) {
+        explicitPending = regexPending;
+      }
+    }
 
     // Accuracy Check: Missing both Amount Paid and Amount Pending
     if (amountPaid <= 0 && explicitPending <= 0) {
