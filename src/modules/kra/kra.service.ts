@@ -50,11 +50,7 @@ export class KraService {
         .select('*')
         .gte('reported_at', start)
         .lte('reported_at', end);
-      let paymentsQuery = this.supabase
-        .from('payment_tracking')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
+      let paymentsQuery = this.supabase.from('payment_tracking').select('*');
       let recurringQuery = this.supabase
         .from('recurring_customers')
         .select('*')
@@ -184,15 +180,11 @@ export class KraService {
         0,
       );
       const collectedPaymentsSum = collectedPayments.reduce(
-        (sum, p) => sum + (Number(p.invoice_amount) || 0),
+        (sum, p) => sum + (Number(p.collected_amount) || 0),
         0,
       );
 
-      const collectedAmount = Math.max(
-        collectedLogsSum,
-        collectedPaymentsSum,
-        collectedLogsSum > 0 ? collectedLogsSum : 0,
-      );
+      const collectedAmount = Math.max(collectedLogsSum, collectedPaymentsSum);
       const collectedCount = Math.max(
         collectedPayments.length,
         collectedLogs.length,
@@ -598,11 +590,7 @@ export class KraService {
         .gte('created_at', start)
         .lte('created_at', end);
 
-      let paymentsQuery = this.supabase
-        .from('payment_tracking')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
+      let paymentsQuery = this.supabase.from('payment_tracking').select('*');
 
       let visitsQuery = this.supabase
         .from('customer_visits')
