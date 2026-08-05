@@ -47,13 +47,27 @@ async function processSalesMessage(text, senderPhone) {
     const customerName = data.customer_name.trim();
     const targetStage = data.target_stage || 'won';
 
-    // Find latest deal for this customer
-    const { data: existingDeals } = await supabase
+    // 1. Prioritize deals with non-zero total_amount for this salesperson
+    let { data: existingDeals } = await supabase
       .from('deals')
       .select('*')
       .ilike('customer_name', `%${customerName}%`)
+      .eq('salesperson_phone', senderPhone)
+      .order('total_amount', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(1);
+
+    // 2. If no match for this salesperson, search company-wide
+    if (!existingDeals || existingDeals.length === 0) {
+      const { data: globalDeals } = await supabase
+        .from('deals')
+        .select('*')
+        .ilike('customer_name', `%${customerName}%`)
+        .order('total_amount', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1);
+      existingDeals = globalDeals;
+    }
 
     let dealId = existingDeals && existingDeals.length > 0 ? existingDeals[0].id : null;
     let existingAmount = existingDeals && existingDeals[0] ? Number(existingDeals[0].total_amount || 0) : 0;
@@ -76,6 +90,14 @@ async function processSalesMessage(text, senderPhone) {
         dealAmount = quantityMt * Number(data.rate_per_mt);
       } else {
         dealAmount = Number(data.rate_per_mt);
+      }
+    }
+
+    if (dealId && dealAmount === 0) {
+      const { data: items } = await supabase.from('deal_items').select('amount, quantity, rate').eq('deal_id', dealId);
+      if (items && items.length > 0) {
+        const itemSum = items.reduce((sum, i) => sum + (Number(i.amount) || Number(i.quantity || 0) * Number(i.rate || 0)), 0);
+        if (itemSum > 0) dealAmount = itemSum;
       }
     }
 
