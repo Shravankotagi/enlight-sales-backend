@@ -66,14 +66,26 @@ export class CustomersController {
   }
 
   @Get('reorder-queue')
-  async getReorderQueue(@CurrentEmployee() employee: any) {
-    const phone = employee.role === 'admin' ? undefined : employee.phone;
+  async getReorderQueue(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
     return this.customersService.getReorderQueue(phone);
   }
 
   @Get('loss-analytics')
-  async getLossAnalytics(@CurrentEmployee() employee: any) {
-    const phone = employee.role === 'admin' ? undefined : employee.phone;
+  async getLossAnalytics(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const phone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
     return this.customersService.getLossAnalytics(phone);
   }
 
