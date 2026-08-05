@@ -227,7 +227,11 @@ export class CustomersService {
         .gte('created_at', threeMonthsAgo);
 
       if (salespersonPhone) {
-        query = query.eq('salesperson_phone', salespersonPhone);
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const last10 = cleanDigits.slice(-10);
+        query = query.or(
+          `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
+        );
       }
 
       const { data: lostDeals, error } = await query;
