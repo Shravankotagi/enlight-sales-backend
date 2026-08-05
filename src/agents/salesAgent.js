@@ -188,7 +188,8 @@ async function syncToBigin(customerName, stage, amount, poNumber, phone) {
         },
       },
     );
-    return `To https://github.com/Shravankotagi/enlight-sales-bot.git`;
+  } catch (err) {
+    console.error('Sales Agent Bigin Sync Error:', err.response?.data || err.message);
   }
 }
 
