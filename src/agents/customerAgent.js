@@ -43,23 +43,29 @@ async function processCustomerMessage(text, senderPhone) {
       .ilike('customer_name', `%${customerName}%`)
       .limit(1);
 
+    const notesText = data.contact_person ? `Owner: ${data.contact_person}` : null;
+
     if (existing && existing.length > 0) {
-      // Re-assign to this salesperson
+      // Re-assign & update customer record
       await supabase
         .from('recurring_customers')
         .update({
           assigned_salesperson_phone: senderPhone,
+          customer_phone: data.phone || existing[0].customer_phone || null,
+          customer_gst: data.gst || existing[0].customer_gst || null,
+          customer_address: data.city || existing[0].customer_address || null,
+          notes: notesText || existing[0].notes || null,
           is_active: true,
         })
         .eq('id', existing[0].id);
     } else {
-      // Insert new customer
+      // Insert new customer using valid columns
       await supabase.from('recurring_customers').insert({
         customer_name: customerName,
-        contact_person: data.contact_person || null,
         customer_phone: data.phone || null,
         customer_gst: data.gst || null,
         customer_address: data.city || null,
+        notes: notesText,
         assigned_salesperson_phone: senderPhone,
         is_active: true,
         avg_order_frequency_days: 30,
@@ -88,11 +94,29 @@ async function processCustomerMessage(text, senderPhone) {
 
     const currentCount = kra2Logs ? kra2Logs.length : 1;
 
+    // Check missing profile info to prompt salesperson
+    const missingInfo = [];
+    if (!data.phone) missingInfo.push('• 📱 *Mobile Number*');
+    if (!data.contact_person) missingInfo.push('• 👤 *Owner / Contact Person Name*');
+    if (!data.city) missingInfo.push('• 📍 *City / Location*');
+    if (!data.gst) missingInfo.push('• 🧾 *GSTIN* (optional)');
+
+    let promptSuffix = '';
+    if (missingInfo.length > 0) {
+      promptSuffix =
+        `\n\n📌 *To complete ${customerName}'s profile, reply with missing details:*\n` +
+        missingInfo.join('\n') +
+        `\n\n*(e.g. "${customerName} phone 9876543210 owner Mr. Kapoor location Mumbai")*`;
+    }
+
     return `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
       `Company: *${customerName}*\n` +
-      (data.contact_person ? `Contact: ${data.contact_person}\n` : '') +
-      `Monthly Target: *${currentCount} / 3 Onboarded*\n\n` +
-      `Added directly to your Account & Customers Dashboard! ✅`;
+      (data.contact_person ? `Contact/Owner: *${data.contact_person}*\n` : '') +
+      (data.phone ? `Phone: *${data.phone}*\n` : '') +
+      (data.city ? `City: *${data.city}*\n` : '') +
+      `Monthly Progress: *${currentCount} / 3 Onboarded*\n\n` +
+      `Added live to your Customers Dashboard! ✅` +
+      promptSuffix;
 
   } catch (error) {
     console.error('Customer Agent Error:', error.message);
