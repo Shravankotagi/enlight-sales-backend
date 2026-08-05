@@ -12,8 +12,8 @@ const { isComplaintReport, isComplaintResolution, handleComplaintLog, handleComp
 const { handleNewCustomerAnnouncement } = require('./kra2');
 
 // Dedicated Specialized AI Agents
-const { processSalesMessage } = require('./agents/salesAgent');
-const { processPaymentMessage } = require('./agents/paymentAgent');
+const { processSalesMessage, processSalesImage } = require('./agents/salesAgent');
+const { processPaymentMessage, processPaymentImage } = require('./agents/paymentAgent');
 const { processCustomerMessage } = require('./agents/customerAgent');
 const { processComplaintMessage } = require('./agents/complaintAgent');
 const { processVisitMessage } = require('./agents/visitAgent');
@@ -256,31 +256,30 @@ router.post('/', async (req, res) => {
         if (messageType === 'text' && raw_text && raw_text.length > 5) {
           // Extract from text
           extraction = await extractFromText(raw_text);
-        } else if (messageType === 'image' && media_urls.length > 0) {
-          // Download image then extract
+        } else if ((messageType === 'image' || messageType === 'document') && media_urls.length > 0) {
           const mediaId = media_urls[0];
           const mediaData = await downloadMedia(mediaId);
           console.log('Media download result:', mediaData ? 'success' : 'failed');
+
           if (mediaData && mediaData.buffer) {
-            extraction = await extractFromImage(mediaData.buffer, mediaData.mimeType);
-          } else {
-            mediaDownloadFailed = true;
-          }
-        } else if (messageType === 'document' && media_urls.length > 0) {
-          const mediaId = media_urls[0];
-          const mediaData = await downloadMedia(mediaId);
-          console.log('Media download result:', mediaData ? 'success' : 'failed');
-          if (mediaData && mediaData.buffer) {
-            // PDFs: try image extraction (Gemini can handle PDF pages)
-            if (mediaData.mimeType === 'application/pdf') {
-              console.log('PDF document received - extracting as image');
-              extraction = await extractFromImage(mediaData.buffer, 'application/pdf');
+            const isPaymentKeyword = raw_text && (
+              raw_text.toLowerCase().includes('payment') ||
+              raw_text.toLowerCase().includes('paid') ||
+              raw_text.toLowerCase().includes('receipt') ||
+              raw_text.toLowerCase().includes('upi') ||
+              raw_text.toLowerCase().includes('advance')
+            );
+
+            if (isPaymentKeyword) {
+              // Route to Payment Collection Vision Agent (KRA 5)
+              const paymentVisionReply = await processPaymentImage(mediaData.buffer, mediaData.mimeType, senderPhone);
+              await sendTextMessage(senderPhone, paymentVisionReply);
+              return;
             } else {
-              // Other docs: extract as image
-              extraction = await extractFromImage(
-                mediaData.buffer, 
-                mediaData.mimeType
-              );
+              // Route to Sales & PO Vision Agent (KRA 1 & Zoho Bigin)
+              const salesVisionReply = await processSalesImage(mediaData.buffer, mediaData.mimeType, senderPhone);
+              await sendTextMessage(senderPhone, salesVisionReply);
+              return;
             }
           } else {
             mediaDownloadFailed = true;

@@ -87,4 +87,75 @@ async function processPaymentMessage(text, senderPhone) {
   }
 }
 
-module.exports = { processPaymentMessage };
+async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const imagePart = {
+      inlineData: {
+        data: imageBuffer.toString('base64'),
+        mimeType: mimeType || 'image/jpeg',
+      },
+    };
+
+    const prompt = `You are the Specialized Payment Collection Vision Agent for Enlight Metals.
+Analyze this payment receipt / UPI transfer screenshot / bank deposit slip image and extract into JSON:
+{
+  "customer_name": "<company/customer name if present, else null>",
+  "amount_paid": <numeric amount paid, else 0>,
+  "payment_type": "advance|installment|full_settlement",
+  "confidence": <float 0.0 to 1.0>
+}
+Return ONLY JSON.`;
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const rawText = result.response.text().trim();
+    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const data = JSON.parse(cleaned);
+
+    if (!data.amount_paid || data.amount_paid <= 0) {
+      return `⚠️ *Payment Receipt Vision Agent Clarification Needed*\n\nI parsed your payment receipt image, but the *Amount Received* is not clear. Please reply with the exact payment amount.`;
+    }
+
+    if (!data.customer_name) {
+      return `⚠️ *Payment Receipt Vision Agent Clarification Needed*\n\nReceipt for *₹${Number(data.amount_paid).toLocaleString('en-IN')}* detected! Please reply with the *Customer/Company Name* so it can be credited to KRA 5.`;
+    }
+
+    const customerName = data.customer_name.trim();
+    const amountPaid = Number(data.amount_paid);
+
+    // Save payment
+    await supabase.from('payment_tracking').insert({
+      customer_name: customerName,
+      salesperson_phone: senderPhone,
+      invoice_amount: amountPaid,
+      collected_amount: amountPaid,
+      outstanding: 0,
+      status: 'collected',
+      payment_type: data.payment_type || 'advance',
+      created_at: new Date().toISOString(),
+    });
+
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number: 5,
+      kra_type: 'payment_collected',
+      value: amountPaid,
+      customer_name: customerName,
+      description: `Payment Receipt Image Logged: ${customerName} (₹${amountPaid.toLocaleString('en-IN')})`,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+    });
+
+    return `💰 *Payment Receipt Image Logged!*\n\n` +
+      `Customer: *${customerName}*\n` +
+      `Amount Collected: *₹${amountPaid.toLocaleString('en-IN')}*\n` +
+      `Status: *Collected & Verified ✅*\n\n` +
+      `Updated KRA 5 Payment Collection Dashboard!`;
+
+  } catch (err) {
+    console.error('Payment Image Agent Error:', err.message);
+    return `⚠️ Could not parse payment receipt image: ${err.message}`;
+  }
+}
+
+module.exports = { processPaymentMessage, processPaymentImage };

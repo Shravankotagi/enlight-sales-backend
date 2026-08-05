@@ -188,9 +188,85 @@ async function syncToBigin(customerName, stage, amount, poNumber, phone) {
         },
       },
     );
-  } catch (err) {
-    console.error('Sales Agent Bigin Sync Error:', err.response?.data || err.message);
+    return `To https://github.com/Shravankotagi/enlight-sales-bot.git`;
   }
 }
 
-module.exports = { processSalesMessage };
+async function processSalesImage(imageBuffer, mimeType, senderPhone) {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const imagePart = {
+      inlineData: {
+        data: imageBuffer.toString('base64'),
+        mimeType: mimeType || 'image/jpeg',
+      },
+    };
+
+    const prompt = `You are the Specialized Sales Achievement & PO Vision Agent for Enlight Metals.
+Analyze this PO image / bill / handwritten slip and extract into JSON:
+{
+  "customer_name": "<company name if present, else null>",
+  "po_number": "<PO number if present, else null>",
+  "quantity_mt": <numeric quantity in MT if present, else 0>,
+  "rate_per_mt": <numeric rate per MT if present, else 0>,
+  "total_amount": <total value in rupees, else 0>,
+  "confidence": <float 0.0 to 1.0>
+}
+Return ONLY JSON.`;
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const rawText = result.response.text().trim();
+    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const data = JSON.parse(cleaned);
+
+    if (!data.customer_name) {
+      return `⚠️ *PO Vision Agent Clarification Needed*\n\nI parsed your PO image, but the *Customer/Company Name* is cut off or not clear. Please reply with the Company Name so it can be logged into your sales dashboard!`;
+    }
+
+    const customerName = data.customer_name.trim();
+    let totalValue = data.total_amount || 0;
+
+    if (!totalValue && data.quantity_mt && data.rate_per_mt) {
+      totalValue = data.quantity_mt * data.rate_per_mt;
+    }
+
+    // Save PO deal
+    await supabase.from('deals').insert({
+      customer_name: customerName,
+      salesperson_phone: senderPhone,
+      stage: 'won',
+      total_amount: totalValue,
+      po_number: data.po_number || null,
+      inquiry_type: 'purchase_order',
+      won_at: new Date().toISOString(),
+    });
+
+    // Log to KRA 1
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number: 1,
+      kra_type: 'sales_achievement',
+      value: totalValue,
+      customer_name: customerName,
+      description: `PO Image Logged: ${customerName} (PO: ${data.po_number || 'N/A'})`,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+    });
+
+    // Sync to Zoho Bigin
+    syncToBigin(customerName, 'won', totalValue, data.po_number, senderPhone);
+
+    return `📦 *PO Document Processed & Logged!*\n\n` +
+      `Customer: *${customerName}*\n` +
+      (data.po_number ? `PO Number: *${data.po_number}*\n` : '') +
+      `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` +
+      `Stage: *Closed Won 🎉*\n\n` +
+      `Logged to KRA 1 Sales Achievement & synced live to Zoho Bigin! ✅`;
+
+  } catch (err) {
+    console.error('Sales Image Agent Error:', err.message);
+    return `⚠️ Could not extract PO image details: ${err.message}`;
+  }
+}
+
+module.exports = { processSalesMessage, processSalesImage };
