@@ -726,29 +726,93 @@ export class KraService {
       });
 
       // KRA 5 Sheet: Payment Collection & Outstanding Management
-      const kra5Rows = safePayments.map((p, index) => ({
+      // Build rows from both won deals (invoices) and payment_tracking records
+      const kra5Map = new Map<string, any>();
+
+      // 1. Process all won deals (these create invoice obligations)
+      const wonDealsForKra5 = safeDeals.filter((d) => d.stage === 'won');
+      wonDealsForKra5.forEach((d) => {
+        const key = (d.customer_name || 'Customer').toLowerCase().trim();
+        const amt = d.total_amount ? Number(d.total_amount) : 0;
+        kra5Map.set(key, {
+          customer_name: d.customer_name || 'Customer',
+          invoice_amount: amt,
+          credit_period_days: 30,
+          payment_due_date: d.created_at
+            ? new Date(
+                new Date(d.created_at).getTime() + 30 * 24 * 60 * 60 * 1000,
+              ).toLocaleDateString('en-IN')
+            : '-',
+          payment_received_date: '-',
+          collected_amount: 0,
+          outstanding: amt,
+          status: 'pending',
+        });
+      });
+
+      // 2. Overlay actual payment records from payment_tracking
+      safePayments.forEach((p) => {
+        const key = (p.customer_name || 'Customer').toLowerCase().trim();
+        const existing = kra5Map.get(key);
+        const collected = Number(p.collected_amount || p.invoice_amount || 0);
+        const invAmt = p.invoice_amount
+          ? Number(p.invoice_amount)
+          : existing?.invoice_amount || collected;
+
+        if (existing) {
+          existing.collected_amount += collected;
+          existing.invoice_amount = Math.max(existing.invoice_amount, invAmt);
+          existing.outstanding = Math.max(
+            0,
+            existing.invoice_amount - existing.collected_amount,
+          );
+          existing.payment_received_date = p.paid_date
+            ? new Date(p.paid_date).toLocaleDateString('en-IN')
+            : p.created_at
+              ? new Date(p.created_at).toLocaleDateString('en-IN')
+              : '-';
+          existing.status =
+            existing.outstanding === 0 ? 'collected' : 'partial';
+        } else {
+          kra5Map.set(key, {
+            customer_name: p.customer_name || 'Customer',
+            invoice_amount: invAmt,
+            credit_period_days: p.credit_period_days || 30,
+            payment_due_date: p.due_date
+              ? new Date(p.due_date).toLocaleDateString('en-IN')
+              : '-',
+            payment_received_date: p.paid_date
+              ? new Date(p.paid_date).toLocaleDateString('en-IN')
+              : p.created_at
+                ? new Date(p.created_at).toLocaleDateString('en-IN')
+                : '-',
+            collected_amount: collected,
+            outstanding:
+              p.outstanding !== null && p.outstanding !== undefined
+                ? Number(p.outstanding)
+                : Math.max(0, invAmt - collected),
+            status: p.status || (collected >= invAmt ? 'collected' : 'partial'),
+          });
+        }
+      });
+
+      const kra5Rows = Array.from(kra5Map.values()).map((row, index) => ({
         sr_no: index + 1,
-        customer_name: p.customer_name || 'Customer',
-        invoice_amount: p.invoice_amount
-          ? `₹${Number(p.invoice_amount).toLocaleString('en-IN')}`
-          : '-',
-        credit_period_days: p.credit_period_days || 30,
-        payment_due_date: p.due_date
-          ? new Date(p.due_date).toLocaleDateString('en-IN')
-          : '-',
-        payment_received_date: p.paid_date
-          ? new Date(p.paid_date).toLocaleDateString('en-IN')
-          : '-',
-        outstanding:
-          p.outstanding !== null && p.outstanding !== undefined
-            ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
-            : '₹0',
+        customer_name: row.customer_name,
+        invoice_amount:
+          row.invoice_amount > 0
+            ? `₹${Number(row.invoice_amount).toLocaleString('en-IN')}`
+            : '-',
+        credit_period_days: row.credit_period_days,
+        payment_due_date: row.payment_due_date,
+        payment_received_date: row.payment_received_date,
+        outstanding: `₹${Number(row.outstanding).toLocaleString('en-IN')}`,
         remarks:
-          p.status === 'collected'
-            ? 'Fully Collected'
-            : p.status === 'pending'
-              ? 'Pending Collection'
-              : p.status,
+          row.outstanding === 0
+            ? 'Fully Collected 🎉'
+            : row.collected_amount > 0
+              ? 'Partial Payment Pending 💳'
+              : 'Pending Collection ⏳',
       }));
 
       // KRA 6 Sheet: CRM Compliance
