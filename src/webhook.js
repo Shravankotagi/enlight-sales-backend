@@ -11,6 +11,14 @@ const { handlePaymentUpdate } = require('./kra5');
 const { isComplaintReport, isComplaintResolution, handleComplaintLog, handleComplaintResolution } = require('./kra8');
 const { handleNewCustomerAnnouncement } = require('./kra2');
 
+// Dedicated Specialized AI Agents
+const { processSalesMessage } = require('./agents/salesAgent');
+const { processPaymentMessage } = require('./agents/paymentAgent');
+const { processCustomerMessage } = require('./agents/customerAgent');
+const { processComplaintMessage } = require('./agents/complaintAgent');
+const { processVisitMessage } = require('./agents/visitAgent');
+const { processRetentionMessage } = require('./agents/retentionAgent');
+
 /**
  * GET /webhook
  * Verification endpoint for Meta Webhook setup.
@@ -157,64 +165,45 @@ router.post('/', async (req, res) => {
               return;
             }
 
-            // NEW CUSTOMER ACQUISITION → KRA 2
-            if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
-              const reply = await handleNewCustomerAnnouncement(intent.customer_name, senderPhone);
-              await sendTextMessage(senderPhone, reply);
+            // STAGE UPDATE / DEAL STATUS → Sales Achievement Agent (KRA 1 & Zoho Bigin)
+            if (intent.intent === 'stage_update' || raw_text.toLowerCase().includes('mark') && (raw_text.toLowerCase().includes('won') || raw_text.toLowerCase().includes('lost'))) {
+              const salesReply = await processSalesMessage(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, salesReply);
               return;
             }
 
-            // VISIT LOG → KRA 9
+            // NEW CUSTOMER ACQUISITION → Customer Onboarding Agent (KRA 2)
+            if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
+              const customerReply = await processCustomerMessage(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, customerReply);
+              return;
+            }
+
+            // VISIT LOG → Site Visit Agent (KRA 9)
             if (intent.intent === 'visit' && intent.confidence >= 0.6) {
-              const visitReply = await handleVisitLog(raw_text, senderPhone);
+              const visitReply = await processVisitMessage(raw_text, senderPhone);
               await sendTextMessage(senderPhone, visitReply);
               return;
             }
 
-            // PAYMENT UPDATE → KRA 5
+            // PAYMENT UPDATE → Payment Collection Agent (KRA 5)
             if (intent.intent === 'payment' && intent.confidence >= 0.6) {
-              const paymentReply = await handlePaymentUpdate(raw_text, senderPhone, intent);
+              const paymentReply = await processPaymentMessage(raw_text, senderPhone);
               await sendTextMessage(senderPhone, paymentReply);
               return;
             }
 
-            // COMPLAINT RESOLUTION → KRA 8
-            if (intent.intent === 'complaint_resolve' && intent.confidence >= 0.6) {
-              const resolutionReply = await handleComplaintResolution(raw_text, senderPhone);
-              await sendTextMessage(senderPhone, resolutionReply);
-              return;
-            }
-
-            // COMPLAINT REPORT → KRA 7 + KRA 8
-            if (intent.intent === 'complaint' && intent.confidence >= 0.6) {
-              const complaintReply = await handleComplaintLog(raw_text, senderPhone);
+            // COMPLAINT REPORT & RESOLUTION → Quality & Complaint Agent (KRA 7 & 8)
+            if ((intent.intent === 'complaint' || intent.intent === 'complaint_resolve') && intent.confidence >= 0.6) {
+              const complaintReply = await processComplaintMessage(raw_text, senderPhone);
               await sendTextMessage(senderPhone, complaintReply);
               return;
             }
 
-            // FOLLOW-UP → KRA 3
+            // FOLLOW-UP → Customer Retention Agent (KRA 3)
             if (intent.intent === 'followup' && intent.confidence >= 0.6) {
-              const followReply = await handleFollowUpReply(raw_text, senderPhone);
-              if (followReply) {
-                await sendTextMessage(senderPhone, followReply);
-                return;
-              }
-              // handleFollowUpReply returned null (no keyword match) — log directly
-              const customerName = intent.customer_name || null;
-              await supabase.from('kra_logs').insert({
-                salesperson_phone: senderPhone,
-                kra_number: 3,
-                kra_type: 'customer_retention',
-                description: `Follow-up: ${raw_text}`,
-                customer_name: customerName,
-                month: new Date().getMonth() + 1,
-                year: new Date().getFullYear()
-              });
-              await sendTextMessage(senderPhone,
-                `🔄 *KRA 3 - Follow-up Logged*\n\n` +
-                (customerName ? `Customer: ${customerName}\n` : '') +
-                `Status: Follow-up recorded\n\nLogged to KRA 3 ✅`
-              );
+              const retentionReply = await processRetentionMessage(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, retentionReply);
               return;
             }
 
