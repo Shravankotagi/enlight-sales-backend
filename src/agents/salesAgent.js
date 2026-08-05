@@ -146,7 +146,7 @@ async function processSalesMessage(text, senderPhone) {
       if (newDeal) dealId = newDeal.id;
     }
 
-    // Sync live to KRA 1 log & payment_tracking table
+    // Sync live to KRA 1 log
     if (dbStage === 'won') {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
@@ -158,29 +158,6 @@ async function processSalesMessage(text, senderPhone) {
         month: new Date().getMonth() + 1,
         year: new Date().getFullYear(),
       });
-
-      // Auto-create pending invoice in payment_tracking table for KRA 5 payment tracking
-      if (dealAmount > 0) {
-        const { data: existingPmt } = await supabase
-          .from('payment_tracking')
-          .select('id')
-          .ilike('customer_name', customerName)
-          .limit(1);
-
-        if (!existingPmt || existingPmt.length === 0) {
-          const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-          await supabase.from('payment_tracking').insert({
-            deal_id: dealId || undefined,
-            customer_name: customerName,
-            salesperson_phone: senderPhone,
-            invoice_amount: dealAmount,
-            outstanding: dealAmount,
-            credit_period_days: 30,
-            due_date: dueDate,
-            status: 'pending',
-          });
-        }
-      }
     }
 
     // Push to Zoho Bigin CRM
