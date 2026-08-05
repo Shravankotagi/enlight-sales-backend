@@ -50,10 +50,37 @@ Rules:
 - Return ONLY the JSON object. No prose. No markdown. No backticks.
 `;
 
+const { supabase } = require('./supabase');
+
+async function getLatestActiveRatesText() {
+  try {
+    const { data: sheets } = await supabase
+      .from('rate_sheets')
+      .select('id, date, rate_sheet_items(*)')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (sheets && sheets.length > 0 && sheets[0].rate_sheet_items?.length > 0) {
+      const items = sheets[0].rate_sheet_items;
+      const formatted = items
+        .map(
+          (i) =>
+            `- ${i.category || 'Steel'} (${i.grade || 'Standard'}${i.dimensions ? ` ${i.dimensions}` : ''}): ₹${Number(i.price_per_mt || 0).toLocaleString('en-IN')}/MT`,
+        )
+        .join('\n');
+      return `\nOFFICIAL ACTIVE RATE SHEET (Use these per-MT prices to calculate rate and total_amount when rate is not explicitly stated in the input):\n${formatted}\n`;
+    }
+  } catch (err) {
+    console.error('Error fetching rate sheet for Gemini:', err.message);
+  }
+  return '';
+}
+
 async function extractFromText(text) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const prompt = EXTRACTION_PROMPT + '\n\nInput text:\n' + text;
+    const rateSheetInfo = await getLatestActiveRatesText();
+    const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const rawText = response.text().trim();
