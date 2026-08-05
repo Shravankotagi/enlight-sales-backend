@@ -124,22 +124,6 @@ router.post('/', async (req, res) => {
           raw_text = raw_text.substring(0, 2000) + "... (truncated)";
         }
 
-        // Check if sender is attempting salesperson actions but is unregistered (Edge Case 3)
-        if (!employeeRecord) {
-          const isSalespersonCommand = messageType === 'text';
-            
-          if (isSalespersonCommand) {
-            console.log(`Unregistered salesperson attempt from phone: ${senderPhone}`);
-            await sendTextMessage(
-              senderPhone, 
-              `⚠️ *Registration Warning*\n\n` +
-              `Your phone number (+${senderPhone}) is not registered as an active salesperson in the system.\n\n` +
-              `Please ask the Admin to add your WhatsApp number under the "Employees" list in the dashboard first.`
-            );
-            return;
-          }
-        }
-
         // --- GEMINI INTENT CLASSIFICATION (runs FIRST before saving to inquiries) ---
         // This routes KRA action messages immediately without polluting the inquiries table
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
