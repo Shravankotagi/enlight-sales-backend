@@ -16,7 +16,8 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "customer_name": "<company/customer name>",
   "target_stage": "won|lost|negotiation|quoted|qualified",
   "loss_reason": "<reason if lost, else null>",
-  "total_amount": <numeric deal value if mentioned, else 0>,
+  "rate_per_mt": <numeric per-MT price if mentioned e.g. 51000 per MT, else 0>,
+  "total_amount": <numeric total deal value in rupees if explicitly mentioned, else 0>,
   "po_number": "<PO number if mentioned, else null>",
   "confidence": <float 0.0 to 1.0>
 }
@@ -55,7 +56,28 @@ async function processSalesMessage(text, senderPhone) {
       .limit(1);
 
     let dealId = existingDeals && existingDeals.length > 0 ? existingDeals[0].id : null;
-    let dealAmount = data.total_amount || (existingDeals && existingDeals[0] ? existingDeals[0].total_amount : 0);
+    let existingAmount = existingDeals && existingDeals[0] ? Number(existingDeals[0].total_amount || 0) : 0;
+
+    // Fetch quantity in MT if existing deal items present
+    let quantityMt = 0;
+    if (dealId) {
+      const { data: items } = await supabase.from('deal_items').select('quantity').eq('deal_id', dealId);
+      if (items && items.length > 0) {
+        quantityMt = items.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+      }
+    }
+
+    let dealAmount = existingAmount;
+
+    if (data.total_amount && data.total_amount > 0) {
+      dealAmount = Number(data.total_amount);
+    } else if (data.rate_per_mt && data.rate_per_mt > 0) {
+      if (quantityMt > 0) {
+        dealAmount = quantityMt * Number(data.rate_per_mt);
+      } else {
+        dealAmount = Number(data.rate_per_mt);
+      }
+    }
 
     // Stage mapping
     const stageMap = {
