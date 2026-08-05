@@ -171,7 +171,9 @@ router.post('/', async (req, res) => {
             }
 
             // PAYMENT UPDATE → Payment Collection Agent (KRA 5)
-            if (intent.intent === 'payment' && intent.confidence >= 0.6) {
+            const isPaymentKeyword = ['payment', 'pending', 'baki', 'collected', 'paid', 'received', 'advance', 'due', 'outstanding'].some(w => raw_text.toLowerCase().includes(w));
+            if ((intent.intent === 'payment' || isPaymentKeyword) && !raw_text.toLowerCase().includes('mark') && !raw_text.toLowerCase().includes('won')) {
+              console.log('Routing to Payment Collection Agent (KRA 5)...');
               const paymentReply = await processPaymentMessage(raw_text, senderPhone);
               await sendTextMessage(senderPhone, paymentReply);
               return;
