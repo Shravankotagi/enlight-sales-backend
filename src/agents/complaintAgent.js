@@ -70,7 +70,7 @@ async function processComplaintMessage(text, senderPhone) {
         // Create resolved complaint
         await supabase.from('complaints').insert({
           customer_name: customerName,
-          salesperson_phone: senderPhone,
+          reported_by: senderPhone,
           complaint_type: data.complaint_type || 'quality',
           description: data.description || 'Resolved complaint',
           status: 'resolved',
@@ -114,7 +114,7 @@ async function processComplaintMessage(text, senderPhone) {
       // Report New Complaint (KRA 7)
       await supabase.from('complaints').insert({
         customer_name: customerName,
-        salesperson_phone: targetSalespersonPhone,
+        reported_by: targetSalespersonPhone,
         complaint_type: data.complaint_type || 'quality',
         description: data.description || text,
         status: 'open',
