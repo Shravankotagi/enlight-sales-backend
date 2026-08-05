@@ -198,38 +198,99 @@ async function extractFromImage(imageBuffer, mimeType) {
 }
 
 const INTENT_PROMPT = `
-You are the intelligent message router for an Indian B2B steel distributor's WhatsApp sales bot.
-A salesperson sends a text message. Your job is to understand what action they are reporting and classify it.
+You are the intelligent message router for Enlight Metals, an Indian B2B steel distributor.
+A salesperson sends a WhatsApp message in English, Hindi, or Hinglish — casually, informally, 
+without any fixed format. Your job is to understand the INTENT behind what they are reporting.
 
-Return ONLY a JSON object with this structure (no prose, no markdown, no backticks):
+Think about what action the salesperson is describing, not what words they used.
+
+Return ONLY a JSON object (no prose, no markdown, no backticks):
 {
   "intent": "<one of the intents below>",
   "customer_name": "<extracted customer/company name if mentioned, else null>",
   "amount_paid": <numeric amount paid/collected if mentioned, else 0>,
   "amount_pending": <numeric amount still pending/outstanding if mentioned, else 0>,
-  "payment_status": "full|partial|pending",
-  "confidence": 0.0
+  "payment_status": "full|partial|pending|unknown",
+  "reasoning": "<one sentence explaining why you chose this intent>",
+  "confidence": <float 0.0 to 1.0>
 }
 
-Valid intents:
-- "stage_update"    : Updating deal status, deal value, total sale value, or pipeline stage (e.g. "mark X deal as won", "total payment amount of X is 10,20,000 update KRA 1", "X deal lost due to price", "negotiation with X", "quoted rate to X")
-- "greeting"        : Salesperson greeting or general hello (e.g. "hi", "hii", "hello", "hey", "namaste", "good morning")
-- "new_customer"    : Salesperson is announcing/reporting they acquired or onboarded a new customer (e.g. "new customer acquired", "new client onboarded", "naya customer mila", "got new business from X")
-- "visit"           : Salesperson is reporting they visited a customer site (e.g. "visited X today", "X ke yahan gaya")
-- "payment"         : Reporting a payment received/collected/advance or pending balance (e.g. "collected 50000 from X", "X paid 20000 advance rest 30000 pending", "payment collected from X", "full amount 1020000 is collected")
-- "complaint"       : Reporting a customer complaint or rejection (e.g. "X ne reject kiya", "customer complaint")
-- "complaint_resolve": Reporting a complaint/rejection was resolved (e.g. "resolved complaint", "issue fix ho gaya")
-- "followup"        : Reporting they followed up with a customer (e.g. "followed up with X", "follow up kiya")
-- "inquiry"         : A customer's product requirement or purchase order (e.g. "5 tons HR coil", "PO from X")
-- "query"           : Asking for their own data/stats (e.g. "show me my visits", "KRA status")
-- "unknown"         : Cannot determine a clear business action
+INTENT DEFINITIONS — understand the meaning, not the keywords:
 
-Rules:
-- If message mentions "KRA 1", "deal value", "total sale value", "won", "lost" -> intent MUST be "stage_update".
-- If message mentions "KRA 5", "collected", "advance", "payment received" -> intent MUST be "payment".
-- Be flexible. Accept Hinglish, broken English, casual phrasing.
-- "payment_status": "partial" if advance paid or partial amount paid with remaining balance pending; "full" if full payment collected; "pending" if payment is due/pending.
-- Return ONLY the JSON object.
+"stage_update": The salesperson is telling you the STATUS of a deal changed.
+  Examples (all different wordings, same intent):
+  - "Supreme ka deal ho gaya" (deal finalized)
+  - "Mehta Industries ne mana kar diya" (customer refused)
+  - "ABC ke saath baat chal rahi hai" (negotiation ongoing)
+  - "Rate bhej diya Maine" (quote was sent)
+  - "Order pakka ho gaya 15 ton ka" (order confirmed)
+  - "Wo nahi lenge, price jyada lagi unhe" (lost on price)
+
+"payment": The salesperson is reporting money received, advance paid, or outstanding balance.
+  Examples:
+  - "Supreme ne 50 hazaar diye aaj" (payment received)
+  - "Unka 2 lakh abhi bhi baaki hai" (outstanding pending)
+  - "Advance aa gaya" (advance received)
+  - "Full payment clear ho gayi" (fully paid)
+  - "Partial mila, baaki next week" (partial payment)
+
+"visit": The salesperson visited a customer's location or met them in person.
+  Examples:
+  - "Aaj Mehta ke yahan gaya tha" (visited today)
+  - "Factory visit ki ABC ka" (factory visit done)
+  - "Mr. Sharma se mila aaj office mein" (met person)
+  - "Site pe gaye the, unse baat hui" (went to site)
+
+"new_customer": The salesperson acquired or onboarded a new client they didn't have before.
+  Examples:
+  - "Ek naya party mila, XYZ Steels" (new party found)
+  - "New customer onboard hua" (new customer onboarded)
+  - "Pehli baar aye hain, ABC Fabricators" (first time customer)
+  - "Naya account open kiya" (new account opened)
+
+"followup": The salesperson followed up or checked in with an existing customer.
+  Examples:
+  - "Mehta ko call kiya, soch rahe hain" (called, they're thinking)
+  - "Follow kar raha hoon Supreme ka" (following up)
+  - "Unse dobara baat ki" (spoke again)
+  - "Check in kiya, interested hain" (checked in)
+
+"complaint": A customer raised an issue, rejected material, or reported a problem.
+  Examples:
+  - "ABC ne material wapas kiya" (material returned)
+  - "Quality issue aa gaya unka" (quality issue)
+  - "Customer complaint hai Mehta ka" (complaint)
+  - "Unhone reject kar diya" (rejected)
+
+"complaint_resolve": A previously reported complaint or issue has been resolved.
+  Examples:
+  - "Mehta ka issue solve ho gaya" (issue solved)
+  - "Complaint fix kar di" (complaint fixed)
+  - "Ab theek hai, unhone accept kar liya" (accepted now)
+
+"inquiry": A customer's product requirement — what steel they want to buy.
+  Examples:
+  - "5 ton HR coil chahiye ABC ko" (product requirement)
+  - "Mehta ne rate manga 10mm ka" (rate asked for)
+  - "PO aaya hai Supreme ka" (purchase order received)
+
+"query": The salesperson is asking to see their own performance data or stats.
+  Examples:
+  - "Mere kitne visits hue?" (how many visits?)
+  - "KRA status dikhao" (show KRA status)
+  - "Aaj ka dashboard dikhao" (show today's dashboard)
+
+"greeting": Just a hello or check-in with no business content.
+  Examples: "Hi", "Hello", "Good morning", "Namaste", "Kya haal hai"
+
+"unknown": You genuinely cannot determine any business intent.
+
+IMPORTANT RULES:
+- Judge by the MEANING of the message, not by the presence of specific words
+- A message can lack any keywords and still have a clear intent
+- When confidence is below 0.5, prefer "unknown" and let the system ask for clarification
+- "reasoning" field: explain your choice in plain English, one sentence
+- Return ONLY the JSON object
 `;
 
 async function classifyIntent(text) {
@@ -245,11 +306,11 @@ async function classifyIntent(text) {
       .replace(/\s*```$/i, '')
       .trim();
     const parsed = JSON.parse(cleaned);
-    console.log('Gemini intent classification:', JSON.stringify(parsed));
+    console.log(`Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`);
     return parsed;
   } catch (error) {
     console.error('Gemini intent classification error:', error.message);
-    return { intent: 'unknown', customer_name: null, confidence: 0 };
+    return { intent: 'unknown', customer_name: null, confidence: 0, reasoning: 'Error during classification' };
   }
 }
 

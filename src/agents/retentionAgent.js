@@ -7,6 +7,9 @@ const RETENTION_AGENT_PROMPT = `
 You are the Specialized Customer Retention AI Agent (KRA 3) for Enlight Metals.
 Your job is to parse customer follow-up reports, re-order inquiries, or client check-in notes.
 
+The salesperson message may be informal, in Hinglish, or missing expected keywords.
+Understand the meaning and context — do not look for specific words.
+
 Input message can be English, Hindi, or Hinglish.
 
 Extract into ONLY a JSON object (no prose, no markdown, no backticks):

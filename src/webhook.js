@@ -124,84 +124,103 @@ router.post('/', async (req, res) => {
           raw_text = raw_text.substring(0, 2000) + "... (truncated)";
         }
 
-        // --- GEMINI INTENT CLASSIFICATION (runs FIRST before saving to inquiries) ---
-        // This routes KRA action messages immediately without polluting the inquiries table
+        // --- GEMINI INTENT CLASSIFICATION (semantic routing) ---
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
+          const intent = await classifyIntent(raw_text);
 
-            const intent = await classifyIntent(raw_text);
-            console.log('Routing based on intent:', intent.intent, '| customer:', intent.customer_name, '| confidence:', intent.confidence);
+          // Low confidence — ask for clarification instead of guessing
+          if (intent.confidence < 0.5 && intent.intent === 'unknown') {
+            await sendTextMessage(
+              senderPhone,
+              `🤔 Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
+                `For example:\n` +
+                `• Deal update ke liye: "ABC ka deal won hua"\n` +
+                `• Payment ke liye: "Supreme ne 50000 diya"\n` +
+                `• Visit ke liye: "Aaj Mehta ke yahan gaya"`,
+            );
+            return;
+          }
 
-            // GREETING → Friendly welcome message & instructions
-            if (intent.intent === 'greeting' || ['hi', 'hii', 'hello', 'hey', 'namaste'].includes(raw_text.toLowerCase().trim())) {
+          switch (intent.intent) {
+            case 'greeting': {
               const empName = employeeRecord ? employeeRecord.name : senderName;
               await sendTextMessage(
                 senderPhone,
-                `👋 *Hello ${empName}!*\n\n` +
-                `Welcome to *Enlight Sales Bot* 🤖\n\n` +
-                `You can update your KRA Dashboard anytime by replying to this bot:\n` +
-                `• 📦 *Deals / PO*: Send PO details or photo\n` +
-                `• 🚗 *Visits*: "Visited Supreme Enterprises met Mr. Sharma"\n` +
-                `• 💰 *Payments*: "Supreme Enterprises paid 20000 advance rest 30000 pending"\n` +
-                `• 🚨 *Complaints*: "Quality complaint for Apex Steel"\n` +
-                `• 👤 *New Client*: "New customer onboarded ABC Steel"\n\n` +
-                `All updates sync live to your KRA Dashboard! ✅`
+                `👋 *Hello ${empName}!*\n\nEnlight Sales Bot ready hai. Kya update karna hai?\n\n` +
+                  `• Deal update, payment, visit, complaint — sab yahan log hoga ✅`,
               );
               return;
             }
 
-            // STAGE UPDATE / DEAL STATUS → Sales Achievement Agent (KRA 1 & Zoho Bigin)
-            if (intent.intent === 'stage_update' || raw_text.toLowerCase().includes('mark') && (raw_text.toLowerCase().includes('won') || raw_text.toLowerCase().includes('lost'))) {
-              const salesReply = await processSalesMessage(raw_text, senderPhone);
+            case 'stage_update': {
+              const salesReply = await processSalesMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, salesReply);
               return;
             }
 
-            // NEW CUSTOMER ACQUISITION → Customer Onboarding Agent (KRA 2)
-            if (intent.intent === 'new_customer' && intent.confidence >= 0.6) {
-              const customerReply = await processCustomerMessage(raw_text, senderPhone);
+            case 'new_customer': {
+              const customerReply = await processCustomerMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, customerReply);
               return;
             }
 
-            // VISIT LOG → Site Visit Agent (KRA 9)
-            if (intent.intent === 'visit' && intent.confidence >= 0.6) {
-              const visitReply = await processVisitMessage(raw_text, senderPhone);
+            case 'visit': {
+              const visitReply = await processVisitMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, visitReply);
               return;
             }
 
-            // PAYMENT UPDATE → Payment Collection Agent (KRA 5)
-            const isPaymentKeyword = ['payment', 'pending', 'baki', 'collected', 'paid', 'received', 'advance', 'due', 'outstanding'].some(w => raw_text.toLowerCase().includes(w));
-            if ((intent.intent === 'payment' || isPaymentKeyword) && !raw_text.toLowerCase().includes('mark') && !raw_text.toLowerCase().includes('won')) {
-              console.log('Routing to Payment Collection Agent (KRA 5)...');
-              const paymentReply = await processPaymentMessage(raw_text, senderPhone);
+            case 'payment': {
+              const paymentReply = await processPaymentMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, paymentReply);
               return;
             }
 
-            // COMPLAINT REPORT & RESOLUTION → Quality & Complaint Agent (KRA 7 & 8)
-            if ((intent.intent === 'complaint' || intent.intent === 'complaint_resolve') && intent.confidence >= 0.6) {
-              const complaintReply = await processComplaintMessage(raw_text, senderPhone);
+            case 'complaint':
+            case 'complaint_resolve': {
+              const complaintReply = await processComplaintMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, complaintReply);
               return;
             }
 
-            // FOLLOW-UP → Customer Retention Agent (KRA 3)
-            if (intent.intent === 'followup' && intent.confidence >= 0.6) {
-              const retentionReply = await processRetentionMessage(raw_text, senderPhone);
+            case 'followup': {
+              const retentionReply = await processRetentionMessage(
+                raw_text,
+                senderPhone,
+              );
               await sendTextMessage(senderPhone, retentionReply);
               return;
             }
 
-            // QUERY → show stats
-            if (intent.intent === 'query' && intent.confidence >= 0.6) {
+            case 'query': {
               const queryReply = await handleQuery(raw_text, senderPhone);
               await sendTextMessage(senderPhone, queryReply);
               return;
             }
 
-            // intent === 'inquiry' or 'unknown' → fall through to Gemini extraction below
-            console.log('Intent is inquiry/unknown — proceeding to extraction pipeline...');
+            case 'inquiry':
+            default:
+              // Fall through to extraction pipeline
+              console.log(
+                'Intent is inquiry/unknown — proceeding to extraction...',
+              );
+              break;
+          }
         }
         // --- END GEMINI INTENT CLASSIFICATION ---
 
