@@ -84,6 +84,35 @@ export class DealsService {
         .select()
         .single();
       if (error) throw error;
+
+      // Auto-sync to payment_tracking & kra_logs when marked as won on web UI
+      if (stage === 'won' && data) {
+        const amt = Number(data.total_amount) || 0;
+        if (amt > 0) {
+          const { data: existingPmt } = await this.supabase
+            .from('payment_tracking')
+            .select('id')
+            .eq('deal_id', id)
+            .limit(1);
+
+          if (!existingPmt || existingPmt.length === 0) {
+            const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+              .toISOString()
+              .split('T')[0];
+            await this.supabase.from('payment_tracking').insert({
+              deal_id: id,
+              customer_name: data.customer_name || 'Customer',
+              salesperson_phone: data.salesperson_phone,
+              invoice_amount: amt,
+              outstanding: amt,
+              credit_period_days: 30,
+              due_date: dueDate,
+              status: 'pending',
+            });
+          }
+        }
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStage for id ${id}:`, error);
