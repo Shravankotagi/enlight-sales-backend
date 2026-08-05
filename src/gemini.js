@@ -155,11 +155,11 @@ Return ONLY a JSON object with this structure (no prose, no markdown, no backtic
 }
 
 Valid intents:
-- "stage_update"    : Updating deal status or pipeline stage (e.g. "mark X deal as won", "X deal lost due to price", "negotiation with X", "quoted rate to X")
+- "stage_update"    : Updating deal status, deal value, total sale value, or pipeline stage (e.g. "mark X deal as won", "total payment amount of X is 10,20,000 update KRA 1", "X deal lost due to price", "negotiation with X", "quoted rate to X")
 - "greeting"        : Salesperson greeting or general hello (e.g. "hi", "hii", "hello", "hey", "namaste", "good morning")
 - "new_customer"    : Salesperson is announcing/reporting they acquired or onboarded a new customer (e.g. "new customer acquired", "new client onboarded", "naya customer mila", "got new business from X")
 - "visit"           : Salesperson is reporting they visited a customer site (e.g. "visited X today", "X ke yahan gaya")
-- "payment"         : Reporting a payment received/collected/advance or pending balance (e.g. "collected 50000 from X", "X paid 20000 advance rest 30000 pending", "payment collected from X")
+- "payment"         : Reporting a payment received/collected/advance or pending balance (e.g. "collected 50000 from X", "X paid 20000 advance rest 30000 pending", "payment collected from X", "full amount 1020000 is collected")
 - "complaint"       : Reporting a customer complaint or rejection (e.g. "X ne reject kiya", "customer complaint")
 - "complaint_resolve": Reporting a complaint/rejection was resolved (e.g. "resolved complaint", "issue fix ho gaya")
 - "followup"        : Reporting they followed up with a customer (e.g. "followed up with X", "follow up kiya")
@@ -168,6 +168,8 @@ Valid intents:
 - "unknown"         : Cannot determine a clear business action
 
 Rules:
+- If message mentions "KRA 1", "deal value", "total sale value", "won", "lost" -> intent MUST be "stage_update".
+- If message mentions "KRA 5", "collected", "advance", "payment received" -> intent MUST be "payment".
 - Be flexible. Accept Hinglish, broken English, casual phrasing.
 - "payment_status": "partial" if advance paid or partial amount paid with remaining balance pending; "full" if full payment collected; "pending" if payment is due/pending.
 - Return ONLY the JSON object.

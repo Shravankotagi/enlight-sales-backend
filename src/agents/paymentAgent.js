@@ -29,23 +29,41 @@ Return ONLY the JSON object.
 
 async function processPaymentMessage(text, senderPhone) {
   try {
+    // Pre-clean formatted numbers (e.g. 10,20,000 -> 1020000)
+    const cleanedText = text.replace(/(\d+),(\d+)/g, '$1$2').replace(/(\d+),(\d+)/g, '$1$2');
+
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const result = await model.generateContent(PAYMENT_AGENT_PROMPT + '\n\nSalesperson message:\n' + text);
+    const result = await model.generateContent(PAYMENT_AGENT_PROMPT + '\n\nSalesperson message:\n' + cleanedText);
     const rawText = result.response.text().trim();
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
+    let customerName = data.customer_name ? data.customer_name.trim() : null;
+
+    // Context Memory: Auto-fill recent customer name if missing in follow-up message
+    if (!customerName) {
+      const { data: recentDeals } = await supabase
+        .from('deals')
+        .select('customer_name')
+        .eq('salesperson_phone', senderPhone)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (recentDeals && recentDeals.length > 0 && recentDeals[0].customer_name) {
+        customerName = recentDeals[0].customer_name;
+      }
+    }
+
     // Accuracy Check: Missing Customer Name
-    if (!data.customer_name) {
+    if (!customerName) {
       return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Customer/Company Name* for this payment record so it can be logged accurately into your KRA 5 Dashboard.`;
     }
 
     // Accuracy Check: Missing Amount
     if (!data.amount_paid || data.amount_paid <= 0) {
-      return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Amount Paid/Collected (₹)* for ${data.customer_name}.`;
+      return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Amount Paid/Collected (₹)* for ${customerName}.`;
     }
 
-    const customerName = data.customer_name.trim();
     const amountPaid = Number(data.amount_paid);
     const amountPending = Number(data.amount_pending || 0);
 
