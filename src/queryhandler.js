@@ -275,6 +275,32 @@ async function getKRAStatus(senderPhone) {
 async function handleQuery(text, senderPhone) {
   const lower = text.toLowerCase();
 
+  // Check for other salesperson names to prevent unauthorized cross-queries
+  try {
+    const supabase = getSupabase();
+    const { data: otherEmployees } = await supabase
+      .from('employees')
+      .select('name')
+      .neq('phone', senderPhone);
+
+    if (otherEmployees && otherEmployees.length > 0) {
+      for (const emp of otherEmployees) {
+        if (emp.name) {
+          const empNameLower = emp.name.toLowerCase().trim();
+          const parts = empNameLower.split(/\s+/);
+          const isMatch = lower.includes(empNameLower) || 
+            parts.some(part => part.length > 3 && lower.includes(part));
+
+          if (isMatch) {
+            return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or KRA details of other salespeople. You can only query your own performance reports.`;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Cross-query check error:', err.message);
+  }
+
   // Dashboard Link / Login request
   const isLinkRequest = 
     lower.includes('link') || 
