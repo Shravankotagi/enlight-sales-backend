@@ -159,12 +159,15 @@ async function processComplaintMessage(text, senderPhone) {
           });
         }
 
+        const { getCustomerMissingInfoPrompt } = require('../supabase');
+        const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
         return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
           `Customer: *${finalCustomerName}*\n` +
           `Complaint Type: *${complaintType.toUpperCase()}*\n` +
           `Resolution Time: *${resolutionTimeHrs} Hours*\n` +
           `SLA Target (48h): *${isSlaCompliant ? '✅ Achieved — Within Target!' : '⚠️ Breached — Escalated!'}*\n\n` +
-          `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
+          `Updated KRA 8 Complaint Resolution Dashboard! ✅` + (missingPrompt || '');
 
       } else {
         // Edge Case 3: No prior open complaint found → create a backdated resolved record
@@ -190,10 +193,13 @@ async function processComplaintMessage(text, senderPhone) {
           year:  new Date().getFullYear(),
         });
 
+        const { getCustomerMissingInfoPrompt } = require('../supabase');
+        const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
         return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
           `Customer: *${finalCustomerName}*\n` +
           `_Note: No prior open complaint found. Created and resolved in one step._\n\n` +
-          `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
+          `Updated KRA 8 Complaint Resolution Dashboard! ✅` + (missingPrompt || '');
       }
     }
 
@@ -257,12 +263,15 @@ async function processComplaintMessage(text, senderPhone) {
       }
     }
 
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
     return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Type: *${complaintType.toUpperCase()}*\n` +
       `Details: ${description}\n` +
       `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n\n` +
-      `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ✅`;
+      `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ✅` + (missingPrompt || '');
 
   } catch (error) {
     console.error('Complaint Agent Error:', error.message);

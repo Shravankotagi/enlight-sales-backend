@@ -104,13 +104,21 @@ async function processCustomerMessage(text, senderPhone) {
 
     const customerName = data.customer_name.trim();
 
-    // Check if this customer already exists in recurring_customers
-    const { data: existing } = await supabase
-      .from('recurring_customers')
-      .select('id, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, notes')
-      .ilike('customer_name', `%${customerName}%`)
-      .limit(1);
+    // Verify and get official customer name from salesperson's registered customers (handles typos)
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
+    let existing = null;
+    if (officialCustomerName) {
+      const { data: found } = await supabase
+        .from('recurring_customers')
+        .select('id, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes')
+        .eq('customer_name', officialCustomerName)
+        .limit(1);
+      existing = found;
+    }
+
+    const finalCustomerName = officialCustomerName || customerName;
     const notesText = data.contact_person ? `Owner: ${data.contact_person}` : null;
     let isNewAcquisition = true;
 
@@ -128,10 +136,11 @@ async function processCustomerMessage(text, senderPhone) {
         .from('recurring_customers')
         .update({
           assigned_salesperson_phone: senderPhone,
-          customer_phone:    data.phone    || record.customer_phone    || null,
-          customer_gst:      data.gst      || record.customer_gst      || null,
-          customer_address:  data.city     || record.customer_address   || null,
-          notes:             notesText     || record.notes             || null,
+          customer_phone:    data.phone          || record.customer_phone    || null,
+          customer_gst:      data.gst            || record.customer_gst      || null,
+          customer_address:  data.city           || record.customer_address  || null,
+          contact_person:    data.contact_person || record.contact_person    || null,
+          notes:             notesText           || record.notes             || null,
           is_active:         true,
           updated_at:        new Date().toISOString(),
         })
@@ -139,10 +148,11 @@ async function processCustomerMessage(text, senderPhone) {
     } else {
       // Brand new customer
       await supabase.from('recurring_customers').insert({
-        customer_name:              customerName,
+        customer_name:              finalCustomerName,
         customer_phone:             data.phone || null,
         customer_gst:               data.gst   || null,
         customer_address:           data.city  || null,
+        contact_person:             data.contact_person || null,
         notes:                      notesText,
         assigned_salesperson_phone: senderPhone,
         is_active:                  true,
@@ -151,15 +161,15 @@ async function processCustomerMessage(text, senderPhone) {
     }
 
     // Edge Case 6: Only log KRA 2 once per customer per salesperson per month
-    const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, customerName);
+    const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
 
     if (isNewAcquisition && !alreadyLogged) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
         kra_number:        2,
         kra_type:          'new_customer',
-        customer_name:     customerName,
-        description:       `New Customer Onboarded: ${customerName}`,
+        customer_name:     finalCustomerName,
+        description:       `New Customer Onboarded: ${finalCustomerName}`,
         month:             new Date().getMonth() + 1,
         year:              new Date().getFullYear(),
       });
@@ -176,22 +186,22 @@ async function processCustomerMessage(text, senderPhone) {
     if (!data.gst)            missingInfo.push('• 🧾 *GSTIN* (optional)');
 
     const promptSuffix = missingInfo.length > 0
-      ? `\n\n📌 *To complete ${customerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
-        `\n\n_(e.g. "${customerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
+      ? `\n\n📌 *To complete ${finalCustomerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
+        `\n\n_(e.g. "${finalCustomerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
       : '';
 
     if (!isNewAcquisition || alreadyLogged) {
       return `✅ *Customer Profile Updated!*\n\n` +
-        `Company: *${customerName}*\n` +
+        `Company: *${finalCustomerName}*\n` +
         (data.contact_person ? `Contact: *${data.contact_person}*\n` : '') +
         (data.phone          ? `Phone: *${data.phone}*\n` : '') +
         (data.city           ? `City: *${data.city}*\n` : '') +
-        `\n_Note: ${customerName} was already onboarded. Profile updated — KRA 2 not re-counted._` +
+        `\n_Note: ${finalCustomerName} was already onboarded. Profile updated — KRA 2 not re-counted._` +
         promptSuffix;
     }
 
     return `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
-      `Company: *${customerName}*\n` +
+      `Company: *${finalCustomerName}*\n` +
       (data.contact_person ? `Contact/Owner: *${data.contact_person}*\n` : '') +
       (data.phone          ? `Phone: *${data.phone}*\n` : '') +
       (data.city           ? `City: *${data.city}*\n` : '') +

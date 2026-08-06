@@ -241,12 +241,12 @@ INTENT DEFINITIONS — understand the meaning, not the keywords:
   - "Mr. Sharma se mila aaj office mein" (met person)
   - "Site pe gaye the, unse baat hui" (went to site)
 
-"new_customer": The salesperson acquired or onboarded a new client they didn't have before.
+"new_customer": The salesperson acquired or onboarded a new client they didn't have before, OR they are updating an existing customer's contact details, owner name, phone, address, location, or GST.
   Examples:
   - "Ek naya party mila, XYZ Steels" (new party found)
   - "New customer onboard hua" (new customer onboarded)
-  - "Pehli baar aye hain, ABC Fabricators" (first time customer)
-  - "Naya account open kiya" (new account opened)
+  - "Delta Structural Steel phone 9876543210 owner Mr. Kapoor" (customer detail update)
+  - "Mehta Industries location Pune gst 27AAAAA1111A1Z1" (customer detail update)
 
 "followup": The salesperson followed up or checked in with an existing customer.
   Examples:

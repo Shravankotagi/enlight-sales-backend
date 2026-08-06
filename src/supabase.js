@@ -290,6 +290,38 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
   return null;
 }
 
+/**
+ * Checks if the customer has any missing fields (phone, gst, address, contact_person)
+ * in recurring_customers. If yes, returns a friendly prompt for the salesperson.
+ */
+async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
+  try {
+    const { data } = await supabase
+      .from('recurring_customers')
+      .select('customer_phone, customer_gst, customer_address, contact_person')
+      .ilike('customer_name', `%${customerName}%`)
+      .limit(1);
+
+    if (!data || data.length === 0) return '';
+
+    const customer = data[0];
+    const missing = [];
+    if (!customer.customer_phone)   missing.push('• 📱 *Mobile Number* (phone)');
+    if (!customer.contact_person)   missing.push('• 👤 *Contact Person / Owner* (owner)');
+    if (!customer.customer_address)  missing.push('• 📍 *City / Address* (location)');
+    if (!customer.customer_gst)      missing.push('• 🧾 *GSTIN* (gst)');
+
+    if (missing.length > 0) {
+      return `\n\n📌 *Missing profile details for ${customerName}:*\n` +
+        missing.join('\n') +
+        `\n\nTo update, reply: _"${customerName} [field] [value]"_`;
+    }
+  } catch (err) {
+    console.error('getCustomerMissingInfoPrompt error:', err.message);
+  }
+  return '';
+}
+
 // Export default and named exports
 module.exports = { 
   supabase, 
@@ -299,5 +331,6 @@ module.exports = {
   getEmployeeByPhone, 
   checkAndLogNewCustomer,
   fuzzyMatchCustomer,
-  verifyAndGetCustomerName
+  verifyAndGetCustomerName,
+  getCustomerMissingInfoPrompt
 };

@@ -135,6 +135,9 @@ async function processVisitMessage(text, senderPhone) {
       negative: '🔴',
     }[visitOutcome] || '🟡';
 
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
     return `🚗 *KRA 9 - Customer Visit Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       (personMet  ? `Person Met: *${personMet}*\n` : '') +
@@ -142,7 +145,7 @@ async function processVisitMessage(text, senderPhone) {
       `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n` +
       `Notes: ${remarks}\n` +
       `\nTotal Visits This Month: *${totalVisits}*\n\n` +
-      `Updated KRA 9 Customer Visit Dashboard! ✅`;
+      `Updated KRA 9 Customer Visit Dashboard! ✅` + (missingPrompt || '');
 
   } catch (error) {
     console.error('Visit Agent Error:', error.message);

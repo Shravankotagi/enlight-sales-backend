@@ -351,7 +351,9 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     lines.push(``, `Updated KRA 5 Payment Collection Dashboard! ✅`);
-    return lines.join('\n');
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+    return lines.join('\n') + (missingPrompt || '');
 
   } catch (error) {
     console.error('Payment Agent Error:', error.message);
@@ -451,7 +453,9 @@ Return ONLY JSON. No prose. No markdown.`;
       lines.push(`Status: *Fully Paid / Settled 🎉*`);
     }
     lines.push(``, `Updated KRA 5 Payment Collection Dashboard! ✅`);
-    return lines.join('\n');
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+    return lines.join('\n') + (missingPrompt || '');
 
   } catch (err) {
     console.error('Payment Image Agent Error:', err.message);

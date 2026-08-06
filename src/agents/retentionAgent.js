@@ -233,6 +233,9 @@ async function processRetentionMessage(text, senderPhone) {
 
     const followupCount = monthlyLogs ? monthlyLogs.length : 1;
 
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
     return `🔄 *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       (followupSummary !== 'Routine check-in' ? `Summary: *${followupSummary}*\n` : '') +
@@ -240,7 +243,7 @@ async function processRetentionMessage(text, senderPhone) {
         ? `Status: *Re-order Expected Soon 📦 — Follow-up task set for 7 days*\n`
         : `Status: *Follow-up Noted ✅*\n`) +
       `Monthly Follow-ups: *${followupCount} logged this month*\n\n` +
-      `Updated KRA 3 Customer Retention Dashboard! ✅`;
+      `Updated KRA 3 Customer Retention Dashboard! ✅` + (missingPrompt || '');
 
   } catch (error) {
     console.error('Retention Agent Error:', error.message);

@@ -479,6 +479,13 @@ router.post('/', async (req, res) => {
             (extraction.total_amount ? `\n💰 Total: ₹${extraction.total_amount.toLocaleString('en-IN')}\n` : '') +
             (extraction.delivery_date ? `📅 Delivery: ${extraction.delivery_date}\n` : '') +
             `\n🎯 Confidence: ${confidence}%`;
+
+          // Append missing customer profile info check
+          const { getCustomerMissingInfoPrompt } = require('./supabase');
+          const missingInfoPrompt = await getCustomerMissingInfoPrompt(deal.customer_name, senderPhone);
+          if (missingInfoPrompt) {
+            replyMessage += missingInfoPrompt;
+          }
         } else {
           if (mediaDownloadFailed) {
             replyMessage = `⚠️ *Download Error*\n\n` +

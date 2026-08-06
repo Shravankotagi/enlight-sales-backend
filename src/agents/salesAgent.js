@@ -297,14 +297,16 @@ async function processSalesMessage(text, senderPhone) {
     syncToBigin(finalCustomerName, dbStage, dealAmount, data.po_number, senderPhone);
 
     // Build reply
+    // Build reply
+    let replyMsg = '';
     if (dbStage === 'won') {
-      return `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
+      replyMsg = `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Stage: *Closed Won 🎉*\n` +
         (dealAmount > 0 ? `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n` : '') +
         `\nUpdated KRA 1 Sales Achievement Dashboard! ✅`;
     } else if (dbStage === 'lost') {
-      return `❌ *Deal Marked as LOST*\n\n` +
+      replyMsg = `❌ *Deal Marked as LOST*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Stage: *Closed Lost*\n` +
         (data.loss_reason ? `Reason: ${data.loss_reason}\n` : '') +
@@ -315,11 +317,15 @@ async function processSalesMessage(text, senderPhone) {
         quoted:      'QUOTED 📄',
         qualified:   'QUALIFIED ✅',
       };
-      return `🔄 *Pipeline Stage Updated!*\n\n` +
+      replyMsg = `🔄 *Pipeline Stage Updated!*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `New Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n\n` +
         `Synced live to Sales Dashboard! ✅`;
     }
+
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+    return replyMsg + (missingPrompt || '');
 
   } catch (error) {
     console.error('Sales Agent Error:', error.message);
@@ -482,12 +488,15 @@ Return ONLY JSON. No prose. No markdown.`;
 
     syncToBigin(finalCustomerName, 'won', totalValue, data.po_number, senderPhone);
 
+    const { getCustomerMissingInfoPrompt } = require('../supabase');
+    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
     return `📦 *PO Document Processed & Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       (data.po_number ? `PO Number: *${data.po_number}*\n` : '') +
       (totalValue > 0 ? `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` : '') +
       `Stage: *Closed Won 🎉*\n\n` +
-      `Logged to KRA 1 Sales Achievement Dashboard! ✅`;
+      `Logged to KRA 1 Sales Achievement Dashboard! ✅` + (missingPrompt || '');
 
   } catch (err) {
     console.error('Sales Image Agent Error:', err.message);
