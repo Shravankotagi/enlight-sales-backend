@@ -165,8 +165,8 @@ router.post('/', async (req, res) => {
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
           const intent = await classifyIntent(raw_text);
 
-          // Low confidence — ask for clarification instead of guessing
-          if (intent.confidence < 0.5 && intent.intent === 'unknown') {
+          // Reject any unrelated or unknown intents immediately
+          if (intent.intent === 'unknown') {
             await sendTextMessage(
               senderPhone,
               `🤔 Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
@@ -551,11 +551,11 @@ router.post('/', async (req, res) => {
           } else if (messageType === 'audio' && !extraction) {
             replyMessage = `Voice note received but transcription failed. Please send as text.`;
           } else {
-            const cleanRef = messageId.replace('wamid.', '').substring(0, 10);
-            replyMessage = `✅ *Inquiry Received*\n\n` +
-              `Logged by: *${employeeRecord?.name || senderName}*\n` +
-              `Reference: ${cleanRef}\n\n` +
-              `We have logged your message.`;
+            replyMessage = `🤔 Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
+              `For example:\n` +
+              `• Deal update ke liye: "ABC ka deal won hua"\n` +
+              `• Payment ke liye: "Supreme ne 50000 diya"\n` +
+              `• Visit ke liye: "Aaj Mehta ke yahan gaya"`;
           }
         }
         // --- END GEMINI EXTRACTION ---
