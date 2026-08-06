@@ -161,6 +161,88 @@ router.post('/', async (req, res) => {
           raw_text = raw_text.substring(0, 2000) + "... (truncated)";
         }
 
+        // --- CHECK ACTIVE REJECTION FLOWS (multi-turn logic) ---
+        const { getFullActiveSession, saveActiveSession } = require('./supabase');
+        const activeSession = await getFullActiveSession(senderPhone);
+        
+        if (activeSession && activeSession.last_intent && activeSession.last_intent.startsWith('pending_loss_reason|')) {
+          const parts = activeSession.last_intent.split('|');
+          const dealId = parts[1];
+          const customerName = parts[2];
+
+          const MAP_REASONS = {
+            '1': 'Price',
+            '2': 'Credit terms',
+            '3': 'Delivery timeline',
+            '4': 'Material unavailable',
+            '5': 'Spec mismatch',
+            '6': 'Competitor relationship',
+            '7': 'Customer silent',
+            '8': 'Cancelled by customer'
+          };
+
+          // Clean up response input
+          const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+          let selectedReason = cleanInput;
+          if (MAP_REASONS[cleanInput]) {
+            selectedReason = MAP_REASONS[cleanInput];
+          } else {
+            // Check if input starts with a number like "1. price"
+            const numMatch = cleanInput.match(/^([1-8])/);
+            if (numMatch && MAP_REASONS[numMatch[1]]) {
+              selectedReason = MAP_REASONS[numMatch[1]];
+            } else {
+              // Otherwise, use the user's custom typed reason
+              selectedReason = raw_text;
+            }
+          }
+
+          // Fetch current deal amount to pass to KRA logs
+          let dealAmount = 0;
+          const { data: dealRow } = await supabase
+            .from('deals')
+            .select('total_amount')
+            .eq('id', dealId)
+            .limit(1);
+          if (dealRow && dealRow.length > 0) {
+            dealAmount = Number(dealRow[0].total_amount || 0);
+          }
+
+          // 1. Update deal to lost stage
+          await supabase
+            .from('deals')
+            .update({
+              stage: 'lost',
+              loss_reason: selectedReason,
+            })
+            .eq('id', dealId);
+
+          // 2. Log to KRA 4 logs
+          await supabase.from('kra_logs').insert({
+            salesperson_phone: senderPhone,
+            kra_number:        4,
+            kra_type:          'deal_lost',
+            value:             dealAmount,
+            customer_name:     customerName,
+            description:       `Deal Lost: ${customerName} — Reason: ${selectedReason}`,
+            month: new Date().getMonth() + 1,
+            year:  new Date().getFullYear(),
+          });
+
+          // 3. Clear/Reset session intent to general so we exit the loss flow
+          await saveActiveSession(senderPhone, customerName, 'general');
+
+          // Send confirmation
+          const reply = `❌ *Deal Marked as LOST*\n\n` +
+            `Customer: *${customerName}*\n` +
+            `Stage: *Closed Lost*\n` +
+            `Reason: *${selectedReason}*\n\n` +
+            `Updated Loss Analytics Dashboard! 📉`;
+
+          await sendTextMessage(senderPhone, reply);
+          return;
+        }
+
         // --- GEMINI INTENT CLASSIFICATION (semantic routing) ---
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
           const intent = await classifyIntent(raw_text);

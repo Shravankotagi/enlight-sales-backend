@@ -369,6 +369,33 @@ async function getActiveSession(salespersonPhone) {
   return null;
 }
 
+/**
+ * Retrieves the full active session object for a salesperson if updated in the last 15 minutes.
+ */
+async function getFullActiveSession(salespersonPhone) {
+  if (!salespersonPhone) return null;
+  try {
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('conversation_sessions')
+      .select('*')
+      .eq('salesperson_phone', salespersonPhone)
+      .gte('updated_at', fifteenMinutesAgo)
+      .limit(1);
+
+    if (error) {
+      console.error('getFullActiveSession error:', error.message);
+      return null;
+    }
+    if (data && data.length > 0) {
+      return data[0];
+    }
+  } catch (err) {
+    console.error('getFullActiveSession catch:', err.message);
+  }
+  return null;
+}
+
 // Export default and named exports
 module.exports = { 
   supabase, 
@@ -381,5 +408,6 @@ module.exports = {
   verifyAndGetCustomerName,
   getCustomerMissingInfoPrompt,
   saveActiveSession,
-  getActiveSession
+  getActiveSession,
+  getFullActiveSession
 };

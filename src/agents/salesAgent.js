@@ -84,18 +84,7 @@ async function findBestDeal(customerName, senderPhone) {
 
   if (ownActive && ownActive.length > 0) return ownActive[0];
 
-  // 2. Own deals, any stage (maybe re-updating a won deal)
-  const { data: ownAny } = await supabase
-    .from('deals')
-    .select('*')
-    .ilike('customer_name', `%${customerName}%`)
-    .eq('salesperson_phone', senderPhone)
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (ownAny && ownAny.length > 0) return ownAny[0];
-
-  // 3. Global search — active stages
+  // 2. Global search — active stages
   const { data: globalActive } = await supabase
     .from('deals')
     .select('*')
@@ -105,16 +94,6 @@ async function findBestDeal(customerName, senderPhone) {
     .limit(1);
 
   if (globalActive && globalActive.length > 0) return globalActive[0];
-
-  // 4. Global search — any stage
-  const { data: globalAny } = await supabase
-    .from('deals')
-    .select('*')
-    .ilike('customer_name', `%${customerName}%`)
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (globalAny && globalAny.length > 0) return globalAny[0];
 
   return null;
 }
@@ -239,12 +218,58 @@ async function processSalesMessage(text, senderPhone) {
       }
 
       if (dbStage === 'lost') {
-        updatePayload.loss_reason = data.loss_reason || 'Not specified';
+        // If loss reason is present and valid, process loss update. Otherwise trigger interactive prompt.
+        if (data.loss_reason && data.loss_reason !== 'Not specified' && data.loss_reason.length > 2) {
+          updatePayload.loss_reason = data.loss_reason;
+        } else {
+          const { saveActiveSession } = require('../supabase');
+          await saveActiveSession(senderPhone, finalCustomerName, `pending_loss_reason|${dealId}|${finalCustomerName}`);
+          return `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
+            `Please reply with the reason for rejection (reply with a number or type your own reason):\n\n` +
+            `1️⃣ Price too high\n` +
+            `2️⃣ Credit terms / Payment terms mismatch\n` +
+            `3️⃣ Delivery timeline delay\n` +
+            `4️⃣ Material unavailable / Out of stock\n` +
+            `5️⃣ Spec mismatch\n` +
+            `6️⃣ Competitor relationship\n` +
+            `7️⃣ Customer silent / No response\n` +
+            `8️⃣ Cancelled by customer`;
+        }
       }
 
       await supabase.from('deals').update(updatePayload).eq('id', dealId);
     } else {
       // ---- CREATE new deal ----
+      if (dbStage === 'lost' && (!data.loss_reason || data.loss_reason === 'Not specified')) {
+        // Find or create a temporary deal first so we can capture a loss reason for it
+        const { data: tempDeal } = await supabase
+          .from('deals')
+          .insert({
+            customer_name:     finalCustomerName,
+            salesperson_phone: senderPhone,
+            stage:             'negotiation',
+            total_amount:      dealAmount || 0,
+            inquiry_type:      'inquiry',
+          })
+          .select()
+          .single();
+
+        if (tempDeal) {
+          const { saveActiveSession } = require('../supabase');
+          await saveActiveSession(senderPhone, finalCustomerName, `pending_loss_reason|${tempDeal.id}|${finalCustomerName}`);
+          return `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
+            `Please reply with the reason for rejection (reply with a number or type your own reason):\n\n` +
+            `1️⃣ Price too high\n` +
+            `2️⃣ Credit terms / Payment terms mismatch\n` +
+            `3️⃣ Delivery timeline delay\n` +
+            `4️⃣ Material unavailable / Out of stock\n` +
+            `5️⃣ Spec mismatch\n` +
+            `6️⃣ Competitor relationship\n` +
+            `7️⃣ Customer silent / No response\n` +
+            `8️⃣ Cancelled by customer`;
+        }
+      }
+
       const { data: newDeal } = await supabase
         .from('deals')
         .insert({
@@ -254,7 +279,7 @@ async function processSalesMessage(text, senderPhone) {
           total_amount:      dealAmount || 0,
           inquiry_type:      'inquiry',
           won_at:            dbStage === 'won' ? new Date().toISOString() : null,
-          loss_reason:       dbStage === 'lost' ? (data.loss_reason || 'Not specified') : null,
+          loss_reason:       dbStage === 'lost' ? data.loss_reason : null,
         })
         .select()
         .single();
