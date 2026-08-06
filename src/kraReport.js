@@ -98,8 +98,12 @@ async function generateFullKRAReport(senderPhone) {
       ? Math.round((recurringWithOrder / recurring.length) * 100)
       : 0;
 
-    // KRA 4 - Enquiry Conversion
-    const totalInquiries = inquiries.length;
+    // KRA 4 - Enquiry Conversion (accurate: use kra_logs inquiry_received vs won deals)
+    // Using kra_logs prevents double-counting when same customer sends multiple messages
+    const kra4InquiryLogs = kraLogs.filter(
+      l => l.kra_number === 4 && l.kra_type === 'inquiry_received'
+    );
+    const totalInquiries = kra4InquiryLogs.length || inquiries.length; // fallback to raw inquiries
     const conversionRate = totalInquiries > 0
       ? Math.round((wonDeals / totalInquiries) * 100)
       : 0;
@@ -118,13 +122,14 @@ async function generateFullKRAReport(senderPhone) {
       (sum, p) => sum + (p.outstanding || 0), 0
     );
 
-    // KRA 6 - CRM Compliance (based on daily logging)
+    // KRA 6 - CRM Compliance (accurate: count distinct days with ANY kra_log OR deal/inquiry activity)
     const workingDays = 26;
-    const daysWithActivity = new Set(
-      [...deals, ...inquiries].map(
-        item => new Date(item.created_at).toDateString()
-      )
-    ).size;
+    const activityDates = new Set([
+      ...kraLogs.map(l => new Date(l.created_at).toDateString()),
+      ...deals.map(d => new Date(d.created_at).toDateString()),
+      ...inquiries.map(i => new Date(i.created_at).toDateString()),
+    ]);
+    const daysWithActivity = activityDates.size;
     const crmCompliance = Math.min(
       100, Math.round((daysWithActivity / workingDays) * 100)
     );

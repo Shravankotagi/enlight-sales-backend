@@ -20,6 +20,43 @@ const { processVisitMessage } = require('./agents/visitAgent');
 const { processRetentionMessage } = require('./agents/retentionAgent');
 
 /**
+ * KRA 6 - CRM Compliance Logger
+ * Logs every business activity by a salesperson as a daily CRM touch.
+ * Called for every non-greeting, non-query intent so daily compliance is accurately tracked.
+ * Uses upsert-by-date so only ONE log per salesperson per day per intent type is created.
+ */
+async function logKRA6Activity(senderPhone, activityType, customerName) {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // Check if we already logged KRA 6 for this salesperson today with this activity type
+    const { data: existing } = await supabase
+      .from('kra_logs')
+      .select('id')
+      .eq('salesperson_phone', senderPhone)
+      .eq('kra_number', 6)
+      .eq('kra_type', activityType)
+      .gte('created_at', `${today}T00:00:00.000Z`)
+      .lte('created_at', `${today}T23:59:59.999Z`)
+      .limit(1);
+
+    if (existing && existing.length > 0) return; // Already logged today for this activity
+
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number:        6,
+      kra_type:          activityType,
+      customer_name:     customerName || null,
+      description:       `CRM Activity: ${activityType} logged via WhatsApp bot`,
+      month: new Date().getMonth() + 1,
+      year:  new Date().getFullYear(),
+    });
+  } catch (err) {
+    console.error('KRA 6 logging error (non-critical):', err.message);
+    // Non-critical — never block the main flow
+  }
+}
+
+/**
  * GET /webhook
  * Verification endpoint for Meta Webhook setup.
  */
@@ -158,6 +195,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, salesReply);
+              logKRA6Activity(senderPhone, 'stage_update', intent.customer_name);
               return;
             }
 
@@ -167,6 +205,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, customerReply);
+              logKRA6Activity(senderPhone, 'new_customer', intent.customer_name);
               return;
             }
 
@@ -176,6 +215,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, visitReply);
+              logKRA6Activity(senderPhone, 'visit_log', intent.customer_name);
               return;
             }
 
@@ -185,6 +225,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, paymentReply);
+              logKRA6Activity(senderPhone, 'payment_update', intent.customer_name);
               return;
             }
 
@@ -195,6 +236,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, complaintReply);
+              logKRA6Activity(senderPhone, 'complaint_log', intent.customer_name);
               return;
             }
 
@@ -204,6 +246,7 @@ router.post('/', async (req, res) => {
                 senderPhone,
               );
               await sendTextMessage(senderPhone, retentionReply);
+              logKRA6Activity(senderPhone, 'followup_log', intent.customer_name);
               return;
             }
 
@@ -351,6 +394,43 @@ router.post('/', async (req, res) => {
             await checkAndLogNewCustomer(deal, senderPhone);
           }
           // --- END KRA 2 CHECK ---
+
+          // --- KRA 4 INQUIRY TRACKING ---
+          // Log KRA 4 for every accepted inquiry so conversion rate is tracked accurately.
+          // Only log once per deal (check by deal_id or customer_name + month)
+          try {
+            const month = new Date().getMonth() + 1;
+            const year  = new Date().getFullYear();
+            const { data: kra4Existing } = await supabase
+              .from('kra_logs')
+              .select('id')
+              .eq('salesperson_phone', senderPhone)
+              .eq('kra_number', 4)
+              .eq('kra_type', 'inquiry_received')
+              .ilike('customer_name', `%${deal.customer_name}%`)
+              .eq('month', month)
+              .eq('year', year)
+              .limit(1);
+
+            if (!kra4Existing || kra4Existing.length === 0) {
+              await supabase.from('kra_logs').insert({
+                salesperson_phone: senderPhone,
+                kra_number:        4,
+                kra_type:          'inquiry_received',
+                customer_name:     deal.customer_name,
+                value:             deal.total_amount || 0,
+                description:       `Inquiry logged: ${deal.customer_name} (${extraction.inquiry_type})`,
+                month,
+                year,
+              });
+            }
+          } catch (kra4Err) {
+            console.error('KRA 4 log error (non-critical):', kra4Err.message);
+          }
+          // --- END KRA 4 INQUIRY TRACKING ---
+
+          // KRA 6 for inquiry/PO submission
+          logKRA6Activity(senderPhone, 'inquiry_submitted', deal.customer_name);
         }
 
         // Build smart reply based on extraction
