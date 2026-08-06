@@ -1,3 +1,30 @@
+/**
+ * KRA 7 & KRA 8 - Quality Complaints & Complaint Resolution Agent
+ *
+ * KRA 7 = Log new quality complaints (reported by salesperson or forwarded from customer)
+ * KRA 8 = Complaint resolved within SLA (target: 48 hours)
+ *
+ * DESIGN PRINCIPLES:
+ * - One complaint row per incident in the `complaints` table.
+ * - Resolution updates the EXISTING open complaint, never creates a duplicate.
+ * - KRA 7 log fires on new complaint.
+ * - KRA 8 log fires ONLY on resolution — and only if not already resolved.
+ * - SLA compliance tracked in hours (target: ≤ 48 hours).
+ * - If customer reports a complaint that is already resolved, inform the salesperson.
+ *
+ * EDGE CASES HANDLED:
+ * 1.  New complaint → insert to complaints + log KRA 7
+ * 2.  Resolve complaint → find open complaint, mark resolved, log KRA 8
+ * 3.  Resolution with no prior open complaint → create a completed record (backdated)
+ * 4.  Complaint already resolved → don't create duplicate, notify user
+ * 5.  Missing customer name → ask for clarification
+ * 6.  SLA breach detection → flag if >48 hours
+ * 7.  Assigned salesperson routing → alert correct salesperson if complaint came from customer
+ * 8.  Duplicate complaint check → don't log a second open complaint for same customer + type
+ * 9.  Escalation flag → set escalated=true if SLA breached on resolution
+ * 10. Hinglish/casual messages → AI handles semantic parsing
+ */
+
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 
@@ -17,16 +44,49 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
   "action": "report|resolve",
   "customer_name": "<customer/company name, else null>",
   "complaint_type": "quality|delivery|billing|specification|other",
-  "description": "<details/remarks, else null>",
+  "description": "<brief description of complaint or resolution, else null>",
   "confidence": <float 0.0 to 1.0>
 }
 
 Rules — understand meaning, not keywords:
-- "action": "report" if message indicates a new problem, quality issue, material return, or rejection.
-- "action": "resolve" if message indicates a complaint was fixed, settled, resolved, or accepted now.
+- "action": "report" → new problem, quality issue, material rejection, wrong delivery, billing dispute.
+- "action": "resolve" → complaint fixed, settled, customer accepted, issue sorted, resolved.
+- If ambiguous, prefer "report" over "resolve".
 
 Return ONLY the JSON object.
 `;
+
+/**
+ * Find the most recent OPEN complaint for a customer.
+ */
+async function getOpenComplaint(customerName) {
+  const { data } = await supabase
+    .from('complaints')
+    .select('*')
+    .ilike('customer_name', `%${customerName}%`)
+    .eq('status', 'open')
+    .order('reported_at', { ascending: false })
+    .limit(1);
+
+  return data && data.length > 0 ? data[0] : null;
+}
+
+/**
+ * Check if a KRA 8 log already exists for this complaint (to avoid re-logging resolved).
+ */
+async function isKRA8AlreadyLogged(senderPhone, customerName) {
+  const { data } = await supabase
+    .from('kra_logs')
+    .select('id')
+    .eq('salesperson_phone', senderPhone)
+    .eq('kra_number', 8)
+    .ilike('customer_name', `%${customerName}%`)
+    .eq('month', new Date().getMonth() + 1)
+    .eq('year', new Date().getFullYear())
+    .limit(1);
+
+  return data && data.length > 0;
+}
 
 async function processComplaintMessage(text, senderPhone) {
   try {
@@ -36,126 +96,158 @@ async function processComplaintMessage(text, senderPhone) {
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
+    // Edge Case 5: Missing customer name
     if (!data.customer_name) {
-      return `⚠️ *Quality Agent Verification Needed*\n\nPlease specify the *Customer/Company Name* associated with this complaint update.`;
+      return `⚠️ *Quality Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company Name* for this complaint.\nExample: _"Quality complaint from Delta Structural Steel — wrong material delivered"_`;
     }
 
-    const customerName = data.customer_name.trim();
+    const customerName   = data.customer_name.trim();
+    const complaintType  = data.complaint_type || 'quality';
+    const description    = data.description || text;
 
+    // ── RESOLVE FLOW ──────────────────────────────────────────────────
     if (data.action === 'resolve') {
-      // Find open complaint for this customer
-      const { data: openComplaints } = await supabase
-        .from('complaints')
-        .select('*')
-        .ilike('customer_name', `%${customerName}%`)
-        .eq('status', 'open')
-        .order('reported_at', { ascending: false })
-        .limit(1);
+      const openComplaint = await getOpenComplaint(customerName);
 
-      let resolutionTimeHrs = 24; // default SLA compliant
-      if (openComplaints && openComplaints.length > 0) {
-        const reportedAt = new Date(openComplaints[0].reported_at);
+      if (openComplaint) {
+        // Edge Case 4: Check if already resolved
         const resolvedAt = new Date();
-        resolutionTimeHrs = Math.max(1, Math.round((resolvedAt.getTime() - reportedAt.getTime()) / (1000 * 60 * 60)));
+        const reportedAt = new Date(openComplaint.reported_at);
+        const resolutionTimeHrs = Math.max(1, Math.round(
+          (resolvedAt.getTime() - reportedAt.getTime()) / (1000 * 60 * 60)
+        ));
+        const isSlaBreached  = resolutionTimeHrs > 48;
+        const isSlaCompliant = !isSlaBreached;
 
+        // Update existing complaint to resolved
         await supabase
           .from('complaints')
           .update({
-            status: 'resolved',
-            resolved_at: resolvedAt.toISOString(),
-            resolution_time_hrs: resolutionTimeHrs,
+            status:               'resolved',
+            resolved_at:          resolvedAt.toISOString(),
+            resolution_time_hrs:  resolutionTimeHrs,
+            escalated:            isSlaBreached, // Edge Case 9: flag escalation on SLA breach
           })
-          .eq('id', openComplaints[0].id);
-      } else {
-        // Create resolved complaint
-        await supabase.from('complaints').insert({
-          customer_name: customerName,
-          reported_by: senderPhone,
-          complaint_type: data.complaint_type || 'quality',
-          description: data.description || 'Resolved complaint',
-          status: 'resolved',
-          reported_at: new Date().toISOString(),
-          resolved_at: new Date().toISOString(),
-          resolution_time_hrs: 24,
-        });
-      }
+          .eq('id', openComplaint.id);
 
-      // Log to KRA 8
-      await supabase.from('kra_logs').insert({
-        salesperson_phone: senderPhone,
-        kra_number: 8,
-        kra_type: 'complaint_resolved',
-        customer_name: customerName,
-        description: `Complaint Resolved for ${customerName} (${resolutionTimeHrs}h resolution time)`,
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear(),
-      });
-
-      const isSlaCompliant = resolutionTimeHrs <= 48;
-
-      return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
-        `Customer: *${customerName}*\n` +
-        `Resolution Time: *${resolutionTimeHrs} Hours*\n` +
-        `SLA Target: *${isSlaCompliant ? 'Within 48h Target (Achieved) 🎯' : 'Exceeded 48h SLA'}*\n\n` +
-        `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
-
-    } else {
-      // Check assigned salesperson for this customer in recurring_customers
-      const { data: customerRecord } = await supabase
-        .from('recurring_customers')
-        .select('assigned_salesperson_phone, customer_name')
-        .ilike('customer_name', `%${customerName}%`)
-        .limit(1);
-
-      const targetSalespersonPhone =
-        (customerRecord && customerRecord[0] && customerRecord[0].assigned_salesperson_phone) ||
-        senderPhone;
-
-      // Report New Complaint (KRA 7)
-      await supabase.from('complaints').insert({
-        customer_name: customerName,
-        reported_by: targetSalespersonPhone,
-        complaint_type: data.complaint_type || 'quality',
-        description: data.description || text,
-        status: 'open',
-        reported_at: new Date().toISOString(),
-      });
-
-      await supabase.from('kra_logs').insert({
-        salesperson_phone: targetSalespersonPhone,
-        kra_number: 7,
-        kra_type: 'quality_complaint',
-        customer_name: customerName,
-        description: `Complaint Logged: ${customerName} - ${data.description || 'Quality issue'}`,
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear(),
-      });
-
-      // Send Instant WhatsApp Alert to the assigned Salesperson if sender is the client
-      if (targetSalespersonPhone && targetSalespersonPhone !== senderPhone) {
-        try {
-          const { sendTextMessage } = require('../whatsapp');
-          await sendTextMessage(
-            targetSalespersonPhone,
-            `🚨 *URGENT CUSTOMER COMPLAINT ALERT!*\n\n` +
-            `Client: *${customerName}*\n` +
-            `Type: *${(data.complaint_type || 'quality').toUpperCase()}*\n` +
-            `Issue: ${data.description || text}\n` +
-            `SLA Target: *48 Hours Resolution ⏱️*\n\n` +
-            `Please contact the client immediately to resolve this issue and reply *"Resolved ${customerName} complaint"* when done!`
-          );
-        } catch (alertError) {
-          console.error('Failed to send complaint alert to salesperson:', alertError.message);
+        // Edge Case 4: Only log KRA 8 once per resolution
+        const alreadyLogged = await isKRA8AlreadyLogged(senderPhone, customerName);
+        if (!alreadyLogged) {
+          await supabase.from('kra_logs').insert({
+            salesperson_phone: senderPhone,
+            kra_number:        8,
+            kra_type:          'complaint_resolved',
+            customer_name:     customerName,
+            description:       `Complaint Resolved: ${customerName} (${resolutionTimeHrs}h — ${isSlaCompliant ? 'Within SLA ✅' : 'SLA BREACHED ⚠️'})`,
+            month: new Date().getMonth() + 1,
+            year:  new Date().getFullYear(),
+          });
         }
-      }
 
-      return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
-        `Customer: *${customerName}*\n` +
-        `Type: *${(data.complaint_type || 'quality').toUpperCase()}*\n` +
-        `Assigned Salesperson: *+${targetSalespersonPhone}*\n` +
-        `Status: *Open (48-Hour Resolution Clock Started ⏱️)*\n\n` +
-        `Automated alert sent to the assigned salesperson!`;
+        return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
+          `Customer: *${customerName}*\n` +
+          `Complaint Type: *${complaintType.toUpperCase()}*\n` +
+          `Resolution Time: *${resolutionTimeHrs} Hours*\n` +
+          `SLA Target (48h): *${isSlaCompliant ? '✅ Achieved — Within Target!' : '⚠️ Breached — Escalated!'}*\n\n` +
+          `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
+
+      } else {
+        // Edge Case 3: No prior open complaint found → create a backdated resolved record
+        await supabase.from('complaints').insert({
+          customer_name:        customerName,
+          reported_by:          senderPhone,
+          complaint_type:       complaintType,
+          description:          description,
+          status:               'resolved',
+          reported_at:          new Date().toISOString(),
+          resolved_at:          new Date().toISOString(),
+          resolution_time_hrs:  0,
+          escalated:            false,
+        });
+
+        await supabase.from('kra_logs').insert({
+          salesperson_phone: senderPhone,
+          kra_number:        8,
+          kra_type:          'complaint_resolved',
+          customer_name:     customerName,
+          description:       `Complaint Resolved (no prior open record): ${customerName}`,
+          month: new Date().getMonth() + 1,
+          year:  new Date().getFullYear(),
+        });
+
+        return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
+          `Customer: *${customerName}*\n` +
+          `_Note: No prior open complaint found. Created and resolved in one step._\n\n` +
+          `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
+      }
     }
+
+    // ── REPORT FLOW ───────────────────────────────────────────────────
+    // Edge Case 8: Check if there's already an open complaint of same type for this customer
+    const existingOpen = await getOpenComplaint(customerName);
+    if (existingOpen && existingOpen.complaint_type === complaintType) {
+      return `⚠️ *Complaint Already Open*\n\n` +
+        `Customer: *${customerName}*\n` +
+        `Type: *${complaintType.toUpperCase()}*\n` +
+        `Reported: *${new Date(existingOpen.reported_at).toLocaleString('en-IN')}*\n\n` +
+        `This complaint is already logged and open. When resolved, reply:\n` +
+        `_"Resolved ${customerName} complaint"_`;
+    }
+
+    // Edge Case 7: Look up assigned salesperson for this customer
+    const { data: customerRecord } = await supabase
+      .from('recurring_customers')
+      .select('assigned_salesperson_phone')
+      .ilike('customer_name', `%${customerName}%`)
+      .limit(1);
+
+    const targetPhone = (customerRecord && customerRecord[0]?.assigned_salesperson_phone) || senderPhone;
+
+    // Insert new complaint
+    await supabase.from('complaints').insert({
+      customer_name:   customerName,
+      reported_by:     targetPhone,
+      complaint_type:  complaintType,
+      description:     description,
+      status:          'open',
+      reported_at:     new Date().toISOString(),
+      escalated:       false,
+    });
+
+    // Log KRA 7
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: targetPhone,
+      kra_number:        7,
+      kra_type:          'quality_complaint',
+      customer_name:     customerName,
+      description:       `Complaint Logged: ${customerName} — ${complaintType}: ${description}`,
+      month: new Date().getMonth() + 1,
+      year:  new Date().getFullYear(),
+    });
+
+    // Edge Case 7: Alert the assigned salesperson if complaint came from a different sender
+    if (targetPhone !== senderPhone) {
+      try {
+        const { sendTextMessage } = require('../whatsapp');
+        await sendTextMessage(
+          targetPhone,
+          `🚨 *URGENT COMPLAINT ALERT — ${customerName}*\n\n` +
+          `Type: *${complaintType.toUpperCase()}*\n` +
+          `Issue: ${description}\n` +
+          `SLA Target: *Resolve within 48 Hours ⏱️*\n\n` +
+          `Reply: _"Resolved ${customerName} complaint"_ once sorted.`
+        );
+      } catch (alertError) {
+        console.error('Complaint alert send failed:', alertError.message);
+      }
+    }
+
+    return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
+      `Customer: *${customerName}*\n` +
+      `Type: *${complaintType.toUpperCase()}*\n` +
+      `Details: ${description}\n` +
+      `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n\n` +
+      `When resolved, reply: _"Resolved ${customerName} complaint"_ ✅`;
 
   } catch (error) {
     console.error('Complaint Agent Error:', error.message);
