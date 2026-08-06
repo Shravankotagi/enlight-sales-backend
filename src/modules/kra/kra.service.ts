@@ -737,7 +737,9 @@ export class KraService {
             ? 'Fully Collected 🎉'
             : p.status === 'pending'
               ? 'Pending Collection ⏳'
-              : p.status || 'In Progress',
+              : p.status === 'partial'
+                ? 'Partial Payment Pending 💳'
+                : p.status || 'In Progress',
       }));
 
       // KRA 6 Sheet: CRM Compliance
