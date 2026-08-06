@@ -375,6 +375,30 @@ router.post('/', async (req, res) => {
         // Save deal if extraction succeeded and it is a valid inquiry or PO
         let deal = null;
         if (extraction && !extraction.error && extraction.inquiry_type && extraction.inquiry_type !== 'unknown') {
+          // Perform Customer Verification (handles exact and fuzzy matched typos)
+          const extractedCustomerName = extraction.customer?.name;
+          const { verifyAndGetCustomerName } = require('./supabase');
+          const officialCustomerName = await verifyAndGetCustomerName(extractedCustomerName, senderPhone);
+
+          if (!officialCustomerName) {
+            const nameToReport = extractedCustomerName || "this client";
+            await sendTextMessage(
+              senderPhone,
+              `⚠️ *Client Not Found in your Customer List*\n\n` +
+              `Client *"${nameToReport}"* is not registered under your salesperson account.\n\n` +
+              `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging inquiries or orders.\n\n` +
+              `*Example to onboard customer:*\n` +
+              `_"New customer ${nameToReport} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+              `Once added, you can resend this inquiry.`
+            );
+            return;
+          }
+
+          // Use the official/corrected customer name from the database (fixes typos)
+          if (extraction.customer) {
+            extraction.customer.name = officialCustomerName;
+          }
+
           // Update inquiry with extraction result
           await supabase
             .from('inquiries')

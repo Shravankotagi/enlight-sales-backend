@@ -118,12 +118,27 @@ async function processRetentionMessage(text, senderPhone) {
     }
 
     const customerName      = data.customer_name.trim();
+
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Client Not Found in your Customer List*\n\n` +
+        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging follow-up updates.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+        `Once added, you can resend this follow-up update.`;
+    }
+
+    const finalCustomerName = officialCustomerName;
     const followupSummary   = data.followup_summary  || 'Routine check-in';
     const reorderExpected   = !!data.reorder_expected;
     const isChurned         = !!data.is_churned && !reorderExpected; // safety: never both true
 
     // Edge Case 5: Ensure customer exists in recurring_customers
-    await ensureCustomerExists(customerName, senderPhone);
+    await ensureCustomerExists(finalCustomerName, senderPhone);
 
     // Edge Case 3: Churn signal → mark customer inactive
     if (isChurned) {
@@ -133,7 +148,7 @@ async function processRetentionMessage(text, senderPhone) {
           is_active:  false,
           updated_at: new Date().toISOString(),
         })
-        .ilike('customer_name', `%${customerName}%`);
+        .ilike('customer_name', `%${finalCustomerName}%`);
 
       // Close any open followup tasks for this customer
       await supabase
@@ -143,7 +158,7 @@ async function processRetentionMessage(text, senderPhone) {
           resolved_at:  new Date().toISOString(),
           resolution_notes: `Customer indicated no further orders. Marked inactive. — ${followupSummary}`,
         })
-        .ilike('customer_name', `%${customerName}%`)
+        .ilike('customer_name', `%${finalCustomerName}%`)
         .eq('salesperson_phone', senderPhone)
         .not('status', 'in', '("resolved","closed")');
 
@@ -152,21 +167,21 @@ async function processRetentionMessage(text, senderPhone) {
         salesperson_phone: senderPhone,
         kra_number:        3,
         kra_type:          'customer_churned',
-        customer_name:     customerName,
-        description:       `Churn Detected: ${customerName} — ${followupSummary}`,
+        customer_name:     finalCustomerName,
+        description:       `Churn Detected: ${finalCustomerName} — ${followupSummary}`,
         month: new Date().getMonth() + 1,
         year:  new Date().getFullYear(),
       });
 
       return `⚠️ *KRA 3 - Churn Signal Logged*\n\n` +
-        `Customer: *${customerName}*\n` +
+        `Customer: *${finalCustomerName}*\n` +
         `Status: *Marked Inactive — No Further Orders Expected*\n` +
         (followupSummary ? `Note: ${followupSummary}\n` : '') +
         `\nCustomer flagged in Retention Dashboard. 📉`;
     }
 
     // Edge Case 6: Update existing followup_task or create new one
-    const existingTask = await getExistingFollowupTask(customerName, senderPhone);
+    const existingTask = await getExistingFollowupTask(finalCustomerName, senderPhone);
 
     const taskStatus = reorderExpected ? 'reorder_expected' : 'pending';
 
@@ -184,7 +199,7 @@ async function processRetentionMessage(text, senderPhone) {
       // Create new followup task
       await supabase.from('followup_tasks').insert({
         task_type:         reorderExpected ? 'reorder_followup' : 'retention_followup',
-        customer_name:     customerName,
+        customer_name:     finalCustomerName,
         salesperson_phone: senderPhone,
         status:            taskStatus,
         resolution_notes:  followupSummary,
@@ -200,8 +215,8 @@ async function processRetentionMessage(text, senderPhone) {
       salesperson_phone: senderPhone,
       kra_number:        3,
       kra_type:          'customer_retention',
-      customer_name:     customerName,
-      description:       `Follow-up: ${customerName} — ${followupSummary}`,
+      customer_name:     finalCustomerName,
+      description:       `Follow-up: ${finalCustomerName} — ${followupSummary}`,
       month: new Date().getMonth() + 1,
       year:  new Date().getFullYear(),
     });
@@ -219,7 +234,7 @@ async function processRetentionMessage(text, senderPhone) {
     const followupCount = monthlyLogs ? monthlyLogs.length : 1;
 
     return `🔄 *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
-      `Customer: *${customerName}*\n` +
+      `Customer: *${finalCustomerName}*\n` +
       (followupSummary !== 'Routine check-in' ? `Summary: *${followupSummary}*\n` : '') +
       (reorderExpected
         ? `Status: *Re-order Expected Soon 📦 — Follow-up task set for 7 days*\n`

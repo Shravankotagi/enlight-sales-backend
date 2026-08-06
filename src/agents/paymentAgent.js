@@ -280,16 +280,31 @@ async function processPaymentMessage(text, senderPhone) {
     const amountPending = Math.max(0, Number(data.amount_pending || 0));
     const isFullPayment = !!data.is_full_payment;
 
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Client Not Found in your Customer List*\n\n` +
+        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging payments.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+        `Once added, you can resend this payment update.`;
+    }
+
+    const finalCustomerName = officialCustomerName;
+
     // Edge Case 7: Both amounts zero and not a full payment — ask for clarification
     if (amountPaid <= 0 && amountPending <= 0 && !isFullPayment) {
-      return `⚠️ *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${customerName}*.\nExample: _"Delta paid 5 lakh, rest 3 lakh pending"_`;
+      return `⚠️ *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${finalCustomerName}*.\nExample: _"Delta paid 5 lakh, rest 3 lakh pending"_`;
     }
 
     const paymentType = data.payment_type || (amountPaid > 0 ? 'advance' : 'outstanding_update');
 
     // Upsert into payment_tracking (one row per customer, always)
     const result2 = await upsertPaymentTracking({
-      customerName,
+      customerName:    finalCustomerName,
       senderPhone,
       newAmountPaid:   amountPaid,
       explicitPending: amountPending,
@@ -304,8 +319,8 @@ async function processPaymentMessage(text, senderPhone) {
       kra_number:        5,
       kra_type:          isFullyPaid ? 'payment_collected' : 'payment_advance',
       value:             amountPaid > 0 ? amountPaid : 0,
-      customer_name:     customerName,
-      description:       `Payment Update: ${customerName}` +
+      customer_name:     finalCustomerName,
+      description:       `Payment Update: ${finalCustomerName}` +
         (amountPaid > 0 ? ` | Received: ₹${amountPaid.toLocaleString('en-IN')}` : '') +
         (result2.finalOutstanding > 0 ? ` | Outstanding: ₹${result2.finalOutstanding.toLocaleString('en-IN')}` : ' | Fully Settled 🎉'),
       month: new Date().getMonth() + 1,
@@ -316,7 +331,7 @@ async function processPaymentMessage(text, senderPhone) {
     const lines = [
       `💰 *KRA 5 - Payment ${result2.existing ? 'Updated' : 'Logged'}!*`,
       ``,
-      `Customer: *${customerName}*`,
+      `Customer: *${finalCustomerName}*`,
     ];
 
     if (result2.finalInvoiceAmount > 0) {
@@ -385,8 +400,23 @@ Return ONLY JSON. No prose. No markdown.`;
       return `⚠️ *Payment Receipt — Customer Not Found*\n\nReceipt for *₹${amountPaid.toLocaleString('en-IN')}* detected! Please reply with the *Customer/Company Name* to credit this payment to KRA 5.`;
     }
 
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Payment Receipt Vision Agent — Client Not Found*\n\n` +
+        `Client *"${customerName}"* detected in the receipt is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging receipts.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+        `Once added, you can resend this PO.`;
+    }
+
+    const finalCustomerName = officialCustomerName;
+
     const result2 = await upsertPaymentTracking({
-      customerName,
+      customerName:    finalCustomerName,
       senderPhone,
       newAmountPaid:   amountPaid,
       explicitPending: 0,
@@ -400,8 +430,8 @@ Return ONLY JSON. No prose. No markdown.`;
       kra_number:        5,
       kra_type:          isFullyPaid ? 'payment_collected' : 'payment_advance',
       value:             amountPaid,
-      customer_name:     customerName,
-      description:       `Payment Receipt Image: ${customerName} (₹${amountPaid.toLocaleString('en-IN')})`,
+      customer_name:     finalCustomerName,
+      description:       `Payment Receipt Image Logged: ${finalCustomerName} (₹${amountPaid.toLocaleString('en-IN')})`,
       month: new Date().getMonth() + 1,
       year:  new Date().getFullYear(),
     });
@@ -409,7 +439,7 @@ Return ONLY JSON. No prose. No markdown.`;
     const lines = [
       `💰 *Payment Receipt Logged!*`,
       ``,
-      `Customer: *${customerName}*`,
+      `Customer: *${finalCustomerName}*`,
     ];
     if (result2.finalInvoiceAmount > 0) lines.push(`Deal Total: *₹${result2.finalInvoiceAmount.toLocaleString('en-IN')}*`);
     lines.push(`Amount Collected: *₹${amountPaid.toLocaleString('en-IN')}*`);

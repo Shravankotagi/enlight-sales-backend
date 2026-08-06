@@ -174,6 +174,20 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     const customerName = data.customer_name.trim();
+
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Client Not Found in your Customer List*\n\n` +
+        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before updating pipeline stages.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_`;
+    }
+
+    const finalCustomerName = officialCustomerName;
     const targetStage  = data.target_stage || 'qualified';
 
     const stageMap = {
@@ -186,7 +200,7 @@ async function processSalesMessage(text, senderPhone) {
     const dbStage = stageMap[targetStage] || 'qualified';
 
     // Edge Case 8/9/11: Find best matching deal
-    const existingDeal = await findBestDeal(customerName, senderPhone);
+    const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
 
     let dealId = existingDeal ? existingDeal.id : null;
     let dealAmount = 0;
@@ -234,7 +248,7 @@ async function processSalesMessage(text, senderPhone) {
       const { data: newDeal } = await supabase
         .from('deals')
         .insert({
-          customer_name:     customerName,
+          customer_name:     finalCustomerName,
           salesperson_phone: senderPhone,
           stage:             dbStage,
           total_amount:      dealAmount || 0,
@@ -250,15 +264,15 @@ async function processSalesMessage(text, senderPhone) {
 
     // Edge Case 5: KRA 1 — log won, but don't double-log if already won
     if (dbStage === 'won') {
-      const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, customerName);
+      const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, finalCustomerName);
       if (!alreadyLogged) {
         await supabase.from('kra_logs').insert({
           salesperson_phone: senderPhone,
           kra_number:        1,
           kra_type:          'sales_achievement',
           value:             dealAmount || 0,
-          customer_name:     customerName,
-          description:       `Deal Won: ${customerName} (₹${Number(dealAmount).toLocaleString('en-IN')})`,
+          customer_name:     finalCustomerName,
+          description:       `Deal Won: ${finalCustomerName} (₹${Number(dealAmount).toLocaleString('en-IN')})`,
           month: new Date().getMonth() + 1,
           year:  new Date().getFullYear(),
         });
@@ -272,26 +286,26 @@ async function processSalesMessage(text, senderPhone) {
         kra_number:        4,
         kra_type:          'deal_lost',
         value:             dealAmount || 0,
-        customer_name:     customerName,
-        description:       `Deal Lost: ${customerName} — Reason: ${data.loss_reason}`,
+        customer_name:     finalCustomerName,
+        description:       `Deal Lost: ${finalCustomerName} — Reason: ${data.loss_reason}`,
         month: new Date().getMonth() + 1,
         year:  new Date().getFullYear(),
       });
     }
 
     // Async Zoho Bigin sync (non-blocking, does not affect response)
-    syncToBigin(customerName, dbStage, dealAmount, data.po_number, senderPhone);
+    syncToBigin(finalCustomerName, dbStage, dealAmount, data.po_number, senderPhone);
 
     // Build reply
     if (dbStage === 'won') {
       return `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
-        `Customer: *${customerName}*\n` +
+        `Customer: *${finalCustomerName}*\n` +
         `Stage: *Closed Won 🎉*\n` +
         (dealAmount > 0 ? `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n` : '') +
         `\nUpdated KRA 1 Sales Achievement Dashboard! ✅`;
     } else if (dbStage === 'lost') {
       return `❌ *Deal Marked as LOST*\n\n` +
-        `Customer: *${customerName}*\n` +
+        `Customer: *${finalCustomerName}*\n` +
         `Stage: *Closed Lost*\n` +
         (data.loss_reason ? `Reason: ${data.loss_reason}\n` : '') +
         `\nUpdated Loss Analytics Dashboard! 📉`;
@@ -302,7 +316,7 @@ async function processSalesMessage(text, senderPhone) {
         qualified:   'QUALIFIED ✅',
       };
       return `🔄 *Pipeline Stage Updated!*\n\n` +
-        `Customer: *${customerName}*\n` +
+        `Customer: *${finalCustomerName}*\n` +
         `New Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n\n` +
         `Synced live to Sales Dashboard! ✅`;
     }
@@ -399,6 +413,20 @@ Return ONLY JSON. No prose. No markdown.`;
     }
 
     const customerName = data.customer_name.trim();
+
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *PO Vision Agent — Client Not Found*\n\n` +
+        `Client *"${customerName}"* detected in the PO image is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging their orders.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_`;
+    }
+
+    const finalCustomerName = officialCustomerName;
     let totalValue = Number(data.total_amount || 0);
 
     if (!totalValue && data.quantity_mt && data.rate_per_mt) {
@@ -406,7 +434,7 @@ Return ONLY JSON. No prose. No markdown.`;
     }
 
     // Edge Case 10: Find existing deal first, don't create duplicate
-    const existingDeal = await findBestDeal(customerName, senderPhone);
+    const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
 
     let dealId;
     if (existingDeal) {
@@ -424,7 +452,7 @@ Return ONLY JSON. No prose. No markdown.`;
       const { data: newDeal } = await supabase
         .from('deals')
         .insert({
-          customer_name:     customerName,
+          customer_name:     finalCustomerName,
           salesperson_phone: senderPhone,
           stage:             'won',
           total_amount:      totalValue || 0,
@@ -438,24 +466,24 @@ Return ONLY JSON. No prose. No markdown.`;
     }
 
     // Edge Case 5: Only log KRA 1 once per customer
-    const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, customerName);
+    const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, finalCustomerName);
     if (!alreadyLogged) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
         kra_number:        1,
         kra_type:          'sales_achievement',
         value:             totalValue,
-        customer_name:     customerName,
-        description:       `PO Image Logged: ${customerName} (PO: ${data.po_number || 'N/A'})`,
+        customer_name:     finalCustomerName,
+        description:       `PO Image Logged: ${finalCustomerName} (PO: ${data.po_number || 'N/A'})`,
         month: new Date().getMonth() + 1,
         year:  new Date().getFullYear(),
       });
     }
 
-    syncToBigin(customerName, 'won', totalValue, data.po_number, senderPhone);
+    syncToBigin(finalCustomerName, 'won', totalValue, data.po_number, senderPhone);
 
     return `📦 *PO Document Processed & Logged!*\n\n` +
-      `Customer: *${customerName}*\n` +
+      `Customer: *${finalCustomerName}*\n` +
       (data.po_number ? `PO Number: *${data.po_number}*\n` : '') +
       (totalValue > 0 ? `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` : '') +
       `Stage: *Closed Won 🎉*\n\n` +

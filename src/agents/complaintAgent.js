@@ -102,12 +102,27 @@ async function processComplaintMessage(text, senderPhone) {
     }
 
     const customerName   = data.customer_name.trim();
+
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Client Not Found in your Customer List*\n\n` +
+        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging quality complaints.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+        `Once added, you can resend this complaint update.`;
+    }
+
+    const finalCustomerName = officialCustomerName;
     const complaintType  = data.complaint_type || 'quality';
     const description    = data.description || text;
 
     // ── RESOLVE FLOW ──────────────────────────────────────────────────
     if (data.action === 'resolve') {
-      const openComplaint = await getOpenComplaint(customerName);
+      const openComplaint = await getOpenComplaint(finalCustomerName);
 
       if (openComplaint) {
         // Edge Case 4: Check if already resolved
@@ -131,21 +146,21 @@ async function processComplaintMessage(text, senderPhone) {
           .eq('id', openComplaint.id);
 
         // Edge Case 4: Only log KRA 8 once per resolution
-        const alreadyLogged = await isKRA8AlreadyLogged(senderPhone, customerName);
+        const alreadyLogged = await isKRA8AlreadyLogged(senderPhone, finalCustomerName);
         if (!alreadyLogged) {
           await supabase.from('kra_logs').insert({
             salesperson_phone: senderPhone,
             kra_number:        8,
             kra_type:          'complaint_resolved',
-            customer_name:     customerName,
-            description:       `Complaint Resolved: ${customerName} (${resolutionTimeHrs}h — ${isSlaCompliant ? 'Within SLA ✅' : 'SLA BREACHED ⚠️'})`,
+            customer_name:     finalCustomerName,
+            description:       `Complaint Resolved: ${finalCustomerName} (${resolutionTimeHrs}h — ${isSlaCompliant ? 'Within SLA ✅' : 'SLA BREACHED ⚠️'})`,
             month: new Date().getMonth() + 1,
             year:  new Date().getFullYear(),
           });
         }
 
         return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
-          `Customer: *${customerName}*\n` +
+          `Customer: *${finalCustomerName}*\n` +
           `Complaint Type: *${complaintType.toUpperCase()}*\n` +
           `Resolution Time: *${resolutionTimeHrs} Hours*\n` +
           `SLA Target (48h): *${isSlaCompliant ? '✅ Achieved — Within Target!' : '⚠️ Breached — Escalated!'}*\n\n` +
@@ -154,7 +169,7 @@ async function processComplaintMessage(text, senderPhone) {
       } else {
         // Edge Case 3: No prior open complaint found → create a backdated resolved record
         await supabase.from('complaints').insert({
-          customer_name:        customerName,
+          customer_name:        finalCustomerName,
           reported_by:          senderPhone,
           complaint_type:       complaintType,
           description:          description,
@@ -169,14 +184,14 @@ async function processComplaintMessage(text, senderPhone) {
           salesperson_phone: senderPhone,
           kra_number:        8,
           kra_type:          'complaint_resolved',
-          customer_name:     customerName,
-          description:       `Complaint Resolved (no prior open record): ${customerName}`,
+          customer_name:     finalCustomerName,
+          description:       `Complaint Resolved (no prior open record): ${finalCustomerName}`,
           month: new Date().getMonth() + 1,
           year:  new Date().getFullYear(),
         });
 
         return `✅ *KRA 8 - Complaint Resolved!*\n\n` +
-          `Customer: *${customerName}*\n` +
+          `Customer: *${finalCustomerName}*\n` +
           `_Note: No prior open complaint found. Created and resolved in one step._\n\n` +
           `Updated KRA 8 Complaint Resolution Dashboard! ✅`;
       }
@@ -184,28 +199,28 @@ async function processComplaintMessage(text, senderPhone) {
 
     // ── REPORT FLOW ───────────────────────────────────────────────────
     // Edge Case 8: Check if there's already an open complaint of same type for this customer
-    const existingOpen = await getOpenComplaint(customerName);
+    const existingOpen = await getOpenComplaint(finalCustomerName);
     if (existingOpen && existingOpen.complaint_type === complaintType) {
       return `⚠️ *Complaint Already Open*\n\n` +
-        `Customer: *${customerName}*\n` +
+        `Customer: *${finalCustomerName}*\n` +
         `Type: *${complaintType.toUpperCase()}*\n` +
         `Reported: *${new Date(existingOpen.reported_at).toLocaleString('en-IN')}*\n\n` +
         `This complaint is already logged and open. When resolved, reply:\n` +
-        `_"Resolved ${customerName} complaint"_`;
+        `_"Resolved ${finalCustomerName} complaint"_`;
     }
 
     // Edge Case 7: Look up assigned salesperson for this customer
     const { data: customerRecord } = await supabase
       .from('recurring_customers')
       .select('assigned_salesperson_phone')
-      .ilike('customer_name', `%${customerName}%`)
+      .ilike('customer_name', `%${finalCustomerName}%`)
       .limit(1);
 
     const targetPhone = (customerRecord && customerRecord[0]?.assigned_salesperson_phone) || senderPhone;
 
     // Insert new complaint
     await supabase.from('complaints').insert({
-      customer_name:   customerName,
+      customer_name:   finalCustomerName,
       reported_by:     targetPhone,
       complaint_type:  complaintType,
       description:     description,
@@ -219,8 +234,8 @@ async function processComplaintMessage(text, senderPhone) {
       salesperson_phone: targetPhone,
       kra_number:        7,
       kra_type:          'quality_complaint',
-      customer_name:     customerName,
-      description:       `Complaint Logged: ${customerName} — ${complaintType}: ${description}`,
+      customer_name:     finalCustomerName,
+      description:       `Complaint Logged: ${finalCustomerName} — ${complaintType}: ${description}`,
       month: new Date().getMonth() + 1,
       year:  new Date().getFullYear(),
     });
@@ -231,11 +246,11 @@ async function processComplaintMessage(text, senderPhone) {
         const { sendTextMessage } = require('../whatsapp');
         await sendTextMessage(
           targetPhone,
-          `🚨 *URGENT COMPLAINT ALERT — ${customerName}*\n\n` +
+          `🚨 *URGENT COMPLAINT ALERT — ${finalCustomerName}*\n\n` +
           `Type: *${complaintType.toUpperCase()}*\n` +
           `Issue: ${description}\n` +
           `SLA Target: *Resolve within 48 Hours ⏱️*\n\n` +
-          `Reply: _"Resolved ${customerName} complaint"_ once sorted.`
+          `Reply: _"Resolved ${finalCustomerName} complaint"_ once sorted.`
         );
       } catch (alertError) {
         console.error('Complaint alert send failed:', alertError.message);
@@ -243,11 +258,11 @@ async function processComplaintMessage(text, senderPhone) {
     }
 
     return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
-      `Customer: *${customerName}*\n` +
+      `Customer: *${finalCustomerName}*\n` +
       `Type: *${complaintType.toUpperCase()}*\n` +
       `Details: ${description}\n` +
       `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n\n` +
-      `When resolved, reply: _"Resolved ${customerName} complaint"_ ✅`;
+      `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ✅`;
 
   } catch (error) {
     console.error('Complaint Agent Error:', error.message);

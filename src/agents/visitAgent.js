@@ -69,6 +69,21 @@ async function processVisitMessage(text, senderPhone) {
     }
 
     const customerName  = data.customer_name.trim();
+
+    // Verify and get official customer name from salesperson's registered customers
+    const { verifyAndGetCustomerName } = require('../supabase');
+    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    if (!officialCustomerName) {
+      return `⚠️ *Client Not Found in your Customer List*\n\n` +
+        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
+        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging visits.\n\n` +
+        `*Example to onboard customer:*\n` +
+        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+        `Once added, you can resend this visit update.`;
+    }
+
+    const finalCustomerName = officialCustomerName;
     // Edge Case 4 & 9: Use AI-extracted remarks instead of raw message
     const remarks       = data.remarks || 'On-site meeting';
     const personMet     = data.person_met || null;
@@ -77,7 +92,7 @@ async function processVisitMessage(text, senderPhone) {
 
     // Edge Case 1: Insert visit record
     await supabase.from('customer_visits').insert({
-      customer_name:     customerName,
+      customer_name:     finalCustomerName,
       salesperson_phone: senderPhone,
       person_met:        personMet,
       contact_no:        contactNo,
@@ -90,8 +105,8 @@ async function processVisitMessage(text, senderPhone) {
       salesperson_phone: senderPhone,
       kra_number:        9,
       kra_type:          'customer_visit',
-      customer_name:     customerName,
-      description:       `Visit: ${customerName}${personMet ? ` (Met: ${personMet})` : ''} — ${remarks}`,
+      customer_name:     finalCustomerName,
+      description:       `Visit: ${finalCustomerName}${personMet ? ` (Met: ${personMet})` : ''} — ${remarks}`,
       month: new Date().getMonth() + 1,
       year:  new Date().getFullYear(),
     });
@@ -112,7 +127,7 @@ async function processVisitMessage(text, senderPhone) {
     await supabase
       .from('recurring_customers')
       .update({ updated_at: new Date().toISOString() })
-      .ilike('customer_name', `%${customerName}%`);
+      .ilike('customer_name', `%${finalCustomerName}%`);
 
     const outcomeEmoji = {
       positive: '🟢',
@@ -121,7 +136,7 @@ async function processVisitMessage(text, senderPhone) {
     }[visitOutcome] || '🟡';
 
     return `🚗 *KRA 9 - Customer Visit Logged!*\n\n` +
-      `Customer: *${customerName}*\n` +
+      `Customer: *${finalCustomerName}*\n` +
       (personMet  ? `Person Met: *${personMet}*\n` : '') +
       (contactNo  ? `Contact: *${contactNo}*\n` : '') +
       `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n` +

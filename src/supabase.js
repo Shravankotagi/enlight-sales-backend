@@ -229,7 +229,7 @@ async function fuzzyMatchCustomer(text, customerList) {
 
     const prompt = `
 Given a user message and a list of customer names, identify which customer from the list the message is referring to.
-The user might have spelling mistakes, typos, or written in Hinglish/mix languages.
+The user might have spelling mistakes, typos, or written in Hinglish/mix languages (e.g. "Mehta steel" matches "Mehta Steel Limited", "Delta structural" matches "Delta Structural Steel").
 
 List of customer names:
 ${customerList.map((c, i) => `${i + 1}. "${c}"`).join('\n')}
@@ -244,13 +244,48 @@ Rules:
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const matchIndex = parseInt(response.text().trim());
+    const textRes = response.text().trim();
+    const matchIndex = parseInt(textRes);
     
-    if (matchIndex > 0 && matchIndex <= customerList.length) {
+    if (!isNaN(matchIndex) && matchIndex > 0 && matchIndex <= customerList.length) {
       return customerList[matchIndex - 1];
     }
   } catch (err) {
     console.error('fuzzyMatchCustomer error:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Verifies if a customer is registered in the salesperson's account.
+ * Handles exact matching and fuzzy matching (typos/Hinglish).
+ * Returns the matched official name or null if not found.
+ */
+async function verifyAndGetCustomerName(customerName, senderPhone) {
+  if (!customerName || !senderPhone) return null;
+  
+  try {
+    const { data: customerRows } = await supabase
+      .from('recurring_customers')
+      .select('customer_name')
+      .eq('assigned_salesperson_phone', senderPhone)
+      .eq('is_active', true);
+
+    if (!customerRows || customerRows.length === 0) return null;
+
+    const customerList = customerRows.map(c => c.customer_name);
+
+    // 1. Exact match (case insensitive, trimmed)
+    const cleanInput = customerName.toLowerCase().trim();
+    const exactMatch = customerList.find(c => c.toLowerCase().trim() === cleanInput);
+    if (exactMatch) return exactMatch;
+
+    // 2. Fuzzy match using Gemini
+    const fuzzyMatch = await fuzzyMatchCustomer(customerName, customerList);
+    if (fuzzyMatch) return fuzzyMatch;
+
+  } catch (err) {
+    console.error('verifyAndGetCustomerName error:', err.message);
   }
   return null;
 }
@@ -263,5 +298,6 @@ module.exports = {
   saveDeal, 
   getEmployeeByPhone, 
   checkAndLogNewCustomer,
-  fuzzyMatchCustomer 
+  fuzzyMatchCustomer,
+  verifyAndGetCustomerName
 };
