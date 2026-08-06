@@ -365,7 +365,8 @@ Examples:
 Return ONLY a JSON object (no markdown, no prose, no backticks):
 {
   "category": "<one of the categories above>",
-  "confidence": <float 0.0 to 1.0>
+  "confidence": <float 0.0 to 1.0>,
+  "target_salesperson": "<full name of the salesperson mentioned in the query if any, else null>"
 }
 `;
 

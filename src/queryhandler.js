@@ -544,104 +544,139 @@ async function getLostDeals(senderPhone, text = '') {
   }
 }
 
+// Shared category → handler router (used by both admin and salesperson paths)
+async function routeToHandler(category, text, phone, isAdmin, supabase) {
+  switch (category) {
+    case 'dashboard_link': {
+      const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+      return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+    }
+    case 'sales_summary':
+      return await getSalesThisMonth(phone, text);
+    case 'kra_status':
+      return await getKRAStatus(phone, text);
+    case 'visit_summary':
+      return await getVisitSummary(phone, text);
+    case 'payment_summary':
+      return await getPaymentSummary(phone);
+    case 'complaint_summary':
+      return await getComplaintSummary(phone);
+    case 'full_report':
+      return await generateFullKRAReport(phone, getMonthRangeFromQuery(text));
+    case 'deals_this_week':
+      return await getDealsThisWeek(isAdmin ? null : phone);
+    case 'pending_deals':
+      return await getPendingDeals(phone);
+    case 'pending_inquiries':
+      return await getPendingInquiries(isAdmin ? null : phone);
+    case 'new_customers_summary':
+      return await getNewCustomerSummary(phone);
+    case 'won_customers':
+      return await getWonCustomers(phone, text);
+    case 'active_deals_detail':
+      return await getActiveDealsDetail(phone);
+    case 'customer_list':
+      return await getCustomerList(phone);
+    case 'rate_sheet':
+      return await getRateSheet();
+    case 'visit_list':
+      return await getVisitList(phone, text);
+    case 'payment_aging':
+      return await getPaymentAging(phone);
+    case 'lost_deals':
+      return await getLostDeals(phone, text);
+    default:
+      return null;
+  }
+}
+
 // Main query router
 async function handleQuery(text, senderPhone) {
   const lower = text.toLowerCase();
+  const supabase = getSupabase();
 
-  // Check for other salesperson names to prevent unauthorized cross-queries
+  // ── Determine sender role ────────────────────────────────────────────────
+  let senderRole = 'salesperson';
+  let effectivePhone = senderPhone; // the phone used for DB queries
   try {
-    const supabase = getSupabase();
-    const { data: otherEmployees } = await supabase
+    const { data: senderEmp } = await supabase
       .from('employees')
-      .select('name')
-      .neq('phone', senderPhone);
+      .select('role')
+      .eq('phone', senderPhone)
+      .single();
+    if (senderEmp) senderRole = senderEmp.role || 'salesperson';
+  } catch (e) { /* default to salesperson */ }
 
-    if (otherEmployees && otherEmployees.length > 0) {
-      for (const emp of otherEmployees) {
-        if (emp.name) {
-          const empNameLower = emp.name.toLowerCase().trim();
-          const parts = empNameLower.split(/\s+/);
-          const isMatch = lower.includes(empNameLower) || 
-            parts.some(part => part.length > 3 && lower.includes(part));
+  const isAdmin = senderRole === 'admin';
 
-          if (isMatch) {
-            return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or KRA details of other salespeople. You can only query your own performance reports.`;
+  // ── Cross-salesperson protection (salesperson only) ─────────────────────
+  if (!isAdmin) {
+    try {
+      const { data: otherEmployees } = await supabase
+        .from('employees')
+        .select('name')
+        .neq('phone', senderPhone);
+
+      if (otherEmployees && otherEmployees.length > 0) {
+        for (const emp of otherEmployees) {
+          if (emp.name) {
+            const empNameLower = emp.name.toLowerCase().trim();
+            const parts = empNameLower.split(/\s+/);
+            const isMatch = lower.includes(empNameLower) ||
+              parts.some(part => part.length > 3 && lower.includes(part));
+            if (isMatch) {
+              return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or KRA details of other salespeople. You can only query your own performance reports.`;
+            }
           }
         }
       }
+    } catch (err) {
+      console.error('Cross-query check error:', err.message);
     }
-  } catch (err) {
-    console.error('Cross-query check error:', err.message);
   }
 
-  // --- SEMANTIC ROUTING USING GEMINI CLASSIFIER (Resolves typos like 'performace') ---
+  // ── Admin: resolve target salesperson from query ─────────────────────────
+  if (isAdmin) {
+    try {
+      const { classifyQueryType } = require('./gemini');
+      const classification = await classifyQueryType(text);
+
+      // If admin mentioned a specific salesperson, look up their phone
+      if (classification && classification.target_salesperson) {
+        const nameLower = classification.target_salesperson.toLowerCase().trim();
+        const { data: allEmps } = await supabase
+          .from('employees')
+          .select('name, phone');
+
+        if (allEmps) {
+          const matched = allEmps.find(e => {
+            const n = (e.name || '').toLowerCase();
+            return n.includes(nameLower) || nameLower.includes(n.split(' ')[0]);
+          });
+          if (matched) effectivePhone = matched.phone;
+        }
+      }
+
+      // Route using category
+      if (classification && classification.category !== 'general' && classification.category !== 'blocked' && classification.confidence >= 0.65) {
+        return await routeToHandler(classification.category, text, effectivePhone, isAdmin, supabase);
+      }
+    } catch (err) {
+      console.error('Admin semantic router error:', err.message);
+    }
+  }
+
+  // ── Salesperson: semantic router ─────────────────────────────────────────
   try {
     const { classifyQueryType } = require('./gemini');
     const classification = await classifyQueryType(text);
 
     if (classification && classification.confidence >= 0.70) {
-      switch (classification.category) {
-        case 'dashboard_link': {
-          const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
-          return `🔗 *Enlight Sales OS Portal*\n\n` +
-            `You can access the web dashboard here:\n` +
-            `👉 ${dashboardUrl}\n\n` +
-            `🔑 *Login instructions*:\n` +
-            `1. Enter your registered WhatsApp number.\n` +
-            `2. Request and verify the OTP sent to your phone.\n` +
-            `3. Keep track of your deals, rate sheets, and KRA dashboards in real-time!`;
-        }
-
-        case 'sales_summary':
-          return await getSalesThisMonth(senderPhone, text);
-
-        case 'kra_status':
-          return await getKRAStatus(senderPhone, text);
-
-        case 'visit_summary':
-          return await getVisitSummary(senderPhone, text);
-
-        case 'payment_summary':
-          return await getPaymentSummary(senderPhone);
-
-        case 'complaint_summary':
-          return await getComplaintSummary(senderPhone);
-
-        case 'full_report':
-          return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
-
-        case 'deals_this_week':
-          return await getDealsThisWeek();
-
-        case 'pending_deals':
-          return await getPendingDeals(senderPhone);
-
-        case 'pending_inquiries':
-          return await getPendingInquiries();
-
-        case 'new_customers_summary':
-          return await getNewCustomerSummary(senderPhone);
-
-        case 'won_customers':
-          return await getWonCustomers(senderPhone, text);
-
-        case 'active_deals_detail':
-          return await getActiveDealsDetail(senderPhone);
-
-        case 'customer_list':
-          return await getCustomerList(senderPhone);
-
-        case 'rate_sheet':
-          return await getRateSheet();
-
-        case 'visit_list':
-          return await getVisitList(senderPhone, text);
-
-        case 'payment_aging':
-          return await getPaymentAging(senderPhone);
-
-        case 'lost_deals':
-          return await getLostDeals(senderPhone, text);
+      if (classification.category === 'blocked') {
+        return `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to *your own* deals, customers, payments, visits, KRA performance, and steel rates.`;
+      }
+      if (classification.category !== 'general') {
+        return await routeToHandler(classification.category, text, effectivePhone, isAdmin, supabase);
       }
     }
   } catch (err) {
