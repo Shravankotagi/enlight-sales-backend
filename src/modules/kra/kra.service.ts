@@ -631,6 +631,12 @@ export class KraService {
         .gte('reported_at', start)
         .lte('reported_at', end);
 
+      let followupsQuery = this.supabase
+        .from('followup_tasks')
+        .select('*')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
       if (salespersonPhone) {
         dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
         inquiriesQuery = inquiriesQuery.eq(
@@ -641,6 +647,10 @@ export class KraService {
         paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
         visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
         complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
+        followupsQuery = followupsQuery.eq(
+          'salesperson_phone',
+          salespersonPhone,
+        );
       }
 
       const [
@@ -650,6 +660,7 @@ export class KraService {
         { data: payments },
         { data: visits },
         { data: complaints },
+        { data: followups },
       ] = await Promise.all([
         dealsQuery,
         inquiriesQuery,
@@ -657,6 +668,7 @@ export class KraService {
         paymentsQuery,
         visitsQuery,
         complaintsQuery,
+        followupsQuery,
       ]);
 
       const safeDeals = deals || [];
@@ -665,6 +677,7 @@ export class KraService {
       const safePayments = payments || [];
       const safeVisits = visits || [];
       const safeComplaints = complaints || [];
+      const safeFollowups = followups || [];
 
       // KRA 1 Sheet: Sales Achievement
       const wonDeals = safeDeals.filter((d) => d.stage === 'won');
@@ -706,12 +719,43 @@ export class KraService {
 
       // KRA 3 Sheet: Customer Retention & Recurring Business
       const kra3Logs = safeKraLogs.filter((l) => l.kra_number === 3);
-      const kra3Rows = kra3Logs.map((l, index) => ({
+      const kra3Followups = safeFollowups.filter(
+        (f) =>
+          f.task_type === 'kra3_retention' ||
+          f.task_type === 'reorder_followup' ||
+          f.task_type === 'retention_followup',
+      );
+
+      // Merge both list types (resolved logs and scheduled tasks)
+      const combinedKRA3 = [
+        ...kra3Logs.map((l) => ({
+          customer_name: l.customer_name || 'Recurring Customer',
+          details: l.description || 'Repeat Order / Follow-up',
+          quantity: l.value ? `${l.value} MT` : '1 Order',
+          remarks:
+            l.kra_type === 'customer_churned'
+              ? 'Flagged Churned 📉'
+              : 'Follow-up Logged ✅',
+          date: new Date(l.created_at),
+        })),
+        ...kra3Followups.map((f) => ({
+          customer_name: f.customer_name || 'Recurring Customer',
+          details: f.resolution_notes || 'Scheduled Retention Follow-up',
+          quantity: '-',
+          remarks:
+            f.status === 'pending'
+              ? 'Pending Follow-up ⏳'
+              : `Follow-up Sent 📱 (Count: ${f.follow_up_count})`,
+          date: new Date(f.created_at),
+        })),
+      ].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+      const kra3Rows = combinedKRA3.map((item, index) => ({
         sr_no: index + 1,
-        existing_customer_name: l.customer_name || 'Recurring Customer',
-        product_supplied: l.description || 'Repeat Order / Follow-up',
-        order_quantity: l.value ? `${l.value} MT` : '1 Order',
-        remarks: 'Follow-up / Billing recorded',
+        existing_customer_name: item.customer_name,
+        product_supplied: item.details,
+        order_quantity: item.quantity,
+        remarks: item.remarks,
       }));
 
       // KRA 4 Sheet: Enquiry Conversion
