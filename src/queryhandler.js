@@ -98,28 +98,19 @@ async function getSalesThisMonth(senderPhone) {
     const { data: deals, error } = await supabase
       .from('deals')
       .select('*, deal_items(*)')
-      .eq('customer_phone', senderPhone)
-      .in('stage', ['won', 'new_inquiry', 'quoted', 'negotiation'])
+      .eq('salesperson_phone', senderPhone)
       .gte('created_at', start)
       .lte('created_at', end);
 
     if (error) throw error;
 
-    // Also get all deals for this month regardless of phone
-    // (during testing, use all deals)
-    const { data: allDeals } = await supabase
-      .from('deals')
-      .select('*, deal_items(*)')
-      .gte('created_at', start)
-      .lte('created_at', end);
-
-    const totalDeals = allDeals?.length || 0;
-    const wonDeals = allDeals?.filter(d => d.stage === 'won').length || 0;
-    const totalAmount = allDeals?.reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0;
-    const totalItems = allDeals?.reduce((sum, d) => sum + (d.deal_items?.length || 0), 0) || 0;
+    const totalDeals = deals?.length || 0;
+    const wonDeals = deals?.filter(d => d.stage === 'won').length || 0;
+    const totalAmount = deals?.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0) || 0;
+    const totalItems = deals?.reduce((sum, d) => sum + (d.deal_items?.length || 0), 0) || 0;
 
     return `📊 *Sales Summary - ${monthName} ${year}*\n\n` +
-      `📋 Total Deals: ${totalDeals}\n` +
+      `📋 Total Created Deals: ${totalDeals}\n` +
       `✅ Won: ${wonDeals}\n` +
       `📦 Total Line Items: ${totalItems}\n` +
       `💰 Total Value: ${formatINR(totalAmount)}\n\n` +
@@ -227,42 +218,53 @@ async function getKRAStatus(senderPhone) {
     const supabase = getSupabase();
     const { start, end, monthName, year } = getMonthRange();
 
-    // Get all deals this month
+    // Get all deals this month for this salesperson
     const { data: deals } = await supabase
       .from('deals')
       .select('*, deal_items(*)')
+      .eq('salesperson_phone', senderPhone)
       .gte('created_at', start)
       .lte('created_at', end);
 
-    // Get all inquiries this month
+    // Get all inquiries this month for this salesperson
     const { data: inquiries } = await supabase
       .from('inquiries')
       .select('*')
+      .eq('salesperson_phone', senderPhone)
       .gte('created_at', start)
       .lte('created_at', end);
 
+    // Get KRA logs this month for KRA 2 (New Customers)
+    const { data: kra2Logs } = await supabase
+      .from('kra_logs')
+      .select('id')
+      .eq('salesperson_phone', senderPhone)
+      .eq('kra_number', 2)
+      .eq('kra_type', 'new_customer')
+      .eq('month', new Date().getMonth() + 1)
+      .eq('year', new Date().getFullYear());
+
     const totalDeals = deals?.length || 0;
-    const wonDeals = deals?.filter(d => d.stage === 'won').length || 0;
-    const lostDeals = deals?.filter(d => d.stage === 'lost').length || 0;
+    const wonDeals = deals?.filter(d => d.stage === 'won') || [];
+    const wonCount = wonDeals.length;
+    const wonValue = wonDeals.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
+
     const totalInquiries = inquiries?.length || 0;
     const conversionRate = totalInquiries > 0 
-      ? Math.round((wonDeals / totalInquiries) * 100) 
+      ? Math.round((wonCount / totalInquiries) * 100) 
       : 0;
-    const totalAmount = deals?.reduce((sum, d) => 
-      sum + (d.total_amount || 0), 0) || 0;
-    const newCustomers = deals?.filter(d => 
-      d.customer_name && d.inquiry_type === 'purchase_order'
-    ).length || 0;
+
+    const newCustomersCount = kra2Logs?.length || 0;
 
     return `🎯 *KRA Status - ${monthName} ${year}*\n\n` +
-      `📋 KRA 1 - Sales Achievement\n` +
-      `   Deals: ${totalDeals} | Value: ${formatINR(totalAmount)}\n\n` +
-      `👥 KRA 2 - New Customers\n` +
-      `   POs received: ${newCustomers} (target: 3)\n\n` +
-      `🔄 KRA 4 - Enquiry Conversion\n` +
-      `   Inquiries: ${totalInquiries} | Won: ${wonDeals}\n` +
+      `📋 *KRA 1 - Sales Achievement*\n` +
+      `   Won Deals: ${wonCount} | Value: ${formatINR(wonValue)} (Total Created: ${totalDeals})\n\n` +
+      `👥 *KRA 2 - New Customers*\n` +
+      `   POs received: ${newCustomersCount} (target: 3)\n\n` +
+      `🔄 *KRA 4 - Enquiry Conversion*\n` +
+      `   Inquiries: ${totalInquiries} | Won: ${wonCount}\n` +
       `   Rate: ${conversionRate}% (target: 70-80%)\n\n` +
-      `📊 KRA 6 - CRM Compliance\n` +
+      `📊 *KRA 6 - CRM Compliance*\n` +
       `   Logged today via WhatsApp bot ✅\n\n` +
       `_Full KRA report available from Sales Lead_`;
   } catch (error) {
@@ -320,6 +322,13 @@ async function handleQuery(text, senderPhone) {
       `1. Enter your registered WhatsApp number.\n` +
       `2. Request and verify the OTP sent to your phone.\n` +
       `3. Keep track of your deals, rate sheets, and KRA dashboards in real-time!`;
+  }
+
+  // KRA status or Performance (checked first to avoid matching 'sales' in 'salesperson performance')
+  if (lower.includes('kra') || lower.includes('target') || 
+      lower.includes('performance') || lower.includes('achievement') ||
+      lower.includes('dashboard') || lower.includes('status') || lower.includes('summary')) {
+    return await getKRAStatus(senderPhone);
   }
 
   // Sales this month
@@ -389,12 +398,7 @@ async function handleQuery(text, senderPhone) {
     return await getNewCustomerSummary(senderPhone);
   }
 
-  // KRA status
-  if (lower.includes('kra') || lower.includes('target') || 
-      lower.includes('performance') || lower.includes('achievement') ||
-      lower.includes('dashboard') || lower.includes('status') || lower.includes('summary')) {
-    return await getKRAStatus(senderPhone);
-  }
+
 
   // Default: Conversational Gemini Assistant (handles dates, time, rates, general queries)
   return await handleConversationalQuery(text, senderPhone);
