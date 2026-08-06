@@ -59,6 +59,23 @@ export class DealsService {
         .eq('id', id)
         .single();
       if (error) throw error;
+
+      // Enrich with actual customer phone from recurring_customers
+      // (deals.customer_phone stores salesperson phone, not customer phone)
+      if (data && data.customer_name) {
+        const { data: custData } = await this.supabase
+          .from('recurring_customers')
+          .select('customer_phone, customer_gst, contact_person')
+          .ilike('customer_name', `%${data.customer_name}%`)
+          .limit(1)
+          .single();
+        if (custData) {
+          data.customer_phone = custData.customer_phone;
+          data.customer_gst = data.customer_gst || custData.customer_gst;
+          data.contact_person = custData.contact_person;
+        }
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
