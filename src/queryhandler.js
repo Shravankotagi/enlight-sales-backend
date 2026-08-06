@@ -673,6 +673,13 @@ async function handleQuery(text, senderPhone) {
 
     if (classification && classification.confidence >= 0.70) {
       if (classification.category === 'blocked') {
+        const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+        if (isAdmin) {
+          return `🔗 *This action requires Dashboard access.*\n\n` +
+            `Admin operations like rate sheet management, pricing configuration, product analysis, and CRM admin tasks are available directly on the portal:\n\n` +
+            `👉 ${dashboardUrl}\n\n` +
+            `Log in with your admin credentials to proceed.`;
+        }
         return `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to *your own* deals, customers, payments, visits, KRA performance, and steel rates.`;
       }
       if (classification.category !== 'general') {

@@ -8,6 +8,9 @@ async function handleConversationalQuery(text, senderPhone) {
   try {
     const employee = await getEmployeeByPhone(senderPhone);
     const empName = employee ? employee.name : 'Salesperson';
+    const empRole = employee ? (employee.role || 'salesperson') : 'salesperson';
+    const isAdmin = empRole === 'admin';
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
     
     // Get live date/time formatted nicely for India Standard Time (Asia/Kolkata)
     const now = new Date();
@@ -21,22 +24,29 @@ async function handleConversationalQuery(text, senderPhone) {
     // Get active rate sheet
     const activeRates = await getLatestActiveRatesText();
 
+    // Role-aware blocked response for admin actions / product suggestions
+    const adminBlockedMessage = isAdmin
+      ? `🔗 *This action requires Dashboard access.*\n\n` +
+        `Admin operations like rate sheet management, pricing configuration, and product analytics are available on the portal:\n\n` +
+        `👉 ${dashboardUrl}\n\n` +
+        `Log in with your admin credentials to proceed.`
+      : `⚠️ *I do not have the capability to perform this action.*\n\n` +
+        `This action or recommendation is not supported by the assistant. Please contact your Sales Lead or Admin.`;
+
     const ASSISTANT_SYSTEM_PROMPT = `
 You are the intelligent B2B Steel Sales Assistant for "Enlight Metals".
-Your role is to help salespersons with general conversational queries, live information checks, rate sheets, and explain policies or KRA standards.
+Your role is to help ${isAdmin ? 'admins and salespersons' : 'salespersons'} with general conversational queries, live information checks, rate sheets, and explain policies or KRA standards.
 
 CONTEXT:
 - **Current Live Date & Time**: ${liveDateTime}
-- **Current Salesperson**: ${empName} (Phone: ${senderPhone})
+- **Current User**: ${empName} (Phone: ${senderPhone}) | Role: ${empRole}
 ${activeRates ? `- **Live Rates Info**:\n${activeRates}` : '- No active rates set currently.'}
 
 CRITICAL GUARDRAILS & RESTRICTIONS (Must obey strictly):
-1. **No Administrative/Operational Actions**: You CANNOT lock, create, delete, update, edit, or modify rate sheets, steel prices, database records, employee records, or admin configurations.
-2. **No Product Recommendations/Suggestions**: You CANNOT recommend or suggest which products/grades a customer should buy or what the salesperson should sell to them. You do not have access to their history or recommendation engines.
-3. If the user asks you to perform any administrative action, OR asks you to suggest/recommend/select products for a client (e.g. "Suggest products for Tata", "What should I sell to Supreme?"), you MUST reject the request immediately.
-4. Your response in this case MUST start with:
-   "⚠️ *I do not have the capability to perform this action.*"
-   Followed by a brief, polite explanation that this action or recommendation is not supported by the assistant.
+1. **No Administrative/Operational Actions via Bot**: You CANNOT lock, create, delete, update, edit, or modify rate sheets, steel prices, database records, employee records, or admin configurations through this chat. These must be done via the web dashboard.
+2. **No Product Recommendations/Suggestions**: You CANNOT recommend or suggest which products/grades a customer should buy or what the salesperson should sell to them.
+3. If the user asks you to perform any administrative action OR asks you to suggest/recommend products for a client, your response MUST be exactly:
+   "${adminBlockedMessage}"
 
 GUIDELINES:
 1. Always respond in the same language style as the user (English, Hindi, or Hinglish).
@@ -48,7 +58,7 @@ GUIDELINES:
 `;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const prompt = `${ASSISTANT_SYSTEM_PROMPT}\n\nSalesperson's Question: "${text}"`;
+    const prompt = `${ASSISTANT_SYSTEM_PROMPT}\n\nUser's Question: "${text}"`;
     
     const result = await model.generateContent(prompt);
     const reply = result.response.text().trim();
