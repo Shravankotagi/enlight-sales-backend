@@ -322,6 +322,53 @@ async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
   return '';
 }
 
+/**
+ * Saves or updates the active customer context session for a salesperson.
+ */
+async function saveActiveSession(salespersonPhone, customerName, intent = 'general') {
+  if (!salespersonPhone || !customerName) return;
+  try {
+    const { error } = await supabase
+      .from('conversation_sessions')
+      .upsert({
+        salesperson_phone: salespersonPhone,
+        active_customer_name: customerName,
+        last_intent: intent,
+        updated_at: new Date().toISOString()
+      });
+    if (error) console.error('saveActiveSession error:', error.message);
+  } catch (err) {
+    console.error('saveActiveSession catch:', err.message);
+  }
+}
+
+/**
+ * Retrieves the active customer context for a salesperson if it was updated in the last 15 minutes.
+ */
+async function getActiveSession(salespersonPhone) {
+  if (!salespersonPhone) return null;
+  try {
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('conversation_sessions')
+      .select('active_customer_name')
+      .eq('salesperson_phone', salespersonPhone)
+      .gte('updated_at', fifteenMinutesAgo)
+      .limit(1);
+
+    if (error) {
+      console.error('getActiveSession error:', error.message);
+      return null;
+    }
+    if (data && data.length > 0) {
+      return data[0].active_customer_name;
+    }
+  } catch (err) {
+    console.error('getActiveSession catch:', err.message);
+  }
+  return null;
+}
+
 // Export default and named exports
 module.exports = { 
   supabase, 
@@ -332,5 +379,7 @@ module.exports = {
   checkAndLogNewCustomer,
   fuzzyMatchCustomer,
   verifyAndGetCustomerName,
-  getCustomerMissingInfoPrompt
+  getCustomerMissingInfoPrompt,
+  saveActiveSession,
+  getActiveSession
 };

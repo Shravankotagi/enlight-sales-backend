@@ -160,6 +160,10 @@ async function processCustomerMessage(text, senderPhone) {
       });
     }
 
+    // Save active customer session context
+    const { saveActiveSession } = require('../supabase');
+    await saveActiveSession(senderPhone, finalCustomerName, 'onboarding_prompted');
+
     // Edge Case 6: Only log KRA 2 once per customer per salesperson per month
     const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
 

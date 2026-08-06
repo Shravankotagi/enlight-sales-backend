@@ -420,23 +420,39 @@ router.post('/', async (req, res) => {
             }
           }
 
-          // 2. Validate Customer Name Presence (Must not be empty/null, nor fallback keywords like 'Customer' or 'this client')
-          const extractedCustomerName = extraction.customer?.name?.trim();
-          if (!extractedCustomerName || 
+          // 2. Validate and Resolve Customer Name
+          let extractedCustomerName = extraction.customer?.name?.trim();
+
+          const isPlaceholder = !extractedCustomerName || 
               extractedCustomerName.toLowerCase() === 'customer' || 
               extractedCustomerName.toLowerCase() === 'this client' || 
-              extractedCustomerName.toLowerCase() === 'client') {
-            await sendTextMessage(
-              senderPhone,
-              `❓ *Which customer is this inquiry for?*\n\n` +
-              `Please specify the customer/company name so I can log this inquiry.\n` +
-              `*Example:* _"For Mehta Industries, need 15 MT HR Coil"_`
-            );
-            return;
+              extractedCustomerName.toLowerCase() === 'client';
+
+          if (isPlaceholder) {
+            // Check if there is an active customer session context in the last 15 minutes
+            const { getActiveSession } = require('./supabase');
+            const sessionCustomer = await getActiveSession(senderPhone);
+            if (sessionCustomer) {
+              console.log(`Resolved customer name "${sessionCustomer}" from active session context.`);
+              extractedCustomerName = sessionCustomer;
+              if (extraction.customer) {
+                extraction.customer.name = sessionCustomer;
+              } else {
+                extraction.customer = { name: sessionCustomer };
+              }
+            } else {
+              await sendTextMessage(
+                senderPhone,
+                `❓ *Which customer is this inquiry for?*\n\n` +
+                `Please specify the customer/company name so I can log this inquiry.\n` +
+                `*Example:* _"For Mehta Industries, need 15 MT HR Coil"_`
+              );
+              return;
+            }
           }
 
           // 3. Perform Customer Verification (handles exact and fuzzy matched typos)
-          const { verifyAndGetCustomerName } = require('./supabase');
+          const { verifyAndGetCustomerName, saveActiveSession } = require('./supabase');
           const officialCustomerName = await verifyAndGetCustomerName(extractedCustomerName, senderPhone);
 
           if (!officialCustomerName) {
@@ -451,6 +467,9 @@ router.post('/', async (req, res) => {
             );
             return;
           }
+
+          // Keep session context refreshed with the validated customer name
+          await saveActiveSession(senderPhone, officialCustomerName, 'inquiry');
 
           // Use the official/corrected customer name from the database (fixes typos)
           if (extraction.customer) {
