@@ -409,9 +409,10 @@ async function getCustomerList(senderPhone) {
 
     const { data: customers } = await supabase
       .from('recurring_customers')
-      .select('company_name, contact_person, city, mobile, gstin')
-      .eq('salesperson_phone', senderPhone)
-      .order('company_name', { ascending: true })
+      .select('customer_name, contact_person, customer_address, customer_phone, customer_gst')
+      .eq('assigned_salesperson_phone', senderPhone)
+      .eq('is_active', true)
+      .order('customer_name', { ascending: true })
       .limit(20);
 
     if (!customers || customers.length === 0) {
@@ -419,9 +420,9 @@ async function getCustomerList(senderPhone) {
     }
 
     const lines = customers.map((c, i) =>
-      `${i + 1}. *${c.company_name}*\n` +
-      `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.city || 'N/A'} | 📱 ${c.mobile || 'N/A'}` +
-      (c.gstin ? `\n   🧾 GST: ${c.gstin}` : '')
+      `${i + 1}. *${c.customer_name}*\n` +
+      `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.customer_address || 'N/A'} | 📱 ${c.customer_phone || 'N/A'}` +
+      (c.customer_gst ? `\n   🧾 GST: ${c.customer_gst}` : '')
     );
 
     return `👥 *Your Customer List (${customers.length})*\n\n` + lines.join('\n\n');
@@ -474,36 +475,91 @@ async function getVisitList(senderPhone, text = '') {
   }
 }
 
-/** Payment aging / outstanding list */
+/** Payment aging / outstanding list — derived from deals table (source of truth) */
 async function getPaymentAging(senderPhone) {
   try {
     const supabase = getSupabase();
 
-    const { data: payments } = await supabase
+    // Source of truth: unpaid won deals with payment_terms
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('customer_name, total_amount, payment_terms, created_at, status')
+      .eq('salesperson_phone', senderPhone)
+      .eq('stage', 'won')
+      .not('status', 'eq', 'payment_collected')
+      .order('created_at', { ascending: true })
+      .limit(15);
+
+    // Also check payment_tracking for any overrides
+    const { data: ptRecords } = await supabase
       .from('payment_tracking')
       .select('customer_name, invoice_amount, outstanding, due_date, status')
       .eq('salesperson_phone', senderPhone)
-      .neq('status', 'paid')
+      .neq('status', 'collected')
       .order('due_date', { ascending: true })
       .limit(15);
 
-    if (!payments || payments.length === 0) {
+    const today = new Date();
+
+    // Prefer payment_tracking records (they have outstanding amounts), fall back to deals
+    let rows = [];
+
+    if (ptRecords && ptRecords.length > 0) {
+      rows = ptRecords.map((p, i) => {
+        // Calculate due date: use stored due_date only if it's valid (not null / epoch)
+        let dueDisplay = 'Due date TBD';
+        let overdueStr = '';
+        if (p.due_date) {
+          const due = new Date(p.due_date);
+          // Guard against epoch (1970) values
+          if (due.getFullYear() > 1980) {
+            const daysLeft = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+            const overdue = daysLeft < 0;
+            dueDisplay = due.toLocaleDateString('en-IN');
+            overdueStr = overdue
+              ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
+              : ` (${daysLeft}d left)`;
+          }
+        }
+        const outstanding = Number(p.outstanding) || Number(p.invoice_amount) || 0;
+        return `${i + 1}. *${p.customer_name}*\n` +
+          `   Outstanding: ${formatINR(outstanding)}\n` +
+          `   Due: ${dueDisplay}${overdueStr}`;
+      });
+
+      const totalOutstanding = ptRecords.reduce((s, p) => s + (Number(p.outstanding) || Number(p.invoice_amount) || 0), 0);
+      return `💰 *Outstanding Payments (${ptRecords.length})*\n\n` +
+        rows.join('\n\n') +
+        `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`;
+    }
+
+    // Fallback: derive from won deals
+    if (!deals || deals.length === 0) {
       return '✅ No outstanding payments! All collections up to date.';
     }
 
-    const today = new Date();
-    const lines = payments.map((p, i) => {
-      const due = new Date(p.due_date);
-      const daysLeft = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
-      const overdue = daysLeft < 0;
-      return `${i + 1}. *${p.customer_name}*\n` +
-        `   Outstanding: ${formatINR(p.outstanding)} / ${formatINR(p.invoice_amount)}\n` +
-        `   Due: ${due.toLocaleDateString('en-IN')} ${overdue ? `⚠️ (${Math.abs(daysLeft)}d overdue)` : `(${daysLeft}d left)`}`;
+    rows = deals.map((d, i) => {
+      let dueDisplay = 'Due date TBD';
+      let overdueStr = '';
+      if (d.payment_terms && d.created_at) {
+        const termDays = parseInt((d.payment_terms.match(/\d+/) || ['30'])[0]);
+        const due = new Date(d.created_at);
+        due.setDate(due.getDate() + termDays);
+        const daysLeft = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+        const overdue = daysLeft < 0;
+        dueDisplay = due.toLocaleDateString('en-IN');
+        overdueStr = overdue
+          ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
+          : ` (${daysLeft}d left)`;
+      }
+      return `${i + 1}. *${d.customer_name}*\n` +
+        `   Amount: ${formatINR(d.total_amount)}\n` +
+        `   Due: ${dueDisplay}${overdueStr}`;
     });
 
-    const totalOutstanding = payments.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
-    return `💰 *Outstanding Payments (${payments.length})*\n\n` +
-      lines.join('\n\n') +
+    const totalOutstanding = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
+    return `💰 *Outstanding Payments (${deals.length})*\n\n` +
+      rows.join('\n\n') +
       `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`;
   } catch (err) {
     console.error('getPaymentAging error:', err.message);
@@ -724,27 +780,12 @@ async function handleQuery(text, senderPhone) {
   if (lower.includes('visit') || lower.includes('visited') || lower.includes('field visit')) {
     return await getVisitList(senderPhone, text);
   }
-  // Payment aging
-  if (lower.includes('outstanding') || lower.includes('overdue') || lower.includes('baaki') || lower.includes('due')) {
+  // Outstanding / payment aging (must come before generic 'payment')
+  if (lower.includes('outstanding') || lower.includes('overdue') || lower.includes('baaki') ||
+      lower.includes('due') || lower.includes('aging') || lower.includes('hasn') || lower.includes('nahi diya')) {
     return await getPaymentAging(senderPhone);
   }
-  // Full report
-  if (lower.includes('monthly report') || lower.includes('full report') || lower.includes('report card') || lower === 'report') {
-    return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
-  }
-  // This week
-  if (lower.includes('this week') || lower.includes('is hafte')) {
-    return await getDealsThisWeek();
-  }
-  // Pending deals
-  if (lower.includes('pending') && lower.includes('deal')) {
-    return await getPendingDeals(senderPhone);
-  }
-  // Pending inquiries
-  if (lower.includes('pending') || lower.includes('review queue') || lower.includes('inquir')) {
-    return await getPendingInquiries();
-  }
-  // Payment summary
+  // Payment summary (KRA 5 totals)
   if (lower.includes('payment') || lower.includes('collection')) {
     return await getPaymentSummary(senderPhone);
   }
