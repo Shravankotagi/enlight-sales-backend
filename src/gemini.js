@@ -274,16 +274,19 @@ INTENT DEFINITIONS — understand the meaning, not the keywords:
   - "Mehta ne rate manga 10mm ka" (rate asked for)
   - "PO aaya hai Supreme ka" (purchase order received)
 
-"query": The salesperson is asking to see their own performance data or stats.
+"query": The salesperson is asking for their performance stats, dashboard link, or asking general informational questions (e.g. today's date/time, current steel rates/prices, explaining bot features, or general information).
   Examples:
-  - "Mere kitne visits hue?" (how many visits?)
+  - "what is todays date" (date/time query)
+  - "rate sheet dikhao" (pricing query)
+  - "today's price of HR Coil" (pricing query)
+  - "Mere kitne visits hue?" (performance stats)
   - "KRA status dikhao" (show KRA status)
   - "Aaj ka dashboard dikhao" (show today's dashboard)
 
 "greeting": Just a hello or check-in with no business content.
   Examples: "Hi", "Hello", "Good morning", "Namaste", "Kya haal hai"
 
-"unknown": You genuinely cannot determine any business intent.
+"unknown": You genuinely cannot determine any business intent or it is a general conversational remark.
 
 IMPORTANT RULES:
 - Judge by the MEANING of the message, not by the presence of specific words
@@ -296,7 +299,9 @@ IMPORTANT RULES:
 async function classifyIntent(text) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const prompt = INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
+    const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'long' });
+    const contextPrompt = `Context:\n- Today's date and time in India: ${nowStr}\n\n`;
+    const prompt = contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const rawText = response.text().trim();
@@ -314,4 +319,4 @@ async function classifyIntent(text) {
   }
 }
 
-module.exports = { extractFromText, extractFromImage, classifyIntent };
+module.exports = { extractFromText, extractFromImage, classifyIntent, getLatestActiveRatesText };

@@ -3,6 +3,7 @@ const { getPaymentSummary } = require('./kra5');
 const { getComplaintSummary } = require('./kra8');
 const { generateFullKRAReport } = require('./kraReport');
 const { getNewCustomerSummary } = require('./kra2');
+const { handleConversationalQuery } = require('./agents/assistantAgent');
 
 function getSupabase() {
   return createClient(
@@ -48,7 +49,11 @@ function isQuery(text) {
     // General / Command phrases
     'monthly report', 'sales report', 'status report', 'show me sales',
     'my reports', 'my report', 'all reports', 'show reports', 'report card',
-    'report', 'reports', 'dashboard', 'login', 'link', 'website', 'portal', 'url'
+    'report', 'reports', 'dashboard', 'login', 'link', 'website', 'portal', 'url',
+    // General conversational & date/pricing query triggers
+    'date', 'time', 'today', 'aaj', 'din', 'tarikh', 'time kya', 'price', 'prices',
+    'rate', 'rates', 'cost', 'bhav', 'what is', 'tell me', 'help', 'how to', 'bot',
+    'assistant', 'hello', 'hi', 'hey', 'namaste', 'joke', 'who are you', 'kaise ho'
   ];
 
   return queryKeywords.some(keyword => lowerText.includes(keyword));
@@ -365,8 +370,8 @@ async function handleQuery(text, senderPhone) {
     return await getKRAStatus(senderPhone);
   }
 
-  // Default: sales summary
-  return await getSalesThisMonth(senderPhone);
+  // Default: Conversational Gemini Assistant (handles dates, time, rates, general queries)
+  return await handleConversationalQuery(text, senderPhone);
 }
 
 async function getVisitSummary(senderPhone) {
