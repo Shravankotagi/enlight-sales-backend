@@ -72,6 +72,47 @@ function getMonthRange() {
   };
 }
 
+function getMonthRangeFromQuery(text) {
+  if (!text) return getMonthRange();
+  const lower = text.toLowerCase();
+  const months = [
+    { name: 'january', aliases: ['january', 'jan', 'januari'] },
+    { name: 'february', aliases: ['february', 'feb', 'februari'] },
+    { name: 'march', aliases: ['march', 'mar', 'murch'] },
+    { name: 'april', aliases: ['april', 'apr'] },
+    { name: 'may', aliases: ['may'] },
+    { name: 'june', aliases: ['june', 'jun'] },
+    { name: 'july', aliases: ['july', 'jul'] },
+    { name: 'august', aliases: ['august', 'aug'] },
+    { name: 'september', aliases: ['september', 'sep', 'sept'] },
+    { name: 'october', aliases: ['october', 'oct'] },
+    { name: 'november', aliases: ['november', 'nov'] },
+    { name: 'december', aliases: ['december', 'dec'] }
+  ];
+
+  const now = new Date();
+  let targetMonth = now.getMonth();
+  let targetYear = now.getFullYear();
+
+  for (let idx = 0; idx < months.length; idx++) {
+    const m = months[idx];
+    if (m.aliases.some(alias => lower.includes(alias))) {
+      targetMonth = idx;
+      break;
+    }
+  }
+
+  const start = new Date(targetYear, targetMonth, 1);
+  const end = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    monthName: start.toLocaleString('en-IN', { month: 'long' }),
+    year: targetYear
+  };
+}
+
 // Get current week date range
 function getWeekRange() {
   const now = new Date();
@@ -90,10 +131,10 @@ function formatINR(amount) {
 
 // QUERY HANDLERS
 
-async function getSalesThisMonth(senderPhone) {
+async function getSalesThisMonth(senderPhone, text = '') {
   try {
     const supabase = getSupabase();
-    const { start, end, monthName, year } = getMonthRange();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
 
     const { data: deals, error } = await supabase
       .from('deals')
@@ -213,10 +254,10 @@ async function getDealsThisWeek() {
   }
 }
 
-async function getKRAStatus(senderPhone) {
+async function getKRAStatus(senderPhone, text = '') {
   try {
     const supabase = getSupabase();
-    const { start, end, monthName, year } = getMonthRange();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
 
     // Get all deals this month for this salesperson
     const { data: deals } = await supabase
@@ -234,6 +275,9 @@ async function getKRAStatus(senderPhone) {
       .gte('created_at', start)
       .lte('created_at', end);
 
+    const resolvedMonth = new Date(start).getMonth() + 1;
+    const resolvedYear  = new Date(start).getFullYear();
+
     // Get KRA logs this month for KRA 2 (New Customers)
     const { data: kra2Logs } = await supabase
       .from('kra_logs')
@@ -241,8 +285,8 @@ async function getKRAStatus(senderPhone) {
       .eq('salesperson_phone', senderPhone)
       .eq('kra_number', 2)
       .eq('kra_type', 'new_customer')
-      .eq('month', new Date().getMonth() + 1)
-      .eq('year', new Date().getFullYear());
+      .eq('month', resolvedMonth)
+      .eq('year', resolvedYear);
 
     const totalDeals = deals?.length || 0;
     const wonDeals = deals?.filter(d => d.stage === 'won') || [];
@@ -328,13 +372,13 @@ async function handleQuery(text, senderPhone) {
   if (lower.includes('kra') || lower.includes('target') || 
       lower.includes('performance') || lower.includes('achievement') ||
       lower.includes('dashboard') || lower.includes('status') || lower.includes('summary')) {
-    return await getKRAStatus(senderPhone);
+    return await getKRAStatus(senderPhone, text);
   }
 
   // Sales this month
   if (lower.includes('sales') || lower.includes('is mahine') || 
       lower.includes('this month') || lower.includes('monthly')) {
-    return await getSalesThisMonth(senderPhone);
+    return await getSalesThisMonth(senderPhone, text);
   }
 
   // This week
@@ -358,7 +402,7 @@ async function handleQuery(text, senderPhone) {
   // KRA 9 - Visit summary
   if (lower.includes('visit') || lower.includes('visits') ||
       lower.includes('customer visit') || lower.includes('kra 9')) {
-    return await getVisitSummary(senderPhone);
+    return await getVisitSummary(senderPhone, text);
   }
 
   // KRA 5 - Payment summary
@@ -388,7 +432,7 @@ async function handleQuery(text, senderPhone) {
       lower === 'report' ||
       lower === 'reports' ||
       lower.includes('all my reports')) {
-    return await generateFullKRAReport(senderPhone);
+    return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
   }
 
   // KRA 2 new customers
@@ -404,10 +448,10 @@ async function handleQuery(text, senderPhone) {
   return await handleConversationalQuery(text, senderPhone);
 }
 
-async function getVisitSummary(senderPhone) {
+async function getVisitSummary(senderPhone, text = '') {
   try {
     const supabase = getSupabase();
-    const { start, end, monthName, year } = getMonthRange();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
 
     const { data: visits } = await supabase
       .from('customer_visits')

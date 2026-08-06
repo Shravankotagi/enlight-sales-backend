@@ -26,9 +26,9 @@ function formatINR(amount) {
   return '₹' + Number(amount).toLocaleString('en-IN');
 }
 
-async function generateFullKRAReport(senderPhone) {
+async function generateFullKRAReport(senderPhone, customMonthRange = null) {
   const supabase = getSupabase();
-  const { start, end, monthName, year } = getMonthRange();
+  const { start, end, monthName, year } = customMonthRange || getMonthRange();
   const now = new Date();
 
   try {
