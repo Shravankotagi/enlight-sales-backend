@@ -1,3 +1,27 @@
+/**
+ * KRA 1 - Sales Achievement & Pipeline Agent
+ *
+ * DESIGN PRINCIPLES:
+ * - One deal per customer inquiry. Stage updates modify THAT deal, never create a new one.
+ * - A "won" event logs to KRA 1. A "lost" event logs to KRA 4 loss analytics.
+ * - KRA 5 (Payment) is NEVER touched here. Payment is explicitly separate.
+ * - PO images mark the existing deal as won, never create a duplicate deal.
+ *
+ * EDGE CASES HANDLED:
+ * 1.  Stage update (won/lost/negotiation/quoted/qualified) on existing deal → update deal
+ * 2.  Stage update for customer not in DB → create new deal at that stage
+ * 3.  Won deal → log KRA 1, set won_at timestamp
+ * 4.  Lost deal → log KRA 4 loss reason, never log KRA 1
+ * 5.  Duplicate won → check if deal already marked won, skip KRA 1 re-log
+ * 6.  Missing customer name → ask for clarification
+ * 7.  Deal value update with rate × qty → compute and store total_amount
+ * 8.  Customer name partial match (fuzzy ILIKE) → find best existing deal
+ * 9.  Salesperson's own deal priority → search own deals first, then global
+ * 10. PO image → update existing deal if found, else create new won deal
+ * 11. Multiple open deals for same customer → pick the most recent non-won/lost one
+ * 12. Hinglish/casual message → AI interprets meaning, not keywords
+ */
+
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 const axios = require('axios');
@@ -16,7 +40,7 @@ Input message can be English, Hindi, or Hinglish.
 Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 {
   "action": "stage_update|purchase_order",
-  "customer_name": "<company/customer name>",
+  "customer_name": "<company/customer name, else null>",
   "target_stage": "won|lost|negotiation|quoted|qualified",
   "loss_reason": "<inferred reason if deal was lost, else null>",
   "rate_per_mt": <numeric per-MT price if mentioned e.g. 51000 per MT, else 0>,
@@ -25,162 +49,262 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "confidence": <float 0.0 to 1.0>
 }
 
-Rules for target_stage — understand meaning, not keywords:
-- Any message indicating a deal was finalized, confirmed, accepted, or order placed -> "won"
-- Any message indicating a deal was refused, rejected, cancelled, or customer declined -> "lost"
-- Any message indicating ongoing discussion, bargaining, or counter-offer -> "negotiation"
-- Any message indicating a price/quote was sent or shared -> "quoted"
-- Any new requirement or RFQ received -> "qualified"
+Rules for target_stage — understand MEANING, not keywords:
+- "won": deal finalized, confirmed, accepted, order placed, PO received, customer said yes
+- "lost": deal refused, rejected, cancelled, customer said no, competitor won
+- "negotiation": ongoing discussion, bargaining, counter-offer, price haggling
+- "quoted": price/quote sent or shared, proforma sent
+- "qualified": new requirement received, customer interested, lead confirmed
 
-Rules for loss_reason — infer from context:
-- Infer the reason why the deal was lost (e.g. price high, competitor lower rate, payment terms mismatch, delivery delay) if deal lost, else null.
+Rules for loss_reason:
+- Infer from context (price too high, competitor cheaper, delivery mismatch, payment terms, product unavailable)
+- If not clearly a loss, set to null
+
+IMPORTANT:
+- If a message says "deal won" or "order confirm" with no amount, set total_amount=0 (we will look it up from DB)
+- Do NOT invent amounts. Only set total_amount if explicitly stated in the message.
 
 Return ONLY the JSON object.
 `;
 
+/**
+ * Finds the best matching existing deal for a customer.
+ * Priority: salesperson's own deals → active stages first → most recent.
+ */
+async function findBestDeal(customerName, senderPhone) {
+  // 1. Own deals, active stages first (not won/lost yet)
+  const { data: ownActive } = await supabase
+    .from('deals')
+    .select('*')
+    .ilike('customer_name', `%${customerName}%`)
+    .eq('salesperson_phone', senderPhone)
+    .not('stage', 'in', '("won","lost")')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (ownActive && ownActive.length > 0) return ownActive[0];
+
+  // 2. Own deals, any stage (maybe re-updating a won deal)
+  const { data: ownAny } = await supabase
+    .from('deals')
+    .select('*')
+    .ilike('customer_name', `%${customerName}%`)
+    .eq('salesperson_phone', senderPhone)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (ownAny && ownAny.length > 0) return ownAny[0];
+
+  // 3. Global search — active stages
+  const { data: globalActive } = await supabase
+    .from('deals')
+    .select('*')
+    .ilike('customer_name', `%${customerName}%`)
+    .not('stage', 'in', '("won","lost")')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (globalActive && globalActive.length > 0) return globalActive[0];
+
+  // 4. Global search — any stage
+  const { data: globalAny } = await supabase
+    .from('deals')
+    .select('*')
+    .ilike('customer_name', `%${customerName}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (globalAny && globalAny.length > 0) return globalAny[0];
+
+  return null;
+}
+
+/**
+ * Gets deal item amounts to compute total_amount if not explicitly stated.
+ */
+async function getDealAmountFromItems(dealId) {
+  const { data: items } = await supabase
+    .from('deal_items')
+    .select('amount, quantity, rate')
+    .eq('deal_id', dealId);
+
+  if (!items || items.length === 0) return 0;
+
+  const sum = items.reduce((total, item) => {
+    const itemAmount = Number(item.amount) || (Number(item.quantity || 0) * Number(item.rate || 0));
+    return total + itemAmount;
+  }, 0);
+
+  return sum;
+}
+
+/**
+ * Checks if KRA 1 was already logged for a specific deal (to prevent duplicate won-logs).
+ */
+async function isKRA1AlreadyLogged(senderPhone, customerName) {
+  const { data } = await supabase
+    .from('kra_logs')
+    .select('id')
+    .eq('salesperson_phone', senderPhone)
+    .eq('kra_number', 1)
+    .ilike('customer_name', `%${customerName}%`)
+    .limit(1);
+
+  return data && data.length > 0;
+}
+
+/**
+ * Main text message handler.
+ */
 async function processSalesMessage(text, senderPhone) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
     const result = await model.generateContent(SALES_AGENT_PROMPT + '\n\nSalesperson message:\n' + text);
     const rawText = result.response.text().trim();
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
     const data = JSON.parse(cleaned);
 
+    // Edge Case 6: Missing customer name
     if (!data.customer_name) {
-      return `⚠️ *Sales Agent Request*\nPlease mention the Customer/Company Name to update the sales pipeline.`;
+      return `⚠️ *Sales Agent Request*\n\nPlease mention the *Customer/Company Name* to update the sales pipeline.\nExample: _"Delta Structural Steel deal won"_`;
     }
 
     const customerName = data.customer_name.trim();
-    const targetStage = data.target_stage || 'won';
+    const targetStage  = data.target_stage || 'qualified';
 
-    // 1. Prioritize deals with non-zero total_amount for this salesperson
-    let { data: existingDeals } = await supabase
-      .from('deals')
-      .select('*')
-      .ilike('customer_name', `%${customerName}%`)
-      .eq('salesperson_phone', senderPhone)
-      .order('total_amount', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    // 2. If no match for this salesperson, search company-wide
-    if (!existingDeals || existingDeals.length === 0) {
-      const { data: globalDeals } = await supabase
-        .from('deals')
-        .select('*')
-        .ilike('customer_name', `%${customerName}%`)
-        .order('total_amount', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1);
-      existingDeals = globalDeals;
-    }
-
-    let dealId = existingDeals && existingDeals.length > 0 ? existingDeals[0].id : null;
-    let existingAmount = existingDeals && existingDeals[0] ? Number(existingDeals[0].total_amount || 0) : 0;
-
-    // Fetch quantity in MT if existing deal items present
-    let quantityMt = 0;
-    if (dealId) {
-      const { data: items } = await supabase.from('deal_items').select('quantity').eq('deal_id', dealId);
-      if (items && items.length > 0) {
-        quantityMt = items.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
-      }
-    }
-
-    let dealAmount = existingAmount;
-
-    if (data.total_amount && data.total_amount > 0) {
-      dealAmount = Number(data.total_amount);
-    } else if (data.rate_per_mt && data.rate_per_mt > 0) {
-      if (quantityMt > 0) {
-        dealAmount = quantityMt * Number(data.rate_per_mt);
-      } else {
-        dealAmount = Number(data.rate_per_mt);
-      }
-    }
-
-    if (dealId && dealAmount === 0) {
-      const { data: items } = await supabase.from('deal_items').select('amount, quantity, rate').eq('deal_id', dealId);
-      if (items && items.length > 0) {
-        const itemSum = items.reduce((sum, i) => sum + (Number(i.amount) || Number(i.quantity || 0) * Number(i.rate || 0)), 0);
-        if (itemSum > 0) dealAmount = itemSum;
-      }
-    }
-
-    // Stage mapping
     const stageMap = {
-      won: 'won',
-      lost: 'lost',
+      won:         'won',
+      lost:        'lost',
       negotiation: 'negotiation',
-      quoted: 'quoted',
-      qualified: 'qualified',
+      quoted:      'quoted',
+      qualified:   'qualified',
     };
-    const dbStage = stageMap[targetStage] || 'won';
+    const dbStage = stageMap[targetStage] || 'qualified';
+
+    // Edge Case 8/9/11: Find best matching deal
+    const existingDeal = await findBestDeal(customerName, senderPhone);
+
+    let dealId = existingDeal ? existingDeal.id : null;
+    let dealAmount = 0;
+
+    // Resolve deal amount (priority: AI extracted > DB items > existing total)
+    if (data.total_amount && Number(data.total_amount) > 0) {
+      dealAmount = Number(data.total_amount);
+    } else if (dealId) {
+      const itemsTotal = await getDealAmountFromItems(dealId);
+      dealAmount = itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
+    }
+
+    // Edge Case 7: If rate × qty was given but not total
+    if (dealAmount === 0 && data.rate_per_mt && Number(data.rate_per_mt) > 0 && dealId) {
+      const { data: items } = await supabase
+        .from('deal_items')
+        .select('quantity')
+        .eq('deal_id', dealId);
+      const totalQty = (items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+      if (totalQty > 0) dealAmount = totalQty * Number(data.rate_per_mt);
+    }
 
     if (dealId) {
-      // Update deal in Supabase
-      await supabase
-        .from('deals')
-        .update({
-          stage: dbStage,
-          total_amount: dealAmount || undefined,
-          won_at: dbStage === 'won' ? new Date().toISOString() : undefined,
-          loss_reason: dbStage === 'lost' ? data.loss_reason || 'Not specified' : undefined,
-        })
-        .eq('id', dealId);
+      // ---- UPDATE existing deal ----
+      const updatePayload = {
+        stage: dbStage,
+      };
+
+      // Only update amount if we have a new value and it's greater than 0
+      if (dealAmount > 0) {
+        updatePayload.total_amount = dealAmount;
+      }
+
+      if (dbStage === 'won') {
+        updatePayload.won_at = new Date().toISOString();
+      }
+
+      if (dbStage === 'lost') {
+        updatePayload.loss_reason = data.loss_reason || 'Not specified';
+      }
+
+      await supabase.from('deals').update(updatePayload).eq('id', dealId);
     } else {
-      // Insert new deal
+      // ---- CREATE new deal ----
       const { data: newDeal } = await supabase
         .from('deals')
         .insert({
-          customer_name: customerName,
+          customer_name:     customerName,
           salesperson_phone: senderPhone,
-          stage: dbStage,
-          total_amount: dealAmount || 0,
-          inquiry_type: 'purchase_order',
-          won_at: dbStage === 'won' ? new Date().toISOString() : undefined,
-          loss_reason: dbStage === 'lost' ? data.loss_reason || 'Not specified' : undefined,
+          stage:             dbStage,
+          total_amount:      dealAmount || 0,
+          inquiry_type:      'inquiry',
+          won_at:            dbStage === 'won' ? new Date().toISOString() : null,
+          loss_reason:       dbStage === 'lost' ? (data.loss_reason || 'Not specified') : null,
         })
         .select()
         .single();
+
       if (newDeal) dealId = newDeal.id;
     }
 
-    // Sync live to KRA 1 log
+    // Edge Case 5: KRA 1 — log won, but don't double-log if already won
     if (dbStage === 'won') {
+      const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, customerName);
+      if (!alreadyLogged) {
+        await supabase.from('kra_logs').insert({
+          salesperson_phone: senderPhone,
+          kra_number:        1,
+          kra_type:          'sales_achievement',
+          value:             dealAmount || 0,
+          customer_name:     customerName,
+          description:       `Deal Won: ${customerName} (₹${Number(dealAmount).toLocaleString('en-IN')})`,
+          month: new Date().getMonth() + 1,
+          year:  new Date().getFullYear(),
+        });
+      }
+    }
+
+    // Edge Case 4: KRA 4 — log loss reason (separate from KRA 1)
+    if (dbStage === 'lost' && data.loss_reason) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
-        kra_number: 1,
-        kra_type: 'sales_achievement',
-        value: dealAmount || 0,
-        customer_name: customerName,
-        description: `Deal Won: ${customerName} (₹${Number(dealAmount).toLocaleString('en-IN')})`,
+        kra_number:        4,
+        kra_type:          'deal_lost',
+        value:             dealAmount || 0,
+        customer_name:     customerName,
+        description:       `Deal Lost: ${customerName} — Reason: ${data.loss_reason}`,
         month: new Date().getMonth() + 1,
-        year: new Date().getFullYear(),
+        year:  new Date().getFullYear(),
       });
     }
 
-    // Push to Zoho Bigin CRM
+    // Async Zoho Bigin sync (non-blocking, does not affect response)
     syncToBigin(customerName, dbStage, dealAmount, data.po_number, senderPhone);
 
-    // Format WhatsApp Response
+    // Build reply
     if (dbStage === 'won') {
       return `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
         `Customer: *${customerName}*\n` +
         `Stage: *Closed Won 🎉*\n` +
-        `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n\n` +
-        `Updated KRA 1 Sales Achievement & synced live to Zoho Bigin! ✅`;
+        (dealAmount > 0 ? `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n` : '') +
+        `\nUpdated KRA 1 Sales Achievement Dashboard! ✅`;
     } else if (dbStage === 'lost') {
       return `❌ *Deal Marked as LOST*\n\n` +
         `Customer: *${customerName}*\n` +
         `Stage: *Closed Lost*\n` +
         (data.loss_reason ? `Reason: ${data.loss_reason}\n` : '') +
-        `Updated Loss Analytics & Zoho Bigin! 📉`;
+        `\nUpdated Loss Analytics Dashboard! 📉`;
     } else {
+      const stageLabels = {
+        negotiation: 'NEGOTIATION 🤝',
+        quoted:      'QUOTED 📄',
+        qualified:   'QUALIFIED ✅',
+      };
       return `🔄 *Pipeline Stage Updated!*\n\n` +
         `Customer: *${customerName}*\n` +
-        `New Stage: *${dbStage.toUpperCase()}*\n\n` +
-        `Synced live to Sales Dashboard & Zoho Bigin! ✅`;
+        `New Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n\n` +
+        `Synced live to Sales Dashboard! ✅`;
     }
 
   } catch (error) {
@@ -189,18 +313,16 @@ async function processSalesMessage(text, senderPhone) {
   }
 }
 
-// Background sync to Zoho Bigin
+/**
+ * Background Zoho Bigin sync — non-blocking, errors are logged but don't fail the user reply.
+ */
 async function syncToBigin(customerName, stage, amount, poNumber, phone) {
   try {
-    const refreshToken = process.env.ZOHO_REFRESH_TOKEN || '1000.92deffb421c05ba197867a3312e56475.758cee03c48e3a09f30b54d26ad2ccab';
-    const clientId = process.env.ZOHO_CLIENT_ID || '1000.5DT0R10YNLSQX9S6EA7TOHC3TI8LQR';
-    const clientSecret = process.env.ZOHO_CLIENT_SECRET || 'f4ebcd5a7e25659f5da35d5e72a1e367939d5c5efb';
-
     const params = new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
+      refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+      client_id:     process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET,
+      grant_type:    'refresh_token',
     });
 
     const tokenRes = await axios.post('https://accounts.zoho.in/oauth/v2/token', params.toString(), {
@@ -209,40 +331,42 @@ async function syncToBigin(customerName, stage, amount, poNumber, phone) {
     const accessToken = tokenRes.data.access_token;
 
     const biginStageMap = {
-      won: 'Closed Won',
-      lost: 'Closed Lost',
+      won:         'Closed Won',
+      lost:        'Closed Lost',
       negotiation: 'Negotiation/Review',
-      quoted: 'Value Proposition',
-      qualified: 'Qualification',
+      quoted:      'Value Proposition',
+      qualified:   'Qualification',
     };
 
     await axios.post(
       'https://www.zohoapis.in/bigin/v1/Deals',
       {
-        data: [
-          {
-            Deal_Name: `${customerName} - Purchase Order`,
-            Stage: biginStageMap[stage] || 'Qualification',
-            Amount: amount || 0,
-            Pipeline: 'Sales Pipeline Standard',
-            Layout: { id: '1384628000000000173' },
-            Description: `PO: ${poNumber || 'N/A'} | Customer: ${customerName} | Salesperson: ${phone}`,
-            Closing_Date: new Date().toISOString().split('T')[0],
-          },
-        ],
+        data: [{
+          Deal_Name:    `${customerName} - ${stage === 'won' ? 'Purchase Order' : 'Pipeline Update'}`,
+          Stage:        biginStageMap[stage] || 'Qualification',
+          Amount:       amount || 0,
+          Pipeline:     'Sales Pipeline Standard',
+          Layout:       { id: '1384628000000000173' },
+          Description:  `PO: ${poNumber || 'N/A'} | Customer: ${customerName} | Salesperson: ${phone}`,
+          Closing_Date: new Date().toISOString().split('T')[0],
+        }],
       },
       {
         headers: {
-          Authorization: 'Zoho-oauthtoken ' + accessToken,
+          Authorization:  'Zoho-oauthtoken ' + accessToken,
           'Content-Type': 'application/json',
         },
       },
     );
   } catch (err) {
-    console.error('Sales Agent Bigin Sync Error:', err.response?.data || err.message);
+    console.error('Bigin Sync Error:', err.response?.data || err.message);
   }
 }
 
+/**
+ * PO Image handler — finds existing deal or creates new won deal.
+ * Edge Case 10: Never creates a duplicate deal if one already exists for the customer.
+ */
 async function processSalesImage(imageBuffer, mimeType, senderPhone) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
@@ -260,10 +384,10 @@ Analyze this PO image / bill / handwritten slip and extract into JSON:
   "po_number": "<PO number if present, else null>",
   "quantity_mt": <numeric quantity in MT if present, else 0>,
   "rate_per_mt": <numeric rate per MT if present, else 0>,
-  "total_amount": <total value in rupees, else 0>,
+  "total_amount": <total value in rupees if stated, else 0>,
   "confidence": <float 0.0 to 1.0>
 }
-Return ONLY JSON.`;
+Return ONLY JSON. No prose. No markdown.`;
 
     const result = await model.generateContent([prompt, imagePart]);
     const rawText = result.response.text().trim();
@@ -271,48 +395,71 @@ Return ONLY JSON.`;
     const data = JSON.parse(cleaned);
 
     if (!data.customer_name) {
-      return `⚠️ *PO Vision Agent Clarification Needed*\n\nI parsed your PO image, but the *Customer/Company Name* is cut off or not clear. Please reply with the Company Name so it can be logged into your sales dashboard!`;
+      return `⚠️ *PO Vision Agent — Customer Not Found*\n\nI parsed your PO image but the *Customer/Company Name* is not visible. Please reply with the company name to log this PO.`;
     }
 
     const customerName = data.customer_name.trim();
-    let totalValue = data.total_amount || 0;
+    let totalValue = Number(data.total_amount || 0);
 
     if (!totalValue && data.quantity_mt && data.rate_per_mt) {
-      totalValue = data.quantity_mt * data.rate_per_mt;
+      totalValue = Number(data.quantity_mt) * Number(data.rate_per_mt);
     }
 
-    // Save PO deal
-    await supabase.from('deals').insert({
-      customer_name: customerName,
-      salesperson_phone: senderPhone,
-      stage: 'won',
-      total_amount: totalValue,
-      po_number: data.po_number || null,
-      inquiry_type: 'purchase_order',
-      won_at: new Date().toISOString(),
-    });
+    // Edge Case 10: Find existing deal first, don't create duplicate
+    const existingDeal = await findBestDeal(customerName, senderPhone);
 
-    // Log to KRA 1
-    await supabase.from('kra_logs').insert({
-      salesperson_phone: senderPhone,
-      kra_number: 1,
-      kra_type: 'sales_achievement',
-      value: totalValue,
-      customer_name: customerName,
-      description: `PO Image Logged: ${customerName} (PO: ${data.po_number || 'N/A'})`,
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
-    });
+    let dealId;
+    if (existingDeal) {
+      await supabase
+        .from('deals')
+        .update({
+          stage:        'won',
+          total_amount: totalValue || existingDeal.total_amount || 0,
+          po_number:    data.po_number || existingDeal.po_number || null,
+          won_at:       new Date().toISOString(),
+        })
+        .eq('id', existingDeal.id);
+      dealId = existingDeal.id;
+    } else {
+      const { data: newDeal } = await supabase
+        .from('deals')
+        .insert({
+          customer_name:     customerName,
+          salesperson_phone: senderPhone,
+          stage:             'won',
+          total_amount:      totalValue || 0,
+          po_number:         data.po_number || null,
+          inquiry_type:      'purchase_order',
+          won_at:            new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (newDeal) dealId = newDeal.id;
+    }
 
-    // Sync to Zoho Bigin
+    // Edge Case 5: Only log KRA 1 once per customer
+    const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, customerName);
+    if (!alreadyLogged) {
+      await supabase.from('kra_logs').insert({
+        salesperson_phone: senderPhone,
+        kra_number:        1,
+        kra_type:          'sales_achievement',
+        value:             totalValue,
+        customer_name:     customerName,
+        description:       `PO Image Logged: ${customerName} (PO: ${data.po_number || 'N/A'})`,
+        month: new Date().getMonth() + 1,
+        year:  new Date().getFullYear(),
+      });
+    }
+
     syncToBigin(customerName, 'won', totalValue, data.po_number, senderPhone);
 
     return `📦 *PO Document Processed & Logged!*\n\n` +
       `Customer: *${customerName}*\n` +
       (data.po_number ? `PO Number: *${data.po_number}*\n` : '') +
-      `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` +
+      (totalValue > 0 ? `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` : '') +
       `Stage: *Closed Won 🎉*\n\n` +
-      `Logged to KRA 1 Sales Achievement & synced live to Zoho Bigin! ✅`;
+      `Logged to KRA 1 Sales Achievement Dashboard! ✅`;
 
   } catch (err) {
     console.error('Sales Image Agent Error:', err.message);
