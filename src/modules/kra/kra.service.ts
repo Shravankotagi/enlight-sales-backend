@@ -243,15 +243,36 @@ export class KraService {
         },
         kra4: {
           label: 'Enquiry Conversion',
-          total_inquiries: inquiries.length,
+          // Use kra_logs inquiry_received count (accurate — deduped per customer per month)
+          // Fallback to raw inquiries.length if no kra4 logs exist yet
+          total_inquiries:
+            kraLogs.filter(
+              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
+            ).length || inquiries.length,
           won_deals: wonDeals.length,
           conversion_rate:
-            inquiries.length > 0
-              ? Math.round((wonDeals.length / inquiries.length) * 100)
+            (kraLogs.filter(
+              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
+            ).length || inquiries.length) > 0
+              ? Math.round(
+                  (wonDeals.length /
+                    (kraLogs.filter(
+                      (l) =>
+                        l.kra_number === 4 && l.kra_type === 'inquiry_received',
+                    ).length || inquiries.length)) *
+                    100,
+                )
               : 0,
           target_rate: 70,
           status:
-            inquiries.length > 0 && wonDeals.length / inquiries.length >= 0.7
+            (kraLogs.filter(
+              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
+            ).length || inquiries.length) > 0 &&
+            wonDeals.length /
+              (kraLogs.filter(
+                (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
+              ).length || inquiries.length) >=
+              0.7
               ? 'achieved'
               : 'in_progress',
         },
@@ -265,7 +286,13 @@ export class KraService {
         },
         kra6: {
           label: 'CRM Compliance',
-          logged_via_bot: deals.length + inquiries.length,
+          // Count distinct days with ANY bot activity (deals, inquiries, or any kra_log)
+          active_days: new Set([
+            ...kraLogs.map((l) => new Date(l.created_at).toDateString()),
+            ...deals.map((d) => new Date(d.created_at).toDateString()),
+            ...inquiries.map((i) => new Date(i.created_at).toDateString()),
+          ]).size,
+          logged_via_bot: deals.length + inquiries.length + kraLogs.length,
           status: 'tracked',
         },
         kra7: {
