@@ -323,19 +323,26 @@ const QUERY_CLASSIFIER_PROMPT = `
 You are an intelligent query router for a B2B steel sales system.
 Your job is to classify the salesperson's request into one of the following categories:
 - "dashboard_link": requests login link, website, portal URL, dashboard URL, open dashboard.
-- "sales_summary": requests sales report, sales numbers, deals created/won.
-- "kra_status": requests performance report, KRA status, KRA achievements, targets status.
-- "visit_summary": requests visits count, customer visits logged, field visits.
-- "payment_summary": requests outstanding payment, collection, overdue, dues, outstanding collection.
-- "complaint_summary": requests complaints logged, customer issues, material returns.
+- "sales_summary": requests sales report, sales numbers, deals created/won count and value.
+- "kra_status": requests performance report, KRA status, KRA achievements, targets status, my performance.
+- "visit_summary": requests visits count total, how many visits did I do.
+- "payment_summary": requests outstanding payment totals, collection summary, overdue totals.
+- "complaint_summary": requests complaints logged count, customer issues summary.
 - "full_report": requests full monthly report, complete KRA report card, monthly report.
 - "deals_this_week": requests this week's deals list, week deals, is hafte ke deals.
 - "pending_deals": requests pending deals list, open deals, active deals, incomplete deals.
 - "pending_inquiries": requests pending inquiries list, review queue, inquiries to be processed.
-- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received count.
-- "general": general hello, steel rates, price sheet, dates, general conversation, or any other query.
+- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received count, how many new customers.
+- "won_customers": requests won customer names, list of won deals with customers and products, who I won deals with, KRA 1 breakdown, won deals detail.
+- "active_deals_detail": requests active deals pipeline with items and amounts, my current deals with products.
+- "customer_list": requests full customer list, all my customers, registered clients, my client directory.
+- "rate_sheet": requests today's rate sheet, current steel prices, current rates, bhav, what are the rates.
+- "visit_list": requests customer visit list, who I visited, my visits this month, field visit log.
+- "payment_aging": requests outstanding dues per customer, overdue list, who hasn't paid, payment aging, baaki list.
+- "lost_deals": requests lost deals breakdown, rejected deals, why deals were lost, loss reasons, deals I lost.
+- "general": general hello, general conversation, greetings, or any other query not listed above.
 
-Identify the category even if there are typos (e.g. "performace" -> "kra_status", "bhav" -> "general", "stat" -> "kra_status", "monthly report" -> "full_report").
+Identify the category even if there are typos (e.g. "performace" -> "kra_status", "bhav" -> "rate_sheet", "won customer names" -> "won_customers", "visit log" -> "visit_list").
 
 Return ONLY a JSON object (no markdown, no prose, no backticks):
 {

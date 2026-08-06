@@ -35,14 +35,26 @@ function isQuery(text) {
     // Deal queries  
     'pending deals', 'open deals', 'meri deals',
     'my deals', 'deals this week', 'is hafte',
+    'active deals', 'current deals', 'won deals', 'won customers',
+    'lost deals', 'rejected deals',
     // Customer queries
     'customer list', 'which customers', 'kaun se customer',
     'not ordered', 'order nahi', 'inactive customers',
+    'my customers', 'all customers', 'client list', 'client directory',
     // Payment queries
     'outstanding', 'overdue', 'due payment',
-    'pending payment', 'baaki payment',
+    'pending payment', 'baaki payment', 'baaki list',
+    'who hasn\'t paid', 'payment aging', 'collection due',
     // KRA queries
     'my kra', 'performance report', 'target achievements',
+    'performance', 'performace', 'kra status', 'kra report',
+    'my performance', 'target status',
+    // Visit queries
+    'my visits', 'visit log', 'who did i visit', 'field visits',
+    'customer visits', 'site visits',
+    // Rate / Price queries
+    'rate sheet', 'current rates', 'today\'s rates', 'steel rates',
+    'bhav', 'price list', 'rate list',
     // Inquiry queries
     'my inquiries', 'meri inquiries', 'pending inquiries',
     'review queue', 'kitni inquiries',
@@ -50,9 +62,10 @@ function isQuery(text) {
     'monthly report', 'sales report', 'status report', 'show me sales',
     'my reports', 'my report', 'all reports', 'show reports', 'report card',
     'report', 'reports', 'dashboard', 'login', 'link', 'website', 'portal', 'url',
+    'new customers', 'onboarded customers', 'kra 2',
     // General conversational & date/pricing query triggers
-    'date', 'time', 'today', 'aaj', 'din', 'tarikh', 'time kya', 'price', 'prices',
-    'rate', 'rates', 'cost', 'bhav', 'what is', 'tell me', 'help', 'how to', 'bot',
+    'date', 'time', 'today', 'aaj', 'din', 'tarikh', 'time kya',
+    'what is', 'tell me', 'help', 'how to', 'bot', 'give me', 'show me', 'list',
     'assistant', 'hello', 'hi', 'hey', 'namaste', 'joke', 'who are you', 'kaise ho'
   ];
 
@@ -317,6 +330,220 @@ async function getKRAStatus(senderPhone, text = '') {
   }
 }
 
+// ── NEW RICH DATA HANDLERS ────────────────────────────────────────────────
+
+/** Won customer names + product + qty breakdown (mirrors KRA 1 breakdown card) */
+async function getWonCustomers(senderPhone, text = '') {
+  try {
+    const supabase = getSupabase();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
+
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('*, deal_items(*)')
+      .eq('salesperson_phone', senderPhone)
+      .eq('stage', 'won')
+      .gte('created_at', start)
+      .lte('created_at', end);
+
+    if (!deals || deals.length === 0) {
+      return `📋 No won deals found for ${monthName} ${year}.`;
+    }
+
+    let srNo = 1;
+    const lines = [];
+    for (const deal of deals) {
+      const items = deal.deal_items || [];
+      if (items.length === 0) {
+        lines.push(`${srNo++}. *${deal.customer_name}* — Amount: ${formatINR(deal.total_amount)}`);
+      } else {
+        for (const item of items) {
+          lines.push(`${srNo++}. *${deal.customer_name}*\n   Product: ${item.sku_text || 'N/A'}\n   Qty: ${item.quantity || 0} ${item.unit || 'MT'} | Rate: ${formatINR(item.rate)} | Amt: ${formatINR(item.amount)}`);
+        }
+      }
+    }
+
+    const totalValue = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
+    return `🏆 *Won Customers — ${monthName} ${year}* (${deals.length} deals)\n\n` +
+      lines.join('\n\n') +
+      `\n\n💰 *Total Won Value: ${formatINR(totalValue)}*`;
+  } catch (err) {
+    console.error('getWonCustomers error:', err.message);
+    return '❌ Could not fetch won customers.';
+  }
+}
+
+/** Active deals with full stage + items detail */
+async function getActiveDealsDetail(senderPhone) {
+  try {
+    const supabase = getSupabase();
+
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('*, deal_items(*)')
+      .eq('salesperson_phone', senderPhone)
+      .not('stage', 'in', '("won","lost")')
+      .order('created_at', { ascending: false })
+      .limit(15);
+
+    if (!deals || deals.length === 0) {
+      return '✅ No active deals in pipeline right now.';
+    }
+
+    const lines = deals.map((d, i) => {
+      const items = (d.deal_items || []).map(it => `     • ${it.sku_text || 'Item'}: ${it.quantity} ${it.unit}`).join('\n');
+      return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n   💰 ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
+    });
+
+    return `📋 *Active Pipeline Deals (${deals.length})*\n\n` + lines.join('\n\n');
+  } catch (err) {
+    console.error('getActiveDealsDetail error:', err.message);
+    return '❌ Could not fetch active deals.';
+  }
+}
+
+/** Full registered customer list */
+async function getCustomerList(senderPhone) {
+  try {
+    const supabase = getSupabase();
+
+    const { data: customers } = await supabase
+      .from('recurring_customers')
+      .select('company_name, contact_person, city, mobile, gstin')
+      .eq('salesperson_phone', senderPhone)
+      .order('company_name', { ascending: true })
+      .limit(20);
+
+    if (!customers || customers.length === 0) {
+      return '📋 No customers registered under your account yet.';
+    }
+
+    const lines = customers.map((c, i) =>
+      `${i + 1}. *${c.company_name}*\n` +
+      `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.city || 'N/A'} | 📱 ${c.mobile || 'N/A'}` +
+      (c.gstin ? `\n   🧾 GST: ${c.gstin}` : '')
+    );
+
+    return `👥 *Your Customer List (${customers.length})*\n\n` + lines.join('\n\n');
+  } catch (err) {
+    console.error('getCustomerList error:', err.message);
+    return '❌ Could not fetch customer list.';
+  }
+}
+
+/** Active rate sheet from DB */
+async function getRateSheet() {
+  try {
+    const { getLatestActiveRatesText } = require('./gemini');
+    const rates = await getLatestActiveRatesText();
+    if (!rates) return '❌ No active rate sheet found. Please contact your Sales Lead.';
+    const now = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full' });
+    return `💹 *Active Steel Rate Sheet*\n📅 ${now}\n\n${rates}\n\n_Rates managed by Admin via Enlight Sales OS_`;
+  } catch (err) {
+    console.error('getRateSheet error:', err.message);
+    return '❌ Could not fetch rate sheet.';
+  }
+}
+
+/** Customer visits list */
+async function getVisitList(senderPhone, text = '') {
+  try {
+    const supabase = getSupabase();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
+
+    const { data: visits } = await supabase
+      .from('customer_visits')
+      .select('*')
+      .eq('salesperson_phone', senderPhone)
+      .gte('visit_date', start)
+      .lte('visit_date', end)
+      .order('visit_date', { ascending: false });
+
+    if (!visits || visits.length === 0) {
+      return `📍 No visits logged for ${monthName} ${year}.`;
+    }
+
+    const lines = visits.map((v, i) =>
+      `${i + 1}. *${v.customer_name}*\n   📅 ${new Date(v.visit_date).toLocaleDateString('en-IN')}\n   📝 ${v.notes || 'No notes'}`
+    );
+
+    return `📍 *Customer Visits — ${monthName} ${year}* (${visits.length})\n\n` + lines.join('\n\n');
+  } catch (err) {
+    console.error('getVisitList error:', err.message);
+    return '❌ Could not fetch visit list.';
+  }
+}
+
+/** Payment aging / outstanding list */
+async function getPaymentAging(senderPhone) {
+  try {
+    const supabase = getSupabase();
+
+    const { data: payments } = await supabase
+      .from('payment_tracking')
+      .select('customer_name, invoice_amount, outstanding, due_date, status')
+      .eq('salesperson_phone', senderPhone)
+      .neq('status', 'paid')
+      .order('due_date', { ascending: true })
+      .limit(15);
+
+    if (!payments || payments.length === 0) {
+      return '✅ No outstanding payments! All collections up to date.';
+    }
+
+    const today = new Date();
+    const lines = payments.map((p, i) => {
+      const due = new Date(p.due_date);
+      const daysLeft = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+      const overdue = daysLeft < 0;
+      return `${i + 1}. *${p.customer_name}*\n` +
+        `   Outstanding: ${formatINR(p.outstanding)} / ${formatINR(p.invoice_amount)}\n` +
+        `   Due: ${due.toLocaleDateString('en-IN')} ${overdue ? `⚠️ (${Math.abs(daysLeft)}d overdue)` : `(${daysLeft}d left)`}`;
+    });
+
+    const totalOutstanding = payments.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
+    return `💰 *Outstanding Payments (${payments.length})*\n\n` +
+      lines.join('\n\n') +
+      `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`;
+  } catch (err) {
+    console.error('getPaymentAging error:', err.message);
+    return '❌ Could not fetch payment aging.';
+  }
+}
+
+/** Lost deals breakdown with reasons */
+async function getLostDeals(senderPhone, text = '') {
+  try {
+    const supabase = getSupabase();
+    const { start, end, monthName, year } = getMonthRangeFromQuery(text);
+
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('customer_name, total_amount, loss_reason, created_at')
+      .eq('salesperson_phone', senderPhone)
+      .eq('stage', 'lost')
+      .gte('created_at', start)
+      .lte('created_at', end)
+      .order('created_at', { ascending: false });
+
+    if (!deals || deals.length === 0) {
+      return `✅ No lost deals in ${monthName} ${year}.`;
+    }
+
+    const lines = deals.map((d, i) =>
+      `${i + 1}. *${d.customer_name}*\n   Amount: ${formatINR(d.total_amount)}\n   Reason: ${d.loss_reason || 'Not specified'}`
+    );
+
+    const totalLost = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
+    return `❌ *Lost Deals — ${monthName} ${year}* (${deals.length})\n\n` +
+      lines.join('\n\n') +
+      `\n\n📉 *Total Lost Value: ${formatINR(totalLost)}*`;
+  } catch (err) {
+    console.error('getLostDeals error:', err.message);
+    return '❌ Could not fetch lost deals.';
+  }
+}
+
 // Main query router
 async function handleQuery(text, senderPhone) {
   const lower = text.toLowerCase();
@@ -394,6 +621,27 @@ async function handleQuery(text, senderPhone) {
 
         case 'new_customers_summary':
           return await getNewCustomerSummary(senderPhone);
+
+        case 'won_customers':
+          return await getWonCustomers(senderPhone, text);
+
+        case 'active_deals_detail':
+          return await getActiveDealsDetail(senderPhone);
+
+        case 'customer_list':
+          return await getCustomerList(senderPhone);
+
+        case 'rate_sheet':
+          return await getRateSheet();
+
+        case 'visit_list':
+          return await getVisitList(senderPhone, text);
+
+        case 'payment_aging':
+          return await getPaymentAging(senderPhone);
+
+        case 'lost_deals':
+          return await getLostDeals(senderPhone, text);
       }
     }
   } catch (err) {
