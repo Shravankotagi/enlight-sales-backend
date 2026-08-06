@@ -277,6 +277,7 @@ async function processSalesMessage(text, senderPhone) {
           year:  new Date().getFullYear(),
         });
       }
+      await handlePaymentTrackingOnWon(dealId, finalCustomerName, dealAmount, senderPhone);
     }
 
     // Edge Case 4: KRA 4 — log loss reason (separate from KRA 1)
@@ -485,6 +486,7 @@ Return ONLY JSON. No prose. No markdown.`;
         year:  new Date().getFullYear(),
       });
     }
+    await handlePaymentTrackingOnWon(dealId, finalCustomerName, totalValue, senderPhone);
 
     syncToBigin(finalCustomerName, 'won', totalValue, data.po_number, senderPhone);
 
@@ -501,6 +503,64 @@ Return ONLY JSON. No prose. No markdown.`;
   } catch (err) {
     console.error('Sales Image Agent Error:', err.message);
     return `⚠️ Could not extract PO image details: ${err.message}`;
+  }
+}
+
+async function handlePaymentTrackingOnWon(dealId, customerName, amount, salespersonPhone) {
+  try {
+    const wonDate = new Date();
+    const dueDate = new Date(wonDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const dueDateStr = dueDate.toISOString().split('T')[0];
+
+    let existingRecord = null;
+    if (dealId) {
+      const { data: byDeal } = await supabase
+        .from('payment_tracking')
+        .select('id')
+        .eq('deal_id', dealId)
+        .limit(1);
+      if (byDeal && byDeal.length > 0) {
+        existingRecord = byDeal[0];
+      }
+    }
+
+    if (!existingRecord) {
+      const { data: byCust } = await supabase
+        .from('payment_tracking')
+        .select('id')
+        .eq('customer_name', customerName)
+        .limit(1);
+      if (byCust && byCust.length > 0) {
+        existingRecord = byCust[0];
+      }
+    }
+
+    if (existingRecord) {
+      await supabase
+        .from('payment_tracking')
+        .update({
+          due_date: dueDateStr,
+          invoice_amount: amount || undefined,
+          deal_id: dealId || undefined,
+          credit_period_days: 30,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingRecord.id);
+    } else {
+      await supabase.from('payment_tracking').insert({
+        salesperson_phone: salespersonPhone,
+        customer_name: customerName,
+        invoice_amount: amount || 0,
+        outstanding: amount || 0,
+        status: 'pending',
+        due_date: dueDateStr,
+        deal_id: dealId || null,
+        credit_period_days: 30,
+        created_at: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error('Failed to handle payment tracking on won:', err.message);
   }
 }
 
