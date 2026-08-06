@@ -329,6 +329,10 @@ Your job is to classify the salesperson's request into one of the following cate
 - "payment_summary": requests outstanding payment, collection, overdue, dues, outstanding collection.
 - "complaint_summary": requests complaints logged, customer issues, material returns.
 - "full_report": requests full monthly report, complete KRA report card, monthly report.
+- "deals_this_week": requests this week's deals list, week deals, is hafte ke deals.
+- "pending_deals": requests pending deals list, open deals, active deals, incomplete deals.
+- "pending_inquiries": requests pending inquiries list, review queue, inquiries to be processed.
+- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received count.
 - "general": general hello, steel rates, price sheet, dates, general conversation, or any other query.
 
 Identify the category even if there are typos (e.g. "performace" -> "kra_status", "bhav" -> "general", "stat" -> "kra_status", "monthly report" -> "full_report").

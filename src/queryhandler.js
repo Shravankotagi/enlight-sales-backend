@@ -382,6 +382,18 @@ async function handleQuery(text, senderPhone) {
 
         case 'full_report':
           return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
+
+        case 'deals_this_week':
+          return await getDealsThisWeek();
+
+        case 'pending_deals':
+          return await getPendingDeals(senderPhone);
+
+        case 'pending_inquiries':
+          return await getPendingInquiries();
+
+        case 'new_customers_summary':
+          return await getNewCustomerSummary(senderPhone);
       }
     }
   } catch (err) {
