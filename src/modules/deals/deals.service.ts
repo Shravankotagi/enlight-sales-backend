@@ -102,6 +102,59 @@ export class DealsService {
         .single();
       if (error) throw error;
 
+      // Automatically create or update payment tracking record when a deal is marked WON
+      if (stage === 'won' && data) {
+        const wonDate = data.won_at ? new Date(data.won_at) : new Date();
+        const dueDate = new Date(wonDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+        const dueDateStr = dueDate.toISOString().split('T')[0];
+
+        // Try to find matching payment record by deal_id first, then by customer_name
+        let existingRecord = null;
+        const { data: byDeal } = await this.supabase
+          .from('payment_tracking')
+          .select('id')
+          .eq('deal_id', data.id)
+          .limit(1);
+
+        if (byDeal && byDeal.length > 0) {
+          existingRecord = byDeal[0];
+        } else {
+          const { data: byCust } = await this.supabase
+            .from('payment_tracking')
+            .select('id')
+            .eq('customer_name', data.customer_name)
+            .limit(1);
+          if (byCust && byCust.length > 0) {
+            existingRecord = byCust[0];
+          }
+        }
+
+        if (existingRecord) {
+          await this.supabase
+            .from('payment_tracking')
+            .update({
+              due_date: dueDateStr,
+              invoice_amount: data.total_amount || undefined,
+              deal_id: data.id,
+              credit_period_days: 30,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingRecord.id);
+        } else {
+          await this.supabase.from('payment_tracking').insert({
+            salesperson_phone: data.salesperson_phone,
+            customer_name: data.customer_name,
+            invoice_amount: data.total_amount || 0,
+            outstanding: data.total_amount || 0,
+            status: 'pending',
+            due_date: dueDateStr,
+            deal_id: data.id,
+            credit_period_days: 30,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStage for id ${id}:`, error);
