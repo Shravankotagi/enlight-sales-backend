@@ -380,33 +380,44 @@ router.post('/', async (req, res) => {
           const validUnits = ['mt', 'kg', 'ton', 'tons', 'no', 'nos', 'pc', 'pcs', 'sheet', 'sheets', 'bundle', 'bundles', 'coil', 'coils'];
           const lineItems = extraction.line_items || [];
 
+          // Pre-resolve customer name context so we can use it in clarification prompts
+          let extractedCustName = extraction.customer?.name?.trim();
+          const { getActiveSession } = require('./supabase');
+          const sessionCust = await getActiveSession(senderPhone);
+          const currentCustomerLabel = (extractedCustName && 
+            extractedCustName.toLowerCase() !== 'customer' && 
+            extractedCustName.toLowerCase() !== 'this client' && 
+            extractedCustName.toLowerCase() !== 'client') 
+            ? extractedCustName 
+            : (sessionCust || 'the customer');
+
           if (lineItems.length === 0) {
             await sendTextMessage(
               senderPhone,
-              `⚠️ *Invalid requirement details*\n\nPlease specify a valid product name, quantity, and unit (e.g. MT, Kg, Tons, Nos, or Sheets).`
+              `❓ *Which steel product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name, quantity, and unit (e.g. _15 MT HR Coil_ or _20 sheets MS Plate_).`
             );
             return;
           }
 
           for (const item of lineItems) {
-            if (!item.sku_text || item.sku_text.toLowerCase().trim() === 'unknown') {
+            if (!item.sku_text || item.sku_text.toLowerCase().trim() === 'unknown' || item.sku_text.toLowerCase().trim() === 'null') {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid requirement details*\n\nPlease specify a valid product name.`
+                `❓ *Which steel product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name (e.g. _HR Coil_ or _MS Sheet_).`
               );
               return;
             }
             if (!item.quantity || Number(item.quantity) <= 0) {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid requirement details*\n\nPlease specify a valid quantity for *${item.sku_text}*.`
+                `❓ *How much ${item.sku_text} does ${currentCustomerLabel} require?*\n\nPlease specify the quantity (e.g. _10 MT_ or _50 Sheets_).`
               );
               return;
             }
-            if (!item.unit) {
+            if (!item.unit || item.unit.toLowerCase().trim() === 'null') {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid requirement details*\n\nPlease specify a unit (e.g. MT, Kg, Tons, Nos, or Sheets) for *${item.sku_text}*.`
+                `❓ *What unit should we use for ${item.quantity} of ${item.sku_text}?*\n\nPlease mention a valid unit like MT, Kg, Tons, Nos, or Sheets.`
               );
               return;
             }
@@ -414,7 +425,7 @@ router.post('/', async (req, res) => {
             if (!validUnits.includes(normUnit)) {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid quantity/unit*\n\nUnit *"${item.unit}"* is not a valid steel unit. Please specify a valid unit such as MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`
+                `⚠️ *Invalid unit*\n\nUnit *"${item.unit}"* is not a valid steel unit. Please specify a valid unit like MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`
               );
               return;
             }
