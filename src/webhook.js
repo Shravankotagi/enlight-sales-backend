@@ -268,7 +268,7 @@ router.post('/', async (req, res) => {
         // --- END GEMINI INTENT CLASSIFICATION ---
 
         // Only actual sales inquiries/POs reach here
-        // Apply duplicate check only for inquiry messages
+        // Apply duplicate check only for inquiry messages that were successfully processed
         if (raw_text) {
           const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
           const { data: duplicateInquiries } = await supabase
@@ -276,6 +276,7 @@ router.post('/', async (req, res) => {
             .select('id, created_at')
             .eq('salesperson_phone', senderPhone)
             .eq('raw_text', raw_text)
+            .in('status', ['processed', 'review'])
             .gte('created_at', oneHourAgo);
 
           if (duplicateInquiries && duplicateInquiries.length > 0) {
@@ -375,20 +376,77 @@ router.post('/', async (req, res) => {
         // Save deal if extraction succeeded and it is a valid inquiry or PO
         let deal = null;
         if (extraction && !extraction.error && extraction.inquiry_type && extraction.inquiry_type !== 'unknown') {
-          // Perform Customer Verification (handles exact and fuzzy matched typos)
-          const extractedCustomerName = extraction.customer?.name;
+          // 1. Validate Line Items (Product, Quantity, Unit)
+          const validUnits = ['mt', 'kg', 'ton', 'tons', 'no', 'nos', 'pc', 'pcs', 'sheet', 'sheets', 'bundle', 'bundles', 'coil', 'coils'];
+          const lineItems = extraction.line_items || [];
+
+          if (lineItems.length === 0) {
+            await sendTextMessage(
+              senderPhone,
+              `⚠️ *Invalid requirement details*\n\nPlease specify a valid product name, quantity, and unit (e.g. MT, Kg, Tons, Nos, or Sheets).`
+            );
+            return;
+          }
+
+          for (const item of lineItems) {
+            if (!item.sku_text || item.sku_text.toLowerCase().trim() === 'unknown') {
+              await sendTextMessage(
+                senderPhone,
+                `⚠️ *Invalid requirement details*\n\nPlease specify a valid product name.`
+              );
+              return;
+            }
+            if (!item.quantity || Number(item.quantity) <= 0) {
+              await sendTextMessage(
+                senderPhone,
+                `⚠️ *Invalid requirement details*\n\nPlease specify a valid quantity for *${item.sku_text}*.`
+              );
+              return;
+            }
+            if (!item.unit) {
+              await sendTextMessage(
+                senderPhone,
+                `⚠️ *Invalid requirement details*\n\nPlease specify a unit (e.g. MT, Kg, Tons, Nos, or Sheets) for *${item.sku_text}*.`
+              );
+              return;
+            }
+            const normUnit = item.unit.toLowerCase().trim();
+            if (!validUnits.includes(normUnit)) {
+              await sendTextMessage(
+                senderPhone,
+                `⚠️ *Invalid quantity/unit*\n\nUnit *"${item.unit}"* is not a valid steel unit. Please specify a valid unit such as MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`
+              );
+              return;
+            }
+          }
+
+          // 2. Validate Customer Name Presence (Must not be empty/null, nor fallback keywords like 'Customer' or 'this client')
+          const extractedCustomerName = extraction.customer?.name?.trim();
+          if (!extractedCustomerName || 
+              extractedCustomerName.toLowerCase() === 'customer' || 
+              extractedCustomerName.toLowerCase() === 'this client' || 
+              extractedCustomerName.toLowerCase() === 'client') {
+            await sendTextMessage(
+              senderPhone,
+              `❓ *Which customer is this inquiry for?*\n\n` +
+              `Please specify the customer/company name so I can log this inquiry.\n` +
+              `*Example:* _"For Mehta Industries, need 15 MT HR Coil"_`
+            );
+            return;
+          }
+
+          // 3. Perform Customer Verification (handles exact and fuzzy matched typos)
           const { verifyAndGetCustomerName } = require('./supabase');
           const officialCustomerName = await verifyAndGetCustomerName(extractedCustomerName, senderPhone);
 
           if (!officialCustomerName) {
-            const nameToReport = extractedCustomerName || "this client";
             await sendTextMessage(
               senderPhone,
               `⚠️ *Client Not Found in your Customer List*\n\n` +
-              `Client *"${nameToReport}"* is not registered under your salesperson account.\n\n` +
+              `Client *"${extractedCustomerName}"* is not registered under your salesperson account.\n\n` +
               `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging inquiries or orders.\n\n` +
               `*Example to onboard customer:*\n` +
-              `_"New customer ${nameToReport} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
+              `_"New customer ${extractedCustomerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
               `Once added, you can resend this inquiry.`
             );
             return;
