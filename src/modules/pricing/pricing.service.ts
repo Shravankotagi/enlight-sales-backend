@@ -19,7 +19,9 @@ export class PricingService {
   async getTodayRateSheet() {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const { data, error } = await this.supabase
+
+      // 1. Try to find today's sheet first
+      const { data: todayData } = await this.supabase
         .from('rate_sheets')
         .select('*, rate_sheet_items(*)')
         .eq('date', today)
@@ -27,8 +29,19 @@ export class PricingService {
         .limit(1)
         .single();
 
+      if (todayData) return todayData;
+
+      // 2. Fallback: return the most recent rate sheet (rates persist until admin updates)
+      const { data: latestData, error } = await this.supabase
+        .from('rate_sheets')
+        .select('*, rate_sheet_items(*)')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
       if (error) return null;
-      return data;
+      return latestData;
     } catch {
       return null;
     }
@@ -36,18 +49,39 @@ export class PricingService {
 
   async createRateSheet(items: any[], createdBy: string) {
     const today = new Date().toISOString().split('T')[0];
-    const { data: sheet, error } = await this.supabase
+
+    // Check if a sheet already exists for today
+    const { data: existing } = await this.supabase
       .from('rate_sheets')
-      .insert({ date: today, created_by: createdBy })
-      .select()
+      .select('id')
+      .eq('date', today)
+      .limit(1)
       .single();
 
-    if (error) throw error;
+    let sheetId: string;
+
+    if (existing?.id) {
+      // Reuse existing sheet - update items
+      sheetId = existing.id;
+      await this.supabase
+        .from('rate_sheet_items')
+        .delete()
+        .eq('rate_sheet_id', sheetId);
+    } else {
+      // Create a new sheet for today
+      const { data: sheet, error } = await this.supabase
+        .from('rate_sheets')
+        .insert({ date: today, created_by: createdBy })
+        .select()
+        .single();
+      if (error) throw error;
+      sheetId = sheet.id;
+    }
 
     if (items.length > 0) {
       await this.supabase
         .from('rate_sheet_items')
-        .insert(items.map((item) => ({ rate_sheet_id: sheet.id, ...item })));
+        .insert(items.map((item) => ({ rate_sheet_id: sheetId, ...item })));
 
       this.broadcastRateSheetToSalespersons(items, today);
     }
