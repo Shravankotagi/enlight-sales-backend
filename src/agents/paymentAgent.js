@@ -148,17 +148,61 @@ async function processPaymentMessage(text, senderPhone) {
     const balanceInfo = await resolvePaymentBalance(customerName, amountPaid, explicitPending);
     const amountPending = balanceInfo.outstanding;
 
-    // Insert into payment_tracking
-    await supabase.from('payment_tracking').insert({
-      customer_name: customerName,
-      salesperson_phone: senderPhone,
-      invoice_amount: balanceInfo.dealTotal || (amountPaid + amountPending),
-      collected_amount: amountPaid > 0 ? amountPaid : balanceInfo.totalCollectedNow,
-      outstanding: amountPending,
-      status: balanceInfo.status,
-      payment_type: balanceInfo.paymentType,
-      created_at: new Date().toISOString(),
-    });
+    // Check if a payment tracking row already exists for this customer
+    const { data: existingPmt } = await supabase
+      .from('payment_tracking')
+      .select('id, collected_amount, outstanding, invoice_amount')
+      .ilike('customer_name', `%${customerName}%`)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    let finalCollected = amountPaid;
+    let finalOutstanding = amountPending;
+    let finalInvoiceAmount = balanceInfo.dealTotal || (amountPaid + amountPending);
+
+    if (existingPmt && existingPmt.length > 0) {
+      const record = existingPmt[0];
+      finalInvoiceAmount = Number(record.invoice_amount) || finalInvoiceAmount;
+      
+      // If we got a new payment, add it to prior collected. Otherwise keep old collected amount.
+      if (amountPaid > 0) {
+        finalCollected = Number(record.collected_amount || 0) + amountPaid;
+      } else {
+        finalCollected = Number(record.collected_amount || 0);
+      }
+      
+      // Calculate outstanding based on latest status
+      if (amountPaid > 0 && explicitPending <= 0) {
+        // paid something, auto-calculate new outstanding
+        finalOutstanding = Math.max(0, finalInvoiceAmount - finalCollected);
+      } else {
+        // use reported outstanding
+        finalOutstanding = amountPending;
+      }
+
+      await supabase
+        .from('payment_tracking')
+        .update({
+          collected_amount: finalCollected,
+          outstanding: finalOutstanding,
+          status: finalOutstanding <= 0 ? 'collected' : 'partial',
+          payment_type: amountPaid > 0 ? 'installment' : 'outstanding_update',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', record.id);
+    } else {
+      // Insert a brand new row
+      await supabase.from('payment_tracking').insert({
+        customer_name: customerName,
+        salesperson_phone: senderPhone,
+        invoice_amount: finalInvoiceAmount,
+        collected_amount: finalCollected,
+        outstanding: finalOutstanding,
+        status: finalOutstanding <= 0 ? 'collected' : 'partial',
+        payment_type: balanceInfo.paymentType,
+        created_at: new Date().toISOString(),
+      });
+    }
 
     // Log to kra_logs for KRA 5
     await supabase.from('kra_logs').insert({
