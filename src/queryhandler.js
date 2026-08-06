@@ -347,6 +347,47 @@ async function handleQuery(text, senderPhone) {
     console.error('Cross-query check error:', err.message);
   }
 
+  // --- SEMANTIC ROUTING USING GEMINI CLASSIFIER (Resolves typos like 'performace') ---
+  try {
+    const { classifyQueryType } = require('./gemini');
+    const classification = await classifyQueryType(text);
+
+    if (classification && classification.confidence >= 0.70) {
+      switch (classification.category) {
+        case 'dashboard_link': {
+          const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+          return `🔗 *Enlight Sales OS Portal*\n\n` +
+            `You can access the web dashboard here:\n` +
+            `👉 ${dashboardUrl}\n\n` +
+            `🔑 *Login instructions*:\n` +
+            `1. Enter your registered WhatsApp number.\n` +
+            `2. Request and verify the OTP sent to your phone.\n` +
+            `3. Keep track of your deals, rate sheets, and KRA dashboards in real-time!`;
+        }
+
+        case 'sales_summary':
+          return await getSalesThisMonth(senderPhone, text);
+
+        case 'kra_status':
+          return await getKRAStatus(senderPhone, text);
+
+        case 'visit_summary':
+          return await getVisitSummary(senderPhone, text);
+
+        case 'payment_summary':
+          return await getPaymentSummary(senderPhone);
+
+        case 'complaint_summary':
+          return await getComplaintSummary(senderPhone);
+
+        case 'full_report':
+          return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
+      }
+    }
+  } catch (err) {
+    console.error('Semantic router error:', err.message);
+  }
+
   // Dashboard Link / Login request
   const isLinkRequest = 
     lower.includes('link') || 

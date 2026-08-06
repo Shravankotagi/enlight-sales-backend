@@ -319,4 +319,46 @@ async function classifyIntent(text) {
   }
 }
 
-module.exports = { extractFromText, extractFromImage, classifyIntent, getLatestActiveRatesText };
+const QUERY_CLASSIFIER_PROMPT = `
+You are an intelligent query router for a B2B steel sales system.
+Your job is to classify the salesperson's request into one of the following categories:
+- "dashboard_link": requests login link, website, portal URL, dashboard URL, open dashboard.
+- "sales_summary": requests sales report, sales numbers, deals created/won.
+- "kra_status": requests performance report, KRA status, KRA achievements, targets status.
+- "visit_summary": requests visits count, customer visits logged, field visits.
+- "payment_summary": requests outstanding payment, collection, overdue, dues, outstanding collection.
+- "complaint_summary": requests complaints logged, customer issues, material returns.
+- "full_report": requests full monthly report, complete KRA report card, monthly report.
+- "general": general hello, steel rates, price sheet, dates, general conversation, or any other query.
+
+Identify the category even if there are typos (e.g. "performace" -> "kra_status", "bhav" -> "general", "stat" -> "kra_status", "monthly report" -> "full_report").
+
+Return ONLY a JSON object (no markdown, no prose, no backticks):
+{
+  "category": "<one of the categories above>",
+  "confidence": <float 0.0 to 1.0>
+}
+`;
+
+async function classifyQueryType(text) {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const prompt = QUERY_CLASSIFIER_PROMPT + '\n\nQuery: "' + text + '"';
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const rawText = response.text().trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleaned);
+    console.log(`Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`);
+    return parsed;
+  } catch (error) {
+    console.error('Gemini query classification error:', error.message);
+    return { category: 'general', confidence: 0 };
+  }
+}
+
+module.exports = { extractFromText, extractFromImage, classifyIntent, getLatestActiveRatesText, classifyQueryType };
