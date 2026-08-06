@@ -1,3 +1,25 @@
+/**
+ * KRA 5 - Payment Collection Agent
+ * 
+ * DESIGN PRINCIPLE: One row per customer in payment_tracking.
+ * When a new payment update arrives for an existing customer, we UPDATE that row 
+ * rather than inserting a new one. This prevents double-counting.
+ *
+ * EDGE CASES HANDLED:
+ * 1. First payment (advance) - creates a new row
+ * 2. Follow-up installment - updates existing row, adds to collected, recalculates outstanding
+ * 3. Explicit pending stated - uses that as the source of truth for outstanding
+ * 4. Full payment settlement - marks status as 'collected', outstanding = 0
+ * 5. Outstanding-only update (no payment) - updates outstanding without adding to collected
+ * 6. Missing customer name - tries to recall last active deal customer, else asks
+ * 7. Missing amount - asks for clarification
+ * 8. Deal total not found - works purely on reported amounts without assuming deal total
+ * 9. No double-counting - checks existing row before inserting
+ * 10. Overpayment - outstanding clamped to 0, marks fully paid
+ * 11. Image receipts - same upsert logic applied
+ * 12. Hinglish/casual messages - AI parses meaning, not keywords
+ */
+
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 
@@ -15,91 +37,227 @@ Input message can be English, Hindi, or Hinglish.
 Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 {
   "customer_name": "<customer/company name, else null>",
-  "amount_paid": <numeric amount collected/received/advance, else 0>,
-  "amount_pending": <numeric outstanding/pending amount, else 0>,
+  "amount_paid": <numeric amount collected/received/advance this time ONLY, else 0>,
+  "amount_pending": <numeric outstanding/pending amount explicitly stated, else 0>,
   "payment_type": "advance|installment|full_settlement|outstanding_update",
+  "is_full_payment": <true if message says full payment done, else false>,
   "confidence": <float 0.0 to 1.0>
 }
 
 Rules — understand meaning, not keywords:
-- If message reports money received, advance paid, or collected: put amount in amount_paid.
-- If message reports remaining balance, due amount, or pending money: put amount in amount_pending.
-- Understand casual phrasing e.g. "50k de diya", "2L baki hai", "baki next week", "clear ho gaya".
+- "amount_paid": Only what was actually received/collected THIS time (not cumulative). E.g. "5 lakh diya" = 500000.
+- "amount_pending": Only what is still explicitly pending. E.g. "baaki 3 lakh" = 300000.
+- "is_full_payment": true ONLY if message clearly says full/complete payment cleared.
+- If someone says "paid 5L, rest 3L pending" → amount_paid=500000, amount_pending=300000.
+- If someone says "5L outstanding cleared" → amount_paid=500000, is_full_payment=true.
+- If someone says "3L still pending" → amount_paid=0, amount_pending=300000.
+- Understand casual phrasing: "50k de diya" = 50000 paid, "2L baki hai" = 200000 pending.
+- "k" or "K" suffix = thousands. "L" or "lakh" suffix = 100000. "cr" = 10000000.
 
 Return ONLY the JSON object.
 `;
 
-async function resolvePaymentBalance(customerName, newAmountPaid, explicitPending) {
-  let dealTotal = 0;
-  let priorCollected = 0;
-
-  // 1. Look up recent deal total amount for this customer
-  const { data: deals } = await supabase
-    .from('deals')
-    .select('total_amount')
+/**
+ * Gets the single payment tracking record for a customer (most recent).
+ */
+async function getExistingPaymentRecord(customerName) {
+  const { data, error } = await supabase
+    .from('payment_tracking')
+    .select('*')
     .ilike('customer_name', `%${customerName}%`)
     .order('created_at', { ascending: false })
     .limit(1);
 
-  if (deals && deals.length > 0 && deals[0].total_amount) {
-    dealTotal = Number(deals[0].total_amount) || 0;
-  }
-
-  // 2. Sum up all prior payments for this customer
-  const { data: priorPayments } = await supabase
-    .from('payment_tracking')
-    .select('collected_amount')
-    .ilike('customer_name', `%${customerName}%`);
-
-  if (priorPayments && priorPayments.length > 0) {
-    priorCollected = priorPayments.reduce((sum, p) => sum + (Number(p.collected_amount) || 0), 0);
-  }
-
-  let totalCollectedNow = priorCollected + newAmountPaid;
-  let outstanding = 0;
-  let isFullyPaid = false;
-
-  if (explicitPending && explicitPending > 0) {
-    outstanding = explicitPending;
-    if (dealTotal > 0 && newAmountPaid === 0) {
-      totalCollectedNow = Math.max(0, dealTotal - outstanding);
-    }
-  } else if (dealTotal > 0) {
-    outstanding = Math.max(0, dealTotal - totalCollectedNow);
-    isFullyPaid = totalCollectedNow >= dealTotal;
-  } else {
-    isFullyPaid = false;
-  }
-
-  if (outstanding === 0 && dealTotal > 0 && totalCollectedNow >= dealTotal) {
-    isFullyPaid = true;
-  }
-
-  return {
-    dealTotal,
-    priorCollected,
-    totalCollectedNow,
-    outstanding,
-    isFullyPaid,
-    status: isFullyPaid ? 'collected' : 'partial',
-    paymentType: isFullyPaid ? 'full_settlement' : (priorCollected > 0 ? 'installment' : 'advance')
-  };
+  if (error || !data || data.length === 0) return null;
+  return data[0];
 }
 
-function extractPendingAmountRegex(text) {
-  const pendingMatch = text.match(/(?:pending|baki|due|outstanding|balance|rest)\D*?(\d[\d,]*)/i) || 
-                       text.match(/(\d[\d,]*)\D*?(?:pending|baki|due|outstanding|balance|rest)/i);
-  if (pendingMatch && pendingMatch[1]) {
-    const cleanNum = Number(pendingMatch[1].replace(/,/g, ''));
-    if (!isNaN(cleanNum) && cleanNum > 0) return cleanNum;
+/**
+ * Gets the deal total amount for a customer from the deals table.
+ */
+async function getDealTotal(customerName) {
+  const { data } = await supabase
+    .from('deals')
+    .select('total_amount, stage')
+    .ilike('customer_name', `%${customerName}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (data && data.length > 0 && data[0].total_amount) {
+    return Number(data[0].total_amount) || 0;
   }
   return 0;
 }
 
+/**
+ * Get recent deal customer name for context memory.
+ */
+async function getLastCustomerForSalesperson(senderPhone) {
+  const { data } = await supabase
+    .from('deals')
+    .select('customer_name')
+    .eq('salesperson_phone', senderPhone)
+    .not('customer_name', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (data && data.length > 0 && data[0].customer_name) {
+    return data[0].customer_name;
+  }
+
+  // Also check recent kra_logs for KRA 5
+  const { data: logs } = await supabase
+    .from('kra_logs')
+    .select('customer_name')
+    .eq('salesperson_phone', senderPhone)
+    .eq('kra_number', 5)
+    .not('customer_name', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (logs && logs.length > 0 && logs[0].customer_name) {
+    return logs[0].customer_name;
+  }
+
+  return null;
+}
+
+/**
+ * Core upsert logic: Create or update a payment_tracking row for this customer.
+ * Always maintains a SINGLE row per customer.
+ */
+async function upsertPaymentTracking({
+  customerName,
+  senderPhone,
+  newAmountPaid,   // amount received THIS time
+  explicitPending, // outstanding as explicitly stated (or 0 if not stated)
+  isFullPayment,   // true if message said "full payment done"
+  paymentType,
+}) {
+  const existing = await getExistingPaymentRecord(customerName);
+  const dealTotal = await getDealTotal(customerName);
+
+  let finalCollected;
+  let finalOutstanding;
+  let finalInvoiceAmount;
+  let finalStatus;
+  let finalPaymentType = paymentType;
+
+  if (existing) {
+    // --- UPDATE existing row ---
+    const priorCollected = Number(existing.collected_amount) || 0;
+    const priorInvoice   = Number(existing.invoice_amount)   || 0;
+
+    // Invoice amount: prefer deal total, then existing invoice, then compute from reported
+    finalInvoiceAmount = dealTotal || priorInvoice ||
+      (newAmountPaid + explicitPending) ||
+      priorCollected + (Number(existing.outstanding) || 0);
+
+    // Collected: add new payment to prior
+    finalCollected = priorCollected + newAmountPaid;
+
+    // Outstanding calculation (priority: explicit > full payment > auto-calc)
+    if (isFullPayment) {
+      finalOutstanding = 0;
+      finalCollected = finalInvoiceAmount > 0 ? finalInvoiceAmount : finalCollected;
+      finalPaymentType = 'full_settlement';
+    } else if (explicitPending > 0) {
+      finalOutstanding = explicitPending;
+    } else if (dealTotal > 0) {
+      finalOutstanding = Math.max(0, dealTotal - finalCollected);
+    } else {
+      // No deal total, no explicit pending → can't auto-calculate outstanding
+      finalOutstanding = Math.max(0, Number(existing.outstanding) - newAmountPaid);
+    }
+
+    // Clamp
+    finalOutstanding = Math.max(0, finalOutstanding);
+    finalCollected   = Math.min(finalCollected, finalInvoiceAmount > 0 ? finalInvoiceAmount : finalCollected);
+
+    // Determine status
+    finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
+
+    if (newAmountPaid <= 0 && explicitPending > 0) {
+      finalPaymentType = 'outstanding_update';
+    }
+
+    await supabase
+      .from('payment_tracking')
+      .update({
+        invoice_amount:   finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
+        collected_amount: finalCollected,
+        outstanding:      finalOutstanding,
+        status:           finalStatus,
+        payment_type:     finalPaymentType,
+        paid_date:        finalStatus === 'collected' ? new Date().toISOString().split('T')[0] : null,
+        updated_at:       new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+
+  } else {
+    // --- INSERT new row ---
+    finalInvoiceAmount = dealTotal || (newAmountPaid + explicitPending) || newAmountPaid;
+    finalCollected     = newAmountPaid;
+
+    if (isFullPayment) {
+      finalOutstanding   = 0;
+      finalCollected     = finalInvoiceAmount > 0 ? finalInvoiceAmount : newAmountPaid;
+      finalPaymentType   = 'full_settlement';
+    } else if (explicitPending > 0) {
+      finalOutstanding   = explicitPending;
+    } else if (dealTotal > 0) {
+      finalOutstanding   = Math.max(0, dealTotal - finalCollected);
+    } else {
+      // No deal, no pending stated — mark outstanding as unknown (0 but partial)
+      finalOutstanding   = 0;
+    }
+
+    finalOutstanding = Math.max(0, finalOutstanding);
+    finalStatus      = finalOutstanding <= 0 && finalCollected >= finalInvoiceAmount && finalInvoiceAmount > 0
+      ? 'collected'
+      : (finalOutstanding <= 0 && explicitPending <= 0 ? 'partial' : 'partial');
+
+    // If only a pending update with no payment, keep as pending
+    if (newAmountPaid <= 0 && explicitPending > 0) {
+      finalStatus      = 'pending';
+      finalPaymentType = 'outstanding_update';
+      finalCollected   = 0;
+    }
+
+    await supabase.from('payment_tracking').insert({
+      customer_name:    customerName,
+      salesperson_phone: senderPhone,
+      invoice_amount:   finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
+      collected_amount: finalCollected,
+      outstanding:      finalOutstanding,
+      status:           finalStatus,
+      payment_type:     finalPaymentType,
+      paid_date:        finalStatus === 'collected' ? new Date().toISOString().split('T')[0] : null,
+      created_at:       new Date().toISOString(),
+    });
+  }
+
+  return {
+    finalCollected,
+    finalOutstanding,
+    finalInvoiceAmount,
+    finalStatus,
+    dealTotal,
+    existing: !!existing,
+  };
+}
+
+/**
+ * Main text message handler.
+ */
 async function processPaymentMessage(text, senderPhone) {
   try {
-    // Pre-clean formatted numbers (e.g. 10,20,000 -> 1020000)
-    const cleanedText = text.replace(/(\d+),(\d+)/g, '$1$2').replace(/(\d+),(\d+)/g, '$1$2');
+    // Pre-clean Indian number formatting (1,20,000 → 120000)
+    const cleanedText = text
+      .replace(/(\d+),(\d{3})/g, '$1$2')
+      .replace(/(\d+),(\d{3})/g, '$1$2')
+      .replace(/(\d+\.?\d*)\s*[Ll](?:akh)?/g, (_, n) => String(Math.round(parseFloat(n) * 100000)))
+      .replace(/(\d+\.?\d*)\s*[Kk]/g, (_, n) => String(Math.round(parseFloat(n) * 1000)));
 
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
     const result = await model.generateContent(PAYMENT_AGENT_PROMPT + '\n\nSalesperson message:\n' + cleanedText);
@@ -109,122 +267,76 @@ async function processPaymentMessage(text, senderPhone) {
 
     let customerName = data.customer_name ? data.customer_name.trim() : null;
 
-    // Context Memory: Auto-fill recent customer name if missing in follow-up message
+    // Edge Case 6: Missing customer name — try context memory
     if (!customerName) {
-      const { data: recentDeals } = await supabase
-        .from('deals')
-        .select('customer_name')
-        .eq('salesperson_phone', senderPhone)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (recentDeals && recentDeals.length > 0 && recentDeals[0].customer_name) {
-        customerName = recentDeals[0].customer_name;
-      }
+      customerName = await getLastCustomerForSalesperson(senderPhone);
     }
 
-    // Accuracy Check: Missing Customer Name
     if (!customerName) {
-      return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Customer/Company Name* for this payment record so it can be logged accurately into your KRA 5 Dashboard.`;
+      return `⚠️ *Payment Agent — Customer Missing*\n\nPlease specify the *Customer/Company Name* for this payment record.\nExample: _"Delta Structural Steel paid 5 lakh"_`;
     }
 
-    let amountPaid = Number(data.amount_paid || 0);
-    let explicitPending = Number(data.amount_pending || 0);
+    const amountPaid    = Math.max(0, Number(data.amount_paid    || 0));
+    const amountPending = Math.max(0, Number(data.amount_pending || 0));
+    const isFullPayment = !!data.is_full_payment;
 
-    // Fallback: Deterministic Regex pre-parsing for pending balance
-    if (explicitPending <= 0 && (cleanedText.toLowerCase().includes('pending') || cleanedText.toLowerCase().includes('baki') || cleanedText.toLowerCase().includes('due') || cleanedText.toLowerCase().includes('outstanding'))) {
-      const regexPending = extractPendingAmountRegex(cleanedText);
-      if (regexPending > 0) {
-        explicitPending = regexPending;
-      }
+    // Edge Case 7: Both amounts zero and not a full payment — ask for clarification
+    if (amountPaid <= 0 && amountPending <= 0 && !isFullPayment) {
+      return `⚠️ *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${customerName}*.\nExample: _"Delta paid 5 lakh, rest 3 lakh pending"_`;
     }
 
-    // Accuracy Check: Missing both Amount Paid and Amount Pending
-    if (amountPaid <= 0 && explicitPending <= 0) {
-      return `⚠️ *Payment Agent Verification Needed*\n\nPlease specify the *Payment Amount Collected (₹)* or *Outstanding Pending Amount (₹)* for ${customerName}.`;
-    }
+    const paymentType = data.payment_type || (amountPaid > 0 ? 'advance' : 'outstanding_update');
 
-    // Compute balance from deal total and prior payments
-    const balanceInfo = await resolvePaymentBalance(customerName, amountPaid, explicitPending);
-    const amountPending = balanceInfo.outstanding;
-
-    // Check if a payment tracking row already exists for this customer
-    const { data: existingPmt } = await supabase
-      .from('payment_tracking')
-      .select('id, collected_amount, outstanding, invoice_amount')
-      .ilike('customer_name', `%${customerName}%`)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    let finalCollected = amountPaid;
-    let finalOutstanding = amountPending;
-    let finalInvoiceAmount = balanceInfo.dealTotal || (amountPaid + amountPending);
-
-    if (existingPmt && existingPmt.length > 0) {
-      const record = existingPmt[0];
-      finalInvoiceAmount = Number(record.invoice_amount) || finalInvoiceAmount;
-      
-      // If we got a new payment, add it to prior collected. Otherwise keep old collected amount.
-      if (amountPaid > 0) {
-        finalCollected = Number(record.collected_amount || 0) + amountPaid;
-      } else {
-        finalCollected = Number(record.collected_amount || 0);
-      }
-      
-      // Calculate outstanding based on latest status
-      if (amountPaid > 0 && explicitPending <= 0) {
-        // paid something, auto-calculate new outstanding
-        finalOutstanding = Math.max(0, finalInvoiceAmount - finalCollected);
-      } else {
-        // use reported outstanding
-        finalOutstanding = amountPending;
-      }
-
-      await supabase
-        .from('payment_tracking')
-        .update({
-          collected_amount: finalCollected,
-          outstanding: finalOutstanding,
-          status: finalOutstanding <= 0 ? 'collected' : 'partial',
-          payment_type: amountPaid > 0 ? 'installment' : 'outstanding_update',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', record.id);
-    } else {
-      // Insert a brand new row
-      await supabase.from('payment_tracking').insert({
-        customer_name: customerName,
-        salesperson_phone: senderPhone,
-        invoice_amount: finalInvoiceAmount,
-        collected_amount: finalCollected,
-        outstanding: finalOutstanding,
-        status: finalOutstanding <= 0 ? 'collected' : 'partial',
-        payment_type: balanceInfo.paymentType,
-        created_at: new Date().toISOString(),
-      });
-    }
-
-    // Log to kra_logs for KRA 5
-    await supabase.from('kra_logs').insert({
-      salesperson_phone: senderPhone,
-      kra_number: 5,
-      kra_type: balanceInfo.isFullyPaid ? 'payment_collected' : 'payment_advance',
-      value: amountPaid > 0 ? amountPaid : balanceInfo.totalCollectedNow,
-      customer_name: customerName,
-      description: `Payment Update: ${customerName} (${amountPaid > 0 ? `Paid: ₹${amountPaid.toLocaleString('en-IN')}` : ''}${amountPending > 0 ? ` | Outstanding: ₹${amountPending.toLocaleString('en-IN')}` : ''})`,
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
+    // Upsert into payment_tracking (one row per customer, always)
+    const result2 = await upsertPaymentTracking({
+      customerName,
+      senderPhone,
+      newAmountPaid:   amountPaid,
+      explicitPending: amountPending,
+      isFullPayment,
+      paymentType,
     });
 
-    return `💰 *KRA 5 - Payment Collection Logged!*\n\n` +
-      `Customer: *${customerName}*\n` +
-      (balanceInfo.dealTotal > 0 ? `Deal Total Value: *₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
-      (amountPaid > 0 ? `Amount Received: *₹${amountPaid.toLocaleString('en-IN')}*\n` : '') +
-      (balanceInfo.dealTotal > 0 ? `Total Collected So Far: *₹${balanceInfo.totalCollectedNow.toLocaleString('en-IN')} / ₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
-      (amountPending > 0 
-        ? `Outstanding Balance Pending: *₹${amountPending.toLocaleString('en-IN')} ⏳*\nStatus: *Advance / Partial Payment Pending 💳*` 
-        : `Status: *Fully Paid / Settled 🎉*`) +
-      `\n\nUpdated KRA 5 Payment Collection Dashboard! ✅`;
+    // Log to kra_logs for KRA 5 dashboard counter
+    const isFullyPaid = result2.finalStatus === 'collected';
+    await supabase.from('kra_logs').insert({
+      salesperson_phone: senderPhone,
+      kra_number:        5,
+      kra_type:          isFullyPaid ? 'payment_collected' : 'payment_advance',
+      value:             amountPaid > 0 ? amountPaid : 0,
+      customer_name:     customerName,
+      description:       `Payment Update: ${customerName}` +
+        (amountPaid > 0 ? ` | Received: ₹${amountPaid.toLocaleString('en-IN')}` : '') +
+        (result2.finalOutstanding > 0 ? ` | Outstanding: ₹${result2.finalOutstanding.toLocaleString('en-IN')}` : ' | Fully Settled 🎉'),
+      month: new Date().getMonth() + 1,
+      year:  new Date().getFullYear(),
+    });
+
+    // Build reply
+    const lines = [
+      `💰 *KRA 5 - Payment ${result2.existing ? 'Updated' : 'Logged'}!*`,
+      ``,
+      `Customer: *${customerName}*`,
+    ];
+
+    if (result2.finalInvoiceAmount > 0) {
+      lines.push(`Deal Total Value: *₹${result2.finalInvoiceAmount.toLocaleString('en-IN')}*`);
+    }
+    if (amountPaid > 0) {
+      lines.push(`Amount Received This Time: *₹${amountPaid.toLocaleString('en-IN')}*`);
+    }
+    lines.push(`Total Collected So Far: *₹${result2.finalCollected.toLocaleString('en-IN')}*`);
+
+    if (result2.finalOutstanding > 0) {
+      lines.push(`Outstanding Balance: *₹${result2.finalOutstanding.toLocaleString('en-IN')} ⏳*`);
+      lines.push(`Status: *Partial / Advance Payment 💳*`);
+    } else {
+      lines.push(`Outstanding Balance: *₹0*`);
+      lines.push(`Status: *Fully Paid / Settled 🎉*`);
+    }
+
+    lines.push(``, `Updated KRA 5 Payment Collection Dashboard! ✅`);
+    return lines.join('\n');
 
   } catch (error) {
     console.error('Payment Agent Error:', error.message);
@@ -232,6 +344,9 @@ async function processPaymentMessage(text, senderPhone) {
   }
 }
 
+/**
+ * Image receipt handler - same upsert logic.
+ */
 async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
@@ -245,63 +360,68 @@ async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
     const prompt = `You are the Specialized Payment Collection Vision Agent for Enlight Metals.
 Analyze this payment receipt / UPI transfer screenshot / bank deposit slip image and extract into JSON:
 {
-  "customer_name": "<company/customer name if present, else null>",
+  "customer_name": "<company/customer name if visible, else null>",
   "amount_paid": <numeric amount paid, else 0>,
   "payment_type": "advance|installment|full_settlement",
   "confidence": <float 0.0 to 1.0>
 }
-Return ONLY JSON.`;
+Return ONLY JSON. No prose. No markdown.`;
 
     const result = await model.generateContent([prompt, imagePart]);
     const rawText = result.response.text().trim();
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
-    if (!data.amount_paid || data.amount_paid <= 0) {
-      return `⚠️ *Payment Receipt Vision Agent Clarification Needed*\n\nI parsed your payment receipt image, but the *Amount Received* is not clear. Please reply with the exact payment amount.`;
+    const amountPaid = Math.max(0, Number(data.amount_paid || 0));
+    if (amountPaid <= 0) {
+      return `⚠️ *Payment Receipt — Amount Not Clear*\n\nI parsed your payment receipt image, but could not read the amount. Please reply with the exact amount.\nExample: _"₹5,00,000 received from Delta Structural Steel"_`;
     }
 
-    if (!data.customer_name) {
-      return `⚠️ *Payment Receipt Vision Agent Clarification Needed*\n\nReceipt for *₹${Number(data.amount_paid).toLocaleString('en-IN')}* detected! Please reply with the *Customer/Company Name* so it can be credited to KRA 5.`;
+    let customerName = data.customer_name ? data.customer_name.trim() : null;
+    if (!customerName) {
+      customerName = await getLastCustomerForSalesperson(senderPhone);
+    }
+    if (!customerName) {
+      return `⚠️ *Payment Receipt — Customer Not Found*\n\nReceipt for *₹${amountPaid.toLocaleString('en-IN')}* detected! Please reply with the *Customer/Company Name* to credit this payment to KRA 5.`;
     }
 
-    const customerName = data.customer_name.trim();
-    const amountPaid = Number(data.amount_paid);
-
-    const balanceInfo = await resolvePaymentBalance(customerName, amountPaid);
-
-    // Save payment
-    await supabase.from('payment_tracking').insert({
-      customer_name: customerName,
-      salesperson_phone: senderPhone,
-      invoice_amount: balanceInfo.dealTotal || amountPaid,
-      collected_amount: amountPaid,
-      outstanding: balanceInfo.outstanding,
-      status: balanceInfo.status,
-      payment_type: balanceInfo.paymentType,
-      created_at: new Date().toISOString(),
+    const result2 = await upsertPaymentTracking({
+      customerName,
+      senderPhone,
+      newAmountPaid:   amountPaid,
+      explicitPending: 0,
+      isFullPayment:   false,
+      paymentType:     data.payment_type || 'advance',
     });
 
+    const isFullyPaid = result2.finalStatus === 'collected';
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
-      kra_number: 5,
-      kra_type: balanceInfo.isFullyPaid ? 'payment_collected' : 'payment_advance',
-      value: amountPaid,
-      customer_name: customerName,
-      description: `Payment Receipt Image Logged: ${customerName} (₹${amountPaid.toLocaleString('en-IN')})`,
+      kra_number:        5,
+      kra_type:          isFullyPaid ? 'payment_collected' : 'payment_advance',
+      value:             amountPaid,
+      customer_name:     customerName,
+      description:       `Payment Receipt Image: ${customerName} (₹${amountPaid.toLocaleString('en-IN')})`,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
+      year:  new Date().getFullYear(),
     });
 
-    return `💰 *Payment Receipt Image Logged!*\n\n` +
-      `Customer: *${customerName}*\n` +
-      (balanceInfo.dealTotal > 0 ? `Deal Total Value: *₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
-      `Amount Collected: *₹${amountPaid.toLocaleString('en-IN')}*\n` +
-      (balanceInfo.dealTotal > 0 ? `Total Collected: *₹${balanceInfo.totalCollectedNow.toLocaleString('en-IN')} / ₹${balanceInfo.dealTotal.toLocaleString('en-IN')}*\n` : '') +
-      (balanceInfo.outstanding > 0 
-        ? `Outstanding Balance Pending: *₹${balanceInfo.outstanding.toLocaleString('en-IN')} ⏳*\nStatus: *Advance / Partial Payment Received 💳*` 
-        : `Status: *Fully Paid / Settled 🎉*`) +
-      `\n\nUpdated KRA 5 Payment Collection Dashboard! ✅`;
+    const lines = [
+      `💰 *Payment Receipt Logged!*`,
+      ``,
+      `Customer: *${customerName}*`,
+    ];
+    if (result2.finalInvoiceAmount > 0) lines.push(`Deal Total: *₹${result2.finalInvoiceAmount.toLocaleString('en-IN')}*`);
+    lines.push(`Amount Collected: *₹${amountPaid.toLocaleString('en-IN')}*`);
+    lines.push(`Total Collected So Far: *₹${result2.finalCollected.toLocaleString('en-IN')}*`);
+    if (result2.finalOutstanding > 0) {
+      lines.push(`Outstanding: *₹${result2.finalOutstanding.toLocaleString('en-IN')} ⏳*`);
+      lines.push(`Status: *Partial Payment 💳*`);
+    } else {
+      lines.push(`Status: *Fully Paid / Settled 🎉*`);
+    }
+    lines.push(``, `Updated KRA 5 Payment Collection Dashboard! ✅`);
+    return lines.join('\n');
 
   } catch (err) {
     console.error('Payment Image Agent Error:', err.message);
