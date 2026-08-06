@@ -274,23 +274,38 @@ INTENT DEFINITIONS — understand the meaning, not the keywords:
   - "Mehta ne rate manga 10mm ka" (rate asked for)
   - "PO aaya hai Supreme ka" (purchase order received)
 
-"query": The salesperson is asking for their performance stats, dashboard link, or asking general informational questions (e.g. today's date/time, current steel rates/prices, explaining bot features, or general information).
-  Examples:
-  - "what is todays date" (date/time query)
-  - "rate sheet dikhao" (pricing query)
-  - "today's price of HR Coil" (pricing query)
-  - "Mere kitne visits hue?" (performance stats)
-  - "KRA status dikhao" (show KRA status)
-  - "Aaj ka dashboard dikhao" (show today's dashboard)
+"query": The salesperson (or admin) is asking for information, reports, data, or stats from the system. This includes ANY request to SEE, SHOW, LIST, GET, or RETRIEVE data. It also includes rate/price questions, dashboard link requests, and general how-to questions about the bot.
+  Examples (many different phrasings, all the same intent):
+  - "what is todays date" / "aaj ka date kya hai"
+  - "rate sheet dikhao" / "bhav kya hai" / "today's rates" / "HR Coil ka bhav"
+  - "Mere kitne visits hue?" / "mera visit summary"
+  - "KRA status dikhao" / "my KRA report" / "performance report" / "performace report august"
+  - "Aaj ka dashboard dikhao" / "dashboard link bhejo" / "send login link"
+  - "won customer names" / "give me the won customers" / "list won deals"
+  - "meri active deals kya hain" / "show my pipeline" / "current deals dikhao"
+  - "my customers list" / "kaun se customers hain mere" / "client directory"
+  - "outstanding payments" / "baaki list" / "who hasn't paid" / "overdue amount"
+  - "show sales report" / "is mahine ki sales" / "august ki report"
+  - "pending inquiries" / "review queue" / "kitni inquiries hain"
+  - "lost deals" / "rejected deals this month" / "konsa deal nahi hua"
+  - "deals this week" / "is hafte ki deals"
+  - "new customers this month" / "kitne naye customers aaye"
+  - "complaint summary" / "kitni complaints hain"
+  - "my visit list" / "who did I visit august mein"
+  - "payment aging" / "konsa customer nahi diya abhi tak"
+  - "full monthly report" / "report card dikhao" / "pura report chahiye"
+  - "show Kumar Varma performance" (admin asking about another salesperson)
+  - "Akruti ki sales dikhao" (admin querying a specific person's data)
 
 "greeting": Just a hello or check-in with no business content.
   Examples: "Hi", "Hello", "Good morning", "Namaste", "Kya haal hai"
 
-"unknown": You genuinely cannot determine any business intent or it is a general conversational remark.
+"unknown": You genuinely cannot determine any business intent. Use this ONLY when none of the above intents fit at all — for truly off-topic, nonsensical, or ambiguous messages.
 
 IMPORTANT RULES:
 - Judge by the MEANING of the message, not by the presence of specific words
 - A message can lack any keywords and still have a clear intent
+- ANY request to retrieve, list, show, get, or display data = "query"
 - When confidence is below 0.5, prefer "unknown" and let the system ask for clarification
 - "reasoning" field: explain your choice in plain English, one sentence
 - Return ONLY the JSON object
