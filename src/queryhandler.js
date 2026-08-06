@@ -648,104 +648,79 @@ async function handleQuery(text, senderPhone) {
     console.error('Semantic router error:', err.message);
   }
 
-  // Dashboard Link / Login request
-  const isLinkRequest = 
-    lower.includes('link') || 
-    lower.includes('login') || 
-    lower.includes('website') || 
-    lower.includes('portal') || 
-    lower.includes('url') || 
-    lower.includes('open dashboard') ||
-    lower.includes('dashboard link');
-    
-  if (isLinkRequest) {
-    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
-    return `🔗 *Enlight Sales OS Portal*\n\n` +
-      `You can access the web dashboard here:\n` +
-      `👉 ${dashboardUrl}\n\n` +
-      `🔑 *Login instructions*:\n` +
-      `1. Enter your registered WhatsApp number.\n` +
-      `2. Request and verify the OTP sent to your phone.\n` +
-      `3. Keep track of your deals, rate sheets, and KRA dashboards in real-time!`;
-  }
-
-  // KRA status or Performance (checked first to avoid matching 'sales' in 'salesperson performance')
-  if (lower.includes('kra') || lower.includes('target') || 
-      lower.includes('performance') || lower.includes('achievement') ||
-      lower.includes('dashboard') || lower.includes('status') || lower.includes('summary')) {
+  // ── Keyword fallback (backup for low-confidence semantic router) ─────────
+  // KRA / performance
+  if (lower.includes('kra') || lower.includes('target') || lower.includes('performance') ||
+      lower.includes('performace') || lower.includes('achievement')) {
     return await getKRAStatus(senderPhone, text);
   }
-
-  // Sales this month
-  if (lower.includes('sales') || lower.includes('is mahine') || 
-      lower.includes('this month') || lower.includes('monthly')) {
+  // Sales summary
+  if (lower.includes('sales') || lower.includes('this month') || lower.includes('is mahine')) {
     return await getSalesThisMonth(senderPhone, text);
   }
-
-  // This week
-  if (lower.includes('this week') || lower.includes('is hafte') || 
-      lower.includes('week')) {
-    return await getDealsThisWeek();
+  // Won customers
+  if (lower.includes('won') && (lower.includes('customer') || lower.includes('deal'))) {
+    return await getWonCustomers(senderPhone, text);
   }
-
-  // Pending deals
-  if (lower.includes('pending') && 
-      (lower.includes('deal') || lower.includes('order'))) {
-    return await getPendingDeals(senderPhone);
+  // Lost deals
+  if (lower.includes('lost') || lower.includes('rejected deal')) {
+    return await getLostDeals(senderPhone, text);
   }
-
-  // Pending inquiries / review queue
-  if (lower.includes('pending') || lower.includes('review') || 
-      lower.includes('inquir')) {
-    return await getPendingInquiries();
+  // Active deals
+  if ((lower.includes('active') || lower.includes('current') || lower.includes('my deals')) && lower.includes('deal')) {
+    return await getActiveDealsDetail(senderPhone);
   }
-
-  // KRA 9 - Visit summary
-  if (lower.includes('visit') || lower.includes('visits') ||
-      lower.includes('customer visit') || lower.includes('kra 9')) {
-    return await getVisitSummary(senderPhone, text);
+  // Customer list
+  if (lower.includes('customer list') || lower.includes('my customers') || lower.includes('client list')) {
+    return await getCustomerList(senderPhone);
   }
-
-  // KRA 5 - Payment summary
-  if (lower.includes('payment') || lower.includes('outstanding') ||
-      lower.includes('overdue') || lower.includes('baaki') ||
-      lower.includes('due') || lower.includes('collection')) {
-    return await getPaymentSummary(senderPhone);
+  // Rate sheet
+  if (lower.includes('rate') || lower.includes('bhav') || lower.includes('price list')) {
+    return await getRateSheet();
   }
-
-  // KRA 8 - Complaint summary
-  if (lower.includes('complaint') || lower.includes('complain') ||
-      lower.includes('shikayat') || lower.includes('kra 8')) {
-    return await getComplaintSummary(senderPhone);
+  // Visit list
+  if (lower.includes('visit') || lower.includes('visited') || lower.includes('field visit')) {
+    return await getVisitList(senderPhone, text);
   }
-
-  // Full monthly report
-  if (lower.includes('monthly report') || 
-      lower.includes('full report') ||
-      lower.includes('mahine ki report') ||
-      lower.includes('kra report') ||
-      lower.includes('monthly kra') ||
-      lower.includes('my reports') ||
-      lower.includes('my report') ||
-      lower.includes('all reports') ||
-      lower.includes('show reports') ||
-      lower.includes('report card') ||
-      lower === 'report' ||
-      lower === 'reports' ||
-      lower.includes('all my reports')) {
+  // Payment aging
+  if (lower.includes('outstanding') || lower.includes('overdue') || lower.includes('baaki') || lower.includes('due')) {
+    return await getPaymentAging(senderPhone);
+  }
+  // Full report
+  if (lower.includes('monthly report') || lower.includes('full report') || lower.includes('report card') || lower === 'report') {
     return await generateFullKRAReport(senderPhone, getMonthRangeFromQuery(text));
   }
-
-  // KRA 2 new customers
-  if (lower.includes('new customer') || 
-      lower.includes('naya customer') ||
-      lower.includes('kra 2')) {
+  // This week
+  if (lower.includes('this week') || lower.includes('is hafte')) {
+    return await getDealsThisWeek();
+  }
+  // Pending deals
+  if (lower.includes('pending') && lower.includes('deal')) {
+    return await getPendingDeals(senderPhone);
+  }
+  // Pending inquiries
+  if (lower.includes('pending') || lower.includes('review queue') || lower.includes('inquir')) {
+    return await getPendingInquiries();
+  }
+  // Payment summary
+  if (lower.includes('payment') || lower.includes('collection')) {
+    return await getPaymentSummary(senderPhone);
+  }
+  // Complaints
+  if (lower.includes('complaint') || lower.includes('shikayat')) {
+    return await getComplaintSummary(senderPhone);
+  }
+  // New customers KRA 2
+  if (lower.includes('new customer') || lower.includes('kra 2')) {
     return await getNewCustomerSummary(senderPhone);
   }
+  // Dashboard link
+  if (lower.includes('link') || lower.includes('login') || lower.includes('portal')) {
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+    return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+  }
 
-
-
-  // Default: Conversational Gemini Assistant (handles dates, time, rates, general queries)
+  // ── Final fallback: route to conversational assistant ──────────────────
   return await handleConversationalQuery(text, senderPhone);
 }
 

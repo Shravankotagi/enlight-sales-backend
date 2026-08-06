@@ -322,6 +322,8 @@ async function classifyIntent(text) {
 const QUERY_CLASSIFIER_PROMPT = `
 You are an intelligent query router for a B2B steel sales system.
 Your job is to classify the salesperson's request into one of the following categories:
+
+DATA QUERIES (about the salesperson's own work):
 - "dashboard_link": requests login link, website, portal URL, dashboard URL, open dashboard.
 - "sales_summary": requests sales report, sales numbers, deals created/won count and value.
 - "kra_status": requests performance report, KRA status, KRA achievements, targets status, my performance.
@@ -332,17 +334,33 @@ Your job is to classify the salesperson's request into one of the following cate
 - "deals_this_week": requests this week's deals list, week deals, is hafte ke deals.
 - "pending_deals": requests pending deals list, open deals, active deals, incomplete deals.
 - "pending_inquiries": requests pending inquiries list, review queue, inquiries to be processed.
-- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received count, how many new customers.
-- "won_customers": requests won customer names, list of won deals with customers and products, who I won deals with, KRA 1 breakdown, won deals detail.
+- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received, how many new customers.
+- "won_customers": requests won customer names, list of won deals with customers and products, who I won deals with, KRA 1 breakdown.
 - "active_deals_detail": requests active deals pipeline with items and amounts, my current deals with products.
 - "customer_list": requests full customer list, all my customers, registered clients, my client directory.
 - "rate_sheet": requests today's rate sheet, current steel prices, current rates, bhav, what are the rates.
 - "visit_list": requests customer visit list, who I visited, my visits this month, field visit log.
 - "payment_aging": requests outstanding dues per customer, overdue list, who hasn't paid, payment aging, baaki list.
-- "lost_deals": requests lost deals breakdown, rejected deals, why deals were lost, loss reasons, deals I lost.
-- "general": general hello, general conversation, greetings, or any other query not listed above.
+- "lost_deals": requests lost deals breakdown, rejected deals, why deals were lost, loss reasons.
 
-Identify the category even if there are typos (e.g. "performace" -> "kra_status", "bhav" -> "rate_sheet", "won customer names" -> "won_customers", "visit log" -> "visit_list").
+ASSISTANT QUERIES (legitimate but handled by conversational AI):
+- "general": hello/greetings, how to log something, what is today's date, help with bot usage, general steel industry questions.
+
+BLOCKED QUERIES (must be rejected — outside scope):
+- "blocked": asking about another specific salesperson's performance, sales or deals by name; asking the bot to perform admin actions (lock/create/modify rate sheets); asking for product recommendations for a client; asking completely off-topic unrelated questions (jokes, news, cricket scores, etc.); asking the bot to access systems it cannot (email, CRM admin, reports for other users).
+
+Examples:
+- "give me the won customer names" → "won_customers" (confidence 0.95)
+- "performace report august" → "kra_status" (confidence 0.90)
+- "bhav kya hai" → "rate_sheet" (confidence 0.85)
+- "baaki list dikhao" → "payment_aging" (confidence 0.90)
+- "is hafte ke deals" → "deals_this_week" (confidence 0.90)
+- "show kumar varma sales" → "blocked" (confidence 0.98)
+- "lock the rate sheet" → "blocked" (confidence 0.98)
+- "suggest products for Tata" → "blocked" (confidence 0.95)
+- "what's the cricket score" → "blocked" (confidence 0.95)
+- "hello" → "general" (confidence 0.90)
+- "how do I log a visit?" → "general" (confidence 0.85)
 
 Return ONLY a JSON object (no markdown, no prose, no backticks):
 {

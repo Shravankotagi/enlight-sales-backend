@@ -247,17 +247,34 @@ router.post('/', async (req, res) => {
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
           const intent = await classifyIntent(raw_text);
 
-          // Reject any unrelated or unknown intents immediately
+          // For 'unknown' intents — run through query classifier before rejecting
+          // This ensures queries phrased unusually still get answered
           if (intent.intent === 'unknown') {
-            await sendTextMessage(
-              senderPhone,
-              `🤔 Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
-                `For example:\n` +
-                `• Deal update ke liye: "ABC ka deal won hua"\n` +
-                `• Payment ke liye: "Supreme ne 50000 diya"\n` +
-                `• Visit ke liye: "Aaj Mehta ke yahan gaya"`,
-            );
-            return;
+            const { classifyQueryType } = require('./supabase').supabase ? require('./gemini') : require('./gemini');
+            let qClass;
+            try {
+              const gemini = require('./gemini');
+              qClass = await gemini.classifyQueryType(raw_text);
+            } catch (e) {
+              qClass = { category: 'general', confidence: 0 };
+            }
+
+            if (qClass && qClass.category !== 'general' && qClass.category !== 'blocked' && qClass.confidence >= 0.65) {
+              // Route to data query handler
+              const queryReply = await handleQuery(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, queryReply);
+              return;
+            } else if (qClass && qClass.category === 'blocked') {
+              await sendTextMessage(senderPhone,
+                `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to *your own* deals, customers, payments, visits, KRA performance, and steel rates.`);
+              return;
+            } else {
+              // Truly unknown — route to assistant for a helpful response or redirect
+              const { handleConversationalQuery } = require('./agents/assistantAgent');
+              const assistantReply = await handleConversationalQuery(raw_text, senderPhone);
+              await sendTextMessage(senderPhone, assistantReply);
+              return;
+            }
           }
 
           switch (intent.intent) {
