@@ -413,48 +413,62 @@ async function syncActivity(activityType, data) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function clearAllBiginData() {
+  const results = { deleted: {}, errors: [] };
   try {
     console.log('[BiginSync] Starting full Bigin data cleanup...');
     const token = await getZohoAccessToken();
 
-    for (const module of ['Deals', 'Contacts', 'Notes']) {
+    // Delete Notes first (they reference Contacts/Deals), then Deals, then Contacts
+    for (const module of ['Notes', 'Deals', 'Contacts']) {
+      results.deleted[module] = 0;
       let page = 1;
       let hasMore = true;
 
       while (hasMore) {
         try {
+          // Fetch records — NO 'fields' param (causes empty results in Bigin)
           const res = await axios.get(`${ZOHO_BIGIN_BASE}/${module}`, {
             headers: zohoHeaders(token),
-            params: { page, per_page: 200, fields: 'id' },
+            params: { page, per_page: 100 }, // Bigin free plan: max 100 per request
           });
 
           const records = res.data?.data || [];
-          if (records.length === 0) { hasMore = false; break; }
+          if (records.length === 0) {
+            hasMore = false;
+            break;
+          }
 
-          const ids = records.map(r => r.id);
+          // Extract IDs and delete in batch
+          const ids = records.map(r => r.id).filter(Boolean);
           if (ids.length > 0) {
-            await axios.delete(`${ZOHO_BIGIN_BASE}/${module}`, {
+            const delRes = await axios.delete(`${ZOHO_BIGIN_BASE}/${module}`, {
               headers: zohoHeaders(token),
               params: { ids: ids.join(',') },
             });
-            console.log(`[BiginSync] Deleted ${ids.length} ${module}`);
+            const deleted = delRes.data?.data?.filter(r => r.status === 'success').length || ids.length;
+            results.deleted[module] += deleted;
+            console.log(`[BiginSync] Deleted ${deleted} ${module} (page ${page})`);
           }
 
-          hasMore = res.data?.info?.more_records || false;
+          hasMore = res.data?.info?.more_records === true;
           page++;
-          await new Promise(r => setTimeout(r, 500)); // rate limit
+          await new Promise(r => setTimeout(r, 600)); // rate limit pause
         } catch (err) {
-          console.error(`[BiginSync] Error deleting ${module}:`, err.response?.data || err.message);
+          const errMsg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+          console.error(`[BiginSync] Error on ${module} page ${page}:`, errMsg);
+          results.errors.push(`${module}: ${errMsg}`);
           hasMore = false;
         }
       }
+
+      console.log(`[BiginSync] ${module}: ${results.deleted[module]} total deleted`);
     }
 
-    console.log('[BiginSync] ✅ Full Bigin cleanup complete');
-    return true;
+    console.log('[BiginSync] ✅ Full Bigin cleanup complete:', results.deleted);
+    return results;
   } catch (err) {
     console.error('[BiginSync] Cleanup failed:', err.message);
-    return false;
+    throw err;
   }
 }
 

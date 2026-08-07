@@ -724,8 +724,13 @@ router.post('/admin/bigin-cleanup', async (req, res) => {
   }
   try {
     const { clearAllBiginData } = require('./agents/biginSyncAgent');
-    await clearAllBiginData();
-    res.json({ success: true, message: 'All Zoho Bigin data cleared successfully' });
+    const results = await clearAllBiginData();
+    res.json({
+      success: true,
+      message: 'All Zoho Bigin data cleared successfully',
+      deleted: results.deleted,
+      errors:  results.errors,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
