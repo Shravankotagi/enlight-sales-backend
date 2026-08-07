@@ -24,7 +24,7 @@ const { createClient } = require('@supabase/supabase-js');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const ZOHO_TOKEN_URL   = 'https://accounts.zoho.in/oauth/v2/token';
-const ZOHO_BIGIN_BASE  = 'https://www.zohoapis.in/bigin/v2';
+const ZOHO_BIGIN_BASE  = 'https://www.zohoapis.in/bigin/v1';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -121,7 +121,7 @@ async function findBiginContact(customerName, token) {
   try {
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
       headers: zohoHeaders(token),
-      params: { criteria: `(Account_Name:equals:${customerName})`, fields: 'id,Full_Name' },
+      params: { criteria: `(Last_Name:equals:${customerName})`, fields: 'id,Last_Name' },
     });
     const records = res.data?.data;
     return records && records.length > 0 ? records[0].id : null;
@@ -137,27 +137,25 @@ async function upsertBiginContact(customerDetails, salespersonName, token) {
 
   const payload = {
     data: [{
-      Full_Name:       name,
-      Account_Name:    name,
-      Phone:           customerDetails.customer_phone || customerDetails.phone || '',
-      Mobile:          customerDetails.customer_phone || customerDetails.phone || '',
-      Mailing_City:    customerDetails.customer_address || customerDetails.city || '',
-      Description:     [
+      Last_Name:    name,                // Required field in Bigin v1
+      Company:      name,                // Company/Account name
+      Phone:        customerDetails.customer_phone || customerDetails.phone || '',
+      Mobile:       customerDetails.customer_phone || customerDetails.phone || '',
+      City:         customerDetails.customer_address || customerDetails.city || '',
+      Description:  [
         `Contact Person: ${customerDetails.contact_person || 'N/A'}`,
         `GST: ${customerDetails.customer_gst || customerDetails.gst || 'N/A'}`,
         `Salesperson: ${salespersonName}`,
         `Order Frequency: Every ${customerDetails.avg_order_frequency_days || 30} days`,
       ].join(' | '),
-      Lead_Source: 'WhatsApp Bot',
+      Lead_Source:  'WhatsApp Bot',
     }],
   };
 
   if (existingId) {
-    // Update existing
     await axios.put(`${ZOHO_BIGIN_BASE}/Contacts/${existingId}`, payload, { headers: zohoHeaders(token) });
     return existingId;
   } else {
-    // Create new
     const res = await axios.post(`${ZOHO_BIGIN_BASE}/Contacts`, payload, { headers: zohoHeaders(token) });
     return res.data?.data?.[0]?.details?.id || null;
   }
@@ -231,18 +229,22 @@ async function upsertBiginDeal({ customerName, stage, amount, poNumber, salesper
 }
 
 /**
- * Add a Note to a Contact in Bigin.
+ * Add a Note to a Contact in Bigin v1.
  */
-async function addBiginNote({ contactId, noteTitle, noteContent, activityType }, token) {
+async function addBiginNote({ contactId, noteTitle, noteContent }, token) {
   const payload = {
     data: [{
       Note_Title:   noteTitle,
       Note_Content: noteContent,
-      Parent_Id:    { id: contactId, type: 'Contacts' },
-      se_module:    'Contacts',
+      $se_module:   'Contacts',
+      Parent_Id:    contactId,
     }],
   };
-  await axios.post(`${ZOHO_BIGIN_BASE}/Notes`, payload, { headers: zohoHeaders(token) });
+  try {
+    await axios.post(`${ZOHO_BIGIN_BASE}/Notes`, payload, { headers: zohoHeaders(token) });
+  } catch (err) {
+    console.error('[BiginSync] Note add error:', err.response?.data || err.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,6 +421,12 @@ async function clearAllBiginData() {
     const token = await getZohoAccessToken();
 
     // Delete Notes first (they reference Contacts/Deals), then Deals, then Contacts
+    const moduleFields = {
+      Notes:    'id,Note_Title',
+      Deals:    'id,Deal_Name',
+      Contacts: 'id,Full_Name',
+    };
+
     for (const module of ['Notes', 'Deals', 'Contacts']) {
       results.deleted[module] = 0;
       let page = 1;
@@ -426,10 +434,9 @@ async function clearAllBiginData() {
 
       while (hasMore) {
         try {
-          // Fetch records — NO 'fields' param (causes empty results in Bigin)
           const res = await axios.get(`${ZOHO_BIGIN_BASE}/${module}`, {
             headers: zohoHeaders(token),
-            params: { page, per_page: 100 }, // Bigin free plan: max 100 per request
+            params: { page, per_page: 100, fields: moduleFields[module] },
           });
 
           const records = res.data?.data || [];
@@ -438,7 +445,6 @@ async function clearAllBiginData() {
             break;
           }
 
-          // Extract IDs and delete in batch
           const ids = records.map(r => r.id).filter(Boolean);
           if (ids.length > 0) {
             const delRes = await axios.delete(`${ZOHO_BIGIN_BASE}/${module}`, {
@@ -452,7 +458,7 @@ async function clearAllBiginData() {
 
           hasMore = res.data?.info?.more_records === true;
           page++;
-          await new Promise(r => setTimeout(r, 600)); // rate limit pause
+          await new Promise(r => setTimeout(r, 600));
         } catch (err) {
           const errMsg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
           console.error(`[BiginSync] Error on ${module} page ${page}:`, errMsg);
