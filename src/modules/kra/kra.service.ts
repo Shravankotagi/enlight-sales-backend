@@ -936,6 +936,11 @@ export class KraService {
         0,
       );
 
+      // Distinct customer count for KRA 2 — matches bot's getMonthlyOnboardCount distinct Set logic
+      const kra2DistinctCount = new Set(
+        kra2Rows.map((r) => (r.company_name || '').toLowerCase().trim()),
+      ).size;
+
       return {
         kra1: {
           number: 1,
@@ -956,7 +961,7 @@ export class KraService {
           number: 2,
           title: 'KRA 2: New Customer Acquisition',
           target: 'Minimum 3 new customers per month',
-          achieved: `${kra2Rows.length}/3`,
+          achieved: `${kra2DistinctCount}/3`,
           meaning:
             "Measures the salesperson's ability to expand Enlight Metals' customer base by identifying, approaching, and converting new prospects into active customers. A new customer is defined as a company that has not previously placed a billed order with Enlight Metals.",
           headers: [
