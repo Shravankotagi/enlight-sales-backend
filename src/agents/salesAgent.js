@@ -635,34 +635,37 @@ async function handlePaymentTrackingOnWon(dealId, customerName, amount, salesper
     if (dealId) {
       const { data: byDeal } = await supabase
         .from('payment_tracking')
-        .select('id')
+        .select('*')
         .eq('deal_id', dealId)
         .limit(1);
-      if (byDeal && byDeal.length > 0) {
-        existingRecord = byDeal[0];
-      }
+      if (byDeal && byDeal.length > 0) existingRecord = byDeal[0];
     }
 
-    if (!existingRecord) {
+    if (!existingRecord && customerName) {
       const { data: byCust } = await supabase
         .from('payment_tracking')
-        .select('id')
-        .eq('customer_name', customerName)
+        .select('*')
+        .ilike('customer_name', `%${customerName}%`)
         .limit(1);
-      if (byCust && byCust.length > 0) {
-        existingRecord = byCust[0];
-      }
+      if (byCust && byCust.length > 0) existingRecord = byCust[0];
     }
 
     if (existingRecord) {
+      const priorCollected = Number(existingRecord.collected_amount || 0);
+      const newInvoiceAmt  = Number(amount || existingRecord.invoice_amount || 0);
+      const newOutstanding = Math.max(0, newInvoiceAmt - priorCollected);
+      const newStatus      = priorCollected >= newInvoiceAmt ? 'settled' : priorCollected > 0 ? 'partial' : 'pending';
+
       await supabase
         .from('payment_tracking')
         .update({
-          due_date: dueDateStr,
-          invoice_amount: amount || undefined,
-          deal_id: dealId || undefined,
+          due_date:           dueDateStr,
+          invoice_amount:     newInvoiceAmt,
+          outstanding:        newOutstanding,
+          status:             newStatus,
+          deal_id:            dealId || existingRecord.deal_id || null,
           credit_period_days: 30,
-          updated_at: new Date().toISOString()
+          updated_at:         new Date().toISOString()
         })
         .eq('id', existingRecord.id);
     } else {
