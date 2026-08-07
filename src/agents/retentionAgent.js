@@ -151,15 +151,23 @@ async function processRetentionMessage(text, senderPhone) {
 
     // Verify official customer name
     const { verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let isNewProspect = false;
 
     if (!officialCustomerName) {
-      return `⚠️ *Client Not Found in your Customer List*\n\n` +
-        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging follow-up updates.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
-        `Once added, you can resend this follow-up update.`;
+      // Auto-create prospect instead of rejecting
+      isNewProspect = true;
+      const { error: insertError } = await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      });
+      if (!insertError) {
+        console.log(`[RetentionAgent] Auto-created new prospect: ${customerName}`);
+      }
+      officialCustomerName = customerName;
     }
 
     const finalCustomerName     = officialCustomerName;

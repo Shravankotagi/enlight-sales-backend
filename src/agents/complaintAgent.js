@@ -104,17 +104,20 @@ async function processComplaintMessage(text, senderPhone) {
 
     const customerName   = data.customer_name.trim();
 
-    // Verify and get official customer name from salesperson's registered customers
+    // Verify and get official customer name — auto-create if not found
     const { verifyAndGetCustomerName } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
     if (!officialCustomerName) {
-      return `⚠️ *Client Not Found in your Customer List*\n\n` +
-        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging quality complaints.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
-        `Once added, you can resend this complaint update.`;
+      // Auto-create as prospect instead of rejecting the complaint
+      await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      }).select().single();
+      officialCustomerName = customerName;
+      console.log(`[ComplaintAgent] Auto-created new prospect: ${customerName}`);
     }
 
     const finalCustomerName = officialCustomerName;

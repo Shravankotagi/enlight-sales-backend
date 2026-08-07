@@ -1,23 +1,25 @@
 /**
  * KRA 8 / KRA 9 - Customer Site Visit & Meeting Agent
  *
- * Tracks field visits made by salesperson to customer locations.
- * Each visit is a separate log — multiple visits to same customer in a day are valid.
+ * DESIGN PRINCIPLES:
+ * - Visit-first CRM flow: Log visit → Auto-create prospect if new → Extract details → Request missing info
+ * - Never reject a visit because the customer isn't registered yet.
+ * - New prospects are auto-onboarded from the visit message itself.
+ * - All extracted data (product interests, follow-up, person met, outcome) is persisted.
+ * - No placeholder values ever stored — null if not mentioned.
  *
  * EDGE CASES HANDLED:
- * 1.  Normal visit log → insert to customer_visits + log KRA
- * 2.  Missing customer name → ask for clarification
+ * 1.  Normal visit (existing customer) → log visit + update KRA 9
+ * 2.  New prospect visit → auto-create in recurring_customers + log visit + ask for missing details
  * 3.  Multiple visits same day to same customer → allowed (each is a separate activity)
- * 4.  Visit with no remarks → defaults to "On-site meeting" (never a generic placeholder)
- * 5.  Visit with person name/designation mentioned → captured and stored
+ * 4.  visit_outcome always persisted (positive/neutral/negative)
+ * 5.  Visit with person name/designation → captured and stored
  * 6.  Monthly visit count includes ALL visits (not just unique customers)
- * 7.  Customer not in recurring_customers → still logs visit (new prospect visits happen)
- * 8.  Hinglish/casual messages → AI handles semantic parsing
- * 9.  Avoid logging raw message as remarks → use AI-extracted summary
- * 10. Contact number extraction → stored in contact_no if mentioned
- * 11. visit_outcome always persisted (positive/neutral/negative)
- * 12. Material requirement (qty + type) and follow-up action captured and stored
- * 13. No placeholder values ever stored — keep null if not mentioned
+ * 7.  material_requirement (product interests) captured and stored
+ * 8.  follow_up_action captured and stored
+ * 9.  city/location extracted from message if mentioned → stored in recurring_customers
+ * 10. Hinglish/casual messages → AI handles semantic parsing
+ * 11. Contact number only stored if explicitly mentioned (no placeholder)
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -28,7 +30,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const VISIT_AGENT_PROMPT = `
 You are the Specialized Site Visit & Meeting AI Agent (KRA 9) for Enlight Metals, a B2B steel distributor.
-Your job is to parse salesperson customer site visit reports or field meeting logs.
+Your job is to parse salesperson customer site visit reports, prospect meetings, or field activity logs.
 
 The salesperson message may be informal, in Hinglish, or missing expected keywords.
 Understand the meaning and context — do not look for specific words.
@@ -38,30 +40,80 @@ Input message can be English, Hindi, or Hinglish.
 Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 {
   "customer_name": "<customer/company name visited, else null>",
+  "is_new_prospect": <true if this seems to be a first meeting / new lead / prospect not yet in system, else false>,
   "person_met": "<full name and designation of person met (e.g. 'Mr. Sharma, Purchase Manager'), else null>",
-  "contact_no": "<phone number of person met if explicitly mentioned, else null>",
-  "remarks": "<rich, detailed summary of what was discussed, key decisions made, and outcome — 2-3 lines. Do NOT copy raw message. Do NOT use generic text like 'Field Visit' or 'Market Presence'. Capture the actual business context.>",
+  "contact_no": "<phone number of person met if EXPLICITLY stated in message, else null>",
+  "city": "<city or location of the customer if mentioned (e.g. 'Pune', 'Mumbai'), else null>",
+  "product_interests": "<steel products the customer is interested in, comma-separated (e.g. 'CR Sheets, MS Plates', 'HR Coil, TMT bars'), else null>",
+  "remarks": "<rich, detailed 2-3 line summary of what was discussed, what was shown/introduced, and the outcome. Do NOT use generic text like 'Field Visit' or 'Market Presence'. Capture the actual business context.>",
   "visit_outcome": "positive|neutral|negative",
-  "material_requirement": "<steel product and quantity required by customer if mentioned (e.g. '50 MT HR Coil', '10 ton TMT bars'), else null>",
-  "follow_up_action": "<specific action required next (e.g. 'Send quotation by tomorrow', 'Share rate sheet by Friday'), else null>",
+  "material_requirement": "<steel product + quantity the customer needs (e.g. '50 MT HR Coil', '10 ton MS Plates'), else null>",
+  "follow_up_action": "<specific next action with deadline if mentioned (e.g. 'Send quotation by tomorrow', 'Share catalogue'), else null>",
   "confidence": <float 0.0 to 1.0>
 }
 
 Rules:
+- "is_new_prospect": true if message says "introduced", "first meeting", "new contact", "business card collected", "new lead", etc.
 - "visit_outcome":
-  - "positive" → order expected, interest shown, deal progressed, quotation requested, positive response
+  - "positive" → interest shown, products discussed, quotation asked, deal progressed, business card exchanged
   - "negative" → customer not available, bad response, rejected meeting, not interested
   - "neutral" → routine check-in, no specific outcome mentioned
-- "remarks": Write a rich, detailed, professional summary — capture WHAT was discussed, WHO decided WHAT, and what the next step is.
+- "product_interests": Extract ALL products mentioned as interests (even without a quantity). e.g. "interested in CR Sheets and MS Plates" → "CR Sheets, MS Plates"
+- "material_requirement": Only if a specific quantity is mentioned. e.g. "need 50 MT HR Coil" → "50 MT HR Coil"
+- "remarks": Must be specific and business-relevant.
   - BAD: "Visited and market presence recorded"
-  - GOOD: "Discussed HR Coil requirements of ~50 MT. Customer (Purchase Manager Mr. Sharma) requested formal quotation by tomorrow. Interest level is high."
-- "material_requirement": Extract product type + quantity if mentioned. e.g. "50 MT HR Coil", "10 ton TMT Fe500"
-- "follow_up_action": Extract the specific next action with deadline if mentioned. e.g. "Send quotation by tomorrow"
-- "contact_no": Only set if a phone number is EXPLICITLY stated in the message. Otherwise null.
-- NEVER invent or assume data not present in the message.
+  - GOOD: "First meeting with Mehta Engineering, Pune. Introduced product range. Customer showed interest in CR Sheets and MS Plates. Business card collected."
+- "contact_no": ONLY if a phone number is explicitly stated. Otherwise null — never invent.
+- "city": Extract if any city/location is mentioned. e.g. "in Pune" → "Pune"
 
 Return ONLY the JSON object.
 `;
+
+/**
+ * Auto-create a new prospect in recurring_customers from visit data.
+ * Returns the official customer name.
+ */
+async function autoOnboardProspect(customerName, senderPhone, extractedData) {
+  try {
+    // Check if already exists (fuzzy)
+    const { data: existing } = await supabase
+      .from('recurring_customers')
+      .select('id, customer_name')
+      .ilike('customer_name', `%${customerName}%`)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      // Already exists — update with any new info from this visit
+      const updateData = { updated_at: new Date().toISOString() };
+      if (extractedData.city)       updateData.customer_address  = extractedData.city;
+      if (extractedData.contact_no) updateData.customer_phone    = extractedData.contact_no;
+      if (extractedData.person_met) updateData.contact_person    = extractedData.person_met;
+
+      await supabase.from('recurring_customers').update(updateData).eq('id', existing[0].id);
+      return existing[0].customer_name;
+    }
+
+    // New prospect — create record with all available info
+    await supabase.from('recurring_customers').insert({
+      customer_name:              customerName,
+      assigned_salesperson_phone: senderPhone,
+      customer_address:           extractedData.city        || null,
+      customer_phone:             extractedData.contact_no  || null,
+      contact_person:             extractedData.person_met  || null,
+      notes:                      extractedData.product_interests
+                                    ? `Interested in: ${extractedData.product_interests}`
+                                    : null,
+      is_active:                  true,
+      avg_order_frequency_days:   30,
+    });
+
+    console.log(`[VisitAgent] Auto-onboarded new prospect: ${customerName}`);
+    return customerName;
+  } catch (err) {
+    console.error('autoOnboardProspect error:', err.message);
+    return customerName;
+  }
+}
 
 async function processVisitMessage(text, senderPhone) {
   try {
@@ -75,35 +127,36 @@ async function processVisitMessage(text, senderPhone) {
       .trim();
     const data = JSON.parse(cleaned);
 
-    // Edge Case 2: Missing customer name
+    // Missing customer name — must ask
     if (!data.customer_name) {
-      return `⚠️ *Visit Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Delta Structural Steel today, met Mr. Sharma, discussed pricing"_`;
+      return `⚠️ *Visit Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Mehta Engineering in Pune today, met Purchase Manager, interested in CR Sheets"_`;
     }
 
     const customerName = data.customer_name.trim();
 
-    // Verify and get official customer name from salesperson's registered customers
+    // Try to match existing registered customer first
     const { verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+
+    let isNewProspect = false;
 
     if (!officialCustomerName) {
-      return `⚠️ *Client Not Found in your Customer List*\n\n` +
-        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging visits.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
-        `Once added, you can resend this visit update.`;
+      // ── NEW PROSPECT FLOW ─────────────────────────────────────────────────
+      // Auto-onboard instead of rejecting the visit
+      isNewProspect = true;
+      officialCustomerName = await autoOnboardProspect(customerName, senderPhone, data);
     }
 
     const finalCustomerName = officialCustomerName;
 
     // Extract all fields — NEVER use placeholder values
-    const remarks            = data.remarks || 'On-site meeting';
-    const personMet          = data.person_met || null;
-    const contactNo          = data.contact_no || null;                    // null if not mentioned
-    const visitOutcome       = data.visit_outcome || 'neutral';
-    const materialRequirement = data.material_requirement || null;         // null if not mentioned
-    const followUpAction      = data.follow_up_action || null;             // null if not mentioned
+    const remarks             = data.remarks            || 'On-site meeting';
+    const personMet           = data.person_met         || null;
+    const contactNo           = data.contact_no         || null;
+    const visitOutcome        = data.visit_outcome       || 'neutral';
+    const materialRequirement = data.material_requirement || null;
+    const followUpAction      = data.follow_up_action    || null;
+    const productInterests    = data.product_interests   || null;
 
     // Insert visit record with all extracted data
     await supabase.from('customer_visits').insert({
@@ -118,13 +171,15 @@ async function processVisitMessage(text, senderPhone) {
       visited_at:           new Date().toISOString(),
     });
 
-    // Log to KRA 9 with full business context
+    // Log KRA 9 with full business context
     const kraDescription = [
       `Visit: ${finalCustomerName}`,
-      personMet           ? `Met: ${personMet}` : null,
-      visitOutcome        ? `Outcome: ${visitOutcome}` : null,
-      materialRequirement ? `Requirement: ${materialRequirement}` : null,
-      followUpAction      ? `Follow-up: ${followUpAction}` : null,
+      isNewProspect           ? 'NEW PROSPECT'            : null,
+      personMet               ? `Met: ${personMet}`       : null,
+      visitOutcome            ? `Outcome: ${visitOutcome}` : null,
+      productInterests        ? `Interests: ${productInterests}` : null,
+      materialRequirement     ? `Requirement: ${materialRequirement}` : null,
+      followUpAction          ? `Follow-up: ${followUpAction}` : null,
       `Notes: ${remarks}`,
     ].filter(Boolean).join(' | ');
 
@@ -138,7 +193,7 @@ async function processVisitMessage(text, senderPhone) {
       year:  new Date().getFullYear(),
     });
 
-    // Save active session so follow-up messages (profile updates) link to this customer
+    // Save active session for context retention (follow-up messages will know this customer)
     await saveActiveSession(senderPhone, finalCustomerName, 'visit_logged');
 
     // Count ALL visits this month
@@ -152,16 +207,13 @@ async function processVisitMessage(text, senderPhone) {
 
     const totalVisits = visitLogs ? visitLogs.length : 1;
 
-    // Update last contact date on recurring_customers (churn tracking signal)
+    // Update last contact timestamp
     await supabase
       .from('recurring_customers')
       .update({ updated_at: new Date().toISOString() })
       .ilike('customer_name', `%${finalCustomerName}%`);
 
     const outcomeEmoji = { positive: '🟢', neutral: '🟡', negative: '🔴' }[visitOutcome] || '🟡';
-
-    const { getCustomerMissingInfoPrompt } = require('../supabase');
-    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
 
     // Async Zoho Bigin Smart Sync
     syncActivity('visit', {
@@ -171,19 +223,46 @@ async function processVisitMessage(text, senderPhone) {
       visitOutcome,
       materialRequirement,
       followUpAction,
+      productInterests,
       senderPhone,
     });
 
-    return `🚗 *KRA 9 - Customer Visit Logged!*\n\n` +
-      `Customer: *${finalCustomerName}*\n` +
-      (personMet           ? `Person Met: *${personMet}*\n` : '') +
-      (contactNo           ? `Contact: *${contactNo}*\n` : '') +
-      `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n` +
-      `Notes: ${remarks}\n` +
-      (materialRequirement ? `📦 Requirement: *${materialRequirement}*\n` : '') +
-      (followUpAction      ? `📌 Follow-up: *${followUpAction}*\n` : '') +
-      `\nTotal Visits This Month: *${totalVisits}*\n\n` +
-      `Updated KRA 9 Customer Visit Dashboard! ✅` + (missingPrompt || '');
+    // Build response
+    let reply = isNewProspect
+      ? `🆕 *New Prospect Added & Visit Logged!*\n\n`
+      : `🚗 *KRA 9 - Customer Visit Logged!*\n\n`;
+
+    reply += `Customer: *${finalCustomerName}*\n`;
+    if (data.city)         reply += `Location: *${data.city}*\n`;
+    if (personMet)         reply += `Person Met: *${personMet}*\n`;
+    if (contactNo)         reply += `Contact: *${contactNo}*\n`;
+    reply += `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n`;
+    reply += `Notes: ${remarks}\n`;
+    if (productInterests)    reply += `🛒 Product Interests: *${productInterests}*\n`;
+    if (materialRequirement) reply += `📦 Requirement: *${materialRequirement}*\n`;
+    if (followUpAction)      reply += `📌 Follow-up: *${followUpAction}*\n`;
+    reply += `\nTotal Visits This Month: *${totalVisits}*\n`;
+    reply += `\nUpdated KRA 9 Customer Visit Dashboard! ✅`;
+
+    // For new prospects, ask for missing mandatory details
+    if (isNewProspect) {
+      const missingFields = [];
+      if (!contactNo)         missingFields.push('• 📱 *Mobile Number*');
+      if (!personMet)         missingFields.push('• 👤 *Owner / Contact Person Name*');
+      if (!data.city)         missingFields.push('• 📍 *City / Location*');
+      missingFields.push('• 🧾 *GSTIN* (optional)');
+
+      reply += `\n\n📌 *${finalCustomerName} has been added as a new prospect.*\n` +
+        `To complete their profile, please share:\n${missingFields.join('\n')}\n\n` +
+        `_(Simply reply: "${finalCustomerName} phone 9876543210 owner Mr. Kapoor")_`;
+    } else {
+      // For existing customers, check if profile is complete
+      const { getCustomerMissingInfoPrompt } = require('../supabase');
+      const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+      if (missingPrompt) reply += missingPrompt;
+    }
+
+    return reply;
 
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
