@@ -788,27 +788,84 @@ export class KraService {
       );
 
       // Merge both list types (resolved logs and scheduled tasks)
+      // Prefer followup_tasks records (richer data) over raw kra_logs
+      const followupTaskCustomers = new Set(
+        kra3Followups.map((f) => (f.customer_name || '').toLowerCase().trim()),
+      );
+
       const combinedKRA3 = [
-        ...kra3Logs.map((l) => ({
-          customer_name: l.customer_name || 'Recurring Customer',
-          details: l.description || 'Repeat Order / Follow-up',
-          quantity: l.value ? `${l.value} MT` : '1 Order',
-          remarks:
-            l.kra_type === 'customer_churned'
-              ? 'Flagged Churned 📉'
-              : 'Follow-up Logged ✅',
-          date: new Date(l.created_at),
-        })),
-        ...kra3Followups.map((f) => ({
-          customer_name: f.customer_name || 'Recurring Customer',
-          details: f.resolution_notes || 'Scheduled Retention Follow-up',
-          quantity: '-',
-          remarks:
-            f.status === 'pending'
-              ? 'Pending Follow-up ⏳'
-              : `Follow-up Sent 📱 (Count: ${f.follow_up_count})`,
-          date: new Date(f.created_at),
-        })),
+        // kra_logs rows — only include if no richer followup_task exists for same customer
+        ...kra3Logs
+          .filter(
+            (l) =>
+              !followupTaskCustomers.has(
+                (l.customer_name || '').toLowerCase().trim(),
+              ),
+          )
+          .map((l) => {
+            // Parse status out of description (format: "... | Status: reviewing_quotation | ...")
+            const statusMatch = l.description?.match(/Status:\s*(\w+)/);
+            const parsedStatus = statusMatch ? statusMatch[1] : l.kra_type;
+            const statusLabels: Record<string, string> = {
+              reviewing_quotation: 'Reviewing Quotation 📄',
+              awaiting_decision: 'Awaiting Decision ⏳',
+              reorder_confirmed: 'Reorder Confirmed ✅',
+              price_negotiation: 'Price Negotiation 💬',
+              site_visit_pending: 'Site Visit Pending 🏭',
+              payment_pending: 'Payment Pending 💰',
+              routine_checkin: 'Routine Check-in 📞',
+              customer_churned: 'Flagged Churned 📉',
+              customer_retention: 'Follow-up Logged 📋',
+            };
+            // Parse next followup date from description
+            const nextFUMatch = l.description?.match(
+              /Next follow-up:\s*([^|]+)/,
+            );
+            const nextFUDate = nextFUMatch ? nextFUMatch[1].trim() : '-';
+            return {
+              customer_name: l.customer_name || 'Recurring Customer',
+              details: l.description
+                ? l.description.split('Notes:').pop()?.trim() || l.description
+                : 'Follow-up logged',
+              quantity: l.value ? `${l.value} MT` : '-', // blank — not an order
+              remarks:
+                statusLabels[parsedStatus] ||
+                parsedStatus ||
+                'Follow-up Logged 📋',
+              next_followup: nextFUDate,
+              date: new Date(l.created_at),
+            };
+          }),
+        // followup_tasks rows — always use these (most up-to-date)
+        ...kra3Followups.map((f) => {
+          const statusLabels: Record<string, string> = {
+            reviewing_quotation: 'Reviewing Quotation 📄',
+            awaiting_decision: 'Awaiting Decision ⏳',
+            reorder_confirmed: 'Reorder Confirmed ✅',
+            reorder_expected: 'Reorder Expected 🔥',
+            price_negotiation: 'Price Negotiation 💬',
+            site_visit_pending: 'Site Visit Pending 🏭',
+            payment_pending: 'Payment Pending 💰',
+            routine_checkin: 'Routine Check-in 📞',
+            pending: 'Pending Follow-up ⏳',
+            churned: 'Flagged Churned 📉',
+          };
+          const statusKey = f.followup_status || f.status || 'pending';
+          return {
+            customer_name: f.customer_name || 'Recurring Customer',
+            details: f.resolution_notes || 'Scheduled Retention Follow-up',
+            quantity: '-', // follow-ups are not orders — never show '1 Order'
+            remarks:
+              statusLabels[statusKey] ||
+              `Follow-up #${f.follow_up_count || 1} 📋`,
+            next_followup: f.next_followup_date
+              ? new Date(f.next_followup_date).toLocaleDateString('en-IN')
+              : f.due_date
+                ? new Date(f.due_date).toLocaleDateString('en-IN')
+                : '-',
+            date: new Date(f.updated_at || f.created_at),
+          };
+        }),
       ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
       const kra3Rows = combinedKRA3.map((item, index) => ({
@@ -816,6 +873,7 @@ export class KraService {
         existing_customer_name: item.customer_name,
         product_supplied: item.details,
         order_quantity: item.quantity,
+        next_followup_date: item.next_followup,
         remarks: item.remarks,
       }));
 
@@ -980,15 +1038,16 @@ export class KraService {
           title: 'KRA 3: Customer Retention & Recurring Business',
           target:
             'Ensure at least one bill per month from every active recurring customer, wherever business potential exists.',
-          achieved: `${kra3Rows.length} Orders`,
+          achieved: `${kra3Rows.length} Follow-ups`,
           meaning:
             "This KRA measures the salesperson's ability to maintain strong relationships with existing customers and generate repeat business. It focuses on customer retention by encouraging recurring orders, increasing customer loyalty, and ensuring continuous business growth through repeat billing rather than one-time transactions.",
           headers: [
             'Sr. No.',
             'Existing Customer Name',
-            'Product Supplied',
-            'Order Quantity',
-            'Remarks',
+            'Follow-up Notes',
+            'Quantity (MT)',
+            'Next Follow-up Date',
+            'Status / Remarks',
           ],
           rows: kra3Rows,
         },
