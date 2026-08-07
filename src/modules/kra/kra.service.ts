@@ -1018,6 +1018,8 @@ export class KraService {
       // Uses actual extracted fields from customer_visits table or parses structured tags in remarks.
       const kra9Rows = safeVisits.map((v, index) => {
         const rawRemarks = v.remarks || '';
+        const custKey = (v.customer_name || '').toLowerCase().trim();
+        const custRecord = customerMap.get(custKey);
 
         // Extract structured tags if present
         const outcomeMatch =
@@ -1041,8 +1043,8 @@ export class KraService {
         return {
           sr_no: index + 1,
           company_name: v.customer_name || 'Client Site',
-          person_met: v.person_met || '-', // null if not mentioned
-          contact_no: v.contact_no || '-',
+          person_met: v.person_met || custRecord?.contact_person || '-',
+          contact_no: v.contact_no || custRecord?.customer_phone || '-',
           outcome: outcomeMatch
             ? outcomeMatch.charAt(0).toUpperCase() + outcomeMatch.slice(1)
             : '-',
