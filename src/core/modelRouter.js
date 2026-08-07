@@ -70,12 +70,12 @@ function getNextGroqKey() {
  * Returns a ChatGoogleGenerativeAI instance using the next available Gemini key.
  * Optionally binds tools for function calling.
  */
-function getGeminiModel(tools = null) {
+function getGeminiModel(tools = null, modelName = 'gemini-2.5-flash') {
   const key = getNextGeminiKey();
   if (!key) return null;
 
   const model = new ChatGoogleGenerativeAI({
-    model:       'gemini-2.5-flash',
+    model:       modelName,
     apiKey:      key,
     temperature: 0.1,
     maxRetries:  0, // we handle retries ourselves
@@ -128,17 +128,20 @@ function getModel(tools = null) {
  */
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
+  const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
-  // 1. Try Gemini models
-  for (let i = 0; i < Math.max(GEMINI_KEYS.length, 1); i++) {
-    const model = getGeminiModel(tools);
-    if (!model) break;
-    try {
-      return await model.invoke(messages);
-    } catch (err) {
-      console.warn(`[ModelRouter] Gemini attempt failed (${err.message?.slice(0, 80)}), trying next provider...`);
-      lastError = err;
-      continue;
+  // 1. Try Gemini model variants
+  for (const mName of geminiModels) {
+    for (let i = 0; i < Math.max(GEMINI_KEYS.length, 1); i++) {
+      const model = getGeminiModel(tools, mName);
+      if (!model) break;
+      try {
+        return await model.invoke(messages);
+      } catch (err) {
+        console.warn(`[ModelRouter] Gemini (${mName}) attempt failed (${err.message?.slice(0, 60)}), trying next...`);
+        lastError = err;
+        continue;
+      }
     }
   }
 
@@ -149,7 +152,7 @@ async function invokeWithFallback(messages, tools = null) {
     try {
       return await model.invoke(messages);
     } catch (err) {
-      console.warn(`[ModelRouter] Groq attempt failed (${err.message?.slice(0, 80)}), trying next...`);
+      console.warn(`[ModelRouter] Groq attempt failed (${err.message?.slice(0, 60)}), trying next...`);
       lastError = err;
       continue;
     }
