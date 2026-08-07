@@ -301,7 +301,10 @@ async function processRetentionMessage(text, senderPhone) {
       `Follow-up: ${finalCustomerName}`,
       `Status: ${followupStatus}`,
       orderExpectedTimeline ? `Order expected: ${orderExpectedTimeline}` : null,
-      linkedDealId          ? `Linked deal: ₹${Number(linkedDealAmount || 0).toLocaleString('en-IN')}` : null,
+      `Next follow-up: ${followupDateStr}`,
+      linkedDealId && linkedDealAmount && Number(linkedDealAmount) > 0
+        ? `Linked deal: ₹${Number(linkedDealAmount).toLocaleString('en-IN')}`
+        : linkedDealId ? `Linked deal: No amount recorded` : null,
       `Notes: ${followupSummary}`,
     ].filter(Boolean).join(' | ');
 
@@ -346,7 +349,9 @@ async function processRetentionMessage(text, senderPhone) {
       `Status: *${statusLabels[followupStatus] || followupStatus}*\n` +
       `Summary: ${followupSummary}\n` +
       (orderExpectedTimeline ? `📅 Order Expected: *${orderExpectedTimeline}*\n` : '') +
-      (linkedDealId && linkedDealAmount ? `🔗 Linked Deal: *₹${Number(linkedDealAmount).toLocaleString('en-IN')}*\n` : '') +
+      (linkedDealId && linkedDealAmount && Number(linkedDealAmount) > 0
+        ? `🔗 Linked Deal: *₹${Number(linkedDealAmount).toLocaleString('en-IN')}*\n`
+        : '') +
       `📌 Next Follow-up Scheduled: *${followupDateStr}* (${followupDays} days)\n` +
       `Monthly Follow-ups: *${followupCount} logged this month*\n\n` +
       `Updated KRA 3 Customer Retention Dashboard! ✅` + (missingPrompt || '');
