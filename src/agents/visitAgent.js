@@ -158,18 +158,28 @@ async function processVisitMessage(text, senderPhone) {
     const followUpAction      = data.follow_up_action    || null;
     const productInterests    = data.product_interests   || null;
 
-    // Insert visit record with all extracted data
-    await supabase.from('customer_visits').insert({
+    // Format metadata into structured tags inside remarks for clean storage & dashboard parsing
+    const metaTags = [];
+    if (visitOutcome)        metaTags.push(`[Outcome: ${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}]`);
+    if (materialRequirement) metaTags.push(`[Requirement: ${materialRequirement}]`);
+    if (followUpAction)      metaTags.push(`[FollowUp: ${followUpAction}]`);
+    if (productInterests)    metaTags.push(`[Interests: ${productInterests}]`);
+
+    const fullRemarks = metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
+
+    // Insert visit record with valid table columns
+    const { error: visitErr } = await supabase.from('customer_visits').insert({
       customer_name:        finalCustomerName,
       salesperson_phone:    senderPhone,
       person_met:           personMet,
       contact_no:           contactNo,
-      remarks:              remarks,
-      visit_outcome:        visitOutcome,
-      material_requirement: materialRequirement,
-      follow_up_action:     followUpAction,
+      remarks:              fullRemarks,
       visited_at:           new Date().toISOString(),
     });
+
+    if (visitErr) {
+      console.error('[VisitAgent] customer_visits insert error:', visitErr.message);
+    }
 
     // Log KRA 9 with full business context
     const kraDescription = [
