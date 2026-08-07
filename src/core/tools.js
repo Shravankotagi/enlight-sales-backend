@@ -228,7 +228,7 @@ const getContextTool = tool(
       const { getFullActiveSession } = getSupabase();
       const session = await getFullActiveSession(senderPhone);
       return JSON.stringify({
-        activeCustomer:   session?.customer_name || null,
+        activeCustomer:   session?.active_customer_name || null,
         lastIntent:       session?.last_intent   || null,
         sessionUpdatedAt: session?.updated_at    || null,
       });
