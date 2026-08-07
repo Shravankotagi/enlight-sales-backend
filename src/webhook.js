@@ -243,140 +243,23 @@ router.post('/', async (req, res) => {
           return;
         }
 
-        // --- GEMINI INTENT CLASSIFICATION (semantic routing) ---
+        // ── AGENTIC ORCHESTRATOR (LangGraph + Gemini 2.5 Flash) ──────────────
+        // Replaces all manual intent classification and if/else routing.
+        // The orchestrator understands any message (English/Hindi/Hinglish),
+        // calls the right tool(s), and writes an intelligent natural response.
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
-          const intent = await classifyIntent(raw_text);
+          const { runOrchestrator } = require('./core/orchestrator');
+          const empName = employeeRecord ? employeeRecord.name : senderName;
 
-          // For 'unknown' intents — run through query classifier before rejecting
-          // This ensures queries phrased unusually still get answered
-          if (intent.intent === 'unknown') {
-            const { classifyQueryType } = require('./supabase').supabase ? require('./gemini') : require('./gemini');
-            let qClass;
-            try {
-              const gemini = require('./gemini');
-              qClass = await gemini.classifyQueryType(raw_text);
-            } catch (e) {
-              qClass = { category: 'general', confidence: 0 };
-            }
+          const reply = await runOrchestrator(raw_text, senderPhone, {
+            employeeName:  empName,
+            messageType:   'text',
+          });
 
-            if (qClass && qClass.category !== 'general' && qClass.category !== 'blocked' && qClass.confidence >= 0.65) {
-              // Route to data query handler
-              const queryReply = await handleQuery(raw_text, senderPhone);
-              await sendTextMessage(senderPhone, queryReply);
-              return;
-            } else if (qClass && qClass.category === 'blocked') {
-              await sendTextMessage(senderPhone,
-                `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to *your own* deals, customers, payments, visits, KRA performance, and steel rates.`);
-              return;
-            } else {
-              // Truly unknown — route to assistant for a helpful response or redirect
-              const { handleConversationalQuery } = require('./agents/assistantAgent');
-              const assistantReply = await handleConversationalQuery(raw_text, senderPhone);
-              await sendTextMessage(senderPhone, assistantReply);
-              return;
-            }
-          }
-
-          switch (intent.intent) {
-            case 'greeting': {
-              const empName = employeeRecord ? employeeRecord.name : senderName;
-              await sendTextMessage(
-                senderPhone,
-                `👋 *Hello ${empName}!*\n\nEnlight Sales Bot ready hai. Kya update karna hai?\n\n` +
-                  `• Deal update, payment, visit, complaint — sab yahan log hoga ✅`,
-              );
-              return;
-            }
-
-            case 'stage_update': {
-              const salesReply = await processSalesMessage(
-                raw_text,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, salesReply);
-              logKRA6Activity(senderPhone, 'stage_update', intent.customer_name);
-              return;
-            }
-
-            case 'new_customer': {
-              // Context retention: if user replies with partial profile info (phone/owner/city)
-              // without mentioning the company name, inject the active session customer name
-              let customerText = raw_text;
-              if (!intent.customer_name) {
-                const { getActiveSession } = require('./supabase');
-                const sessionCustomer = await getActiveSession(senderPhone);
-                if (sessionCustomer) {
-                  // Prepend the known customer so processCustomerMessage can update the right record
-                  customerText = `${sessionCustomer} ${raw_text}`;
-                  console.log(`[Context] Injected active customer "${sessionCustomer}" into new_customer update`);
-                }
-              }
-              const customerReply = await processCustomerMessage(
-                customerText,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, customerReply);
-              logKRA6Activity(senderPhone, 'new_customer', intent.customer_name);
-              return;
-            }
-
-            case 'visit': {
-              const visitReply = await processVisitMessage(
-                raw_text,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, visitReply);
-              logKRA6Activity(senderPhone, 'visit_log', intent.customer_name);
-              return;
-            }
-
-            case 'payment': {
-              const paymentReply = await processPaymentMessage(
-                raw_text,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, paymentReply);
-              logKRA6Activity(senderPhone, 'payment_update', intent.customer_name);
-              return;
-            }
-
-            case 'complaint':
-            case 'complaint_resolve': {
-              const complaintReply = await processComplaintMessage(
-                raw_text,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, complaintReply);
-              logKRA6Activity(senderPhone, 'complaint_log', intent.customer_name);
-              return;
-            }
-
-            case 'followup': {
-              const retentionReply = await processRetentionMessage(
-                raw_text,
-                senderPhone,
-              );
-              await sendTextMessage(senderPhone, retentionReply);
-              logKRA6Activity(senderPhone, 'followup_log', intent.customer_name);
-              return;
-            }
-
-            case 'query': {
-              const queryReply = await handleQuery(raw_text, senderPhone);
-              await sendTextMessage(senderPhone, queryReply);
-              return;
-            }
-
-            case 'inquiry':
-            default:
-              // Fall through to extraction pipeline
-              console.log(
-                'Intent is inquiry/unknown — proceeding to extraction...',
-              );
-              break;
-          }
+          await sendTextMessage(senderPhone, reply);
+          return;
         }
-        // --- END GEMINI INTENT CLASSIFICATION ---
+        // ── END ORCHESTRATOR ──────────────────────────────────────────────────
 
         // Only actual sales inquiries/POs reach here
         // Apply duplicate check only for inquiry messages that were successfully processed
