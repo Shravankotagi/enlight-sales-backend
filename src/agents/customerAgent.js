@@ -250,6 +250,19 @@ async function processCustomerMessage(text, senderPhone) {
       }
     }
 
+    // Sync contact_person and customer_phone to customer_visits rows for this customer
+    if (data.contact_person || data.phone) {
+      const visitUpdate = {};
+      if (data.contact_person) visitUpdate.person_met = data.contact_person;
+      if (data.phone)          visitUpdate.contact_no = data.phone;
+
+      await supabase
+        .from('customer_visits')
+        .update(visitUpdate)
+        .ilike('customer_name', `%${finalCustomerName}%`)
+        .eq('salesperson_phone', senderPhone);
+    }
+
     // Save active customer session context
     await saveActiveSession(senderPhone, finalCustomerName, 'onboarding_prompted');
 
