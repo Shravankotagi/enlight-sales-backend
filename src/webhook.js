@@ -299,8 +299,20 @@ router.post('/', async (req, res) => {
             }
 
             case 'new_customer': {
+              // Context retention: if user replies with partial profile info (phone/owner/city)
+              // without mentioning the company name, inject the active session customer name
+              let customerText = raw_text;
+              if (!intent.customer_name) {
+                const { getActiveSession } = require('./supabase');
+                const sessionCustomer = await getActiveSession(senderPhone);
+                if (sessionCustomer) {
+                  // Prepend the known customer so processCustomerMessage can update the right record
+                  customerText = `${sessionCustomer} ${raw_text}`;
+                  console.log(`[Context] Injected active customer "${sessionCustomer}" into new_customer update`);
+                }
+              }
               const customerReply = await processCustomerMessage(
-                raw_text,
+                customerText,
                 senderPhone,
               );
               await sendTextMessage(senderPhone, customerReply);
