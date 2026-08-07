@@ -75,7 +75,7 @@ function getGeminiModel(tools = null) {
   if (!key) return null;
 
   const model = new ChatGoogleGenerativeAI({
-    model:       'gemini-2.5-flash',
+    model:       'gemini-3.1-flash-lite',
     apiKey:      key,
     temperature: 0.1,
     maxRetries:  0, // we handle retries ourselves
