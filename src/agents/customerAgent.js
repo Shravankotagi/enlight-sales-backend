@@ -92,9 +92,13 @@ async function getMonthlyOnboardCount(senderPhone) {
 
 async function processCustomerMessage(text, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const result = await model.generateContent(CUSTOMER_AGENT_PROMPT + '\n\nSalesperson message:\n' + text);
-    const rawText = result.response.text().trim();
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+    const response = await invokeWithFallback([
+      new SystemMessage(CUSTOMER_AGENT_PROMPT),
+      new HumanMessage('Salesperson message:\n' + text),
+    ]);
+    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 

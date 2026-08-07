@@ -260,9 +260,13 @@ async function processPaymentMessage(text, senderPhone) {
       .replace(/(\d+\.?\d*)\s*[Ll](?:akh)?/g, (_, n) => String(Math.round(parseFloat(n) * 100000)))
       .replace(/(\d+\.?\d*)\s*[Kk]/g, (_, n) => String(Math.round(parseFloat(n) * 1000)));
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const result = await model.generateContent(PAYMENT_AGENT_PROMPT + '\n\nSalesperson message:\n' + cleanedText);
-    const rawText = result.response.text().trim();
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+    const response = await invokeWithFallback([
+      new SystemMessage(PAYMENT_AGENT_PROMPT),
+      new HumanMessage('Salesperson message:\n' + cleanedText),
+    ]);
+    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 

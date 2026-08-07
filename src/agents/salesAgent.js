@@ -371,8 +371,6 @@ async function processSalesMessage(text, senderPhone) {
         raw_text:          text,
         source_channel:    'whatsapp',
         sender_phone:      senderPhone,
-        salesperson_phone: senderPhone,
-        customer_name:     finalCustomerName,
         status:            'pending',
         created_at:        new Date().toISOString(),
       });

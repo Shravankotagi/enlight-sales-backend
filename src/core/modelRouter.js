@@ -127,35 +127,35 @@ function getModel(tools = null) {
  * @returns {object} AI message response
  */
 async function invokeWithFallback(messages, tools = null) {
-  const providers = [
-    () => getGeminiModel(tools),
-    () => getGroqModel(tools),
-  ];
-
   let lastError;
-  for (const getProvider of providers) {
-    const model = getProvider();
-    if (!model) continue;
 
+  // 1. Try Gemini models
+  for (let i = 0; i < Math.max(GEMINI_KEYS.length, 1); i++) {
+    const model = getGeminiModel(tools);
+    if (!model) break;
     try {
       return await model.invoke(messages);
     } catch (err) {
-      const is429 = err.status === 429 ||
-        (err.message && (err.message.includes('429') || err.message.includes('rate') || err.message.includes('quota')));
-
-      if (is429) {
-        // Mark this key as rate limited
-        const keyHint = err.message?.match(/key[:\s]+(\S+)/i)?.[1];
-        if (keyHint) markKeyRateLimited(keyHint);
-        console.warn(`[ModelRouter] 429 received, switching provider...`);
-        lastError = err;
-        continue;
-      }
-      throw err; // non-rate-limit errors propagate immediately
+      console.warn(`[ModelRouter] Gemini attempt failed (${err.message?.slice(0, 80)}), trying next provider...`);
+      lastError = err;
+      continue;
     }
   }
 
-  throw lastError || new Error('[ModelRouter] All providers failed');
+  // 2. Try Groq fallback models
+  for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
+    const model = getGroqModel(tools);
+    if (!model) break;
+    try {
+      return await model.invoke(messages);
+    } catch (err) {
+      console.warn(`[ModelRouter] Groq attempt failed (${err.message?.slice(0, 80)}), trying next...`);
+      lastError = err;
+      continue;
+    }
+  }
+
+  throw lastError || new Error('[ModelRouter] All AI providers failed');
 }
 
 module.exports = { getModel, getGeminiModel, getGroqModel, invokeWithFallback, markKeyRateLimited };
