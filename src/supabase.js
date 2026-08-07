@@ -350,18 +350,24 @@ async function saveActiveSession(salespersonPhone, customerName, intent = 'gener
   }
 }
 
+function getStartOfTodayISO() {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  return startOfToday.toISOString();
+}
+
 /**
- * Retrieves the active customer context for a salesperson if it was updated in the last 15 minutes.
+ * Retrieves the active customer context for a salesperson (persists for the day, resets at 12:00 AM midnight).
  */
 async function getActiveSession(salespersonPhone) {
   if (!salespersonPhone) return null;
   try {
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const startOfToday = getStartOfTodayISO();
     const { data, error } = await supabase
       .from('conversation_sessions')
       .select('active_customer_name')
       .eq('salesperson_phone', salespersonPhone)
-      .gte('updated_at', fifteenMinutesAgo)
+      .gte('updated_at', startOfToday)
       .limit(1);
 
     if (error) {
@@ -378,17 +384,17 @@ async function getActiveSession(salespersonPhone) {
 }
 
 /**
- * Retrieves the full active session object for a salesperson if updated in the last 15 minutes.
+ * Retrieves the full active session object for a salesperson (persists for the day, resets at 12:00 AM midnight).
  */
 async function getFullActiveSession(salespersonPhone) {
   if (!salespersonPhone) return null;
   try {
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const startOfToday = getStartOfTodayISO();
     const { data, error } = await supabase
       .from('conversation_sessions')
       .select('*')
       .eq('salesperson_phone', salespersonPhone)
-      .gte('updated_at', fifteenMinutesAgo)
+      .gte('updated_at', startOfToday)
       .limit(1);
 
     if (error) {
