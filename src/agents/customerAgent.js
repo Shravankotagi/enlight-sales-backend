@@ -147,18 +147,63 @@ async function processCustomerMessage(text, senderPhone) {
         })
         .eq('id', record.id);
     } else {
-      // Brand new customer
-      await supabase.from('recurring_customers').insert({
-        customer_name:              finalCustomerName,
-        customer_phone:             data.phone || null,
-        customer_gst:               data.gst   || null,
-        customer_address:           data.city  || null,
-        contact_person:             data.contact_person || null,
-        notes:                      notesText,
-        assigned_salesperson_phone: senderPhone,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
-      });
+      // officialCustomerName was null — do a direct fuzzy search as fallback
+      // This catches typo variations ("Mehta Engg" vs "Mehta Engineering")
+      const { data: fuzzyMatch } = await supabase
+        .from('recurring_customers')
+        .select('id, customer_name, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes')
+        .ilike('customer_name', `%${customerName.split(' ')[0]}%`) // search by first word
+        .eq('assigned_salesperson_phone', senderPhone)
+        .limit(1);
+
+      if (fuzzyMatch && fuzzyMatch.length > 0) {
+        // Existing customer found via fuzzy match — update, don't insert
+        const record = fuzzyMatch[0];
+        isNewAcquisition = false;
+        await supabase
+          .from('recurring_customers')
+          .update({
+            customer_phone:   data.phone          || record.customer_phone    || null,
+            customer_gst:     data.gst            || record.customer_gst      || null,
+            customer_address: data.city           || record.customer_address  || null,
+            contact_person:   data.contact_person || record.contact_person    || null,
+            notes:            notesText           || record.notes             || null,
+            is_active:        true,
+            updated_at:       new Date().toISOString(),
+          })
+          .eq('id', record.id);
+
+        // Prompt missing info for the found customer
+        const missingInfo = [];
+        if (!record.customer_phone && !data.phone) missingInfo.push('• 📱 *Mobile Number*');
+        if (!record.contact_person && !data.contact_person) missingInfo.push('• 👤 *Owner / Contact Person Name*');
+        if (!record.customer_address && !data.city) missingInfo.push('• 📍 *City / Location*');
+        if (!record.customer_gst && !data.gst) missingInfo.push('• 🧾 *GSTIN* (optional)');
+        const promptSuffix = missingInfo.length > 0
+          ? `\n\n📌 *To complete the profile, reply with:*\n${missingInfo.join('\n')}`
+          : '';
+
+        return `ℹ️ *Customer Already Exists*\n\n` +
+          `*${record.customer_name}* is already registered under your account.\n` +
+          (data.contact_person ? `Contact updated to: *${data.contact_person}*\n` : '') +
+          (data.phone          ? `Phone updated to: *${data.phone}*\n` : '') +
+          (data.city           ? `City updated to: *${data.city}*\n` : '') +
+          `\n_Profile updated — KRA 2 not re-counted to avoid duplicates._` +
+          promptSuffix;
+      } else {
+        // Genuinely brand new customer — safe to insert
+        await supabase.from('recurring_customers').insert({
+          customer_name:              finalCustomerName,
+          customer_phone:             data.phone || null,
+          customer_gst:               data.gst   || null,
+          customer_address:           data.city  || null,
+          contact_person:             data.contact_person || null,
+          notes:                      notesText,
+          assigned_salesperson_phone: senderPhone,
+          is_active:                  true,
+          avg_order_frequency_days:   30,
+        });
+      }
     }
 
     // Save active customer session context
