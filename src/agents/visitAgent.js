@@ -232,6 +232,28 @@ async function processVisitMessage(text, senderPhone) {
       year:  new Date().getFullYear(),
     });
 
+    // Also log KRA 2 for new prospect acquisition if not already logged
+    if (isNewProspect) {
+      try {
+        const { isKRA2AlreadyLogged } = require('./customerAgent');
+        const alreadyLoggedKRA2 = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
+        if (!alreadyLoggedKRA2) {
+          await supabase.from('kra_logs').insert({
+            salesperson_phone: senderPhone,
+            kra_number:        2,
+            kra_type:          'new_customer',
+            customer_name:     finalCustomerName,
+            description:       `New Customer Onboarded via Visit: ${finalCustomerName}`,
+            month:             new Date().getMonth() + 1,
+            year:              new Date().getFullYear(),
+          });
+          console.log(`[VisitAgent] Logged KRA 2 for new prospect: ${finalCustomerName}`);
+        }
+      } catch (e) {
+        console.error('[VisitAgent] KRA 2 auto-logging error:', e.message);
+      }
+    }
+
     // Save active session for context retention (follow-up messages will know this customer)
     await saveActiveSession(senderPhone, finalCustomerName, 'visit_logged');
 

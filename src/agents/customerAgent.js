@@ -253,10 +253,10 @@ async function processCustomerMessage(text, senderPhone) {
     // Save active customer session context
     await saveActiveSession(senderPhone, finalCustomerName, 'onboarding_prompted');
 
-    // Edge Case 6: Only log KRA 2 once per customer per salesperson per month
+    // Log KRA 2 once per customer per salesperson per month
     const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
 
-    if (isNewAcquisition && !alreadyLogged) {
+    if (!alreadyLogged) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
         kra_number:        2,
@@ -283,13 +283,13 @@ async function processCustomerMessage(text, senderPhone) {
         `\n\n_(e.g. "${finalCustomerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
       : '';
 
-    if (!isNewAcquisition || alreadyLogged) {
+    if (alreadyLogged && !isNewAcquisition) {
       return `✅ *Customer Profile Updated!*\n\n` +
         `Company: *${finalCustomerName}*\n` +
         (data.contact_person ? `Contact: *${data.contact_person}*\n` : '') +
         (data.phone          ? `Phone: *${data.phone}*\n` : '') +
         (data.city           ? `City: *${data.city}*\n` : '') +
-        `\n_Note: ${finalCustomerName} was already onboarded. Profile updated — KRA 2 not re-counted._` +
+        `\n_Note: ${finalCustomerName} profile updated on your dashboard._` +
         promptSuffix;
     }
 
@@ -318,4 +318,4 @@ async function processCustomerMessage(text, senderPhone) {
   }
 }
 
-module.exports = { processCustomerMessage };
+module.exports = { processCustomerMessage, isKRA2AlreadyLogged };
