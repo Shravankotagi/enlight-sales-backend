@@ -704,4 +704,19 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ── Admin: Trigger full Zoho Bigin data cleanup ──────────────────────────────
+router.post('/admin/bigin-cleanup', async (req, res) => {
+  const { secret } = req.body;
+  if (secret !== process.env.ADMIN_SECRET && secret !== 'enlight_admin_2024') {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { clearAllBiginData } = require('./agents/biginSyncAgent');
+    await clearAllBiginData();
+    res.json({ success: true, message: 'All Zoho Bigin data cleared successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

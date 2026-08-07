@@ -21,6 +21,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
+const { syncActivity } = require('./biginSyncAgent');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -203,6 +204,16 @@ async function processCustomerMessage(text, senderPhone) {
         `\n_Note: ${finalCustomerName} was already onboarded. Profile updated — KRA 2 not re-counted._` +
         promptSuffix;
     }
+
+    // Async Zoho Bigin Smart Sync (both new onboarding and profile update)
+    syncActivity('new_customer', {
+      customerName:  finalCustomerName,
+      phone:         data.phone || null,
+      gst:           data.gst || null,
+      city:          data.city || null,
+      contactPerson: data.contact_person || null,
+      senderPhone,
+    });
 
     return `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
       `Company: *${finalCustomerName}*\n` +

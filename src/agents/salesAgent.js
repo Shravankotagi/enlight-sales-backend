@@ -23,7 +23,8 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { supabase } = require('../supabase');
+const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
+const { syncActivity } = require('./biginSyncAgent');
 const axios = require('axios');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -319,8 +320,16 @@ async function processSalesMessage(text, senderPhone) {
       });
     }
 
-    // Async Zoho Bigin sync (non-blocking, does not affect response)
-    syncToBigin(finalCustomerName, dbStage, dealAmount, data.po_number, senderPhone);
+    // Async Zoho Bigin Smart Sync (non-blocking)
+    syncActivity('deal', {
+      customerName: finalCustomerName,
+      stage:        dbStage,
+      amount:       dealAmount,
+      poNumber:     data.po_number,
+      paymentTerms: data.payment_terms,
+      products:     deal?.deal_items || [],
+      senderPhone,
+    });
 
     // Build reply
     // Build reply
@@ -359,55 +368,7 @@ async function processSalesMessage(text, senderPhone) {
   }
 }
 
-/**
- * Background Zoho Bigin sync — non-blocking, errors are logged but don't fail the user reply.
- */
-async function syncToBigin(customerName, stage, amount, poNumber, phone) {
-  try {
-    const params = new URLSearchParams({
-      refresh_token: process.env.ZOHO_REFRESH_TOKEN,
-      client_id:     process.env.ZOHO_CLIENT_ID,
-      client_secret: process.env.ZOHO_CLIENT_SECRET,
-      grant_type:    'refresh_token',
-    });
-
-    const tokenRes = await axios.post('https://accounts.zoho.in/oauth/v2/token', params.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-    const accessToken = tokenRes.data.access_token;
-
-    const biginStageMap = {
-      won:         'Closed Won',
-      lost:        'Closed Lost',
-      negotiation: 'Negotiation/Review',
-      quoted:      'Value Proposition',
-      qualified:   'Qualification',
-    };
-
-    await axios.post(
-      'https://www.zohoapis.in/bigin/v1/Deals',
-      {
-        data: [{
-          Deal_Name:    `${customerName} - ${stage === 'won' ? 'Purchase Order' : 'Pipeline Update'}`,
-          Stage:        biginStageMap[stage] || 'Qualification',
-          Amount:       amount || 0,
-          Pipeline:     'Sales Pipeline Standard',
-          Layout:       { id: '1384628000000000173' },
-          Description:  `PO: ${poNumber || 'N/A'} | Customer: ${customerName} | Salesperson: ${phone}`,
-          Closing_Date: new Date().toISOString().split('T')[0],
-        }],
-      },
-      {
-        headers: {
-          Authorization:  'Zoho-oauthtoken ' + accessToken,
-          'Content-Type': 'application/json',
-        },
-      },
-    );
-  } catch (err) {
-    console.error('Bigin Sync Error:', err.response?.data || err.message);
-  }
-}
+// (Old syncToBigin removed — replaced by biginSyncAgent.syncActivity)
 
 /**
  * PO Image handler — finds existing deal or creates new won deal.
@@ -513,7 +474,16 @@ Return ONLY JSON. No prose. No markdown.`;
     }
     await handlePaymentTrackingOnWon(dealId, finalCustomerName, totalValue, senderPhone);
 
-    syncToBigin(finalCustomerName, 'won', totalValue, data.po_number, senderPhone);
+    // Async Zoho Bigin Smart Sync (non-blocking)
+    syncActivity('deal', {
+      customerName: finalCustomerName,
+      stage:        'won',
+      amount:       totalValue,
+      poNumber:     data.po_number,
+      paymentTerms: data.payment_terms,
+      products:     data.items || [],
+      senderPhone,
+    });
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
     const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);

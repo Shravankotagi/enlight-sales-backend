@@ -22,6 +22,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
+const { syncActivity } = require('./biginSyncAgent');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -351,6 +352,17 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     lines.push(``, `Updated KRA 5 Payment Collection Dashboard! ✅`);
+
+    // Async Zoho Bigin Smart Sync
+    syncActivity('payment', {
+      customerName:  finalCustomerName,
+      amountPaid:    amountPaid || 0,
+      amountPending: result2.finalOutstanding || 0,
+      paymentType:   data.payment_type || 'installment',
+      isFullPayment: isFullyPaid,
+      senderPhone,
+    });
+
     const { getCustomerMissingInfoPrompt } = require('../supabase');
     const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
     return lines.join('\n') + (missingPrompt || '');

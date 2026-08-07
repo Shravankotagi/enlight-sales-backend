@@ -27,6 +27,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
+const { syncActivity } = require('./biginSyncAgent');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -265,6 +266,15 @@ async function processComplaintMessage(text, senderPhone) {
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
     const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
+    // Async Zoho Bigin Smart Sync
+    syncActivity('complaint', {
+      customerName:  finalCustomerName,
+      complaintType,
+      description,
+      action:       'report',
+      senderPhone:  targetPhone,
+    });
 
     return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
       `Customer: *${finalCustomerName}*\n` +

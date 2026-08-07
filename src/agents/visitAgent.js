@@ -19,6 +19,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
+const { syncActivity } = require('./biginSyncAgent');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -137,6 +138,15 @@ async function processVisitMessage(text, senderPhone) {
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
     const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+
+    // Async Zoho Bigin Smart Sync
+    syncActivity('visit', {
+      customerName: finalCustomerName,
+      personMet,
+      remarks,
+      visitOutcome,
+      senderPhone,
+    });
 
     return `🚗 *KRA 9 - Customer Visit Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
