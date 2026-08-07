@@ -243,35 +243,35 @@ export class KraService {
         },
         kra4: {
           label: 'Enquiry Conversion',
-          // Use kra_logs inquiry_received count (accurate — deduped per customer per month)
-          // Fallback to raw inquiries.length if no kra4 logs exist yet
-          total_inquiries:
-            kraLogs.filter(
-              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
-            ).length || inquiries.length,
-          won_deals: wonDeals.length,
+          // Only count won deals that have a direct inquiry link (inquiry_id present in safeInquiries)
+          // Prevents rate exceeding 100% when deals come from salesAgent without going through inquiry pipeline
+          total_inquiries: inquiries.length,
+          won_deals: wonDeals.filter(
+            (d) => d.inquiry_id && inquiries.some((i) => i.id === d.inquiry_id),
+          ).length,
           conversion_rate:
-            (kraLogs.filter(
-              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
-            ).length || inquiries.length) > 0
-              ? Math.round(
-                  (wonDeals.length /
-                    (kraLogs.filter(
-                      (l) =>
-                        l.kra_number === 4 && l.kra_type === 'inquiry_received',
-                    ).length || inquiries.length)) *
-                    100,
+            inquiries.length > 0
+              ? Math.min(
+                  100,
+                  Math.round(
+                    (wonDeals.filter(
+                      (d) =>
+                        d.inquiry_id &&
+                        inquiries.some((i) => i.id === d.inquiry_id),
+                    ).length /
+                      inquiries.length) *
+                      100,
+                  ),
                 )
               : 0,
           target_rate: 70,
           status:
-            (kraLogs.filter(
-              (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
-            ).length || inquiries.length) > 0 &&
-            wonDeals.length /
-              (kraLogs.filter(
-                (l) => l.kra_number === 4 && l.kra_type === 'inquiry_received',
-              ).length || inquiries.length) >=
+            inquiries.length > 0 &&
+            wonDeals.filter(
+              (d) =>
+                d.inquiry_id && inquiries.some((i) => i.id === d.inquiry_id),
+            ).length /
+              inquiries.length >=
               0.7
               ? 'achieved'
               : 'in_progress',
@@ -1055,9 +1055,18 @@ export class KraService {
           number: 4,
           title: 'KRA 4: Enquiry Conversion',
           target: 'Achieve a minimum 70-80% enquiry-to-order conversion ratio',
+          // Only count won deals that are directly linked to an inquiry
+          // Prevents >100% rates from deals created via salesAgent without inquiry pipeline
           achieved:
             safeInquiries.length > 0
-              ? `${Math.round((wonDeals.length / safeInquiries.length) * 100)}%`
+              ? `${Math.min(
+                  100,
+                  Math.round(
+                    (kra4Rows.filter((r) => r.order_status === 'Won').length /
+                      safeInquiries.length) *
+                      100,
+                  ),
+                )}%`
               : '0%',
           meaning:
             "This KRA measures the salesperson's ability to convert customer enquiries into confirmed sales orders. It evaluates the effectiveness of follow-ups, quotation management, customer engagement, and negotiation skills across enquiries received through calls, emails, walk-ins, website leads, Zoho CRM, referrals, exhibitions, and other sales channels.",
