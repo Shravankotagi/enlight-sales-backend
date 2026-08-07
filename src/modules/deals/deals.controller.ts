@@ -32,7 +32,11 @@ export class DealsController {
     const data = await this.dealsService.findAll({ stage, from, to });
 
     if (targetPhone) {
-      return data.filter((d: any) => d.salesperson_phone === targetPhone);
+      return data.filter(
+        (d: any) =>
+          d.salesperson_phone === targetPhone ||
+          d.customer_phone === targetPhone,
+      );
     }
     return data;
   }
@@ -49,7 +53,11 @@ export class DealsController {
 
     const deals = await this.dealsService.findAll({ from, to });
     const filtered = targetPhone
-      ? deals.filter((d: any) => d.salesperson_phone === targetPhone)
+      ? deals.filter(
+          (d: any) =>
+            d.salesperson_phone === targetPhone ||
+            d.customer_phone === targetPhone,
+        )
       : deals;
 
     const stages = [
@@ -87,7 +95,11 @@ export class DealsController {
     );
 
     const filtered = targetPhone
-      ? activeDeals.filter((d: any) => d.salesperson_phone === targetPhone)
+      ? activeDeals.filter(
+          (d: any) =>
+            d.salesperson_phone === targetPhone ||
+            d.customer_phone === targetPhone,
+        )
       : activeDeals;
 
     const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];

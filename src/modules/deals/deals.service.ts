@@ -33,7 +33,9 @@ export class DealsService {
         query = query.eq('stage', filters.stage);
       }
       if (filters?.salesperson_phone) {
-        query = query.eq('customer_phone', filters.salesperson_phone);
+        query = query.or(
+          `salesperson_phone.eq.${filters.salesperson_phone},customer_phone.eq.${filters.salesperson_phone}`,
+        );
       }
       if (filters?.from) {
         query = query.gte('created_at', filters.from);
