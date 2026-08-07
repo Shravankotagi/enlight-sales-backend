@@ -81,6 +81,27 @@ const OrchestratorState = Annotation.Root({
   toolsUsed:       Annotation({ reducer: (x, y) => [...(x || []), ...(y || [])], default: () => [] }),
 });
 
+// ── Deterministic Intent Anchor ───────────────────────────────────────────
+
+function getDeterministicIntentHint(text) {
+  if (!text || typeof text !== 'string') return '';
+  const lower = text.toLowerCase();
+
+  if (/\b(paid|payment|advance|received|collected|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki)\b/i.test(lower)) {
+    return '\n[DETERMINISTIC ANCHOR: Message contains payment/collection signals. Primary Tool: log_payment]';
+  }
+  if (/\b(visited|visit|met|meeting|site|factory|plant|office|market visit)\b/i.test(lower)) {
+    return '\n[DETERMINISTIC ANCHOR: Message contains site visit signals. Primary Tool: log_customer_visit]';
+  }
+  if (/\b(complaint|defective|damaged|scratch|rust|quality|rejected|rejection|faulty)\b/i.test(lower)) {
+    return '\n[DETERMINISTIC ANCHOR: Message contains complaint signals. Primary Tool: log_complaint]';
+  }
+  if (/\b(requires|requirement|need|inquiry|quote|quotation|rfq|rate|ton|mt|deal|won|lost|closed|po received)\b/i.test(lower)) {
+    return '\n[DETERMINISTIC ANCHOR: Message contains sales/requirement signals. Primary Tool: update_deal_stage]';
+  }
+  return '';
+}
+
 // ── Nodes ─────────────────────────────────────────────────────────────────
 
 /**
@@ -90,9 +111,13 @@ const OrchestratorState = Annotation.Root({
 async function agentNode(state) {
   const { messages, senderPhone, employeeName, messageType, imageBuffer, imageMimeType } = state;
 
+  const lastHumanMsg = [...messages].reverse().find(m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage');
+  const userText = lastHumanMsg ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '') : '';
+  const intentAnchor = getDeterministicIntentHint(userText);
+
   // Build the full message context for the LLM
   const contextMessages = [
-    new SystemMessage(SYSTEM_PROMPT + `\n\nCurrent salesperson: ${employeeName || 'Salesperson'}\nPhone: ${senderPhone}\nMessage type: ${messageType}`),
+    new SystemMessage(SYSTEM_PROMPT + `\n\nCurrent salesperson: ${employeeName || 'Salesperson'}\nPhone: ${senderPhone}\nMessage type: ${messageType}${intentAnchor}`),
     ...messages,
   ];
 
