@@ -45,6 +45,7 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
   "action": "report|resolve",
   "customer_name": "<customer/company name, else null>",
   "complaint_type": "quality|delivery|billing|specification|other",
+  "affected_product": "<specific product/material affected e.g. 'HR Coil 8mm', 'TMT Bars', 'MS Sheets' — else null>",
   "description": "<brief description of complaint or resolution, else null>",
   "confidence": <float 0.0 to 1.0>
 }
@@ -52,6 +53,7 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 Rules — understand meaning, not keywords:
 - "action": "report" → new problem, quality issue, material rejection, wrong delivery, billing dispute.
 - "action": "resolve" → complaint fixed, settled, customer accepted, issue sorted, resolved.
+- "affected_product": Extract the specific steel product/material affected (e.g. 'HR Coil', 'TMT Bar 10mm', 'MS Plate'). null if not mentioned.
 - If ambiguous, prefer "report" over "resolve".
 
 Return ONLY the JSON object.
@@ -121,8 +123,13 @@ async function processComplaintMessage(text, senderPhone) {
     }
 
     const finalCustomerName = officialCustomerName;
-    const complaintType  = data.complaint_type || 'quality';
-    const description    = data.description || text;
+    const complaintType    = data.complaint_type || 'quality';
+    const affectedProduct  = data.affected_product || null;
+    const rawDescription   = data.description || text;
+    // Structure description with product prefix for clean dashboard parsing
+    const description = affectedProduct
+      ? `[Product: ${affectedProduct}] ${rawDescription}`
+      : rawDescription;
 
     // ── RESOLVE FLOW ──────────────────────────────────────────────────
     if (data.action === 'resolve') {
@@ -228,14 +235,17 @@ async function processComplaintMessage(text, senderPhone) {
 
     const targetPhone = (customerRecord && customerRecord[0]?.assigned_salesperson_phone) || senderPhone;
 
-    // Insert new complaint
+    // Insert new complaint with SLA timestamps
+    const reportedAt = new Date();
+    const slaDueAt   = new Date(reportedAt.getTime() + 48 * 60 * 60 * 1000); // SLA = 48h from report
+
     await supabase.from('complaints').insert({
       customer_name:   finalCustomerName,
       reported_by:     targetPhone,
       complaint_type:  complaintType,
-      description:     description,
+      description:     description, // structured: '[Product: HR Coil] Rust detected...'
       status:          'open',
-      reported_at:     new Date().toISOString(),
+      reported_at:     reportedAt.toISOString(),
       escalated:       false,
     });
 
@@ -282,8 +292,10 @@ async function processComplaintMessage(text, senderPhone) {
     return `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Type: *${complaintType.toUpperCase()}*\n` +
-      `Details: ${description}\n` +
-      `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n\n` +
+      (affectedProduct ? `Product Affected: *${affectedProduct}*\n` : '') +
+      `Details: ${rawDescription}\n` +
+      `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n` +
+      `SLA Due: *${slaDueAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}*\n\n` +
       `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ✅` + (missingPrompt || '');
 
   } catch (error) {

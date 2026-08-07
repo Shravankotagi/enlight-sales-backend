@@ -162,8 +162,37 @@ async function processSalesMessage(text, senderPhone) {
     const finalCustomerName = officialCustomerName || customerName;
     let isNewProspect = false;
 
+    const targetStage  = data.target_stage || 'qualified';
+    const stageMap = {
+      won:         'won',
+      lost:        'lost',
+      negotiation: 'negotiation',
+      quoted:      'quoted',
+      qualified:   'qualified',
+    };
+    const dbStage = stageMap[targetStage] || 'qualified';
+
     if (!officialCustomerName) {
-      // Auto-create prospect instead of blocking deal update
+      // Check if there's any existing deal for this customer (by fuzzy name) before creating prospect
+      const { data: anyDeal } = await supabase
+        .from('deals')
+        .select('id, stage')
+        .ilike('customer_name', `%${customerName.split(' ')[0]}%`)
+        .eq('salesperson_phone', senderPhone)
+        .limit(1);
+
+      // If user is trying to UPDATE/CONVERT a stage (not create a new won deal),
+      // and no deal/inquiry exists — tell them instead of silently creating one
+      if ((!anyDeal || anyDeal.length === 0) && dbStage !== 'won' && dbStage !== 'lost') {
+        return `⚠️ *No Active Inquiry Found*\n\n` +
+          `There is no active inquiry or deal for *${customerName}* in your pipeline.\n\n` +
+          `To start a new inquiry, share the requirements:\n` +
+          `_e.g. "${customerName} requires 10 MT HR Coil 3mm"_\n\n` +
+          `Or to mark a new win directly:\n` +
+          `_e.g. "${customerName} deal won for ₹5,00,000"_`;
+      }
+
+      // Auto-create prospect only for new won/lost deals or if a deal was found by fuzzy match
       isNewProspect = true;
       await supabase.from('recurring_customers').insert({
         customer_name:              customerName,
@@ -173,16 +202,6 @@ async function processSalesMessage(text, senderPhone) {
       });
       console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
     }
-    const targetStage  = data.target_stage || 'qualified';
-
-    const stageMap = {
-      won:         'won',
-      lost:        'lost',
-      negotiation: 'negotiation',
-      quoted:      'quoted',
-      qualified:   'qualified',
-    };
-    const dbStage = stageMap[targetStage] || 'qualified';
 
     // Edge Case 8/9/11: Find best matching deal
     const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
