@@ -73,12 +73,13 @@ const updateDealStageTool = tool(
   {
     name: 'update_deal_stage',
     description: `Use this tool when the salesperson reports:
+- Any new customer requirement, inquiry, product demand, or RFQ (e.g. "[Company] requires 20 MT HR Coil", "[Company] needs quote for 10 MT MS Plate")
 - A deal being won, lost, or progressing in the pipeline
 - "Deal won", "Order confirmed", "PO received", "Deal closed"
 - "Lost the deal", "Customer rejected", "No order"
-- Deal moving to negotiation, quotation sent, qualified lead
-- Any sales pipeline stage update for any customer
-This logs to KRA 1 and updates the deals table.`,
+- Deal moving to negotiation, quotation sent, qualified lead, new inquiry
+- Any sales pipeline stage update or product requirement for any customer
+This creates/updates deals, logs to KRA 1 & KRA 4, and updates the sales pipeline.`,
     schema: z.object({
       text:        z.string().describe('The full original message from the salesperson'),
       senderPhone: z.string().describe('The WhatsApp phone number of the salesperson'),
@@ -152,12 +153,10 @@ const logRetentionFollowupTool = tool(
   },
   {
     name: 'log_retention_followup',
-    description: `Use this tool when the salesperson reports:
-- A follow-up call or meeting with an existing customer
-- Customer reviewing a quotation or considering a repeat order
-- "Followed up with [customer]", "They are reviewing", "Will confirm next week"
-- Retention activity for recurring customers
-- KRA 3 follow-up or re-order tracking
+    description: `Use this tool ONLY when the salesperson reports:
+- Explicit follow-up calls or status check-ins with an existing customer regarding past orders
+- "Followed up with [customer] on old quote", "Retention call done", "Customer still considering"
+- Do NOT use this for new product requirements or new inquiries — use update_deal_stage for requirements instead!
 This logs to KRA 3 and updates followup_tasks.`,
     schema: z.object({
       text:        z.string().describe('The full original message from the salesperson'),

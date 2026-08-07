@@ -31,7 +31,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const SALES_AGENT_PROMPT = `
 You are the Specialized Sales Achievement & Pipeline Agent for Enlight Metals (B2B Steel Distributor).
-Your job is to analyze salesperson messages reporting sales actions, deal status updates, or stage changes.
+Your job is to analyze salesperson messages reporting sales actions, deal status updates, stage changes, or customer product requirements/inquiries.
 
 The salesperson message may be informal, in Hinglish, or missing expected keywords.
 Understand the meaning and context — do not look for specific words.
@@ -40,22 +40,28 @@ Input message can be English, Hindi, or Hinglish.
 
 Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 {
-  "action": "stage_update|purchase_order",
+  "action": "stage_update|purchase_order|inquiry",
   "customer_name": "<company/customer name, else null>",
-  "target_stage": "won|lost|negotiation|quoted|qualified",
-  "loss_reason": "<inferred reason if deal was lost, else null>",
-  "rate_per_mt": <numeric per-MT price if mentioned e.g. 51000 per MT, else 0>,
+  "target_stage": "new_inquiry|qualified|quoted|negotiation|won|lost",
+  "product_requirement": "<product description e.g. HR Coil 8mm, else null>",
+  "quantity_mt": <numeric tonnage if mentioned e.g. 20 MT -> 20, else null>,
+  "rate_per_mt": <numeric per-MT price if mentioned e.g. 51000, else null>,
   "total_amount": <numeric total deal value in rupees if explicitly mentioned, else 0>,
+  "delivery_location": "<city/address if mentioned e.g. Pune, else null>",
+  "delivery_date": "<delivery deadline if mentioned e.g. 20 August, else null>",
   "po_number": "<PO number if mentioned, else null>",
+  "po_date": "<PO date if mentioned YYYY-MM-DD, else null>",
+  "loss_reason": "<inferred reason if deal was lost, else null>",
   "confidence": <float 0.0 to 1.0>
 }
 
 Rules for target_stage — understand MEANING, not keywords:
+- "new_inquiry": new customer requirement, inquiry, demand, quotation request, RFQ
+- "qualified": verified lead or interest confirmed
+- "quoted": price/quote sent or shared, proforma sent
+- "negotiation": ongoing discussion, bargaining, counter-offer, price haggling
 - "won": deal finalized, confirmed, accepted, order placed, PO received, customer said yes
 - "lost": deal refused, rejected, cancelled, customer said no, competitor won
-- "negotiation": ongoing discussion, bargaining, counter-offer, price haggling
-- "quoted": price/quote sent or shared, proforma sent
-- "qualified": new requirement received, customer interested, lead confirmed
 
 Rules for loss_reason:
 - Infer from context (price too high, competitor cheaper, delivery mismatch, payment terms, product unavailable)
@@ -138,9 +144,13 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
  */
 async function processSalesMessage(text, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-    const result = await model.generateContent(SALES_AGENT_PROMPT + '\n\nSalesperson message:\n' + text);
-    const rawText = result.response.text().trim();
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+    const response = await invokeWithFallback([
+      new SystemMessage(SALES_AGENT_PROMPT),
+      new HumanMessage('Salesperson message:\n' + text),
+    ]);
+    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -160,43 +170,32 @@ async function processSalesMessage(text, senderPhone) {
     const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
     const finalCustomerName = officialCustomerName || customerName;
-    let isNewProspect = false;
 
-    const targetStage  = data.target_stage || 'qualified';
+    // Fetch actual customer phone from recurring_customers (never default to salesperson phone)
+    const { data: custRecord } = await supabase
+      .from('recurring_customers')
+      .select('customer_phone')
+      .ilike('customer_name', `%${finalCustomerName}%`)
+      .limit(1);
+    const actualCustomerPhone = custRecord && custRecord.length > 0 ? custRecord[0].customer_phone : (data.customer_phone || null);
+
+    const targetStage = data.target_stage || 'new_inquiry';
     const stageMap = {
+      new_inquiry: 'new_inquiry',
+      qualified:   'qualified',
+      quoted:      'quoted',
+      negotiation: 'negotiation',
       won:         'won',
       lost:        'lost',
-      negotiation: 'negotiation',
-      quoted:      'quoted',
-      qualified:   'qualified',
     };
-    const dbStage = stageMap[targetStage] || 'qualified';
+    const dbStage = stageMap[targetStage] || 'new_inquiry';
 
     if (!officialCustomerName) {
-      // Check if there's any existing deal for this customer (by fuzzy name) before creating prospect
-      const { data: anyDeal } = await supabase
-        .from('deals')
-        .select('id, stage')
-        .ilike('customer_name', `%${customerName.split(' ')[0]}%`)
-        .eq('salesperson_phone', senderPhone)
-        .limit(1);
-
-      // If user is trying to UPDATE/CONVERT a stage (not create a new won deal),
-      // and no deal/inquiry exists — tell them instead of silently creating one
-      if ((!anyDeal || anyDeal.length === 0) && dbStage !== 'won' && dbStage !== 'lost') {
-        return `⚠️ *No Active Inquiry Found*\n\n` +
-          `There is no active inquiry or deal for *${customerName}* in your pipeline.\n\n` +
-          `To start a new inquiry, share the requirements:\n` +
-          `_e.g. "${customerName} requires 10 MT HR Coil 3mm"_\n\n` +
-          `Or to mark a new win directly:\n` +
-          `_e.g. "${customerName} deal won for ₹5,00,000"_`;
-      }
-
-      // Auto-create prospect only for new won/lost deals or if a deal was found by fuzzy match
-      isNewProspect = true;
+      // Auto-create customer in recurring_customers if not registered
       await supabase.from('recurring_customers').insert({
         customer_name:              customerName,
         assigned_salesperson_phone: senderPhone,
+        customer_phone:             data.customer_phone || null,
         is_active:                  true,
         avg_order_frequency_days:   30,
       });
@@ -218,20 +217,42 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     // Edge Case 7: If rate × qty was given but not total
-    if (dealAmount === 0 && data.rate_per_mt && Number(data.rate_per_mt) > 0 && dealId) {
-      const { data: items } = await supabase
-        .from('deal_items')
-        .select('quantity')
-        .eq('deal_id', dealId);
-      const totalQty = (items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
-      if (totalQty > 0) dealAmount = totalQty * Number(data.rate_per_mt);
+    if (dealAmount === 0 && data.rate_per_mt && Number(data.rate_per_mt) > 0) {
+      const qty = data.quantity_mt || 0;
+      if (qty > 0) {
+        dealAmount = qty * Number(data.rate_per_mt);
+      } else if (dealId) {
+        const { data: items } = await supabase
+          .from('deal_items')
+          .select('quantity')
+          .eq('deal_id', dealId);
+        const totalQty = (items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+        if (totalQty > 0) dealAmount = totalQty * Number(data.rate_per_mt);
+      }
+    }
+
+    // Resolve PO Date (always set to today or extracted PO date)
+    const poDate = data.po_date || new Date().toISOString().split('T')[0];
+
+    // Resolve PO Number (auto-generate if won or PO received and po_number is missing)
+    let poNumber = data.po_number || (existingDeal ? existingDeal.po_number : null);
+    if (!poNumber && (dbStage === 'won' || data.action === 'purchase_order')) {
+      const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      poNumber = `PO-${todayStr}-${randomNum}`;
     }
 
     if (dealId) {
       // ---- UPDATE existing deal ----
       const updatePayload = {
         stage: dbStage,
+        po_date: poDate,
       };
+
+      if (poNumber) updatePayload.po_number = poNumber;
+      if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
+      if (data.delivery_location) updatePayload.delivery_location = data.delivery_location;
+      if (data.delivery_date) updatePayload.delivery_date = data.delivery_date;
 
       // Only update amount if we have a new value and it's greater than 0
       if (dealAmount > 0) {
@@ -243,7 +264,6 @@ async function processSalesMessage(text, senderPhone) {
       }
 
       if (dbStage === 'lost') {
-        // If loss reason is present and valid, process loss update. Otherwise trigger interactive prompt.
         if (data.loss_reason && data.loss_reason !== 'Not specified' && data.loss_reason.length > 2) {
           updatePayload.loss_reason = data.loss_reason;
         } else {
@@ -263,18 +283,33 @@ async function processSalesMessage(text, senderPhone) {
       }
 
       await supabase.from('deals').update(updatePayload).eq('id', dealId);
+
+      // Add line item if quantity or product specified
+      if (data.product_requirement || data.quantity_mt) {
+        await supabase.from('deal_items').insert({
+          deal_id: dealId,
+          sku_text: data.product_requirement || 'Steel Requirement',
+          quantity: data.quantity_mt ? Number(data.quantity_mt) : null,
+          unit: 'MT',
+          rate: data.rate_per_mt ? Number(data.rate_per_mt) : null,
+          amount: dealAmount || null,
+          created_at: new Date().toISOString(),
+        });
+      }
     } else {
       // ---- CREATE new deal ----
       if (dbStage === 'lost' && (!data.loss_reason || data.loss_reason === 'Not specified')) {
-        // Find or create a temporary deal first so we can capture a loss reason for it
         const { data: tempDeal } = await supabase
           .from('deals')
           .insert({
             customer_name:     finalCustomerName,
             salesperson_phone: senderPhone,
+            customer_phone:    actualCustomerPhone,
             stage:             'negotiation',
             total_amount:      dealAmount || 0,
             inquiry_type:      'inquiry',
+            po_date:           poDate,
+            po_number:         poNumber,
           })
           .select()
           .single();
@@ -300,16 +335,47 @@ async function processSalesMessage(text, senderPhone) {
         .insert({
           customer_name:     finalCustomerName,
           salesperson_phone: senderPhone,
+          customer_phone:    actualCustomerPhone,
           stage:             dbStage,
           total_amount:      dealAmount || 0,
           inquiry_type:      'inquiry',
+          delivery_location: data.delivery_location || null,
+          delivery_date:     data.delivery_date || null,
+          po_date:           poDate,
+          po_number:         poNumber,
           won_at:            dbStage === 'won' ? new Date().toISOString() : null,
           loss_reason:       dbStage === 'lost' ? data.loss_reason : null,
         })
         .select()
         .single();
 
-      if (newDeal) dealId = newDeal.id;
+      if (newDeal) {
+        dealId = newDeal.id;
+
+        // Auto-create line item
+        if (data.product_requirement || data.quantity_mt) {
+          await supabase.from('deal_items').insert({
+            deal_id:    dealId,
+            sku_text:   data.product_requirement || 'Steel Requirement',
+            quantity:   data.quantity_mt ? Number(data.quantity_mt) : null,
+            unit:       'MT',
+            rate:       data.rate_per_mt ? Number(data.rate_per_mt) : null,
+            amount:     dealAmount || null,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Always insert into inquiries table for KRA 4 tracking
+      await supabase.from('inquiries').insert({
+        raw_text:          text,
+        source_channel:    'whatsapp',
+        sender_phone:      senderPhone,
+        salesperson_phone: senderPhone,
+        customer_name:     finalCustomerName,
+        status:            'pending',
+        created_at:        new Date().toISOString(),
+      });
     }
 
     // Edge Case 5: KRA 1 — log won, but don't double-log if already won
@@ -322,7 +388,7 @@ async function processSalesMessage(text, senderPhone) {
           kra_type:          'sales_achievement',
           value:             dealAmount || 0,
           customer_name:     finalCustomerName,
-          description:       `Deal Won: ${finalCustomerName} (₹${Number(dealAmount).toLocaleString('en-IN')})`,
+          description:       `Deal Won: ${finalCustomerName} (₹${Number(dealAmount).toLocaleString('en-IN')}) — PO: ${poNumber || 'N/A'}`,
           month: new Date().getMonth() + 1,
           year:  new Date().getFullYear(),
         });
@@ -345,7 +411,6 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     // Async Zoho Bigin Smart Sync (non-blocking)
-    // Fetch deal items for full sync context
     let dealItems = [];
     if (dealId) {
       const { data: fetchedItems } = await supabase
@@ -358,21 +423,22 @@ async function processSalesMessage(text, senderPhone) {
       customerName: finalCustomerName,
       stage:        dbStage,
       amount:       dealAmount,
-      poNumber:     data.po_number,
+      poNumber:     poNumber,
       paymentTerms: data.payment_terms,
       products:     dealItems,
       senderPhone,
     });
 
     // Build reply
-    // Build reply
     let replyMsg = '';
     if (dbStage === 'won') {
       replyMsg = `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
+        `PO Date: *${poDate}*\n` +
+        `PO Number: *${poNumber || 'Generated'}*\n` +
         `Stage: *Closed Won 🎉*\n` +
         (dealAmount > 0 ? `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n` : '') +
-        `\nUpdated KRA 1 Sales Achievement Dashboard! ✅`;
+        `\nUpdated KRA 1 Sales Achievement Dashboard & Pipeline! ✅`;
     } else if (dbStage === 'lost') {
       replyMsg = `❌ *Deal Marked as LOST*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
@@ -381,14 +447,20 @@ async function processSalesMessage(text, senderPhone) {
         `\nUpdated Loss Analytics Dashboard! 📉`;
     } else {
       const stageLabels = {
+        new_inquiry: 'NEW INQUIRY 📋',
         negotiation: 'NEGOTIATION 🤝',
         quoted:      'QUOTED 📄',
         qualified:   'QUALIFIED ✅',
       };
-      replyMsg = `🔄 *Pipeline Stage Updated!*\n\n` +
+      replyMsg = `💼 *Sales Inquiry & Pipeline Logged!*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
-        `New Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n\n` +
-        `Synced live to Sales Dashboard! ✅`;
+        `Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n` +
+        (data.product_requirement ? `Requirement: *${data.product_requirement}*\n` : '') +
+        (data.quantity_mt ? `Quantity: *${data.quantity_mt} MT*\n` : '') +
+        (data.delivery_location ? `Delivery Location: *${data.delivery_location}*\n` : '') +
+        `PO Date: *${poDate}*\n` +
+        (poNumber ? `PO Number: *${poNumber}*\n` : '') +
+        `\nSynced live to Sales Pipeline & KRA 1 Dashboard! ✅`;
     }
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
@@ -409,7 +481,7 @@ async function processSalesMessage(text, senderPhone) {
  */
 async function processSalesImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const imagePart = {
       inlineData: {
         data: imageBuffer.toString('base64'),
@@ -456,10 +528,26 @@ Return ONLY JSON. No prose. No markdown.`;
       });
       console.log(`[SalesAgent] Auto-created new prospect from PO image: ${customerName}`);
     }
+    // Fetch actual customer phone from recurring_customers (never default to salesperson phone)
+    const { data: custRecord } = await supabase
+      .from('recurring_customers')
+      .select('customer_phone')
+      .ilike('customer_name', `%${finalCustomerName}%`)
+      .limit(1);
+    const actualCustomerPhone = custRecord && custRecord.length > 0 ? custRecord[0].customer_phone : null;
+
     let totalValue = Number(data.total_amount || 0);
 
     if (!totalValue && data.quantity_mt && data.rate_per_mt) {
       totalValue = Number(data.quantity_mt) * Number(data.rate_per_mt);
+    }
+
+    const poDate = data.po_date || new Date().toISOString().split('T')[0];
+    let poNumber = data.po_number || null;
+    if (!poNumber) {
+      const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      poNumber = `PO-${todayStr}-${randomNum}`;
     }
 
     // Edge Case 10: Find existing deal first, don't create duplicate
@@ -467,15 +555,15 @@ Return ONLY JSON. No prose. No markdown.`;
 
     let dealId;
     if (existingDeal) {
-      await supabase
-        .from('deals')
-        .update({
-          stage:        'won',
-          total_amount: totalValue || existingDeal.total_amount || 0,
-          po_number:    data.po_number || existingDeal.po_number || null,
-          won_at:       new Date().toISOString(),
-        })
-        .eq('id', existingDeal.id);
+      const updatePayload = {
+        stage:        'won',
+        total_amount: totalValue || existingDeal.total_amount || 0,
+        po_number:    poNumber || existingDeal.po_number || null,
+        po_date:      poDate,
+        won_at:       new Date().toISOString(),
+      };
+      if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
+      await supabase.from('deals').update(updatePayload).eq('id', existingDeal.id);
       dealId = existingDeal.id;
     } else {
       const { data: newDeal } = await supabase
@@ -483,9 +571,11 @@ Return ONLY JSON. No prose. No markdown.`;
         .insert({
           customer_name:     finalCustomerName,
           salesperson_phone: senderPhone,
+          customer_phone:    actualCustomerPhone,
           stage:             'won',
           total_amount:      totalValue || 0,
-          po_number:         data.po_number || null,
+          po_number:         poNumber,
+          po_date:           poDate,
           inquiry_type:      'purchase_order',
           won_at:            new Date().toISOString(),
         })
@@ -503,7 +593,7 @@ Return ONLY JSON. No prose. No markdown.`;
         kra_type:          'sales_achievement',
         value:             totalValue,
         customer_name:     finalCustomerName,
-        description:       `PO Image Logged: ${finalCustomerName} (PO: ${data.po_number || 'N/A'})`,
+        description:       `PO Image Logged: ${finalCustomerName} (PO: ${poNumber})`,
         month: new Date().getMonth() + 1,
         year:  new Date().getFullYear(),
       });

@@ -109,16 +109,24 @@ async function getInquiries() {
 
 async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
   try {
+    const poDate = extraction.po_date || new Date().toISOString().split('T')[0];
+    let poNumber = extraction.po_number || null;
+    if (!poNumber && (extraction.inquiry_type === 'purchase_order' || extraction.stage === 'won')) {
+      const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      poNumber = `PO-${todayStr}-${randomNum}`;
+    }
+
     // Save deal
     const { data: deal, error: dealError } = await supabase
       .from('deals')
       .insert({
         inquiry_id: inquiryId,
         stage: 'new_inquiry',
-        po_number: extraction.po_number || null,
-        po_date: extraction.po_date || null,
+        po_number: poNumber,
+        po_date: poDate,
         customer_name: extraction.customer?.name || null,
-        customer_phone: extraction.customer?.phone || senderPhone,
+        customer_phone: extraction.customer?.phone || null,
         customer_gst: extraction.customer?.gst || null,
         customer_address: extraction.customer?.address || null,
         delivery_location: extraction.delivery_location || null,
