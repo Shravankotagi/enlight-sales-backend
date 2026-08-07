@@ -1015,22 +1015,45 @@ export class KraService {
       });
 
       // KRA 9 Sheet: Customer Visits
-      // Uses actual extracted fields from customer_visits table — no placeholders.
-      const kra9Rows = safeVisits.map((v, index) => ({
-        sr_no: index + 1,
-        company_name: v.customer_name || 'Client Site',
-        person_met: v.person_met || '-', // null if not mentioned
-        contact_no: v.contact_no || '-',
-        outcome: v.visit_outcome
-          ? v.visit_outcome.charAt(0).toUpperCase() + v.visit_outcome.slice(1)
-          : '-',
-        requirement: v.material_requirement || '-', // e.g. '50 MT HR Coil'
-        follow_up: v.follow_up_action || '-', // e.g. 'Send quotation'
-        remarks: v.remarks || 'On-site meeting',
-        visit_date: v.visited_at
-          ? new Date(v.visited_at).toLocaleDateString('en-IN')
-          : '-',
-      }));
+      // Uses actual extracted fields from customer_visits table or parses structured tags in remarks.
+      const kra9Rows = safeVisits.map((v, index) => {
+        const rawRemarks = v.remarks || '';
+
+        // Extract structured tags if present
+        const outcomeMatch =
+          v.visit_outcome || rawRemarks.match(/\[Outcome:\s*([^\]]+)\]/i)?.[1];
+        const reqMatch =
+          v.material_requirement ||
+          rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1];
+        const followMatch =
+          v.follow_up_action ||
+          rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1];
+
+        // Clean remarks by stripping tags
+        const cleanRemarks =
+          rawRemarks
+            .replace(
+              /\[(Outcome|Requirement|FollowUp|Interests):\s*[^\]]+\]\s*/gi,
+              '',
+            )
+            .trim() || 'On-site meeting';
+
+        return {
+          sr_no: index + 1,
+          company_name: v.customer_name || 'Client Site',
+          person_met: v.person_met || '-', // null if not mentioned
+          contact_no: v.contact_no || '-',
+          outcome: outcomeMatch
+            ? outcomeMatch.charAt(0).toUpperCase() + outcomeMatch.slice(1)
+            : '-',
+          requirement: reqMatch || '-',
+          follow_up: followMatch || '-',
+          remarks: cleanRemarks,
+          visit_date: v.visited_at
+            ? new Date(v.visited_at).toLocaleDateString('en-IN')
+            : '-',
+        };
+      });
 
       const kra1Tonnage = kra1Rows.reduce(
         (sum, r) => sum + (r.quantity_mt || 0),
