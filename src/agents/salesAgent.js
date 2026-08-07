@@ -159,15 +159,20 @@ async function processSalesMessage(text, senderPhone) {
     const { verifyAndGetCustomerName } = require('../supabase');
     const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
-    if (!officialCustomerName) {
-      return `⚠️ *Client Not Found in your Customer List*\n\n` +
-        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before updating pipeline stages.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_`;
-    }
+    const finalCustomerName = officialCustomerName || customerName;
+    let isNewProspect = false;
 
-    const finalCustomerName = officialCustomerName;
+    if (!officialCustomerName) {
+      // Auto-create prospect instead of blocking deal update
+      isNewProspect = true;
+      await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      });
+      console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
+    }
     const targetStage  = data.target_stage || 'qualified';
 
     const stageMap = {
@@ -321,13 +326,22 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     // Async Zoho Bigin Smart Sync (non-blocking)
+    // Fetch deal items for full sync context
+    let dealItems = [];
+    if (dealId) {
+      const { data: fetchedItems } = await supabase
+        .from('deal_items')
+        .select('sku_text, quantity, unit, rate, amount')
+        .eq('deal_id', dealId);
+      dealItems = fetchedItems || [];
+    }
     syncActivity('deal', {
       customerName: finalCustomerName,
       stage:        dbStage,
       amount:       dealAmount,
       poNumber:     data.po_number,
       paymentTerms: data.payment_terms,
-      products:     deal?.deal_items || [],
+      products:     dealItems,
       senderPhone,
     });
 
@@ -411,15 +425,18 @@ Return ONLY JSON. No prose. No markdown.`;
     const { verifyAndGetCustomerName } = require('../supabase');
     const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
-    if (!officialCustomerName) {
-      return `⚠️ *PO Vision Agent — Client Not Found*\n\n` +
-        `Client *"${customerName}"* detected in the PO image is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging their orders.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_`;
-    }
+    let finalCustomerName = officialCustomerName || customerName;
 
-    const finalCustomerName = officialCustomerName;
+    if (!officialCustomerName) {
+      // Auto-create prospect so PO image can still be logged
+      await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      });
+      console.log(`[SalesAgent] Auto-created new prospect from PO image: ${customerName}`);
+    }
     let totalValue = Number(data.total_amount || 0);
 
     if (!totalValue && data.quantity_mt && data.rate_per_mt) {

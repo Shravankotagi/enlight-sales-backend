@@ -282,16 +282,18 @@ async function processPaymentMessage(text, senderPhone) {
     const isFullPayment = !!data.is_full_payment;
 
     // Verify and get official customer name from salesperson's registered customers
-    const { verifyAndGetCustomerName } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
     if (!officialCustomerName) {
-      return `⚠️ *Client Not Found in your Customer List*\n\n` +
-        `Client *"${customerName}"* is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging payments.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
-        `Once added, you can resend this payment update.`;
+      // Auto-create prospect instead of blocking payment
+      await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      });
+      officialCustomerName = customerName;
+      console.log(`[PaymentAgent] Auto-created new prospect: ${customerName}`);
     }
 
     const finalCustomerName = officialCustomerName;
@@ -414,17 +416,18 @@ Return ONLY JSON. No prose. No markdown.`;
       return `⚠️ *Payment Receipt — Customer Not Found*\n\nReceipt for *₹${amountPaid.toLocaleString('en-IN')}* detected! Please reply with the *Customer/Company Name* to credit this payment to KRA 5.`;
     }
 
-    // Verify and get official customer name from salesperson's registered customers
-    const { verifyAndGetCustomerName } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
     if (!officialCustomerName) {
-      return `⚠️ *Payment Receipt Vision Agent — Client Not Found*\n\n` +
-        `Client *"${customerName}"* detected in the receipt is not registered under your salesperson account.\n\n` +
-        `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging receipts.\n\n` +
-        `*Example to onboard customer:*\n` +
-        `_"New customer ${customerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
-        `Once added, you can resend this PO.`;
+      // Auto-create prospect so payment image can still be logged
+      await supabase.from('recurring_customers').insert({
+        customer_name:              customerName,
+        assigned_salesperson_phone: senderPhone,
+        is_active:                  true,
+        avg_order_frequency_days:   30,
+      });
+      officialCustomerName = customerName;
+      console.log(`[PaymentAgent] Auto-created new prospect from receipt: ${customerName}`);
     }
 
     const finalCustomerName = officialCustomerName;
