@@ -653,6 +653,17 @@ export class KraService {
         );
       }
 
+      // Also fetch recurring_customers to get real contact_person/industry for KRA 2
+      let customersQuery = this.supabase
+        .from('recurring_customers')
+        .select('customer_name, contact_person, industry, notes');
+      if (salespersonPhone) {
+        customersQuery = customersQuery.eq(
+          'assigned_salesperson_phone',
+          salespersonPhone,
+        );
+      }
+
       const [
         { data: deals },
         { data: inquiries },
@@ -661,6 +672,7 @@ export class KraService {
         { data: visits },
         { data: complaints },
         { data: followups },
+        { data: customers },
       ] = await Promise.all([
         dealsQuery,
         inquiriesQuery,
@@ -669,6 +681,7 @@ export class KraService {
         visitsQuery,
         complaintsQuery,
         followupsQuery,
+        customersQuery,
       ]);
 
       const safeDeals = deals || [];
@@ -678,6 +691,14 @@ export class KraService {
       const safeVisits = visits || [];
       const safeComplaints = complaints || [];
       const safeFollowups = followups || [];
+      const safeCustomers = customers || [];
+
+      // Build a lookup map: customer_name → recurring_customers record
+      const customerMap = new Map<string, any>();
+      safeCustomers.forEach((c) => {
+        if (c.customer_name)
+          customerMap.set(c.customer_name.toLowerCase().trim(), c);
+      });
 
       // KRA 1 Sheet: Sales Achievement
       const wonDeals = safeDeals.filter((d) => d.stage === 'won');
@@ -702,20 +723,60 @@ export class KraService {
       });
 
       // KRA 2 Sheet: New Customer Acquisition
+      // Only maps CUSTOMER MASTER DATA — no sales fields populated during onboarding.
+      // Sales fields (Product Ordered, First Order Qty, Billing Date) only fill when actual order exists.
       const kra2Logs = safeKraLogs.filter(
         (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
       );
-      const kra2Rows = kra2Logs.map((l, index) => ({
-        sr_no: index + 1,
-        company_name: l.customer_name || 'New Client',
-        industry_segment: 'Manufacturing / Industrial',
-        contact_person: 'Key Contact',
-        product_ordered: l.description || 'Steel Order',
-        first_order_qty: l.value
-          ? `₹${Number(l.value).toLocaleString('en-IN')}`
-          : '1 Order',
-        billing_date: new Date(l.created_at).toLocaleDateString('en-IN'),
-      }));
+      const kra2Rows = kra2Logs.map((l, index) => {
+        // Look up the real customer record for contact_person and industry
+        const custKey = (l.customer_name || '').toLowerCase().trim();
+        const custRecord = customerMap.get(custKey);
+
+        // Find the first real deal/order for this customer (if any)
+        const firstDeal = safeDeals
+          .filter(
+            (d) =>
+              d.stage === 'won' &&
+              d.customer_name?.toLowerCase().trim() === custKey,
+          )
+          .sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime(),
+          )[0];
+
+        const firstDealItems = firstDeal?.deal_items || [];
+        const productOrdered = firstDeal
+          ? firstDealItems
+              .map((i: any) => i.sku_text)
+              .filter(Boolean)
+              .join(', ') ||
+            firstDeal.inquiry_type ||
+            'Steel Products'
+          : null; // blank — no order yet
+
+        const firstOrderQty = firstDeal
+          ? firstDealItems.reduce(
+              (s: number, i: any) => s + (i.quantity || 0),
+              0,
+            ) || null
+          : null; // blank — no order yet
+
+        const billingDate = firstDeal?.won_at
+          ? new Date(firstDeal.won_at).toLocaleDateString('en-IN')
+          : null; // blank — no billing during onboarding
+
+        return {
+          sr_no: index + 1,
+          company_name: l.customer_name || 'New Client',
+          industry_segment: custRecord?.industry || '-', // real value or blank
+          contact_person: custRecord?.contact_person || '-', // real contact, not 'Key Contact'
+          product_ordered: productOrdered || '-', // blank until real order
+          first_order_qty: firstOrderQty ? `${firstOrderQty} MT` : '-', // blank until real order
+          billing_date: billingDate || '-', // blank until real billing
+        };
+      });
 
       // KRA 3 Sheet: Customer Retention & Recurring Business
       const kra3Logs = safeKraLogs.filter((l) => l.kra_number === 3);
@@ -853,13 +914,21 @@ export class KraService {
       }));
 
       // KRA 9 Sheet: Customer Visits
+      // Uses actual extracted fields from customer_visits table — no placeholders.
       const kra9Rows = safeVisits.map((v, index) => ({
         sr_no: index + 1,
         company_name: v.customer_name || 'Client Site',
-        address: v.location || v.address || 'Field Visit Location',
-        person_met: v.person_met || 'Owner / Buyer',
+        person_met: v.person_met || '-', // null if not mentioned
         contact_no: v.contact_no || '-',
-        remarks: v.notes || 'Visited & Market Presence Recorded',
+        outcome: v.visit_outcome
+          ? v.visit_outcome.charAt(0).toUpperCase() + v.visit_outcome.slice(1)
+          : '-',
+        requirement: v.material_requirement || '-', // e.g. '50 MT HR Coil'
+        follow_up: v.follow_up_action || '-', // e.g. 'Send quotation'
+        remarks: v.remarks || 'On-site meeting',
+        visit_date: v.visited_at
+          ? new Date(v.visited_at).toLocaleDateString('en-IN')
+          : '-',
       }));
 
       const kra1Tonnage = kra1Rows.reduce(
@@ -1028,10 +1097,13 @@ export class KraService {
           headers: [
             'Sr. No.',
             'Company Name',
-            'Address',
             'Person Met',
             'Contact No.',
+            'Outcome',
+            'Requirement',
+            'Follow-up Action',
             'Remarks',
+            'Visit Date',
           ],
           rows: kra9Rows,
         },
