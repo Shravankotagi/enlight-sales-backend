@@ -36,7 +36,7 @@ export class InquiriesService {
       const { data, error } = await this.supabase
         .from('inquiries')
         .select('*')
-        .eq('status', 'review')
+        .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data;
