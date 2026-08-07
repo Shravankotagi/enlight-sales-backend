@@ -98,15 +98,58 @@ async function processCustomerMessage(text, senderPhone) {
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
-    // Edge Case 5: Missing customer name
+    const { getActiveSession, getFullActiveSession, saveActiveSession, verifyAndGetCustomerName } = require('../supabase');
+
+    // ── Session Context & Pending Payload Resolution ──────────────────────
+    let activeCustomer = await getActiveSession(senderPhone);
+    const fullSession  = await getFullActiveSession(senderPhone);
+
+    // If company name is missing, try to resolve from active customer session
+    if (!data.customer_name && activeCustomer && activeCustomer !== 'PENDING_PROFILE') {
+      data.customer_name = activeCustomer;
+      console.log(`[CustomerAgent] Resolved missing company name from active session: "${activeCustomer}"`);
+    }
+
+    // Check if there was a pending profile update payload from a previous turn
+    let pendingPayload = null;
+    if (fullSession && fullSession.last_intent && fullSession.last_intent.startsWith('pending_profile|')) {
+      try {
+        const jsonStr = fullSession.last_intent.replace('pending_profile|', '');
+        pendingPayload = JSON.parse(jsonStr);
+      } catch (e) { /* ignore parse error */ }
+    }
+
+    // Merge pending profile details if available
+    if (pendingPayload) {
+      data.phone          = data.phone          || pendingPayload.phone          || null;
+      data.contact_person = data.contact_person || pendingPayload.contact_person || null;
+      data.city           = data.city           || pendingPayload.city           || null;
+      data.gst            = data.gst            || pendingPayload.gst            || null;
+    }
+
+    // If STILL no customer name after session check
     if (!data.customer_name) {
+      if (data.phone || data.contact_person || data.city || data.gst) {
+        // Save pending profile data so when user responds with company name, it merges!
+        const payloadStr = JSON.stringify({
+          phone:          data.phone,
+          contact_person: data.contact_person,
+          city:           data.city,
+          gst:            data.gst
+        });
+        await saveActiveSession(senderPhone, 'PENDING_PROFILE', `pending_profile|${payloadStr}`);
+        return `Oops! I missed getting the *Company Name* for this customer. 😅\n\n` +
+          `Could you please tell me the Company Name for ${data.contact_person ? `*${data.contact_person}*` : 'this contact'}` +
+          (data.phone ? ` with mobile number *${data.phone}*` : '') + `?\n\n` +
+          `Once I have that, I'll get their profile updated right away!`;
+      }
+
       return `⚠️ *Customer Agent — Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
     }
 
     const customerName = data.customer_name.trim();
 
     // Verify and get official customer name from salesperson's registered customers (handles typos)
-    const { verifyAndGetCustomerName } = require('../supabase');
     const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
 
     let existing = null;
@@ -115,6 +158,7 @@ async function processCustomerMessage(text, senderPhone) {
         .from('recurring_customers')
         .select('id, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes')
         .eq('customer_name', officialCustomerName)
+        .eq('assigned_salesperson_phone', senderPhone)
         .limit(1);
       existing = found;
     }
@@ -207,7 +251,6 @@ async function processCustomerMessage(text, senderPhone) {
     }
 
     // Save active customer session context
-    const { saveActiveSession } = require('../supabase');
     await saveActiveSession(senderPhone, finalCustomerName, 'onboarding_prompted');
 
     // Edge Case 6: Only log KRA 2 once per customer per salesperson per month

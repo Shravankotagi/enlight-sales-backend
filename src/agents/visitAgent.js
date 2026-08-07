@@ -75,11 +75,12 @@ Return ONLY the JSON object.
  */
 async function autoOnboardProspect(customerName, senderPhone, extractedData) {
   try {
-    // Check if already exists (fuzzy)
+    // Check if already exists (fuzzy) for this salesperson
     const { data: existing } = await supabase
       .from('recurring_customers')
       .select('id, customer_name')
       .ilike('customer_name', `%${customerName}%`)
+      .eq('assigned_salesperson_phone', senderPhone)
       .limit(1);
 
     if (existing && existing.length > 0) {
@@ -148,6 +149,34 @@ async function processVisitMessage(text, senderPhone) {
     }
 
     const finalCustomerName = officialCustomerName;
+
+    // ── Duplicate Visit Safeguard for Bare Customer Name Replies ─────────
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: recentVisits } = await supabase
+      .from('customer_visits')
+      .select('id, visited_at')
+      .eq('salesperson_phone', senderPhone)
+      .ilike('customer_name', `%${finalCustomerName}%`)
+      .gte('visited_at', tenMinutesAgo)
+      .limit(1);
+
+    const isBareNameMsg = text.trim().length <= 40 &&
+      !text.toLowerCase().includes('visited') &&
+      !text.toLowerCase().includes('met') &&
+      !text.toLowerCase().includes('introduced');
+
+    if (recentVisits && recentVisits.length > 0 && isBareNameMsg) {
+      console.log(`[VisitAgent] Suppressing duplicate visit for "${finalCustomerName}" (visit already logged ${recentVisits[0].visited_at})`);
+
+      // Refresh active session
+      await saveActiveSession(senderPhone, finalCustomerName, 'profile_updated');
+
+      return `ℹ️ *Visit Already Logged for ${finalCustomerName}*\n\n` +
+        `Your visit with *${finalCustomerName}* is already recorded on your KRA 9 dashboard!\n\n` +
+        `If you meant to update their contact info, say: _"${finalCustomerName} phone 9876543210 owner Mr. Kapoor"_\n` +
+        `Or to log a new inquiry, say: _"${finalCustomerName} needs 10 MT HR Coil"_\n\n` +
+        `Updated KRA 9 Customer Visit Dashboard! ✅`;
+    }
 
     // Extract all fields — NEVER use placeholder values
     const remarks             = data.remarks            || 'On-site meeting';

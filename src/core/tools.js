@@ -180,13 +180,13 @@ const onboardNewCustomerTool = tool(
   {
     name: 'onboard_new_customer',
     description: `Use this tool when the salesperson is:
-- Adding a completely new customer to the system
-- "New customer [name]", "Onboard [company]"
+- Adding a completely new customer to the system ("New customer [name]", "Onboard [company]")
 - Providing customer details: owner, phone, city, GST
 - Updating an existing customer's profile details (phone number, address, GST, contact person)
-This logs to KRA 2 and creates/updates recurring_customers.`,
+- Responding to a profile completion prompt with mobile number, owner name, or location
+IMPORTANT: If the message contains profile details (phone/owner/city) but does NOT explicitly state the company name, call get_conversation_context first to get the active customer name, and include that company name in the text parameter passed to this tool (e.g. "Mehta Engineering phone 9876543210 owner MR Mehta").`,
     schema: z.object({
-      text:        z.string().describe('The full original message from the salesperson'),
+      text:        z.string().describe('The message or contextualized query text containing the company name and details'),
       senderPhone: z.string().describe('The WhatsApp phone number of the salesperson'),
     }),
   }
