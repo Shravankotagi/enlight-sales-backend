@@ -956,20 +956,63 @@ export class KraService {
       }));
 
       // KRA 8 Sheet: Customer Complaint Resolution
-      const kra8Rows = safeComplaints.map((c, index) => ({
-        sr_no: index + 1,
-        complaint_date: new Date(c.reported_at).toLocaleDateString('en-IN'),
-        customer_name: c.customer_name || 'Customer',
-        complaint_type: c.complaint_type || 'Quality Issue',
-        complaint_description: c.description || '-',
-        resolution_date: c.resolved_at
-          ? new Date(c.resolved_at).toLocaleDateString('en-IN')
-          : '-',
-        resolution_time_hrs: c.resolution_time_hrs
-          ? `${c.resolution_time_hrs}h`
-          : '-',
-        status: c.status === 'resolved' ? 'Closed' : 'Pending',
-      }));
+      const kra8Rows = safeComplaints.map((c, index) => {
+        // Auto-calculate resolution time from timestamps if stored value is 0/missing
+        let resolutionHrs = c.resolution_time_hrs || 0;
+        if (
+          c.status === 'resolved' &&
+          c.resolved_at &&
+          c.reported_at &&
+          resolutionHrs === 0
+        ) {
+          resolutionHrs = Math.max(
+            1,
+            Math.round(
+              (new Date(c.resolved_at).getTime() -
+                new Date(c.reported_at).getTime()) /
+                (1000 * 60 * 60),
+            ),
+          );
+        }
+
+        // Parse affected product from structured '[Product: HR Coil] ...' description prefix
+        const productMatch = c.description?.match(
+          /^\[Product:\s*([^\]]+)\]\s*/i,
+        );
+        const affectedProduct = productMatch ? productMatch[1].trim() : '-';
+        const cleanDescription = productMatch
+          ? c.description.replace(/^\[Product:\s*[^\]]+\]\s*/i, '').trim()
+          : c.description || '-';
+
+        // SLA due = reported_at + 48h
+        const slaDue = c.reported_at
+          ? new Date(
+              new Date(c.reported_at).getTime() + 48 * 60 * 60 * 1000,
+            ).toLocaleDateString('en-IN')
+          : '-';
+
+        return {
+          sr_no: index + 1,
+          complaint_date: new Date(c.reported_at).toLocaleDateString('en-IN'),
+          customer_name: c.customer_name || 'Customer',
+          complaint_type: c.complaint_type || 'Quality Issue',
+          affected_product: affectedProduct,
+          complaint_description: cleanDescription,
+          sla_due_date: slaDue,
+          resolution_date: c.resolved_at
+            ? new Date(c.resolved_at).toLocaleDateString('en-IN')
+            : '-',
+          resolution_time_hrs: resolutionHrs ? `${resolutionHrs}h` : '-',
+          status:
+            c.status === 'resolved'
+              ? resolutionHrs <= 48
+                ? 'Closed ✅'
+                : 'Closed (SLA Breached ⚠️)'
+              : c.escalated
+                ? 'Pending (Escalated 🔴)'
+                : 'Pending',
+        };
+      });
 
       // KRA 9 Sheet: Customer Visits
       // Uses actual extracted fields from customer_visits table — no placeholders.
@@ -1152,7 +1195,9 @@ export class KraService {
             'Complaint Date',
             'Customer Name',
             'Complaint Type (Quality / Quantity / Billing / Delivery / Others)',
+            'Affected Product',
             'Complaint Description',
+            'SLA Due Date (48h)',
             'Resolution Date',
             'Resolution Time (Hrs)',
             'Status (Closed / Pending)',
