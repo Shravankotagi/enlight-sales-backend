@@ -57,7 +57,7 @@ You help salespersons log their daily sales activities (visits, deals, payments,
 - ALWAYS call at least one tool before responding (never guess about database state)
 - MULTI-INTENT MESSAGES: If a message contains multiple activities (e.g. a site visit AND a deal won, or a payment AND a follow-up), call MULTIPLE tools in parallel in the same turn! (e.g. call log_customer_visit AND update_deal_stage).
 - INTENT CLARIFICATION: If a message is vague or missing essential context to distinguish between payment vs deal vs complaint (e.g. "Mehta 5000"), ask the salesperson a friendly clarifying question with quick choices instead of guessing!
-- If the salesperson reports a customer requirement, product request, or inquiry (e.g. "[Company] requires 20 MT HR Coil"), ALWAYS call update_deal_stage to create/update the deal in the sales pipeline and log the inquiry! Do NOT call log_retention_followup for new product requirements.
+- If the message contains ANY product requirement, tonnage, material request, or RFQ — EVEN if you also called log_customer_visit — you MUST ALSO call update_deal_stage. These two tools are NOT mutually exclusive. A visit message that also mentions a product requirement needs BOTH tools called in the same turn.
 - If the message contains profile details (mobile number, phone, owner, contact person, GST, location) — EVEN WITHOUT A COMPANY NAME — ALWAYS call get_conversation_context or onboard_new_customer immediately to update the customer's profile. Never ask "which company" without calling get_conversation_context first!
 - If the customer name is ambiguous, call get_conversation_context first to check the active session
 - Never reject a message because a customer "isn't registered" — the tools handle auto-registration
@@ -88,19 +88,27 @@ function getDeterministicIntentHint(text) {
   if (!text || typeof text !== 'string') return '';
   const lower = text.toLowerCase();
 
+  const anchors = [];
+
   if (/\b(paid|payment|advance|received|collected|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki)\b/i.test(lower)) {
-    return '\n[DETERMINISTIC ANCHOR: Message contains payment/collection signals. Primary Tool: log_payment]';
+    anchors.push('CALL log_payment');
   }
   if (/\b(visited|visit|met|meeting|site|factory|plant|office|market visit)\b/i.test(lower)) {
-    return '\n[DETERMINISTIC ANCHOR: Message contains site visit signals. Primary Tool: log_customer_visit]';
+    anchors.push('CALL log_customer_visit');
   }
   if (/\b(complaint|defective|damaged|scratch|rust|quality|rejected|rejection|faulty)\b/i.test(lower)) {
-    return '\n[DETERMINISTIC ANCHOR: Message contains complaint signals. Primary Tool: log_complaint]';
+    anchors.push('CALL log_complaint');
   }
-  if (/\b(requires|requirement|need|inquiry|quote|quotation|rfq|rate|ton|mt|deal|won|lost|closed|po received)\b/i.test(lower)) {
-    return '\n[DETERMINISTIC ANCHOR: Message contains sales/requirement signals. Primary Tool: update_deal_stage]';
+  if (/\b(requires|requirement|need|inquiry|quote|quotation|rfq|ton|mt|coil|plate|sheet|tmt|bar|hr|cr|ms)\b/i.test(lower)) {
+    anchors.push('CALL update_deal_stage');
   }
-  return '';
+  if (/\b(won|lost|closed|confirmed|order placed|po received|deal done|finalized)\b/i.test(lower)) {
+    anchors.push('CALL update_deal_stage');
+  }
+
+  if (anchors.length === 0) return '';
+
+  return `\n[REQUIRED TOOL CALLS THIS TURN: ${anchors.join(' AND ')}. You MUST call ALL of these tools before responding. Missing any = incomplete action.]`;
 }
 
 // Global active tools array for the current execution
