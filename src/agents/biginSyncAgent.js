@@ -211,7 +211,6 @@ async function upsertBiginDeal({ customerName, stage, amount, poNumber, salesper
     data: [{
       Deal_Name:    dealName,
       Stage:        STAGE_MAP[stage] || 'Qualification',
-      Pipeline:     'Standard',
       Amount:       amount || 0,
       Closing_Date: new Date().toISOString().split('T')[0],
       Description:  description,
