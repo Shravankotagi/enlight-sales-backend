@@ -17,8 +17,6 @@ const GEMINI_KEYS = [
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
   'gemini-2.5-flash-lite',
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash',
 ];
 
 let roundRobinIdx = 0;
@@ -41,7 +39,7 @@ function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
     model:       modelName,
     apiKey:      key,
     temperature: 0.1,
-    maxRetries:  0,
+    maxRetries:  1,
   });
 
   return tools ? model.bindTools(tools) : model;
@@ -54,7 +52,7 @@ function getModel(tools = null) {
 }
 
 /**
- * Invoke a model with automatic failover across Gemini models & keys.
+ * Invoke a model with automatic failover across Gemini models & keys with retry.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -67,23 +65,25 @@ async function invokeWithFallback(messages, tools = null) {
   for (const modelName of GEMINI_MODELS) {
     for (const key of geminiKeys) {
       if (!key) continue;
-      try {
-        const model = new ChatGoogleGenerativeAI({
-          model:       modelName,
-          apiKey:      key,
-          temperature: 0.1,
-          maxRetries:  0,
-        });
-        const boundModel = tools ? model.bindTools(tools) : model;
-        return await boundModel.invoke(messages);
-      } catch (err) {
-        lastError = err;
-        console.warn(`[ModelRouter] Gemini (${modelName}) attempt failed (${err.message?.slice(0, 70)}), trying fallback...`);
-        const msg = err.message || '';
-        if (msg.includes('429') || msg.includes('Quota')) {
-          await new Promise((r) => setTimeout(r, 2000));
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const model = new ChatGoogleGenerativeAI({
+            model:       modelName,
+            apiKey:      key,
+            temperature: 0.1,
+            maxRetries:  1,
+          });
+          const boundModel = tools ? model.bindTools(tools) : model;
+          return await boundModel.invoke(messages);
+        } catch (err) {
+          lastError = err;
+          console.warn(`[ModelRouter] Gemini (${modelName}) attempt ${attempt} failed (${err.message?.slice(0, 70)}), retrying...`);
+          const msg = err.message || '';
+          if (msg.includes('429') || msg.includes('Quota')) {
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+          continue;
         }
-        continue;
       }
     }
   }

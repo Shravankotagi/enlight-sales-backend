@@ -205,9 +205,18 @@ async function agentNode(state) {
     response = await invokeWithFallback(contextMessages, currentTools);
   } catch (err) {
     console.error('[Orchestrator] Model invocation failed:', err.message);
+
+    // Warm greeting fallback if simple greeting message was sent
+    const cleanUserText = userText.trim().toLowerCase().replace(/[^a-z]/gi, '');
+    if (['hi', 'hii', 'hiii', 'hello', 'hey', 'namaste', 'hie', 'goodmorning', 'goodevening'].includes(cleanUserText)) {
+      return {
+        messages: [new AIMessage(`Namaste! 🙏 Welcome to Enlight Metals Sales Intelligence Bot.\n\nHow can I assist you with your deals, customer visits, payments, or inquiries today?`)],
+      };
+    }
+
     const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('rate_limit') || err.message.includes('Quota'));
     const cleanReply = isRateLimit
-      ? `⏳ *Gemini AI Rate Limit*\n\nGoogle Gemini rate limit reached. Please try sending your message again in 10-15 seconds.\n\n_(Tip: Add an additional Gemini API key in Railway settings under GEMINI_API_KEY_1 to double your capacity!)_`
+      ? `⏳ *Gemini AI Traffic Spike*\n\nGoogle Gemini API rate limit reached. Please try sending your message again in 10-15 seconds.\n\n_(Tip: Add an additional Gemini API key in Railway settings under GEMINI_API_KEY_1 to double your capacity!)_`
       : `⚠️ I'm having trouble processing your request right now. Please try again in a moment.`;
     return {
       messages: [new AIMessage(cleanReply)],
