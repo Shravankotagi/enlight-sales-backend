@@ -171,30 +171,13 @@ export class KraService {
       const pendingPayments = payments.filter(
         (p) => p.status === 'pending' || p.status === 'partial',
       );
-      const collectedPayments = payments.filter(
-        (p) => p.status === 'collected',
-      );
-      const collectedLogs = kraLogs.filter(
-        (l) =>
-          l.kra_number === 5 &&
-          (l.kra_type === 'payment_collected' ||
-            l.kra_type === 'payment_advance'),
-      );
-
-      const collectedLogsSum = collectedLogs.reduce(
-        (sum, l) => sum + (Number(l.value) || 0),
-        0,
-      );
-      const collectedPaymentsSum = collectedPayments.reduce(
+      const collectedAmount = payments.reduce(
         (sum, p) => sum + (Number(p.collected_amount) || 0),
         0,
       );
-
-      const collectedAmount = Math.max(collectedLogsSum, collectedPaymentsSum);
-      const collectedCount = Math.max(
-        collectedPayments.length,
-        collectedLogs.length,
-      );
+      const collectedCount = payments.filter(
+        (p) => (Number(p.collected_amount) || 0) > 0,
+      ).length;
 
       const totalOutstanding = pendingPayments.reduce(
         (sum, p) =>
@@ -208,14 +191,19 @@ export class KraService {
       const reportedThisMonth = complaints.filter(
         (c) => c.reported_at >= start && c.reported_at <= end,
       );
-      // Resolved = complaints that were REPORTED this month AND have been resolved
-      // (does NOT count old month complaints resolved this month — those belong to prev month KRA)
       const resolvedComplaints = reportedThisMonth.filter(
         (c) => c.status === 'resolved',
       );
       const withinTarget = resolvedComplaints.filter(
         (c) => (c.resolution_time_hrs || 0) <= 48,
       );
+
+      const totalDealsCount = dealsCreatedThisMonth.length;
+      const wonDealsCount = wonDeals.length;
+      const conversionRate =
+        totalDealsCount > 0
+          ? Math.round((wonDealsCount / totalDealsCount) * 100)
+          : 0;
 
       return {
         month: start,
@@ -253,38 +241,11 @@ export class KraService {
         },
         kra4: {
           label: 'Enquiry Conversion',
-          // Only count won deals that have a direct inquiry link (inquiry_id present in safeInquiries)
-          // Prevents rate exceeding 100% when deals come from salesAgent without going through inquiry pipeline
-          total_inquiries: inquiries.length,
-          won_deals: wonDeals.filter(
-            (d) => d.inquiry_id && inquiries.some((i) => i.id === d.inquiry_id),
-          ).length,
-          conversion_rate:
-            inquiries.length > 0
-              ? Math.min(
-                  100,
-                  Math.round(
-                    (wonDeals.filter(
-                      (d) =>
-                        d.inquiry_id &&
-                        inquiries.some((i) => i.id === d.inquiry_id),
-                    ).length /
-                      inquiries.length) *
-                      100,
-                  ),
-                )
-              : 0,
+          total_inquiries: totalDealsCount,
+          won_deals: wonDealsCount,
+          conversion_rate: conversionRate,
           target_rate: 70,
-          status:
-            inquiries.length > 0 &&
-            wonDeals.filter(
-              (d) =>
-                d.inquiry_id && inquiries.some((i) => i.id === d.inquiry_id),
-            ).length /
-              inquiries.length >=
-              0.7
-              ? 'achieved'
-              : 'in_progress',
+          status: conversionRate >= 70 ? 'achieved' : 'in_progress',
         },
         kra5: {
           label: 'Payment Collection',
@@ -908,7 +869,7 @@ export class KraService {
         }),
       ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-      const kra3Rows = combinedKRA3.map((item, index) => ({
+      let kra3Rows = combinedKRA3.map((item, index) => ({
         sr_no: index + 1,
         existing_customer_name: item.customer_name,
         product_supplied: item.details,
@@ -917,60 +878,104 @@ export class KraService {
         remarks: item.remarks,
       }));
 
+      if (kra3Rows.length === 0 && safeCustomers.length > 0) {
+        kra3Rows = safeCustomers.map((rc: any, index: number) => {
+          const nextDate = rc.last_order_date
+            ? new Date(
+                new Date(rc.last_order_date).getTime() +
+                  30 * 24 * 60 * 60 * 1000,
+              ).toLocaleDateString('en-IN')
+            : 'Scheduled this month';
+          return {
+            sr_no: index + 1,
+            existing_customer_name: rc.customer_name || 'Active Account',
+            product_supplied: rc.notes || 'Steel Products',
+            order_quantity: rc.avg_order_qty_mt
+              ? `${rc.avg_order_qty_mt} MT`
+              : '-',
+            next_followup_date: nextDate,
+            remarks: 'Active Account — Follow-up Scheduled 📋',
+          };
+        });
+      }
+
       // KRA 4 Sheet: Enquiry Conversion
-      const kra4Rows = safeInquiries.map((inq, index) => {
-        const matchingDeal = safeDeals.find((d) => d.inquiry_id === inq.id);
-        const status =
-          matchingDeal?.stage === 'won'
-            ? 'Won'
-            : matchingDeal?.stage === 'lost'
-              ? 'Lost'
-              : 'Pending';
-        return {
-          sr_no: index + 1,
-          enquiry_date: new Date(inq.created_at).toLocaleDateString('en-IN'),
-          company_name:
-            matchingDeal?.customer_name || inq.sender_name || 'Enquiry Client',
-          product_enquired:
-            inq.raw_text?.substring(0, 40) || 'Steel requirement',
-          order_status: status,
-          order_value: matchingDeal?.total_amount
-            ? `₹${Number(matchingDeal.total_amount).toLocaleString('en-IN')}`
-            : '-',
-          reason_loss_pending:
-            matchingDeal?.lost_reason ||
-            (status === 'Pending' ? 'Under Negotiation' : '-'),
-        };
-      });
+      const kra4Rows = (safeDeals.length > 0 ? safeDeals : safeInquiries).map(
+        (item: any, index: number) => {
+          const isDeal = !!item.stage;
+          const dealItemsStr =
+            item.deal_items
+              ?.map((i: any) => i.sku_text)
+              .filter(Boolean)
+              .join(', ') ||
+            item.inquiry_type ||
+            item.raw_text?.substring(0, 40) ||
+            'Steel Requirement';
+          const status = isDeal
+            ? item.stage === 'won'
+              ? 'Won 🎉'
+              : item.stage === 'lost'
+                ? 'Lost ❌'
+                : 'Pending ⏳'
+            : 'Pending ⏳';
+
+          return {
+            sr_no: index + 1,
+            enquiry_date: new Date(item.created_at).toLocaleDateString('en-IN'),
+            company_name:
+              item.customer_name || item.sender_name || 'Pipeline Client',
+            product_enquired: dealItemsStr,
+            order_status: status,
+            order_value: item.total_amount
+              ? `₹${Number(item.total_amount).toLocaleString('en-IN')}`
+              : '-',
+            reason_loss_pending:
+              item.lost_reason ||
+              (item.stage === 'won'
+                ? 'Order Confirmed 🎉'
+                : 'Under Negotiation ⏳'),
+          };
+        },
+      );
 
       // KRA 5 Sheet: Payment Collection & Outstanding Management
-      // Mapped strictly from payment_tracking table records (logged explicitly by salesperson)
-      const kra5Rows = safePayments.map((p, index) => ({
-        sr_no: index + 1,
-        customer_name: p.customer_name || 'Customer',
-        invoice_amount: p.invoice_amount
-          ? `₹${Number(p.invoice_amount).toLocaleString('en-IN')}`
-          : '-',
-        credit_period_days: p.credit_period_days || 30,
-        payment_due_date: p.due_date
+      const kra5Rows = safePayments.map((p, index) => {
+        let dueDateStr = p.due_date
           ? new Date(p.due_date).toLocaleDateString('en-IN')
-          : '-',
-        payment_received_date: p.paid_date
-          ? new Date(p.paid_date).toLocaleDateString('en-IN')
-          : '-',
-        outstanding:
-          p.outstanding !== null && p.outstanding !== undefined
-            ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
-            : '₹0',
-        remarks:
-          p.status === 'collected'
-            ? 'Fully Collected 🎉'
-            : p.status === 'pending'
-              ? 'Pending Collection ⏳'
-              : p.status === 'partial'
-                ? 'Partial Payment Pending 💳'
-                : p.status || 'In Progress',
-      }));
+          : '-';
+        if (dueDateStr === '-' && p.created_at) {
+          const calculatedDue = new Date(
+            new Date(p.created_at).getTime() +
+              (p.credit_period_days || 30) * 24 * 60 * 60 * 1000,
+          );
+          dueDateStr = calculatedDue.toLocaleDateString('en-IN');
+        }
+
+        return {
+          sr_no: index + 1,
+          customer_name: p.customer_name || 'Customer',
+          invoice_amount: p.invoice_amount
+            ? `₹${Number(p.invoice_amount).toLocaleString('en-IN')}`
+            : '-',
+          credit_period_days: p.credit_period_days || 30,
+          payment_due_date: dueDateStr,
+          payment_received_date: p.paid_date
+            ? new Date(p.paid_date).toLocaleDateString('en-IN')
+            : '-',
+          outstanding:
+            p.outstanding !== null && p.outstanding !== undefined
+              ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
+              : '₹0',
+          remarks:
+            p.status === 'collected'
+              ? 'Fully Collected 🎉'
+              : p.status === 'pending'
+                ? 'Pending Collection ⏳'
+                : p.status === 'partial'
+                  ? 'Partial Payment Pending 💳'
+                  : p.status || 'In Progress',
+        };
+      });
 
       // KRA 6 Sheet: CRM Compliance
       const kra6Rows = safeKraLogs.map((l, index) => ({
