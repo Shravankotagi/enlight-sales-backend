@@ -90,7 +90,7 @@ function getDeterministicIntentHint(text) {
 
   const anchors = [];
 
-  if (/\b(paid|payment|advance|received|collected|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki)\b/i.test(lower)) {
+  if (/\b(payment|advance|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki|paid|amount received|payment collected)\b/i.test(lower)) {
     anchors.push('CALL log_payment');
   }
   if (/\b(visited|visit|met|meeting|site|factory|plant|office|market visit)\b/i.test(lower)) {

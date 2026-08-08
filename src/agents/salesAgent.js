@@ -278,13 +278,10 @@ async function processSalesMessage(text, senderPhone) {
     const dbStage = stageMap[targetStage] || 'new_inquiry';
 
     if (!officialCustomerName) {
-      // Auto-create customer in recurring_customers if not registered
-      await supabase.from('recurring_customers').insert({
-        customer_name: customerName,
-        assigned_salesperson_phone: senderPhone,
+      // Auto-create customer in recurring_customers via ensureCustomerRecord (prevents duplicates)
+      const { ensureCustomerRecord } = require('../supabase');
+      await ensureCustomerRecord(customerName, senderPhone, {
         customer_phone: data.customer_phone || null,
-        is_active: true,
-        avg_order_frequency_days: 30,
       });
       console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
     }

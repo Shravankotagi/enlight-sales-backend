@@ -81,34 +81,17 @@ async function autoOnboardProspect(customerName, senderPhone, extractedData) {
       .limit(1);
 
     if (existing && existing.length > 0) {
-      // Already exists — update with any new info from this visit
-      const updateData = { updated_at: new Date().toISOString() };
-      if (extractedData.city)       updateData.customer_address  = extractedData.city;
-      if (extractedData.contact_no) updateData.customer_phone    = extractedData.contact_no;
-      if (extractedData.person_met) updateData.contact_person    = extractedData.person_met;
-
-      await supabase.from('recurring_customers').update(updateData).eq('id', existing[0].id);
-      return existing[0].customer_name;
-    }
-
-    // New prospect — create record with all available info
-    await supabase.from('recurring_customers').insert({
-      customer_name:              customerName,
-      assigned_salesperson_phone: senderPhone,
-      customer_address:           extractedData.city        || null,
-      customer_phone:             extractedData.contact_no  || null,
-      contact_person:             extractedData.person_met  || null,
-      notes:                      extractedData.product_interests
-                                    ? `Interested in: ${extractedData.product_interests}`
-                                    : null,
-      is_active:                  true,
-      avg_order_frequency_days:   30,
+    // New prospect — create record via ensureCustomerRecord (prevents duplicates)
+    const { ensureCustomerRecord } = require('../supabase');
+    const rec = await ensureCustomerRecord(customerName, senderPhone, {
+      city: extractedData.city,
+      customer_phone: extractedData.contact_no,
+      contact_person: extractedData.person_met,
     });
-
-    console.log(`[VisitAgent] Auto-onboarded new prospect: ${customerName}`);
-    return customerName;
+    console.log(`[VisitAgent] Auto-created new prospect: ${customerName}`);
+    return rec ? rec.customer_name : customerName;
   } catch (err) {
-    console.error('autoOnboardProspect error:', err.message);
+    console.error('[VisitAgent] autoOnboardProspect error:', err.message);
     return customerName;
   }
 }

@@ -237,17 +237,13 @@ async function processCustomerMessage(text, senderPhone) {
           `\n_Profile updated — KRA 2 not re-counted to avoid duplicates._` +
           promptSuffix;
       } else {
-        // Genuinely brand new customer — safe to insert
-        await supabase.from('recurring_customers').insert({
-          customer_name:              finalCustomerName,
-          customer_phone:             data.phone || null,
-          customer_gst:               data.gst   || null,
-          customer_address:           data.city  || null,
-          contact_person:             data.contact_person || null,
-          notes:                      notesText,
-          assigned_salesperson_phone: senderPhone,
-          is_active:                  true,
-          avg_order_frequency_days:   30,
+        // Genuinely brand new customer — use ensureCustomerRecord to prevent race condition duplicates
+        const { ensureCustomerRecord } = require('../supabase');
+        await ensureCustomerRecord(customerName, senderPhone, {
+          customer_phone: data.phone || null,
+          customer_gst: data.gst || null,
+          city: data.city || null,
+          contact_person: data.contact_person || null,
         });
       }
     }

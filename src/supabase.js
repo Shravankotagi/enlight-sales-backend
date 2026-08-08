@@ -182,29 +182,71 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
   }
 }
 
+async function ensureCustomerRecord(customerName, senderPhone, extraData = {}) {
+  if (!customerName || !senderPhone) return null;
+  const cleanName = customerName.trim();
+
+  // 1. Check exact/case-insensitive match for this salesperson
+  const { data: existing } = await supabase
+    .from('recurring_customers')
+    .select('*')
+    .ilike('customer_name', cleanName)
+    .eq('assigned_salesperson_phone', senderPhone)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    const rec = existing[0];
+    const updatePayload = {};
+    if (extraData.customer_phone && !rec.customer_phone) updatePayload.customer_phone = extraData.customer_phone;
+    if (extraData.customer_gst && !rec.customer_gst) updatePayload.customer_gst = extraData.customer_gst;
+    if (extraData.city && !rec.customer_address) updatePayload.customer_address = extraData.city;
+    if (extraData.contact_person && !rec.contact_person) updatePayload.contact_person = extraData.contact_person;
+
+    if (Object.keys(updatePayload).length > 0) {
+      await supabase
+        .from('recurring_customers')
+        .update({ ...updatePayload, updated_at: new Date().toISOString() })
+        .eq('id', rec.id);
+    }
+    return rec;
+  }
+
+  // 2. Insert new record with fallback for race conditions
+  try {
+    const { data: newCustomer } = await supabase
+      .from('recurring_customers')
+      .insert({
+        customer_name: cleanName,
+        assigned_salesperson_phone: senderPhone,
+        customer_phone: extraData.customer_phone || null,
+        customer_gst: extraData.customer_gst || null,
+        customer_address: extraData.city || null,
+        contact_person: extraData.contact_person || null,
+        is_active: true,
+        avg_order_frequency_days: 30,
+      })
+      .select()
+      .single();
+    return newCustomer;
+  } catch (err) {
+    const { data: fallback } = await supabase
+      .from('recurring_customers')
+      .select('*')
+      .ilike('customer_name', cleanName)
+      .limit(1);
+    return fallback ? fallback[0] : null;
+  }
+}
+
 async function checkAndLogNewCustomer(deal, senderPhone) {
   try {
     if (deal && deal.customer_name && senderPhone) {
       const customerName = deal.customer_name.trim();
 
-      // Always ensure customer exists in recurring_customers table
-      const { data: existing } = await supabase
-        .from('recurring_customers')
-        .select('id')
-        .ilike('customer_name', `%${customerName}%`)
-        .limit(1);
-
-      if (!existing || existing.length === 0) {
-        await supabase.from('recurring_customers').insert({
-          customer_name: customerName,
-          customer_phone: deal.customer_phone || null,
-          customer_address: deal.delivery_location || null,
-          assigned_salesperson_phone: senderPhone,
-          is_active: true,
-          avg_order_frequency_days: 30,
-        });
-        console.log('Auto-created customer in recurring_customers:', customerName);
-      }
+      await ensureCustomerRecord(customerName, senderPhone, {
+        customer_phone: deal.customer_phone || null,
+        city: deal.delivery_location || null,
+      });
 
       const { isNewCustomer, logNewCustomer } = require('./kra2');
       if (deal.inquiry_type === 'purchase_order' || deal.stage === 'won') {
@@ -417,6 +459,7 @@ module.exports = {
   getInquiries, 
   saveDeal, 
   getEmployeeByPhone, 
+  ensureCustomerRecord,
   checkAndLogNewCustomer,
   fuzzyMatchCustomer,
   verifyAndGetCustomerName,

@@ -243,19 +243,7 @@ router.post('/', async (req, res) => {
           return;
         }
 
-        // Save raw inquiry data to Supabase for all incoming messages
-        const savedInquiry = await saveInquiry({
-          source_channel: "whatsapp",
-          raw_text,
-          media_urls,
-          voice_url,
-          sender_phone: senderPhone,
-          sender_name: senderName,
-          message_id: messageId,
-          employee_id: employeeId,
-        });
-
-        // ── AGENTIC ORCHESTRATOR (LangGraph + Gemini 2.5 Flash) ──────────────
+        // ── AGENTIC ORCHESTRATOR (LangGraph + Groq Llama 3.3 70B) ──────────────
         // Replaces all manual intent classification and if/else routing.
         // The orchestrator understands any message (English/Hindi/Hinglish),
         // calls the right tool(s), and writes an intelligent natural response.
