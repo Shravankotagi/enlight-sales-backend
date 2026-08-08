@@ -24,7 +24,7 @@
 
 const { StateGraph, START, END, Annotation, MessagesAnnotation } = require('@langchain/langgraph');
 const { ToolNode }       = require('@langchain/langgraph/prebuilt');
-const { HumanMessage, SystemMessage, AIMessage } = require('@langchain/core/messages');
+const { HumanMessage, SystemMessage, AIMessage, ToolMessage } = require('@langchain/core/messages');
 const { createTools }    = require('./tools');
 const { invokeWithFallback } = require('./modelRouter');
 
@@ -269,12 +269,50 @@ async function runOrchestrator(text, senderPhone, options = {}) {
 
     // Create pre-bound tools with senderPhone locked in
     currentTools = createTools(senderPhone);
-    const toolNode = new ToolNode(currentTools);
+
+    // Custom tool execution node that synthesizes combined tool responses directly
+    const customToolNode = async (state) => {
+      const { messages } = state;
+      const lastAIMsg = [...messages].reverse().find(m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage');
+
+      if (!lastAIMsg || !lastAIMsg.tool_calls || lastAIMsg.tool_calls.length === 0) {
+        return { messages: [] };
+      }
+
+      const toolResults = [];
+      const validOutputs = [];
+
+      for (const call of lastAIMsg.tool_calls) {
+        const toolObj = currentTools.find(t => t.name === call.name);
+        if (toolObj) {
+          try {
+            const res = await toolObj.invoke(call.args);
+            const resStr = typeof res === 'string' ? res : JSON.stringify(res);
+            toolResults.push(new ToolMessage({ content: resStr, tool_call_id: call.id }));
+            if (resStr && !resStr.startsWith('Error') && !resStr.startsWith('⚠️')) {
+              validOutputs.push(resStr);
+            }
+          } catch (err) {
+            console.error(`[Orchestrator] Tool ${call.name} execution error:`, err.message);
+            toolResults.push(new ToolMessage({ content: `Error: ${err.message}`, tool_call_id: call.id }));
+          }
+        }
+      }
+
+      if (validOutputs.length > 0) {
+        const finalContent = validOutputs.join('\n\n---\n\n');
+        return {
+          messages: [...toolResults, new AIMessage(finalContent)],
+        };
+      }
+
+      return { messages: toolResults };
+    };
 
     // Build per-request graph
     const graph = new StateGraph(OrchestratorState)
       .addNode('agent', agentNode)
-      .addNode('tools', toolNode)
+      .addNode('tools', customToolNode)
       .addEdge(START, 'agent')
       .addConditionalEdges('agent', shouldContinue)
       .addEdge('tools', 'agent')
