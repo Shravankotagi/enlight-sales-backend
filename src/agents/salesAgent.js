@@ -140,6 +140,75 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
 }
 
 /**
+ * Looks up the latest rate sheet price per MT for a given product text or SKU.
+ */
+async function lookupRateSheetPrice(productText) {
+  try {
+    if (!productText) return null;
+
+    const { data: latestSheet } = await supabase
+      .from('rate_sheets')
+      .select('id')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!latestSheet) return null;
+
+    const { data: items } = await supabase
+      .from('rate_sheet_items')
+      .select('sku_text, category, price_per_mt')
+      .eq('rate_sheet_id', latestSheet.id);
+
+    if (!items || items.length === 0) return null;
+
+    const textLower = productText.toLowerCase();
+
+    // 1. Exact/substring match on sku_text (e.g. "HR Coil 8mm")
+    let matched = items.find(
+      (i) =>
+        i.sku_text &&
+        (textLower.includes(i.sku_text.toLowerCase()) ||
+          i.sku_text.toLowerCase().includes(textLower)),
+    );
+
+    // 2. Substring match on category (e.g. "HR Coil", "MS Sheet", "TMT")
+    if (!matched) {
+      matched = items.find(
+        (i) =>
+          i.category &&
+          (textLower.includes(i.category.toLowerCase()) ||
+            i.category.toLowerCase().includes(textLower)),
+      );
+    }
+
+    // 3. Word token match
+    if (!matched) {
+      const words = textLower.split(/\s+/).filter((w) => w.length > 2);
+      matched = items.find((i) =>
+        words.some(
+          (w) =>
+            (i.sku_text && i.sku_text.toLowerCase().includes(w)) ||
+            (i.category && i.category.toLowerCase().includes(w)),
+        ),
+      );
+    }
+
+    if (matched && Number(matched.price_per_mt) > 0) {
+      return {
+        price_per_mt: Number(matched.price_per_mt),
+        matched_sku: matched.sku_text || matched.category,
+      };
+    }
+    return null;
+  } catch (err) {
+    console.error('[SalesAgent] Rate sheet lookup error:', err.message);
+    return null;
+  }
+}
+
+/**
  * Main text message handler.
  */
 async function processSalesMessage(text, senderPhone) {
@@ -150,7 +219,11 @@ async function processSalesMessage(text, senderPhone) {
       new SystemMessage(SALES_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -167,7 +240,10 @@ async function processSalesMessage(text, senderPhone) {
 
     // Verify and get official customer name from salesperson's registered customers
     const { verifyAndGetCustomerName } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    const officialCustomerName = await verifyAndGetCustomerName(
+      customerName,
+      senderPhone,
+    );
 
     const finalCustomerName = officialCustomerName || customerName;
 
@@ -177,27 +253,46 @@ async function processSalesMessage(text, senderPhone) {
       .select('customer_phone')
       .ilike('customer_name', `%${finalCustomerName}%`)
       .limit(1);
-    const actualCustomerPhone = custRecord && custRecord.length > 0 ? custRecord[0].customer_phone : (data.customer_phone || null);
+    const actualCustomerPhone =
+      custRecord && custRecord.length > 0
+        ? custRecord[0].customer_phone
+        : data.customer_phone || null;
 
-    const targetStage = data.target_stage || 'new_inquiry';
+    let targetStage = data.target_stage || 'new_inquiry';
+
+    // Auto-lookup rate sheet price if rate_per_mt is missing
+    let autoRateInfo = null;
+    if (!data.rate_per_mt && (data.product_requirement || text)) {
+      autoRateInfo = await lookupRateSheetPrice(
+        data.product_requirement || text,
+      );
+      if (autoRateInfo) {
+        data.rate_per_mt = autoRateInfo.price_per_mt;
+        // If price is auto-applied from rate sheet, promote stage to quoted if it was qualified/new_inquiry
+        if (targetStage === 'new_inquiry' || targetStage === 'qualified') {
+          targetStage = 'quoted';
+        }
+      }
+    }
+
     const stageMap = {
       new_inquiry: 'new_inquiry',
-      qualified:   'qualified',
-      quoted:      'quoted',
+      qualified: 'qualified',
+      quoted: 'quoted',
       negotiation: 'negotiation',
-      won:         'won',
-      lost:        'lost',
+      won: 'won',
+      lost: 'lost',
     };
     const dbStage = stageMap[targetStage] || 'new_inquiry';
 
     if (!officialCustomerName) {
       // Auto-create customer in recurring_customers if not registered
       await supabase.from('recurring_customers').insert({
-        customer_name:              customerName,
+        customer_name: customerName,
         assigned_salesperson_phone: senderPhone,
-        customer_phone:             data.customer_phone || null,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
+        customer_phone: data.customer_phone || null,
+        is_active: true,
+        avg_order_frequency_days: 30,
       });
       console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
     }
@@ -208,12 +303,19 @@ async function processSalesMessage(text, senderPhone) {
     let dealId = existingDeal ? existingDeal.id : null;
     let dealAmount = 0;
 
-    // Resolve deal amount (priority: AI extracted > DB items > existing total)
+    // Resolve deal amount (priority: AI extracted total > rate × qty > DB items > existing total)
     if (data.total_amount && Number(data.total_amount) > 0) {
       dealAmount = Number(data.total_amount);
+    } else if (
+      data.rate_per_mt &&
+      data.quantity_mt &&
+      Number(data.quantity_mt) > 0
+    ) {
+      dealAmount = Number(data.quantity_mt) * Number(data.rate_per_mt);
     } else if (dealId) {
       const itemsTotal = await getDealAmountFromItems(dealId);
-      dealAmount = itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
+      dealAmount =
+        itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
     }
 
     // Edge Case 7: If rate × qty was given but not total
@@ -226,7 +328,10 @@ async function processSalesMessage(text, senderPhone) {
           .from('deal_items')
           .select('quantity')
           .eq('deal_id', dealId);
-        const totalQty = (items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+        const totalQty = (items || []).reduce(
+          (s, i) => s + Number(i.quantity || 0),
+          0,
+        );
         if (totalQty > 0) dealAmount = totalQty * Number(data.rate_per_mt);
       }
     }
@@ -450,12 +555,23 @@ async function processSalesMessage(text, senderPhone) {
         quoted:      'QUOTED 📄',
         qualified:   'QUALIFIED ✅',
       };
-      replyMsg = `💼 *Sales Inquiry & Pipeline Logged!*\n\n` +
+      replyMsg =
+        `💼 *Sales Inquiry & Pipeline Logged!* 🏗️\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n` +
-        (data.product_requirement ? `Requirement: *${data.product_requirement}*\n` : '') +
+        (data.product_requirement
+          ? `Requirement: *${data.product_requirement}*\n`
+          : '') +
         (data.quantity_mt ? `Quantity: *${data.quantity_mt} MT*\n` : '') +
-        (data.delivery_location ? `Delivery Location: *${data.delivery_location}*\n` : '') +
+        (data.rate_per_mt
+          ? `Rate Sheet Price: *₹${Number(data.rate_per_mt).toLocaleString('en-IN')} / MT* ${autoRateInfo ? '(Auto-Applied from Official Rate Sheet 📈)' : ''}\n`
+          : '') +
+        (dealAmount > 0
+          ? `Calculated Deal Total: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n`
+          : '') +
+        (data.delivery_location
+          ? `Delivery Location: *${data.delivery_location}*\n`
+          : '') +
         `PO Date: *${poDate}*\n` +
         (poNumber ? `PO Number: *${poNumber}*\n` : '') +
         `\nSynced live to Sales Pipeline & KRA 1 Dashboard! ✅`;
