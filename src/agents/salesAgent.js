@@ -595,7 +595,7 @@ async function processSalesMessage(text, senderPhone) {
  */
 async function processSalesImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
     const imagePart = {
       inlineData: {
         data: imageBuffer.toString('base64'),

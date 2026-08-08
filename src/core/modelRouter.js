@@ -70,7 +70,7 @@ function getNextGroqKey() {
  * Returns a ChatGoogleGenerativeAI instance using the next available Gemini key.
  * Optionally binds tools for function calling.
  */
-function getGeminiModel(tools = null, modelName = 'gemini-2.5-flash') {
+function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
   const key = getNextGeminiKey();
   if (!key) return null;
 
@@ -128,7 +128,7 @@ function getModel(tools = null) {
  */
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
-  const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  const geminiModels = ['gemini-3.1-flash-lite', 'gemini-2.0-flash'];
 
   // 1. Try Gemini model variants
   for (const mName of geminiModels) {

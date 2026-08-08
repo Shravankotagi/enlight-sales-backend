@@ -133,7 +133,7 @@ function postProcessExtraction(parsed) {
 
 async function extractFromText(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
     const rateSheetInfo = await getLatestActiveRatesText();
     const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
     const result = await model.generateContent(prompt);
@@ -163,7 +163,7 @@ async function extractFromText(text) {
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
     
     const imagePart = {
       inlineData: {
