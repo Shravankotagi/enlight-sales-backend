@@ -408,14 +408,6 @@ Return ONLY JSON.`;
     const result = await model.invoke([message]);
     const rawText = typeof result.content === 'string' ? result.content : '';
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const extracted = JSON.parse(cleaned);
-  "confidence": <float 0.0 to 1.0>
-}
-Return ONLY JSON. No prose. No markdown.`;
-
-    const result = await model.generateContent([prompt, imagePart]);
-    const rawText = result.response.text().trim();
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
     const amountPaid = Math.max(0, Number(data.amount_paid || 0));
