@@ -227,7 +227,11 @@ export class KraService {
           label: 'Sales Achievement',
           deals_count: dealsCreatedThisMonth.length,
           won_count: wonDeals.length,
-          total_value: totalValue,
+          total_value: dealsCreatedThisMonth.reduce(
+            (sum, d) => sum + (Number(d.total_amount) || 0),
+            0,
+          ),
+          won_value: totalValue,
           status: dealsCreatedThisMonth.length > 0 ? 'on_track' : 'at_risk',
         },
         kra2: {
