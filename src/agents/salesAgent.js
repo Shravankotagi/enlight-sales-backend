@@ -261,6 +261,13 @@ async function processSalesMessage(text, senderPhone) {
         if (targetStage === 'new_inquiry' || targetStage === 'qualified') {
           targetStage = 'quoted';
         }
+      } else if (data.product_requirement && (data.quantity_mt || data.action === 'purchase_order')) {
+        // Unlisted material check: ask salesperson for rate confirmation
+        const { saveActiveSession } = require('../supabase');
+        await saveActiveSession(senderPhone, finalCustomerName, `pending_custom_rate|${finalCustomerName}|${data.product_requirement}`);
+        return `⚠️ *Product Price Confirmation Required*\n\n` +
+          `The material *"${data.product_requirement}"* is not listed in our active rate sheet.\n\n` +
+          `Please confirm the per MT rate for *${data.product_requirement}* (e.g. reply _"${data.product_requirement} rate is 54000"_) so I can calculate the deal total and update KRA 1 & Sales Pipeline! 📈`;
       }
     }
 
