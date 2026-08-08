@@ -31,10 +31,18 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+let cachedZohoToken = null;
+let tokenExpiresAt = 0;
+
 /**
  * Get a fresh Zoho OAuth access token using the stored refresh token.
+ * Caches token for 50 minutes to avoid hitting Zoho OAuth rate limits.
  */
 async function getZohoAccessToken() {
+  if (cachedZohoToken && Date.now() < tokenExpiresAt) {
+    return cachedZohoToken;
+  }
+
   const params = new URLSearchParams({
     refresh_token: process.env.ZOHO_REFRESH_TOKEN,
     client_id:     process.env.ZOHO_CLIENT_ID,
@@ -45,7 +53,10 @@ async function getZohoAccessToken() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
   if (!res.data.access_token) throw new Error('No access_token in Zoho response');
-  return res.data.access_token;
+
+  cachedZohoToken = res.data.access_token;
+  tokenExpiresAt = Date.now() + 50 * 60 * 1000;
+  return cachedZohoToken;
 }
 
 function zohoHeaders(token) {
@@ -221,8 +232,13 @@ async function upsertBiginDeal({ customerName, stage, amount, poNumber, salesper
     await axios.put(`${ZOHO_BIGIN_BASE}/Deals/${existing.id}`, payload, { headers: zohoHeaders(token) });
     return existing.id;
   } else {
-    const res = await axios.post(`${ZOHO_BIGIN_BASE}/Deals`, payload, { headers: zohoHeaders(token) });
-    return res.data?.data?.[0]?.details?.id || null;
+    try {
+      const res = await axios.post(`${ZOHO_BIGIN_BASE}/Deals`, payload, { headers: zohoHeaders(token) });
+      return res.data?.data?.[0]?.details?.id || null;
+    } catch (err) {
+      console.warn(`[BiginSync] Deal creation notice: ${err.response?.data?.data?.[0]?.message || err.message}`);
+      return null;
+    }
   }
 }
 
