@@ -20,7 +20,6 @@
  * 12. Hinglish/casual messages - AI parses meaning, not keywords
  */
 
-const { ChatGroq } = require('@langchain/groq');
 const { HumanMessage } = require('@langchain/core/messages');
 const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
@@ -383,8 +382,9 @@ async function processPaymentMessage(text, senderPhone) {
  */
 async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-    const model = new ChatGroq({ model: 'llama-3.2-11b-vision-instruct', apiKey, temperature: 0.1 });
+    const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2;
+    const model = new ChatGoogleGenerativeAI({ model: 'gemini-2.5-flash', apiKey, temperature: 0.1 });
     const base64Img = imageBuffer.toString('base64');
     const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
 
@@ -406,10 +406,10 @@ Return ONLY JSON.`;
     });
 
     const result = await model.invoke([message]);
-    const rawText = typeof result.content === 'string' ? result.content : '';
+    const rawText = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
-    if (!data) throw new Error('Could not parse payment receipt JSON from Groq vision response');
+    if (!data) throw new Error('Could not parse payment receipt JSON from Gemini vision response');
 
     const amountPaid = Math.max(0, Number(data.amount_paid || 0));
     if (amountPaid <= 0) {

@@ -22,7 +22,6 @@
  * 12. Hinglish/casual message → AI interprets meaning, not keywords
  */
 
-const { ChatGroq } = require('@langchain/groq');
 const { HumanMessage } = require('@langchain/core/messages');
 const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
@@ -584,8 +583,9 @@ async function processSalesMessage(text, senderPhone) {
  */
 async function processSalesImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-    const model = new ChatGroq({ model: 'llama-3.2-11b-vision-instruct', apiKey, temperature: 0.1 });
+    const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2;
+    const model = new ChatGoogleGenerativeAI({ model: 'gemini-2.5-flash', apiKey, temperature: 0.1 });
     const base64Img = imageBuffer.toString('base64');
     const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
 
@@ -609,7 +609,7 @@ Return ONLY JSON.`;
     });
 
     const result = await model.invoke([message]);
-    const rawText = typeof result.content === 'string' ? result.content : '';
+    const rawText = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 

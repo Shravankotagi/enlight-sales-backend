@@ -243,7 +243,7 @@ router.post('/', async (req, res) => {
           return;
         }
 
-        // ── AGENTIC ORCHESTRATOR (LangGraph + Groq Llama 3.3 70B) ──────────────
+        // ── AGENTIC ORCHESTRATOR (LangGraph + Google Gemini 3.1 Flash Lite) ──────────────
         // Replaces all manual intent classification and if/else routing.
         // The orchestrator understands any message (English/Hindi/Hinglish),
         // calls the right tool(s), and writes an intelligent natural response.

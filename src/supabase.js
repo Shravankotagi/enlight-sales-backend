@@ -273,10 +273,8 @@ async function fuzzyMatchCustomer(text, customerList) {
   if (!customerList || customerList.length === 0) return null;
   
   try {
-    const { ChatGroq } = require('@langchain/groq');
+    const { invokeWithFallback } = require('./core/modelRouter');
     const { HumanMessage } = require('@langchain/core/messages');
-    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-    const model = new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
 
     const prompt = `
 Given a user message and a list of customer names, identify which customer from the list the message is referring to.
@@ -293,8 +291,8 @@ Rules:
 - Return ONLY the number (e.g. "1" or "0"), do not include any other text, markdown, or explanation.
 `;
 
-    const response = await model.invoke([new HumanMessage(prompt)]);
-    const textRes = (typeof response.content === 'string' ? response.content : '').trim();
+    const response = await invokeWithFallback([new HumanMessage(prompt)]);
+    const textRes = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
     const matchIndex = parseInt(textRes);
     
     if (!isNaN(matchIndex) && matchIndex > 0 && matchIndex <= customerList.length) {

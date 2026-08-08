@@ -18,14 +18,7 @@
  */
 
 const axios = require('axios');
-const { ChatGroq } = require('@langchain/groq');
-const { HumanMessage } = require('@langchain/core/messages');
 const { createClient } = require('@supabase/supabase-js');
-
-function getGroqClient() {
-  const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-  return new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
-}
 
 const ZOHO_TOKEN_URL   = 'https://accounts.zoho.in/oauth/v2/token';
 const ZOHO_BIGIN_BASE  = 'https://www.zohoapis.in/bigin/v1';
@@ -97,7 +90,8 @@ async function getCustomerDetails(customerName) {
  */
 async function generateSummary(activityType, data) {
   try {
-    const model = getGroqClient();
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage } = require('@langchain/core/messages');
     const prompts = {
       deal:         `Write a concise 2-3 line professional CRM note for a steel B2B deal update. Data: ${JSON.stringify(data)}. Include: what changed, amount if any, key context. No bullet points.`,
       visit:        `Write a concise 2-3 line professional CRM field visit note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: who was met, what was discussed, outcome. No bullet points.`,
@@ -106,8 +100,8 @@ async function generateSummary(activityType, data) {
       new_customer: `Write a concise 2-3 line professional CRM new customer onboarding note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: who they are, city, what was discussed. No bullet points.`,
     };
     const prompt = prompts[activityType] || `Summarize this CRM activity in 2-3 lines: ${JSON.stringify(data)}`;
-    const result = await model.invoke([new HumanMessage(prompt)]);
-    return (typeof result.content === 'string' ? result.content : '').trim();
+    const result = await invokeWithFallback([new HumanMessage(prompt)]);
+    return (typeof result.content === 'string' ? result.content : JSON.stringify(result.content)).trim();
   } catch (err) {
     console.error('Bigin summary generation error:', err.message);
     return `${activityType} update for ${data.customerName || 'customer'} logged on ${new Date().toLocaleDateString('en-IN')}`;

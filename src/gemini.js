@@ -1,8 +1,8 @@
 /**
- * gemini.js — Inquiry extraction & classification module using Groq (llama-3.3-70b-versatile)
+ * gemini.js — Inquiry extraction & classification module using Google Gemini (gemini-3.1-flash-lite)
  */
 
-const { ChatGroq } = require('@langchain/groq');
+const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { HumanMessage } = require('@langchain/core/messages');
 const { safeParseJSON } = require('./utils/jsonUtils');
 const { supabase } = require('./supabase');
@@ -84,7 +84,7 @@ async function getLatestActiveRatesText() {
       return `\nOFFICIAL ACTIVE RATE SHEET (Use these per-MT prices to calculate rate and total_amount when rate is not explicitly stated in the input):\n${formatted}\n`;
     }
   } catch (err) {
-    console.error('Error fetching rate sheet for Groq:', err.message);
+    console.error('Error fetching rate sheet for Gemini:', err.message);
   }
   return '';
 }
@@ -146,12 +146,12 @@ async function extractFromText(text) {
     const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
     const rawText = await callLightweightModel(prompt);
     const parsed = safeParseJSON(rawText, null);
-    if (!parsed) throw new Error('Could not parse JSON extraction from Groq response');
+    if (!parsed) throw new Error('Could not parse JSON extraction from Gemini response');
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Groq text extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log('Gemini text extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;
   } catch (error) {
-    console.error('Groq text extraction error:', error.message);
+    console.error('Gemini text extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
@@ -162,10 +162,9 @@ async function extractFromText(text) {
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const { ChatGroq } = require('@langchain/groq');
-    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-    const model = new ChatGroq({
-      model: 'llama-3.2-11b-vision-instruct',
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2;
+    const model = new ChatGoogleGenerativeAI({
+      model: 'gemini-2.5-flash',
       apiKey: apiKey,
       temperature: 0.1,
     });
@@ -180,15 +179,15 @@ async function extractFromImage(imageBuffer, mimeType) {
     });
     
     const response = await model.invoke([message]);
-    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
+    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
     
     const parsed = safeParseJSON(rawText, null);
-    if (!parsed) throw new Error('Could not parse image extraction from Groq vision response');
+    if (!parsed) throw new Error('Could not parse image extraction from Gemini vision response');
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Groq image extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log('Gemini image extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;
   } catch (error) {
-    console.error('Groq image extraction error:', error.message);
+    console.error('Gemini image extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',

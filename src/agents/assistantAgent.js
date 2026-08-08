@@ -1,12 +1,7 @@
-const { ChatGroq } = require('@langchain/groq');
-const { HumanMessage } = require('@langchain/core/messages');
+const { invokeWithFallback } = require('../core/modelRouter');
+const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
 const { getLatestActiveRatesText } = require('../gemini');
 const { getEmployeeByPhone } = require('../supabase');
-
-function getGroqClient() {
-  const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-  return new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
-}
 
 async function handleConversationalQuery(text, senderPhone) {
   try {

@@ -21,13 +21,11 @@ function isVisitLog(text) {
   return visitKeywords.some(k => lower.includes(k));
 }
 
-// Extract visit details from message using Groq
+// Extract visit details from message using Google Gemini
 async function extractVisitDetails(text, senderPhone) {
   try {
-    const { ChatGroq } = require('@langchain/groq');
+    const { invokeWithFallback } = require('./core/modelRouter');
     const { HumanMessage } = require('@langchain/core/messages');
-    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-    const model = new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
 
     const prompt = `
 Extract visit details from this salesperson message.
