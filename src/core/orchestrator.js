@@ -206,8 +206,12 @@ async function agentNode(state) {
     response = normalizeGroqToolCalls(response);
   } catch (err) {
     console.error('[Orchestrator] Model invocation failed:', err.message);
+    const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('rate_limit') || err.message.includes('TPM') || err.message.includes('TPD'));
+    const cleanReply = isRateLimit
+      ? `⏳ *Groq AI Rate Limit*\n\nGroq free-tier rate limit reached. Please try sending your message again in 10-15 seconds.\n\n_(Tip: Add an additional Groq API key in Railway settings under GROQ_API_KEY_1 to double your capacity!)_`
+      : `⚠️ I'm having trouble processing your request right now. Please try again in a moment.`;
     return {
-      messages: [new AIMessage(`⚠️ I'm having trouble connecting right now. Please try again in a moment. (${err.message})`)],
+      messages: [new AIMessage(cleanReply)],
     };
   }
 

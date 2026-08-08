@@ -9,11 +9,14 @@ const { ChatGroq } = require('@langchain/groq');
 
 // ── Key Pools ──────────────────────────────────────────────────────────────
 
+// Load all available Groq API keys dynamically
 const GROQ_KEYS = [
   process.env.GROQ_API_KEY,
   process.env.GROQ_API_KEY_1,
   process.env.GROQ_API_KEY_2,
   process.env.GROQ_API_KEY_3,
+  process.env.GROQ_API_KEY_4,
+  process.env.GROQ_API_KEY_5,
 ].filter(Boolean);
 
 // Track which keys are rate-limited / expired
@@ -29,7 +32,7 @@ function isKeyAvailable(key) {
   return false;
 }
 
-function markKeyRateLimited(key, cooldownMs = 60000) {
+function markKeyRateLimited(key, cooldownMs = 30000) {
   rateLimitedUntil[key] = Date.now() + cooldownMs;
   console.warn(`[ModelRouter] Key marked rate-limited for ${cooldownMs / 1000}s`);
 }
@@ -70,7 +73,7 @@ function getModel(tools = null) {
 }
 
 /**
- * Invoke a model with automatic failover across Groq models (70b -> 8b -> mixtral) & keys.
+ * Invoke a model with automatic failover across Groq models (70b -> 8b) & keys with smart rate-limit retry.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -79,27 +82,35 @@ function getModel(tools = null) {
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
 
+  const keysToUse = GROQ_KEYS.length > 0 ? GROQ_KEYS : [process.env.GROQ_API_KEY];
+
   for (const modelName of GROQ_MODELS) {
-    for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
-      const key = getNextGroqKey();
-      if (!key) break;
-      try {
-        const model = new ChatGroq({
-          model:       modelName,
-          apiKey:      key,
-          temperature: 0.1,
-          maxRetries:  0,
-        });
-        const boundModel = tools ? model.bindTools(tools) : model;
-        return await boundModel.invoke(messages);
-      } catch (err) {
-        lastError = err;
-        const msg = err.message || '';
-        if (msg.includes('rate_limit') || msg.includes('429')) {
-          console.warn(`[ModelRouter] Groq (${modelName}) rate limit (429), sleeping 2.5s before retry...`);
-          await new Promise((r) => setTimeout(r, 2500));
+    for (const key of keysToUse) {
+      if (!key) continue;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const model = new ChatGroq({
+            model:       modelName,
+            apiKey:      key,
+            temperature: 0.1,
+            maxRetries:  0,
+          });
+          const boundModel = tools ? model.bindTools(tools) : model;
+          return await boundModel.invoke(messages);
+        } catch (err) {
+          lastError = err;
+          const msg = err.message || '';
+          if (msg.includes('rate_limit') || msg.includes('429')) {
+            const match = msg.match(/Please try again in ([\d\.]+)s/i);
+            let waitSec = match ? parseFloat(match[1]) : 3.0;
+            if (waitSec > 6.0) waitSec = 4.0; // Don't block WhatsApp webhook beyond 5-6s
+
+            console.warn(`[ModelRouter] Groq (${modelName}) 429 rate limit hit (attempt ${attempt}/2). Sleeping ${waitSec.toFixed(1)}s before retry...`);
+            await new Promise((r) => setTimeout(r, Math.round(waitSec * 1000) + 500));
+            continue;
+          }
+          break; // Non-rate-limit error — try next key/model
         }
-        continue;
       }
     }
   }
