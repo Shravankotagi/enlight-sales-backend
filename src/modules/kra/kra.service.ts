@@ -63,10 +63,11 @@ export class KraService {
 
       if (salespersonPhone) {
         // filter queries by salesperson phone if relevant
-        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
-        inquiriesQuery = inquiriesQuery.eq(
-          'salesperson_phone',
-          salespersonPhone,
+        dealsQuery = dealsQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+        );
+        inquiriesQuery = inquiriesQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
         );
         kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
         visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
@@ -394,12 +395,14 @@ export class KraService {
       let inquiryQuery = supabase
         .from('inquiries')
         .select('id, sender_name, raw_text, created_at')
-        .eq('status', 'review')
+        .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
       if (!isAdmin) {
-        inquiryQuery = inquiryQuery.eq('salesperson_phone', salespersonPhone);
+        inquiryQuery = inquiryQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
+        );
       }
 
       const { data: reviewInquiries } = await inquiryQuery
@@ -435,7 +438,9 @@ export class KraService {
         .limit(10);
 
       if (!isAdmin) {
-        staleQuery = staleQuery.eq('salesperson_phone', salespersonPhone);
+        staleQuery = staleQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+        );
       }
 
       const { data: staleDeals } = await staleQuery;

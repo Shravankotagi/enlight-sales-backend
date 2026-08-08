@@ -335,10 +335,11 @@ export class ReportsService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
-        inquiriesQuery = inquiriesQuery.eq(
-          'salesperson_phone',
-          salespersonPhone,
+        dealsQuery = dealsQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+        );
+        inquiriesQuery = inquiriesQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
         );
       }
 
@@ -419,7 +420,9 @@ export class ReportsService {
         .lte('deals.created_at', end);
 
       if (salespersonPhone) {
-        itemsQuery = itemsQuery.eq('deals.salesperson_phone', salespersonPhone);
+        itemsQuery = itemsQuery.or(
+          `deals.salesperson_phone.eq.${salespersonPhone},deals.customer_phone.eq.${salespersonPhone}`,
+        );
       }
 
       const { data: items, error } = await itemsQuery;
