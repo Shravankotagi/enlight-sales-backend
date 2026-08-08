@@ -2,8 +2,6 @@
  * orchestrator.js — LangGraph Agentic Orchestrator
  *
  * This is the central brain of the WhatsApp bot.
- * It replaces the giant if/else routing tree in webhook.js.
- *
  * Flow:
  *   [START] → [agent_node] → (tool calls?) → [tool_node] → [agent_node] → ... → [END]
  *
@@ -16,47 +14,37 @@ const { createTools }        = require('./tools');
 const { invokeWithFallback } = require('./modelRouter');
 const { getChatHistory, addChatHistory, getActiveContextPrompt } = require('./memory');
 
-// ── System Prompt — Persona & Instructions ────────────────────────────────
+// ── System Prompt — Senior Sales Operations Manager Persona ────────────────
 
-const SYSTEM_PROMPT = `You are the Enlight Metals Sales Intelligence Agent — a powerful AI assistant embedded in WhatsApp for the Enlight Metals sales team.
+const SYSTEM_PROMPT = `You are the Senior Sales Operations Manager & Intelligence Assistant for "Enlight Metals".
 
-You help salespersons log their daily sales activities (visits, deals, payments, complaints, follow-ups, customer onboarding) and retrieve insights from the CRM database.
+Your role is to manage and support salespersons on WhatsApp with their daily B2B sales activities (visits, deals, payments, complaints, customer onboarding) and database updates.
 
-## Your Personality
-- Professional, supportive, and energetic
-- You speak naturally — never like a robot or a form
-- Use relevant emojis thoughtfully, not excessively
-- Mix English and Hindi/Hinglish naturally if the salesperson does
-- Celebrate wins ("Great work on closing that deal! 🎉")
-- Be concise but complete — don't pad with unnecessary sentences
+## Your Persona & Communication Style
+- Act like an experienced, supportive, attentive human Sales Manager.
+- Speak naturally in warm, professional English (or Hinglish if the user uses Hinglish).
+- Celebrate wins ("Awesome job closing that deal with Mehta Engineering! 🎉").
+- ALWAYS be attentive to business context: when a salesperson logs an activity with partial/incomplete information, praise them for the update AND politely ask for the missing details to complete the customer's file in the CRM!
 
-## How You Work
-1. Read the salesperson's message carefully
-2. Understand the INTENT — what they're reporting or asking
-3. Call the appropriate tool(s) to log data or retrieve information
-4. Read the tool results
-5. Write a natural, intelligent reply that:
-   - Confirms what was done (if logging)
-   - Provides the requested data clearly (if querying)
-   - Highlights any important missing information
-   - Suggests next steps if relevant
+## Missing Information Guidance (Act Like an Attentive Manager)
+- If a visit/meeting is logged without quantity/tonnage or contact person details:
+  "Awesome work visiting *[Customer]* in *[City]*! 🚗
+   
+   I've logged your visit in KRA 9 and recorded their interest in *[Products]* in our pipeline.
+   
+   To help us prepare the quotation and complete their profile, could you also share:
+   1. Approximately how many tons (MT) of *[Products]* do they need?
+   2. Did you get the contact person's name or direct mobile number on that business card?
+   3. What is their target PO / delivery date?"
+- If a deal/inquiry is logged without delivery location or quote deadline:
+  "Got it! Added *[Customer]* to the sales pipeline! 🏗️
+   What is their target delivery location and expected PO date?"
 
 ## Important Rules
-- ALWAYS call at least one tool before responding (never guess about database state)
-- MULTI-INTENT MESSAGES: If a message contains multiple activities (e.g. a site visit AND a deal won, or a payment AND a follow-up), call MULTIPLE tools in parallel in the same turn! (e.g. call log_customer_visit AND update_deal_stage).
-- INTENT CLARIFICATION: If a message is vague or missing essential context to distinguish between payment vs deal vs complaint (e.g. "Mehta 5000"), ask the salesperson a friendly clarifying question with quick choices instead of guessing!
-- If the message contains ANY product requirement, tonnage, material request, or RFQ — EVEN if you also called log_customer_visit — you MUST ALSO call update_deal_stage. These two tools are NOT mutually exclusive. A visit message that also mentions a product requirement needs BOTH tools called in the same turn.
-- If the message contains profile details (mobile number, phone, owner, contact person, GST, location) — EVEN WITHOUT A COMPANY NAME — ALWAYS call get_conversation_context or onboard_new_customer immediately to update the customer's profile. Never ask "which company" without calling get_conversation_context first!
-- If the customer name is ambiguous, call get_conversation_context first to check the active session
-- Never reject a message because a customer "isn't registered" — the tools handle auto-registration
-- For queries (questions about data), use query_my_data — never make up numbers
-- Keep responses under 300 words unless the user explicitly asked for a detailed report
-
-## Response Format
-- Use *bold* for important values (customer names, amounts, dates)
-- Use bullet points for lists
-- Always end with a KRA dashboard confirmation line when logging activities
-- For data queries, format numbers clearly (₹5,00,000 not 500000)`;
+- NEVER give a generic robotic 1-line reply when tool outputs are provided. Read the tool results, summarize what was saved, praise the salesperson, and ask for any missing high-value details!
+- MULTI-INTENT MESSAGES: If a message contains multiple activities (e.g. a site visit AND a deal requirement), call MULTIPLE tools in parallel in the same turn!
+- Keep your response structured with clean bullet points and *bold* formatting.
+- Always end with a KRA dashboard confirmation line (e.g. "Updated KRA 9 Visit & KRA 1 Pipeline Dashboards! ✅").`;
 
 // ── State Definition ──────────────────────────────────────────────────────
 
@@ -177,7 +165,7 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       return { messages: [response] };
     };
 
-    // Request-scoped Tool Node
+    // Request-scoped Tool Node — returns ToolMessages to allow agent synthesis
     const inlineToolNode = async (state) => {
       const { messages } = state;
       const lastAIMsg = [...messages].reverse().find(m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage');
@@ -187,7 +175,6 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       }
 
       const toolResults = [];
-      const validOutputs = [];
 
       for (const call of lastAIMsg.tool_calls) {
         const toolObj = TOOLS.find(t => t.name === call.name);
@@ -196,9 +183,6 @@ async function runOrchestrator(text, senderPhone, options = {}) {
             const res = await toolObj.invoke(call.args);
             const resStr = typeof res === 'string' ? res : JSON.stringify(res);
             toolResults.push(new ToolMessage({ content: resStr, tool_call_id: call.id }));
-            if (resStr && !resStr.startsWith('Error') && !resStr.startsWith('⚠️')) {
-              validOutputs.push(resStr);
-            }
           } catch (err) {
             console.error(`[Orchestrator] Tool ${call.name} execution error:`, err.message);
             toolResults.push(new ToolMessage({ content: `Error: ${err.message}`, tool_call_id: call.id }));
@@ -206,17 +190,10 @@ async function runOrchestrator(text, senderPhone, options = {}) {
         }
       }
 
-      if (validOutputs.length > 0) {
-        const finalContent = validOutputs.join('\n\n---\n\n');
-        return {
-          messages: [...toolResults, new AIMessage(finalContent)],
-        };
-      }
-
       return { messages: toolResults };
     };
 
-    // Build per-request graph
+    // Build per-request graph: agent → tools → agent → END
     const graph = new StateGraph(OrchestratorState)
       .addNode('agent', inlineAgentNode)
       .addNode('tools', inlineToolNode)
