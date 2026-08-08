@@ -106,6 +106,7 @@ async function ensureCustomerExists(customerName, senderPhone) {
     .from('recurring_customers')
     .select('id')
     .ilike('customer_name', `%${customerName}%`)
+    .eq('assigned_salesperson_phone', senderPhone)
     .limit(1);
 
   if (existing && existing.length > 0) {

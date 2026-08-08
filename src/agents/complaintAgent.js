@@ -59,12 +59,18 @@ Return ONLY the JSON object.
 /**
  * Find the most recent OPEN complaint for a customer.
  */
-async function getOpenComplaint(customerName) {
-  const { data } = await supabase
+async function getOpenComplaint(customerName, senderPhone) {
+  let query = supabase
     .from('complaints')
     .select('*')
     .ilike('customer_name', `%${customerName}%`)
-    .eq('status', 'open')
+    .eq('status', 'open');
+
+  if (senderPhone) {
+    query = query.eq('reported_by', senderPhone);
+  }
+
+  const { data } = await query
     .order('reported_at', { ascending: false })
     .limit(1);
 
@@ -135,7 +141,7 @@ async function processComplaintMessage(text, senderPhone) {
 
     // ── RESOLVE FLOW ──────────────────────────────────────────────────
     if (data.action === 'resolve') {
-      const openComplaint = await getOpenComplaint(finalCustomerName);
+      const openComplaint = await getOpenComplaint(finalCustomerName, senderPhone);
 
       if (openComplaint) {
         // Edge Case 4: Check if already resolved

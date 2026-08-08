@@ -97,26 +97,17 @@ async function getCustomerDetails(customerName) {
 }
 
 /**
- * Use Gemini to generate a professional 2-3 line CRM summary.
+ * Synchronously format a professional CRM summary (zero-latency template).
  */
-async function generateSummary(activityType, data) {
-  try {
-    const { invokeWithFallback } = require('../core/modelRouter');
-    const { HumanMessage } = require('@langchain/core/messages');
-    const prompts = {
-      deal:         `Write a concise 2-3 line professional CRM note for a steel B2B deal update. Data: ${JSON.stringify(data)}. Include: what changed, amount if any, key context. No bullet points.`,
-      visit:        `Write a concise 2-3 line professional CRM field visit note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: who was met, what was discussed, outcome. No bullet points.`,
-      payment:      `Write a concise 2-3 line professional CRM payment update note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: amount received, outstanding if any, payment status. No bullet points.`,
-      complaint:    `Write a concise 2-3 line professional CRM complaint note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: issue type, severity, current status. No bullet points.`,
-      new_customer: `Write a concise 2-3 line professional CRM new customer onboarding note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: who they are, city, what was discussed. No bullet points.`,
-    };
-    const prompt = prompts[activityType] || `Summarize this CRM activity in 2-3 lines: ${JSON.stringify(data)}`;
-    const result = await invokeWithFallback([new HumanMessage(prompt)]);
-    return (typeof result.content === 'string' ? result.content : JSON.stringify(result.content)).trim();
-  } catch (err) {
-    console.error('Bigin summary generation error:', err.message);
-    return `${activityType} update for ${data.customerName || 'customer'} logged on ${new Date().toLocaleDateString('en-IN')}`;
-  }
+function generateSummary(activityType, data) {
+  const templates = {
+    deal:         `Deal ${data.stage || 'updated'} for ${data.customerName}${data.amount ? ` — ₹${Number(data.amount).toLocaleString('en-IN')}` : ''}.`,
+    visit:        `Field visit to ${data.customerName}. ${data.personMet ? `Met ${data.personMet}.` : ''} ${data.remarks || ''}`.trim(),
+    payment:      `Payment update for ${data.customerName}. Received: ₹${Number(data.amountPaid || 0).toLocaleString('en-IN')}. Outstanding: ₹${Number(data.amountPending || 0).toLocaleString('en-IN')}.`,
+    complaint:    `Complaint ${data.action === 'resolve' ? 'resolved' : 'reported'} for ${data.customerName}. Type: ${data.complaintType || 'quality'}.`,
+    new_customer: `New customer onboarded: ${data.customerName}. ${data.city ? `City: ${data.city}.` : ''} ${data.contactPerson ? `Contact: ${data.contactPerson}.` : ''}`.trim(),
+  };
+  return templates[activityType] || `${activityType} update for ${data.customerName || 'customer'}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +272,11 @@ async function syncActivity(activityType, data) {
   // Non-blocking — fire and forget, never crash the caller
   setImmediate(async () => {
     try {
+      if (!process.env.ZOHO_REFRESH_TOKEN || !process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET) {
+        console.log('[BiginSync] Zoho credentials not configured — skipping sync');
+        return;
+      }
+
       console.log(`[BiginSync] Starting sync: ${activityType} for ${data.customerName}`);
 
       const token           = await getZohoAccessToken();
@@ -297,9 +293,9 @@ async function syncActivity(activityType, data) {
         contact_person: data.contactPerson || customerDetails.contact_person,
       };
 
-      // Generate AI summary
+      // Generate summary synchronously
       const summaryData = { ...data, salespersonName, customerDetails: mergedCustomer };
-      const summary = await generateSummary(activityType, summaryData);
+      const summary = generateSummary(activityType, summaryData);
 
       // 1. Always upsert the Contact
       const contactId = await upsertBiginContact(mergedCustomer, salespersonName, token);

@@ -77,7 +77,7 @@ Return ONLY the JSON object.
  * Priority: salesperson's own deals → active stages first → most recent.
  */
 async function findBestDeal(customerName, senderPhone) {
-  // 1. Own deals, active stages first (not won/lost yet)
+  // 1. Own active deals (not won/lost)
   const { data: ownActive } = await supabase
     .from('deals')
     .select('*')
@@ -89,18 +89,16 @@ async function findBestDeal(customerName, senderPhone) {
 
   if (ownActive && ownActive.length > 0) return ownActive[0];
 
-  // 2. Global search — active stages
-  const { data: globalActive } = await supabase
+  // 2. Fallback to own any deals (won/lost included)
+  const { data: ownAny } = await supabase
     .from('deals')
     .select('*')
     .ilike('customer_name', `%${customerName}%`)
-    .not('stage', 'in', '("won","lost")')
+    .eq('salesperson_phone', senderPhone)
     .order('created_at', { ascending: false })
     .limit(1);
 
-  if (globalActive && globalActive.length > 0) return globalActive[0];
-
-  return null;
+  return ownAny && ownAny.length > 0 ? ownAny[0] : null;
 }
 
 /**
@@ -464,6 +462,7 @@ async function processSalesMessage(text, senderPhone) {
         raw_text:          text,
         source_channel:    'whatsapp',
         sender_phone:      senderPhone,
+        salesperson_phone: senderPhone,
         status:            'pending',
         created_at:        new Date().toISOString(),
       });

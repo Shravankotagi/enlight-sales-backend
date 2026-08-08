@@ -59,11 +59,17 @@ Return ONLY the JSON object.
 /**
  * Gets the single payment tracking record for a customer (most recent).
  */
-async function getExistingPaymentRecord(customerName) {
-  const { data, error } = await supabase
+async function getExistingPaymentRecord(customerName, senderPhone) {
+  let query = supabase
     .from('payment_tracking')
     .select('*')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', `%${customerName}%`);
+
+  if (senderPhone) {
+    query = query.eq('salesperson_phone', senderPhone);
+  }
+
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(1);
 
@@ -74,11 +80,17 @@ async function getExistingPaymentRecord(customerName) {
 /**
  * Gets the deal total amount for a customer from the deals table.
  */
-async function getDealTotal(customerName) {
-  const { data } = await supabase
+async function getDealTotal(customerName, senderPhone) {
+  let query = supabase
     .from('deals')
     .select('total_amount, stage')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', `%${customerName}%`);
+
+  if (senderPhone) {
+    query = query.eq('salesperson_phone', senderPhone);
+  }
+
+  const { data } = await query
     .order('created_at', { ascending: false })
     .limit(1);
 
@@ -133,8 +145,8 @@ async function upsertPaymentTracking({
   isFullPayment,   // true if message said "full payment done"
   paymentType,
 }) {
-  const existing = await getExistingPaymentRecord(customerName);
-  const dealTotal = await getDealTotal(customerName);
+  const existing = await getExistingPaymentRecord(customerName, senderPhone);
+  const dealTotal = await getDealTotal(customerName, senderPhone);
 
   let finalCollected;
   let finalOutstanding;

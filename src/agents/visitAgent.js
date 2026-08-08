@@ -100,7 +100,9 @@ async function processVisitMessage(text, senderPhone) {
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')
       .trim();
-    const data = JSON.parse(cleaned);
+    const { safeParseJSON } = require('../utils/jsonUtils');
+    const data = safeParseJSON(cleaned, null);
+    if (!data) throw new Error('Could not parse visit JSON from LLM response');
 
     // Missing customer name — must ask
     if (!data.customer_name) {

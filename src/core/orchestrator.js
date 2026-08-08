@@ -141,7 +141,10 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       const userText = lastHumanMsg
         ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '')
         : '';
-      const intentAnchor = getDeterministicIntentHint(userText);
+      const hasToolResultsAlready = messages.some(
+        m => m._getType?.() === 'tool' || m.constructor?.name === 'ToolMessage'
+      );
+      const intentAnchor = hasToolResultsAlready ? '' : getDeterministicIntentHint(userText);
       const activeContextPrompt = await getActiveContextPrompt(sp);
       const historyMessages = getChatHistory(sp);
 
