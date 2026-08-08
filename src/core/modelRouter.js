@@ -1,25 +1,13 @@
 /**
- * modelRouter.js — Multi-key AI Model Router
+ * modelRouter.js — Multi-key Groq AI Model Router
  *
- * Rotates through Gemini 2.5 Flash keys (round-robin).
- * Falls back to Groq (llama-3.3-70b) if all Gemini keys hit rate limits.
- *
- * Usage:
- *   const { getModel, getModelWithTools } = require('./modelRouter');
- *   const model = getModel();
- *   const modelWithTools = getModelWithTools(tools);
+ * Rotates through Groq (llama-3.3-70b-versatile) API keys (round-robin).
+ * Uses Groq exclusively for model invocation and tool calling.
  */
 
-const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { ChatGroq } = require('@langchain/groq');
 
 // ── Key Pools ──────────────────────────────────────────────────────────────
-
-const GEMINI_KEYS = [
-  process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-].filter(Boolean);
 
 const GROQ_KEYS = [
   process.env.GROQ_API_KEY,
@@ -30,16 +18,12 @@ const GROQ_KEYS = [
 
 // Track which keys are rate-limited and when they cool down
 const rateLimitedUntil = {};
-
-let geminiRoundRobinIdx = 0;
-let groqRoundRobinIdx   = 0;
-
-// ── Helpers ────────────────────────────────────────────────────────────────
+let groqRoundRobinIdx = 0;
 
 function isKeyAvailable(key) {
   if (!rateLimitedUntil[key]) return true;
   if (Date.now() > rateLimitedUntil[key]) {
-    delete rateLimitedUntil[key]; // cooled down
+    delete rateLimitedUntil[key];
     return true;
   }
   return false;
@@ -50,44 +34,19 @@ function markKeyRateLimited(key, cooldownMs = 60000) {
   console.warn(`[ModelRouter] Key rate-limited, cooling down for ${cooldownMs / 1000}s`);
 }
 
-function getNextGeminiKey() {
-  const available = GEMINI_KEYS.filter(isKeyAvailable);
-  if (available.length === 0) return null;
-  const key = available[geminiRoundRobinIdx % available.length];
-  geminiRoundRobinIdx++;
-  return key;
-}
-
 function getNextGroqKey() {
   const available = GROQ_KEYS.filter(isKeyAvailable);
-  if (available.length === 0) return null;
+  if (available.length === 0) return GROQ_KEYS[0] || null;
   const key = available[groqRoundRobinIdx % available.length];
   groqRoundRobinIdx++;
   return key;
 }
 
-// ── Model Factories ────────────────────────────────────────────────────────
+// ── Model Factory ──────────────────────────────────────────────────────────
 
 /**
- * Returns a ChatGoogleGenerativeAI instance using the next available Gemini key.
- * Optionally binds tools for function calling.
- */
-function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
-  const key = getNextGeminiKey();
-  if (!key) return null;
-
-  const model = new ChatGoogleGenerativeAI({
-    model:       modelName,
-    apiKey:      key,
-    temperature: 0.1,
-    maxRetries:  0, // we handle retries ourselves
-  });
-
-  return tools ? model.bindTools(tools) : model;
-}
-
-/**
- * Returns a ChatGroq fallback model using the next available Groq key.
+ * Returns a ChatGroq instance using the next available Groq key.
+ * Binds tools for function calling when provided.
  */
 function getGroqModel(tools = null) {
   const key = getNextGroqKey();
@@ -103,27 +62,14 @@ function getGroqModel(tools = null) {
   return tools ? model.bindTools(tools) : model;
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────
-
-/**
- * Get the best available model (Gemini preferred, Groq fallback).
- * @param {Array} tools - Optional LangChain tools to bind
- * @returns {object} LangChain chat model
- */
 function getModel(tools = null) {
   const groq = getGroqModel(tools);
   if (groq) return groq;
-
-  const gemini = getGeminiModel(tools);
-  if (gemini) return gemini;
-
-  throw new Error('[ModelRouter] All API keys are rate-limited. Try again in a minute.');
+  throw new Error('[ModelRouter] All Groq API keys are rate-limited. Try again in a minute.');
 }
 
 /**
- * Invoke a model with automatic fallback on rate-limit errors.
- * Groq llama-3.3-70b-versatile is the PRIMARY model.
- * Gemini 2.5 Flash is the FALLBACK provider.
+ * Invoke a model with automatic fallback across available Groq keys.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -132,37 +78,22 @@ function getModel(tools = null) {
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
 
-  // 1. Primary: Try Groq (llama-3.3-70b-versatile) with tools
   for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
     const model = getGroqModel(tools);
     if (!model) break;
     try {
       return await model.invoke(messages);
     } catch (err) {
-      console.warn(`[ModelRouter] Groq (llama-3.3-70b-versatile) attempt failed (${err.message?.slice(0, 60)}), trying next...`);
+      console.warn(`[ModelRouter] Groq (llama-3.3-70b-versatile) attempt failed (${err.message?.slice(0, 60)}), trying next key...`);
       lastError = err;
+      if (model.apiKey) {
+        markKeyRateLimited(model.apiKey);
+      }
       continue;
     }
   }
 
-  // 2. Fallback: Try Gemini model variants
-  const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
-  for (const mName of geminiModels) {
-    for (let i = 0; i < Math.max(GEMINI_KEYS.length, 1); i++) {
-      const model = getGeminiModel(tools, mName);
-      if (!model) break;
-      try {
-        console.warn(`[ModelRouter] Falling back to Gemini (${mName})`);
-        return await model.invoke(messages);
-      } catch (err) {
-        console.warn(`[ModelRouter] Gemini (${mName}) attempt failed (${err.message?.slice(0, 60)}), trying next...`);
-        lastError = err;
-        continue;
-      }
-    }
-  }
-
-  throw lastError || new Error('[ModelRouter] All AI providers failed');
+  throw lastError || new Error('[ModelRouter] All Groq API providers failed');
 }
 
-module.exports = { getModel, getGeminiModel, getGroqModel, invokeWithFallback, markKeyRateLimited };
+module.exports = { getModel, getGroqModel, invokeWithFallback, markKeyRateLimited };

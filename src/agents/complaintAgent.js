@@ -25,11 +25,8 @@
  * 10. Hinglish/casual messages → AI handles semantic parsing
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const COMPLAINT_AGENT_PROMPT = `
 You are the Specialized Quality & Complaint AI Agent (KRA 7 & KRA 8) for Enlight Metals.

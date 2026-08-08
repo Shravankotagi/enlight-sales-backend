@@ -20,11 +20,10 @@
  * 12. Hinglish/casual messages - AI parses meaning, not keywords
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { ChatGroq } = require('@langchain/groq');
+const { HumanMessage } = require('@langchain/core/messages');
 const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PAYMENT_AGENT_PROMPT = `
 You are the Specialized Payment Collection AI Agent (KRA 5) for Enlight Metals.
@@ -384,20 +383,32 @@ async function processPaymentMessage(text, senderPhone) {
  */
 async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const imagePart = {
-      inlineData: {
-        data: imageBuffer.toString('base64'),
-        mimeType: mimeType || 'image/jpeg',
-      },
-    };
+    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+    const model = new ChatGroq({ model: 'llama-3.2-11b-vision-instruct', apiKey, temperature: 0.1 });
+    const base64Img = imageBuffer.toString('base64');
+    const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
 
-    const prompt = `You are the Specialized Payment Collection Vision Agent for Enlight Metals.
+    const promptText = `You are the Specialized Payment Collection Vision Agent for Enlight Metals.
 Analyze this payment receipt / UPI transfer screenshot / bank deposit slip image and extract into JSON:
 {
   "customer_name": "<company/customer name if visible, else null>",
   "amount_paid": <numeric amount paid, else 0>,
   "payment_type": "advance|installment|full_settlement",
+  "notes": "<bank reference / UTR / transaction ID if visible>"
+}
+Return ONLY JSON.`;
+
+    const message = new HumanMessage({
+      content: [
+        { type: 'text', text: promptText },
+        { type: 'image_url', image_url: { url: imageUrl } }
+      ]
+    });
+
+    const result = await model.invoke([message]);
+    const rawText = typeof result.content === 'string' ? result.content : '';
+    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const extracted = JSON.parse(cleaned);
   "confidence": <float 0.0 to 1.0>
 }
 Return ONLY JSON. No prose. No markdown.`;

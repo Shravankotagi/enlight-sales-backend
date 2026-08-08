@@ -1,6 +1,19 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+/**
+ * gemini.js — Inquiry extraction & classification module using Groq (llama-3.3-70b-versatile)
+ */
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const { ChatGroq } = require('@langchain/groq');
+const { HumanMessage } = require('@langchain/core/messages');
+const { supabase } = require('./supabase');
+
+function getGroqClient(modelName = 'llama-3.3-70b-versatile') {
+  const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+  return new ChatGroq({
+    model: modelName,
+    apiKey: apiKey,
+    temperature: 0.1,
+  });
+}
 
 const EXTRACTION_PROMPT = `
 You are an inquiry parser for an Indian B2B steel distributor called Enlight Metals.
@@ -54,8 +67,6 @@ Rules:
 - Return ONLY the JSON object. No prose. No markdown. No backticks.
 `;
 
-const { supabase } = require('./supabase');
-
 async function getLatestActiveRatesText() {
   try {
     const { data: sheets } = await supabase
@@ -75,7 +86,7 @@ async function getLatestActiveRatesText() {
       return `\nOFFICIAL ACTIVE RATE SHEET (Use these per-MT prices to calculate rate and total_amount when rate is not explicitly stated in the input):\n${formatted}\n`;
     }
   } catch (err) {
-    console.error('Error fetching rate sheet for Gemini:', err.message);
+    console.error('Error fetching rate sheet for Groq:', err.message);
   }
   return '';
 }
@@ -133,12 +144,11 @@ function postProcessExtraction(parsed) {
 
 async function extractFromText(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGroqClient('llama-3.3-70b-versatile');
     const rateSheetInfo = await getLatestActiveRatesText();
     const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const rawText = response.text().trim();
+    const response = await model.invoke([new HumanMessage(prompt)]);
+    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     
     // Clean response - remove any markdown backticks if present
     const cleaned = rawText
@@ -149,10 +159,10 @@ async function extractFromText(text) {
     
     const parsed = JSON.parse(cleaned);
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Gemini text extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log('Groq text extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;
   } catch (error) {
-    console.error('Gemini text extraction error:', error.message);
+    console.error('Groq text extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
@@ -163,18 +173,19 @@ async function extractFromText(text) {
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGroqClient('llama-3.2-11b-vision-instruct');
+    const base64Img = imageBuffer.toString('base64');
+    const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
     
-    const imagePart = {
-      inlineData: {
-        data: imageBuffer.toString('base64'),
-        mimeType: mimeType || 'image/jpeg'
-      }
-    };
+    const message = new HumanMessage({
+      content: [
+        { type: 'text', text: EXTRACTION_PROMPT },
+        { type: 'image_url', image_url: { url: imageUrl } }
+      ]
+    });
     
-    const result = await model.generateContent([EXTRACTION_PROMPT, imagePart]);
-    const response = await result.response;
-    const rawText = response.text().trim();
+    const response = await model.invoke([message]);
+    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     
     // Clean response
     const cleaned = rawText
@@ -185,10 +196,10 @@ async function extractFromImage(imageBuffer, mimeType) {
     
     const parsed = JSON.parse(cleaned);
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Gemini image extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log('Groq image extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;
   } catch (error) {
-    console.error('Gemini image extraction error:', error.message);
+    console.error('Groq image extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
@@ -275,51 +286,22 @@ INTENT DEFINITIONS — understand the meaning, not the keywords:
   - "PO aaya hai Supreme ka" (purchase order received)
 
 "query": The salesperson (or admin) is asking for information, reports, data, or stats from the system. This includes ANY request to SEE, SHOW, LIST, GET, or RETRIEVE data. It also includes rate/price questions, dashboard link requests, and general how-to questions about the bot.
-  Examples (many different phrasings, all the same intent):
-  - "what is todays date" / "aaj ka date kya hai"
-  - "rate sheet dikhao" / "bhav kya hai" / "today's rates" / "HR Coil ka bhav"
-  - "Mere kitne visits hue?" / "mera visit summary"
-  - "KRA status dikhao" / "my KRA report" / "performance report" / "performace report august"
-  - "Aaj ka dashboard dikhao" / "dashboard link bhejo" / "send login link"
-  - "won customer names" / "give me the won customers" / "list won deals"
-  - "meri active deals kya hain" / "show my pipeline" / "current deals dikhao"
-  - "my customers list" / "kaun se customers hain mere" / "client directory"
-  - "outstanding payments" / "baaki list" / "who hasn't paid" / "overdue amount"
-  - "show sales report" / "is mahine ki sales" / "august ki report"
-  - "pending inquiries" / "review queue" / "kitni inquiries hain"
-  - "lost deals" / "rejected deals this month" / "konsa deal nahi hua"
-  - "deals this week" / "is hafte ki deals"
-  - "new customers this month" / "kitne naye customers aaye"
-  - "complaint summary" / "kitni complaints hain"
-  - "my visit list" / "who did I visit august mein"
-  - "payment aging" / "konsa customer nahi diya abhi tak"
-  - "full monthly report" / "report card dikhao" / "pura report chahiye"
-  - "show Kumar Varma performance" (admin asking about another salesperson)
-  - "Akruti ki sales dikhao" (admin querying a specific person's data)
 
 "greeting": Just a hello or check-in with no business content.
-  Examples: "Hi", "Hello", "Good morning", "Namaste", "Kya haal hai"
 
-"unknown": You genuinely cannot determine any business intent. Use this ONLY when none of the above intents fit at all — for truly off-topic, nonsensical, or ambiguous messages.
+"unknown": You genuinely cannot determine any business intent.
 
-IMPORTANT RULES:
-- Judge by the MEANING of the message, not by the presence of specific words
-- A message can lack any keywords and still have a clear intent
-- ANY request to retrieve, list, show, get, or display data = "query"
-- When confidence is below 0.5, prefer "unknown" and let the system ask for clarification
-- "reasoning" field: explain your choice in plain English, one sentence
-- Return ONLY the JSON object
+Return ONLY the JSON object.
 `;
 
 async function classifyIntent(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGroqClient('llama-3.3-70b-versatile');
     const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'long' });
     const contextPrompt = `Context:\n- Today's date and time in India: ${nowStr}\n\n`;
     const prompt = contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const rawText = response.text().trim();
+    const response = await model.invoke([new HumanMessage(prompt)]);
+    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -329,7 +311,7 @@ async function classifyIntent(text) {
     console.log(`Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`);
     return parsed;
   } catch (error) {
-    console.error('Gemini intent classification error:', error.message);
+    console.error('Groq intent classification error:', error.message);
     return { intent: 'unknown', customer_name: null, confidence: 0, reasoning: 'Error during classification' };
   }
 }
@@ -338,44 +320,11 @@ const QUERY_CLASSIFIER_PROMPT = `
 You are an intelligent query router for a B2B steel sales system.
 Your job is to classify the salesperson's request into one of the following categories:
 
-DATA QUERIES (about the salesperson's own work):
-- "dashboard_link": requests login link, website, portal URL, dashboard URL, open dashboard.
-- "sales_summary": requests sales report, sales numbers, deals created/won count and value.
-- "kra_status": requests performance report, KRA status, KRA achievements, targets status, my performance.
-- "visit_summary": requests visits count total, how many visits did I do.
-- "payment_summary": requests outstanding payment totals, collection summary, overdue totals.
-- "complaint_summary": requests complaints logged count, customer issues summary.
-- "full_report": requests full monthly report, complete KRA report card, monthly report.
-- "deals_this_week": requests this week's deals list, week deals, is hafte ke deals.
-- "pending_deals": requests pending deals list, open deals, active deals, incomplete deals.
-- "pending_inquiries": requests pending inquiries list, review queue, inquiries to be processed.
-- "new_customers_summary": requests KRA 2 new customer onboarding summary, POs received, how many new customers.
-- "won_customers": requests won customer names, list of won deals with customers and products, who I won deals with, KRA 1 breakdown.
-- "active_deals_detail": requests active deals pipeline with items and amounts, my current deals with products.
-- "customer_list": requests full customer list, all my customers, registered clients, my client directory.
-- "rate_sheet": requests today's rate sheet, current steel prices, current rates, bhav, what are the rates.
-- "visit_list": requests customer visit list, who I visited, my visits this month, field visit log.
-- "payment_aging": requests outstanding dues per customer, overdue list, who hasn't paid, payment aging, baaki list.
-- "lost_deals": requests lost deals breakdown, rejected deals, why deals were lost, loss reasons.
+DATA QUERIES:
+- "dashboard_link", "sales_summary", "kra_status", "visit_summary", "payment_summary", "complaint_summary", "full_report", "deals_this_week", "pending_deals", "pending_inquiries", "new_customers_summary", "won_customers", "active_deals_detail", "customer_list", "rate_sheet", "visit_list", "payment_aging", "lost_deals"
 
-ASSISTANT QUERIES (legitimate but handled by conversational AI):
-- "general": hello/greetings, how to log something, what is today's date, help with bot usage, general steel industry questions.
-
-BLOCKED QUERIES (must be rejected — outside scope):
-- "blocked": asking about another specific salesperson's performance, sales or deals by name; asking the bot to perform admin actions (lock/create/modify rate sheets); asking for product recommendations for a client; asking completely off-topic unrelated questions (jokes, news, cricket scores, etc.); asking the bot to access systems it cannot (email, CRM admin, reports for other users).
-
-Examples:
-- "give me the won customer names" → "won_customers" (confidence 0.95)
-- "performace report august" → "kra_status" (confidence 0.90)
-- "bhav kya hai" → "rate_sheet" (confidence 0.85)
-- "baaki list dikhao" → "payment_aging" (confidence 0.90)
-- "is hafte ke deals" → "deals_this_week" (confidence 0.90)
-- "show kumar varma sales" → "blocked" (confidence 0.98)
-- "lock the rate sheet" → "blocked" (confidence 0.98)
-- "suggest products for Tata" → "blocked" (confidence 0.95)
-- "what's the cricket score" → "blocked" (confidence 0.95)
-- "hello" → "general" (confidence 0.90)
-- "how do I log a visit?" → "general" (confidence 0.85)
+ASSISTANT QUERIES: "general"
+BLOCKED QUERIES: "blocked"
 
 Return ONLY a JSON object (no markdown, no prose, no backticks):
 {
@@ -387,11 +336,10 @@ Return ONLY a JSON object (no markdown, no prose, no backticks):
 
 async function classifyQueryType(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGroqClient('llama-3.3-70b-versatile');
     const prompt = QUERY_CLASSIFIER_PROMPT + '\n\nQuery: "' + text + '"';
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const rawText = response.text().trim();
+    const response = await model.invoke([new HumanMessage(prompt)]);
+    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -401,7 +349,7 @@ async function classifyQueryType(text) {
     console.log(`Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`);
     return parsed;
   } catch (error) {
-    console.error('Gemini query classification error:', error.message);
+    console.error('Groq query classification error:', error.message);
     return { category: 'general', confidence: 0 };
   }
 }

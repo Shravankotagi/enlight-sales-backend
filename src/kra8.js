@@ -39,12 +39,13 @@ function isComplaintResolution(text) {
          upper === 'CLOSE';
 }
 
-// Extract complaint details using Gemini
+// Extract complaint details using Groq
 async function extractComplaintDetails(text) {
   try {
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const { ChatGroq } = require('@langchain/groq');
+    const { HumanMessage } = require('@langchain/core/messages');
+    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+    const model = new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
 
     const prompt = `
 Extract complaint details from this salesperson message.
@@ -72,9 +73,9 @@ Rules:
 Message: "${text}"
     `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const raw = response.text().trim()
+    const response = await model.invoke([new HumanMessage(prompt)]);
+    const rawText = typeof response.content === 'string' ? response.content : '';
+    const raw = rawText.trim()
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')

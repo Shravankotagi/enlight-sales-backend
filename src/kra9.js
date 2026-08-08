@@ -21,12 +21,13 @@ function isVisitLog(text) {
   return visitKeywords.some(k => lower.includes(k));
 }
 
-// Extract visit details from message using simple parsing
+// Extract visit details from message using Groq
 async function extractVisitDetails(text, senderPhone) {
   try {
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const { ChatGroq } = require('@langchain/groq');
+    const { HumanMessage } = require('@langchain/core/messages');
+    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+    const model = new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
 
     const prompt = `
 Extract visit details from this salesperson message.
@@ -48,17 +49,15 @@ Rules:
 - person_met: name of person they met (if mentioned)
 - contact_no: phone number if mentioned, else null
 - remarks: what was discussed or outcome
-- outcome: one of "positive|neutral|negative|order_received|follow_up_needed"
-- Return null for fields not mentioned
+- outcome: one of "positive|neutral|negative|followup_required"
 - Return ONLY the JSON object
-- Understand and analyze the meaning of the message before populating "is_valid_visit".
 
 Message: "${text}"
     `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const raw = response.text().trim()
+    const response = await model.invoke([new HumanMessage(prompt)]);
+    const rawText = typeof response.content === 'string' ? response.content : '';
+    const raw = rawText.trim()
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')

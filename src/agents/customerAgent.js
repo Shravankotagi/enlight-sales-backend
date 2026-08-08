@@ -19,11 +19,8 @@
  * 9.  Hinglish/casual → AI handles semantic parsing
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const CUSTOMER_AGENT_PROMPT = `
 You are the Specialized Customer Onboarding AI Agent (KRA 2) for Enlight Metals.

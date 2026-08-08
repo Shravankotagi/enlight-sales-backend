@@ -22,11 +22,8 @@
  * 11. Contact number only stored if explicitly mentioned (no placeholder)
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const VISIT_AGENT_PROMPT = `
 You are the Specialized Site Visit & Meeting AI Agent (KRA 9) for Enlight Metals, a B2B steel distributor.

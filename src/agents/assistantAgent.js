@@ -1,8 +1,12 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { ChatGroq } = require('@langchain/groq');
+const { HumanMessage } = require('@langchain/core/messages');
 const { getLatestActiveRatesText } = require('../gemini');
 const { getEmployeeByPhone } = require('../supabase');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+function getGroqClient() {
+  const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+  return new ChatGroq({ model: 'llama-3.3-70b-versatile', apiKey, temperature: 0.1 });
+}
 
 async function handleConversationalQuery(text, senderPhone) {
   try {
@@ -57,11 +61,11 @@ GUIDELINES:
 6. Never make up steel prices or dates. Only use the provided context.
 `;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGroqClient();
     const prompt = `${ASSISTANT_SYSTEM_PROMPT}\n\nUser's Question: "${text}"`;
     
-    const result = await model.generateContent(prompt);
-    const reply = result.response.text().trim();
+    const result = await model.invoke([new HumanMessage(prompt)]);
+    const reply = (typeof result.content === 'string' ? result.content : '').trim();
     return reply;
   } catch (error) {
     console.error('Conversational assistant error:', error.message);

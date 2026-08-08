@@ -22,10 +22,8 @@
  * 12. Scheduled follow-up date stored and displayed in response
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { supabase } = require('../supabase');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const RETENTION_AGENT_PROMPT = `
 You are the Specialized Customer Retention AI Agent (KRA 3) for Enlight Metals, a B2B steel distributor.

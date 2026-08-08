@@ -22,12 +22,11 @@
  * 12. Hinglish/casual message → AI interprets meaning, not keywords
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { ChatGroq } = require('@langchain/groq');
+const { HumanMessage } = require('@langchain/core/messages');
 const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 const axios = require('axios');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const SALES_AGENT_PROMPT = `
 You are the Specialized Sales Achievement & Pipeline Agent for Enlight Metals (B2B Steel Distributor).
@@ -595,15 +594,12 @@ async function processSalesMessage(text, senderPhone) {
  */
 async function processSalesImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const imagePart = {
-      inlineData: {
-        data: imageBuffer.toString('base64'),
-        mimeType: mimeType || 'image/jpeg',
-      },
-    };
+    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+    const model = new ChatGroq({ model: 'llama-3.2-11b-vision-instruct', apiKey, temperature: 0.1 });
+    const base64Img = imageBuffer.toString('base64');
+    const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
 
-    const prompt = `You are the Specialized Sales Achievement & PO Vision Agent for Enlight Metals.
+    const promptText = `You are the Specialized Sales Achievement & PO Vision Agent for Enlight Metals.
 Analyze this PO image / bill / handwritten slip and extract into JSON:
 {
   "customer_name": "<company name if present, else null>",
@@ -613,10 +609,17 @@ Analyze this PO image / bill / handwritten slip and extract into JSON:
   "total_amount": <total value in rupees if stated, else 0>,
   "confidence": <float 0.0 to 1.0>
 }
-Return ONLY JSON. No prose. No markdown.`;
+Return ONLY JSON.`;
 
-    const result = await model.generateContent([prompt, imagePart]);
-    const rawText = result.response.text().trim();
+    const message = new HumanMessage({
+      content: [
+        { type: 'text', text: promptText },
+        { type: 'image_url', image_url: { url: imageUrl } }
+      ]
+    });
+
+    const result = await model.invoke([message]);
+    const rawText = typeof result.content === 'string' ? result.content : '';
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const data = JSON.parse(cleaned);
 
