@@ -243,6 +243,18 @@ router.post('/', async (req, res) => {
           return;
         }
 
+        // Save raw inquiry data to Supabase for all incoming messages
+        await saveInquiry({
+          source_channel: "whatsapp",
+          raw_text,
+          media_urls,
+          voice_url,
+          sender_phone: senderPhone,
+          sender_name: senderName,
+          message_id: messageId,
+          employee_id: employeeId,
+        });
+
         // ── AGENTIC ORCHESTRATOR (LangGraph + Gemini 2.5 Flash) ──────────────
         // Replaces all manual intent classification and if/else routing.
         // The orchestrator understands any message (English/Hindi/Hinglish),
@@ -279,18 +291,6 @@ router.post('/', async (req, res) => {
             return;
           }
         }
-
-        // Save raw inquiry data to Supabase
-        const savedInquiry = await saveInquiry({
-          source_channel: "whatsapp",
-          raw_text,
-          media_urls,
-          voice_url,
-          sender_phone: senderPhone,
-          sender_name: senderName,
-          message_id: messageId,
-          employee_id: employeeId,
-        });
 
         // --- GEMINI EXTRACTION ---
         let extraction = null;
