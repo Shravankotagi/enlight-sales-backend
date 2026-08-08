@@ -54,14 +54,12 @@ GUIDELINES:
 4. Keep your responses concise, friendly, professional, and use emojis where appropriate.
 5. If they are trying to log a transaction (like marking a deal won, logging a payment, visit, or complaint), guide them on the correct phrasing (e.g. "To log a payment, say 'Delta paid 500000'").
 6. Never make up steel prices or dates. Only use the provided context.
-`;
+    const response = await invokeWithFallback([
+      new SystemMessage(ASSISTANT_SYSTEM_PROMPT),
+      new HumanMessage(text),
+    ]);
 
-    const model = getGroqClient();
-    let reply = (typeof result.content === 'string' ? result.content : '')
-      .replace(/<function\([\s\S]*?<\/function>/gi, '')
-      .replace(/<function\([\s\S]*?>/gi, '')
-      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
-      .trim();
+    let reply = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
 
     if (!reply) {
       reply = 'I am here to help you with Enlight Metals sales updates!';

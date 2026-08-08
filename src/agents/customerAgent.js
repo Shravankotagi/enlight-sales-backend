@@ -98,7 +98,7 @@ async function processCustomerMessage(text, senderPhone) {
     const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
-    if (!data) throw new Error('Could not parse customer onboarding JSON from Groq response');
+    if (!data) throw new Error('Could not parse customer onboarding JSON from LLM response');
 
     const { getActiveSession, getFullActiveSession, saveActiveSession, verifyAndGetCustomerName } = require('../supabase');
 

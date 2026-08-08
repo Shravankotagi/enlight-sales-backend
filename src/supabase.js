@@ -263,7 +263,7 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
 }
 
 /**
- * Uses Groq to fuzzy match a customer name from a list of customer names.
+ * Uses Google Gemini to fuzzy match a customer name from a list of customer names.
  * Useful for handling salesperson typos, Hinglish, or shorthand customer names.
  * @param {string} text - The raw input text containing the customer name.
  * @param {string[]} customerList - The list of active customer names to match against.

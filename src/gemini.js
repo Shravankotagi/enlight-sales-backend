@@ -295,7 +295,7 @@ async function classifyIntent(text) {
     }
     throw new Error('Could not parse intent JSON');
   } catch (error) {
-    console.error('Groq intent classification error:', error.message);
+    console.error('Gemini intent classification error:', error.message);
     return { intent: 'unknown', customer_name: null, confidence: 0, reasoning: 'Error during classification' };
   }
 }
@@ -329,7 +329,7 @@ async function classifyQueryType(text) {
     }
     throw new Error('Could not parse query category JSON');
   } catch (error) {
-    console.error('Groq query classification error:', error.message);
+    console.error('Gemini query classification error:', error.message);
     return { category: 'general', confidence: 0 };
   }
 }
