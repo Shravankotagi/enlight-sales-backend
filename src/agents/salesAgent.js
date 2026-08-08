@@ -363,7 +363,7 @@ async function processSalesMessage(text, senderPhone) {
 
       if (dbStage === 'lost') {
         if (data.loss_reason && data.loss_reason !== 'Not specified' && data.loss_reason.length > 2) {
-          updatePayload.loss_reason = data.loss_reason;
+          updatePayload.lost_reason = data.loss_reason;
         } else {
           const { saveActiveSession } = require('../supabase');
           await saveActiveSession(senderPhone, finalCustomerName, `pending_loss_reason|${dealId}|${finalCustomerName}`);
@@ -428,7 +428,7 @@ async function processSalesMessage(text, senderPhone) {
         }
       }
 
-      const { data: newDeal } = await supabase
+      const { data: newDeal, error: dealInsertErr } = await supabase
         .from('deals')
         .insert({
           customer_name:     finalCustomerName,
@@ -442,10 +442,14 @@ async function processSalesMessage(text, senderPhone) {
           po_date:           poDate,
           po_number:         poNumber,
           won_at:            dbStage === 'won' ? new Date().toISOString() : null,
-          loss_reason:       dbStage === 'lost' ? data.loss_reason : null,
+          lost_reason:       dbStage === 'lost' ? data.loss_reason : null,
         })
         .select()
         .single();
+
+      if (dealInsertErr) {
+        console.error('[SalesAgent] Fatal deals insert error:', dealInsertErr);
+      }
 
       if (newDeal) {
         dealId = newDeal.id;
