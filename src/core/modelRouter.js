@@ -42,18 +42,19 @@ function getNextGroqKey() {
   return key;
 }
 
+const GROQ_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+];
+
 // ── Model Factory ──────────────────────────────────────────────────────────
 
-/**
- * Returns a ChatGroq instance using the next available Groq key.
- * Binds tools for function calling when provided.
- */
-function getGroqModel(tools = null) {
+function getGroqModel(tools = null, modelName = 'llama-3.3-70b-versatile') {
   const key = getNextGroqKey();
   if (!key) return null;
 
   const model = new ChatGroq({
-    model:       'llama-3.3-70b-versatile',
+    model:       modelName,
     apiKey:      key,
     temperature: 0.1,
     maxRetries:  0,
@@ -69,7 +70,7 @@ function getModel(tools = null) {
 }
 
 /**
- * Invoke a model with automatic failover across available Groq keys.
+ * Invoke a model with automatic failover across Groq models (70b -> 8b -> mixtral) & keys.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -78,18 +79,28 @@ function getModel(tools = null) {
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
 
-  for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
-    const model = getGroqModel(tools);
-    if (!model) break;
-    try {
-      return await model.invoke(messages);
-    } catch (err) {
-      console.warn(`[ModelRouter] Groq (llama-3.3-70b-versatile) attempt failed (${err.message?.slice(0, 60)}), trying next key...`);
-      lastError = err;
-      if (model.apiKey) {
-        markKeyRateLimited(model.apiKey);
+  for (const modelName of GROQ_MODELS) {
+    for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
+      const key = getNextGroqKey();
+      if (!key) break;
+      try {
+        const model = new ChatGroq({
+          model:       modelName,
+          apiKey:      key,
+          temperature: 0.1,
+          maxRetries:  0,
+        });
+        const boundModel = tools ? model.bindTools(tools) : model;
+        return await boundModel.invoke(messages);
+      } catch (err) {
+        lastError = err;
+        const msg = err.message || '';
+        if (msg.includes('rate_limit') || msg.includes('429')) {
+          console.warn(`[ModelRouter] Groq (${modelName}) rate limit (429), sleeping 2.5s before retry...`);
+          await new Promise((r) => setTimeout(r, 2500));
+        }
+        continue;
       }
-      continue;
     }
   }
 

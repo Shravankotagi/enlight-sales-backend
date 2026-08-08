@@ -177,6 +177,8 @@ function normalizeGroqToolCalls(response) {
   return response;
 }
 
+const { getChatHistory, addChatHistory, getActiveContextPrompt } = require('./memory');
+
 /**
  * Agent Node: The LLM that reads messages, decides tool calls, and writes responses.
  * Re-runs after each tool_node execution until no more tool calls are needed.
@@ -187,10 +189,13 @@ async function agentNode(state) {
   const lastHumanMsg = [...messages].reverse().find(m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage');
   const userText = lastHumanMsg ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '') : '';
   const intentAnchor = getDeterministicIntentHint(userText);
+  const activeContextPrompt = await getActiveContextPrompt(senderPhone);
+  const historyMessages = getChatHistory(senderPhone);
 
   // Build the full message context for the LLM
   const contextMessages = [
-    new SystemMessage(SYSTEM_PROMPT + `\n\nCurrent salesperson: ${employeeName || 'Salesperson'}\nPhone: ${senderPhone}\nMessage type: ${messageType}${intentAnchor}`),
+    new SystemMessage(SYSTEM_PROMPT + `\n\nCurrent salesperson: ${employeeName || 'Salesperson'}\nPhone: ${senderPhone}\nMessage type: ${messageType}${activeContextPrompt}${intentAnchor}`),
+    ...historyMessages,
     ...messages,
   ];
 
@@ -292,6 +297,9 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     if (!reply) {
       reply = '✅ Activity updated in your CRM & KRA Dashboard!';
     }
+
+    // Save to multi-turn context memory
+    addChatHistory(senderPhone, text, reply);
 
     console.log(`[Orchestrator] Reply ready (${reply.length} chars)`);
     return reply;
