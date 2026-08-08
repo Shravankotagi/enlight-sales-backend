@@ -6,14 +6,11 @@ const { ChatGroq } = require('@langchain/groq');
 const { HumanMessage } = require('@langchain/core/messages');
 const { safeParseJSON } = require('./utils/jsonUtils');
 const { supabase } = require('./supabase');
+const { invokeWithFallback } = require('./core/modelRouter');
 
-function getGroqClient(modelName = 'llama-3.3-70b-versatile') {
-  const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
-  return new ChatGroq({
-    model: modelName,
-    apiKey: apiKey,
-    temperature: 0.1,
-  });
+async function callLightweightModel(prompt) {
+  const response = await invokeWithFallback([new HumanMessage(prompt)]);
+  return typeof response.content === 'string' ? response.content.trim() : JSON.stringify(response.content);
 }
 
 const EXTRACTION_PROMPT = `
@@ -145,13 +142,9 @@ function postProcessExtraction(parsed) {
 
 async function extractFromText(text) {
   try {
-    const model = getGroqClient('llama-3.3-70b-versatile');
     const rateSheetInfo = await getLatestActiveRatesText();
     const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
-    const response = await model.invoke([new HumanMessage(prompt)]);
-    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
-    
-    // Clean response - remove any markdown backticks if present
+    const rawText = await callLightweightModel(prompt);
     const parsed = safeParseJSON(rawText, null);
     if (!parsed) throw new Error('Could not parse JSON extraction from Groq response');
     const postProcessed = postProcessExtraction(parsed);
@@ -169,7 +162,13 @@ async function extractFromText(text) {
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const model = getGroqClient('llama-3.2-11b-vision-instruct');
+    const { ChatGroq } = require('@langchain/groq');
+    const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY_3;
+    const model = new ChatGroq({
+      model: 'llama-3.2-11b-vision-instruct',
+      apiKey: apiKey,
+      temperature: 0.1,
+    });
     const base64Img = imageBuffer.toString('base64');
     const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
     
@@ -183,7 +182,6 @@ async function extractFromImage(imageBuffer, mimeType) {
     const response = await model.invoke([message]);
     const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     
-    // Clean response
     const parsed = safeParseJSON(rawText, null);
     if (!parsed) throw new Error('Could not parse image extraction from Groq vision response');
     const postProcessed = postProcessExtraction(parsed);
@@ -287,20 +285,16 @@ Return ONLY the JSON object.
 
 async function classifyIntent(text) {
   try {
-    const model = getGroqClient('llama-3.3-70b-versatile');
     const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'long' });
     const contextPrompt = `Context:\n- Today's date and time in India: ${nowStr}\n\n`;
     const prompt = contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
-    const response = await model.invoke([new HumanMessage(prompt)]);
-    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    const parsed = JSON.parse(cleaned);
-    console.log(`Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`);
-    return parsed;
+    const rawText = await callLightweightModel(prompt);
+    const parsed = safeParseJSON(rawText, null);
+    if (parsed && parsed.intent) {
+      console.log(`Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`);
+      return parsed;
+    }
+    throw new Error('Could not parse intent JSON');
   } catch (error) {
     console.error('Groq intent classification error:', error.message);
     return { intent: 'unknown', customer_name: null, confidence: 0, reasoning: 'Error during classification' };
@@ -327,18 +321,14 @@ Return ONLY a JSON object (no markdown, no prose, no backticks):
 
 async function classifyQueryType(text) {
   try {
-    const model = getGroqClient('llama-3.3-70b-versatile');
     const prompt = QUERY_CLASSIFIER_PROMPT + '\n\nQuery: "' + text + '"';
-    const response = await model.invoke([new HumanMessage(prompt)]);
-    const rawText = (typeof response.content === 'string' ? response.content : '').trim();
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    const parsed = JSON.parse(cleaned);
-    console.log(`Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`);
-    return parsed;
+    const rawText = await callLightweightModel(prompt);
+    const parsed = safeParseJSON(rawText, null);
+    if (parsed && parsed.category) {
+      console.log(`Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`);
+      return parsed;
+    }
+    throw new Error('Could not parse query category JSON');
   } catch (error) {
     console.error('Groq query classification error:', error.message);
     return { category: 'general', confidence: 0 };
