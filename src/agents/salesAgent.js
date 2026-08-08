@@ -6,33 +6,17 @@
  * - A "won" event logs to KRA 1. A "lost" event logs to KRA 4 loss analytics.
  * - KRA 5 (Payment) is NEVER touched here. Payment is explicitly separate.
  * - PO images mark the existing deal as won, never create a duplicate deal.
- *
- * EDGE CASES HANDLED:
- * 1.  Stage update (won/lost/negotiation/quoted/qualified) on existing deal → update deal
- * 2.  Stage update for customer not in DB → create new deal at that stage
- * 3.  Won deal → log KRA 1, set won_at timestamp
- * 4.  Lost deal → log KRA 4 loss reason, never log KRA 1
- * 5.  Duplicate won → check if deal already marked won, skip KRA 1 re-log
- * 6.  Missing customer name → ask for clarification
- * 7.  Deal value update with rate × qty → compute and store total_amount
- * 8.  Customer name partial match (fuzzy ILIKE) → find best existing deal
- * 9.  Salesperson's own deal priority → search own deals first, then global
- * 10. PO image → update existing deal if found, else create new won deal
- * 11. Multiple open deals for same customer → pick the most recent non-won/lost one
- * 12. Hinglish/casual message → AI interprets meaning, not keywords
+ * - Multi-item requirements (e.g. 20 MT CR Sheets + 10 MT MS Plates) extract as SEPARATE line items,
+ *   match each against the rate sheet individually, and compute exact total.
  */
 
-const { HumanMessage } = require('@langchain/core/messages');
+const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
 const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
-const axios = require('axios');
 
 const SALES_AGENT_PROMPT = `
 You are the Specialized Sales Achievement & Pipeline Agent for Enlight Metals (B2B Steel Distributor).
 Your job is to analyze salesperson messages reporting sales actions, deal status updates, stage changes, or customer product requirements/inquiries.
-
-The salesperson message may be informal, in Hinglish, or missing expected keywords.
-Understand the meaning and context — do not look for specific words.
 
 Input message can be English, Hindi, or Hinglish.
 
@@ -41,33 +25,26 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "action": "stage_update|purchase_order|inquiry",
   "customer_name": "<company/customer name, else null>",
   "target_stage": "new_inquiry|qualified|quoted|negotiation|won|lost",
-  "product_requirement": "<product description e.g. HR Coil 8mm, else null>",
-  "quantity_mt": <numeric tonnage if mentioned e.g. 20 MT -> 20, else null>,
-  "rate_per_mt": <numeric per-MT price if mentioned e.g. 51000, else null>,
-  "total_amount": <numeric total deal value in rupees if explicitly mentioned, else 0>,
-  "delivery_location": "<city/address if mentioned e.g. Pune, else null>",
-  "delivery_date": "<delivery deadline if mentioned e.g. 20 August, else null>",
+  "line_items": [
+    {
+      "product_requirement": "<specific product name e.g. CR Sheets, MS Plates, HR Coil>",
+      "quantity_mt": <numeric tonnage for this specific item e.g. 20>,
+      "rate_per_mt": <numeric per-MT price if mentioned in message, else null>
+    }
+  ],
+  "total_amount": <numeric total deal value in rupees ONLY if explicitly mentioned in text, else 0>,
+  "delivery_location": "<city/address if mentioned, else null>",
+  "delivery_date": "<delivery deadline if mentioned, else null>",
   "po_number": "<PO number if mentioned, else null>",
-  "po_date": "<PO date if mentioned YYYY-MM-DD, else null>",
+  "po_date": "<PO date YYYY-MM-DD if mentioned, else null>",
   "loss_reason": "<inferred reason if deal was lost, else null>",
   "confidence": <float 0.0 to 1.0>
 }
 
-Rules for target_stage — understand MEANING, not keywords:
-- "new_inquiry": new customer requirement, inquiry, demand, quotation request, RFQ
-- "qualified": verified lead or interest confirmed
-- "quoted": price/quote sent or shared, proforma sent
-- "negotiation": ongoing discussion, bargaining, counter-offer, price haggling
-- "won": deal finalized, confirmed, accepted, order placed, PO received, customer said yes
-- "lost": deal refused, rejected, cancelled, customer said no, competitor won
-
-Rules for loss_reason:
-- Infer from context (price too high, competitor cheaper, delivery mismatch, payment terms, product unavailable)
-- If not clearly a loss, set to null
-
-IMPORTANT:
-- If a message says "deal won" or "order confirm" with no amount, set total_amount=0 (we will look it up from DB)
-- Do NOT invent amounts. Only set total_amount if explicitly stated in the message.
+Rules for line_items:
+- If multiple materials/products are mentioned (e.g. "20 MT CR sheets and 10 MT of MS plates"), create a SEPARATE object in line_items for EACH material!
+- Extract the exact tonnage (quantity_mt) for each material individually.
+- If only 1 material is mentioned, line_items should contain 1 object.
 
 Return ONLY the JSON object.
 `;
@@ -77,7 +54,6 @@ Return ONLY the JSON object.
  * Priority: salesperson's own deals → active stages first → most recent.
  */
 async function findBestDeal(customerName, senderPhone) {
-  // 1. Own active deals (not won/lost)
   const { data: ownActive } = await supabase
     .from('deals')
     .select('*')
@@ -89,7 +65,6 @@ async function findBestDeal(customerName, senderPhone) {
 
   if (ownActive && ownActive.length > 0) return ownActive[0];
 
-  // 2. Fallback to own any deals (won/lost included)
   const { data: ownAny } = await supabase
     .from('deals')
     .select('*')
@@ -112,16 +87,14 @@ async function getDealAmountFromItems(dealId) {
 
   if (!items || items.length === 0) return 0;
 
-  const sum = items.reduce((total, item) => {
+  return items.reduce((total, item) => {
     const itemAmount = Number(item.amount) || (Number(item.quantity || 0) * Number(item.rate || 0));
     return total + itemAmount;
   }, 0);
-
-  return sum;
 }
 
 /**
- * Checks if KRA 1 was already logged for a specific deal (to prevent duplicate won-logs).
+ * Checks if KRA 1 was already logged for a specific deal.
  */
 async function isKRA1AlreadyLogged(senderPhone, customerName) {
   const { data } = await supabase
@@ -136,7 +109,7 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
 }
 
 /**
- * Looks up the latest rate sheet price per MT for a given product text or SKU.
+ * Looks up price per MT from official active rate sheet for a given product text.
  */
 async function lookupRateSheetPrice(productText) {
   try {
@@ -161,7 +134,7 @@ async function lookupRateSheetPrice(productText) {
 
     const textLower = productText.toLowerCase();
 
-    // 1. Exact/substring match on sku_text (e.g. "HR Coil 8mm")
+    // 1. Exact/substring match on sku_text (e.g. "CR Sheets", "MS Plates")
     let matched = items.find(
       (i) =>
         i.sku_text &&
@@ -169,7 +142,7 @@ async function lookupRateSheetPrice(productText) {
           i.sku_text.toLowerCase().includes(textLower)),
     );
 
-    // 2. Substring match on category (e.g. "HR Coil", "MS Sheet", "TMT")
+    // 2. Substring match on category
     if (!matched) {
       matched = items.find(
         (i) =>
@@ -210,7 +183,6 @@ async function lookupRateSheetPrice(productText) {
 async function processSalesMessage(text, senderPhone) {
   try {
     const { invokeWithFallback } = require('../core/modelRouter');
-    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
     const response = await invokeWithFallback([
       new SystemMessage(SALES_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
@@ -218,25 +190,24 @@ async function processSalesMessage(text, senderPhone) {
     const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
-    if (!data) throw new Error('Could not parse sales extraction JSON from LLM response');
 
-    // Edge Case 6: Missing customer name
-    if (!data.customer_name) {
-      return `⚠️ *Sales Agent Request*\n\nPlease mention the *Customer/Company Name* to update the sales pipeline.\nExample: _"Delta Structural Steel deal won"_`;
+    if (!data || data.confidence < 0.3) {
+      return `❓ I couldn't clearly understand the deal update. Could you please specify the customer name and status (e.g. "Mehta Engineering 20 MT CR sheets quote sent")?`;
     }
 
-    const customerName = data.customer_name.trim();
+    const customerName = data.customer_name;
+    if (!customerName || customerName.length < 2) {
+      const { saveActiveSession } = require('../supabase');
+      await saveActiveSession(senderPhone, 'Unknown', 'pending_customer_for_deal');
+      return `Which customer is this deal update for? Please reply with the customer/company name.`;
+    }
 
-    // Verify and get official customer name from salesperson's registered customers
-    const { verifyAndGetCustomerName } = require('../supabase');
     const officialCustomerName = await verifyAndGetCustomerName(
       customerName,
       senderPhone,
     );
-
     const finalCustomerName = officialCustomerName || customerName;
 
-    // Fetch actual customer phone from recurring_customers (never default to salesperson phone)
     const { data: custRecord } = await supabase
       .from('recurring_customers')
       .select('customer_phone')
@@ -249,25 +220,65 @@ async function processSalesMessage(text, senderPhone) {
 
     let targetStage = data.target_stage || 'new_inquiry';
 
-    // Auto-lookup rate sheet price if rate_per_mt is missing
-    let autoRateInfo = null;
-    if (!data.rate_per_mt && (data.product_requirement || text)) {
-      autoRateInfo = await lookupRateSheetPrice(
-        data.product_requirement || text,
-      );
-      if (autoRateInfo) {
-        data.rate_per_mt = autoRateInfo.price_per_mt;
-        // If price is auto-applied from rate sheet, promote stage to quoted if it was qualified/new_inquiry
-        if (targetStage === 'new_inquiry' || targetStage === 'qualified') {
-          targetStage = 'quoted';
+    // Multi-item extraction and rate sheet price calculation
+    let rawItems = [];
+    if (Array.isArray(data.line_items) && data.line_items.length > 0) {
+      rawItems = data.line_items;
+    } else if (data.product_requirement || data.quantity_mt) {
+      rawItems = [{
+        product_requirement: data.product_requirement,
+        quantity_mt: data.quantity_mt,
+        rate_per_mt: data.rate_per_mt,
+      }];
+    }
+
+    let calculatedTotal = 0;
+    const processedItems = [];
+    let hasUnlistedMaterial = false;
+    let unlistedMaterialName = '';
+
+    for (const item of rawItems) {
+      const pName = item.product_requirement || 'Steel Requirement';
+      const qty = Number(item.quantity_mt) || 0;
+      let rate = Number(item.rate_per_mt) || 0;
+      let autoRate = null;
+
+      if (!rate) {
+        autoRate = await lookupRateSheetPrice(pName);
+        if (autoRate) {
+          rate = autoRate.price_per_mt;
+        } else if (qty > 0 || data.action === 'purchase_order') {
+          hasUnlistedMaterial = true;
+          unlistedMaterialName = pName;
         }
-      } else if (data.product_requirement && (data.quantity_mt || data.action === 'purchase_order')) {
-        // Unlisted material check: ask salesperson for rate confirmation
-        const { saveActiveSession } = require('../supabase');
-        await saveActiveSession(senderPhone, finalCustomerName, `pending_custom_rate|${finalCustomerName}|${data.product_requirement}`);
-        return `⚠️ *Product Price Confirmation Required*\n\n` +
-          `The material *"${data.product_requirement}"* is not listed in our active rate sheet.\n\n` +
-          `Please confirm the per MT rate for *${data.product_requirement}* (e.g. reply _"${data.product_requirement} rate is 54000"_) so I can calculate the deal total and update KRA 1 & Sales Pipeline! 📈`;
+      }
+
+      const itemAmount = qty > 0 && rate > 0 ? qty * rate : 0;
+      calculatedTotal += itemAmount;
+
+      processedItems.push({
+        pName,
+        qty,
+        rate,
+        itemAmount,
+      });
+    }
+
+    if (hasUnlistedMaterial && calculatedTotal === 0) {
+      const { saveActiveSession } = require('../supabase');
+      await saveActiveSession(senderPhone, finalCustomerName, `pending_custom_rate|${finalCustomerName}|${unlistedMaterialName}`);
+      return `⚠️ *Product Price Confirmation Required*\n\n` +
+        `The material *"${unlistedMaterialName}"* is not listed in our active rate sheet.\n\n` +
+        `Please confirm the per MT rate for *${unlistedMaterialName}* (e.g. reply _"${unlistedMaterialName} rate is 54000"_) so I can calculate the deal total and update KRA 1 & Sales Pipeline! 📈`;
+    }
+
+    let dealAmount = 0;
+    if (data.total_amount && Number(data.total_amount) > 0) {
+      dealAmount = Number(data.total_amount);
+    } else if (calculatedTotal > 0) {
+      dealAmount = calculatedTotal;
+      if (targetStage === 'new_inquiry' || targetStage === 'qualified') {
+        targetStage = 'quoted';
       }
     }
 
@@ -282,7 +293,6 @@ async function processSalesMessage(text, senderPhone) {
     const dbStage = stageMap[targetStage] || 'new_inquiry';
 
     if (!officialCustomerName) {
-      // Auto-create customer in recurring_customers via ensureCustomerRecord (prevents duplicates)
       const { ensureCustomerRecord } = require('../supabase');
       await ensureCustomerRecord(customerName, senderPhone, {
         customer_phone: data.customer_phone || null,
@@ -290,49 +300,15 @@ async function processSalesMessage(text, senderPhone) {
       console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
     }
 
-    // Edge Case 8/9/11: Find best matching deal
     const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
-
     let dealId = existingDeal ? existingDeal.id : null;
-    let dealAmount = 0;
 
-    // Resolve deal amount (priority: AI extracted total > rate × qty > DB items > existing total)
-    if (data.total_amount && Number(data.total_amount) > 0) {
-      dealAmount = Number(data.total_amount);
-    } else if (
-      data.rate_per_mt &&
-      data.quantity_mt &&
-      Number(data.quantity_mt) > 0
-    ) {
-      dealAmount = Number(data.quantity_mt) * Number(data.rate_per_mt);
-    } else if (dealId) {
+    if (dealAmount === 0 && dealId) {
       const itemsTotal = await getDealAmountFromItems(dealId);
-      dealAmount =
-        itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
+      dealAmount = itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
     }
 
-    // Edge Case 7: If rate × qty was given but not total
-    if (dealAmount === 0 && data.rate_per_mt && Number(data.rate_per_mt) > 0) {
-      const qty = data.quantity_mt || 0;
-      if (qty > 0) {
-        dealAmount = qty * Number(data.rate_per_mt);
-      } else if (dealId) {
-        const { data: items } = await supabase
-          .from('deal_items')
-          .select('quantity')
-          .eq('deal_id', dealId);
-        const totalQty = (items || []).reduce(
-          (s, i) => s + Number(i.quantity || 0),
-          0,
-        );
-        if (totalQty > 0) dealAmount = totalQty * Number(data.rate_per_mt);
-      }
-    }
-
-    // Resolve PO Date (always set to today or extracted PO date)
     const poDate = data.po_date || new Date().toISOString().split('T')[0];
-
-    // Resolve PO Number (auto-generate if won or PO received and po_number is missing)
     let poNumber = data.po_number || (existingDeal ? existingDeal.po_number : null);
     if (!poNumber && (dbStage === 'won' || data.action === 'purchase_order')) {
       const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -351,15 +327,9 @@ async function processSalesMessage(text, senderPhone) {
       if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
       if (data.delivery_location) updatePayload.delivery_location = data.delivery_location;
       if (data.delivery_date) updatePayload.delivery_date = data.delivery_date;
+      if (dealAmount > 0) updatePayload.total_amount = dealAmount;
 
-      // Only update amount if we have a new value and it's greater than 0
-      if (dealAmount > 0) {
-        updatePayload.total_amount = dealAmount;
-      }
-
-      if (dbStage === 'won') {
-        updatePayload.won_at = new Date().toISOString();
-      }
+      if (dbStage === 'won') updatePayload.won_at = new Date().toISOString();
 
       if (dbStage === 'lost') {
         if (data.loss_reason && data.loss_reason !== 'Not specified' && data.loss_reason.length > 2) {
@@ -382,17 +352,20 @@ async function processSalesMessage(text, senderPhone) {
 
       await supabase.from('deals').update(updatePayload).eq('id', dealId);
 
-      // Add line item if quantity or product specified
-      if (data.product_requirement || data.quantity_mt) {
-        await supabase.from('deal_items').insert({
-          deal_id: dealId,
-          sku_text: data.product_requirement || 'Steel Requirement',
-          quantity: data.quantity_mt ? Number(data.quantity_mt) : null,
-          unit: 'MT',
-          rate: data.rate_per_mt ? Number(data.rate_per_mt) : null,
-          amount: dealAmount || null,
-          created_at: new Date().toISOString(),
-        });
+      // Clean old deal items if new line items are provided
+      if (processedItems.length > 0) {
+        await supabase.from('deal_items').delete().eq('deal_id', dealId);
+        for (const pItem of processedItems) {
+          await supabase.from('deal_items').insert({
+            deal_id: dealId,
+            sku_text: pItem.pName,
+            quantity: pItem.qty > 0 ? pItem.qty : null,
+            unit: 'MT',
+            rate: pItem.rate > 0 ? pItem.rate : null,
+            amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
+            created_at: new Date().toISOString(),
+          });
+        }
       }
     } else {
       // ---- CREATE new deal ----
@@ -453,356 +426,89 @@ async function processSalesMessage(text, senderPhone) {
 
       if (newDeal) {
         dealId = newDeal.id;
-
-        // Auto-create line item
-        if (data.product_requirement || data.quantity_mt) {
+        for (const pItem of processedItems) {
           await supabase.from('deal_items').insert({
-            deal_id:    dealId,
-            sku_text:   data.product_requirement || 'Steel Requirement',
-            quantity:   data.quantity_mt ? Number(data.quantity_mt) : null,
-            unit:       'MT',
-            rate:       data.rate_per_mt ? Number(data.rate_per_mt) : null,
-            amount:     dealAmount || null,
+            deal_id: dealId,
+            sku_text: pItem.pName,
+            quantity: pItem.qty > 0 ? pItem.qty : null,
+            unit: 'MT',
+            rate: pItem.rate > 0 ? pItem.rate : null,
+            amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
             created_at: new Date().toISOString(),
           });
         }
       }
-
-      // Always insert into inquiries table for KRA 4 tracking
-      await supabase.from('inquiries').insert({
-        raw_text:          text,
-        source_channel:    'whatsapp',
-        sender_phone:      senderPhone,
-        salesperson_phone: senderPhone,
-        status:            'pending',
-        created_at:        new Date().toISOString(),
-      });
     }
 
-    // Edge Case 5: KRA 1 — log won, but don't double-log if already won
+    // Edge Case 3: Log KRA 1 when deal is won
     if (dbStage === 'won') {
-      const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, finalCustomerName);
+      const alreadyLogged = await isKRA1AlreadyLogged(
+        senderPhone,
+        finalCustomerName,
+      );
       if (!alreadyLogged) {
         await supabase.from('kra_logs').insert({
           salesperson_phone: senderPhone,
-          kra_number:        1,
-          kra_type:          'sales_achievement',
-          value:             dealAmount || 0,
-          customer_name:     finalCustomerName,
-          description:       `Deal Won: ${finalCustomerName} (₹${Number(dealAmount).toLocaleString('en-IN')}) — PO: ${poNumber || 'N/A'}`,
-          month: new Date().getMonth() + 1,
-          year:  new Date().getFullYear(),
+          customer_name: finalCustomerName,
+          kra_number: 1,
+          kra_type: 'sales_achievement',
+          metric_name: 'won_deal_value',
+          value: dealAmount,
+          notes: `Won deal for ${finalCustomerName}: ₹${dealAmount.toLocaleString('en-IN')}`,
+          created_at: new Date().toISOString(),
         });
+        console.log(`[SalesAgent] Logged KRA 1 for won deal: ${finalCustomerName} = ₹${dealAmount}`);
       }
-      await handlePaymentTrackingOnWon(dealId, finalCustomerName, dealAmount, senderPhone);
     }
 
-    // Edge Case 4: KRA 4 — log loss reason (separate from KRA 1)
-    if (dbStage === 'lost' && data.loss_reason) {
-      await supabase.from('kra_logs').insert({
-        salesperson_phone: senderPhone,
-        kra_number:        4,
-        kra_type:          'deal_lost',
-        value:             dealAmount || 0,
-        customer_name:     finalCustomerName,
-        description:       `Deal Lost: ${finalCustomerName} — Reason: ${data.loss_reason}`,
-        month: new Date().getMonth() + 1,
-        year:  new Date().getFullYear(),
+    // Trigger Zoho Bigin Sync
+    try {
+      syncActivity('deal', {
+        customer_name: finalCustomerName,
+        amount: dealAmount,
+        stage: dbStage,
+        po_number: poNumber,
       });
-    }
-
-    // Async Zoho Bigin Smart Sync (non-blocking)
-    let dealItems = [];
-    if (dealId) {
-      const { data: fetchedItems } = await supabase
-        .from('deal_items')
-        .select('sku_text, quantity, unit, rate, amount')
-        .eq('deal_id', dealId);
-      dealItems = fetchedItems || [];
-    }
-    syncActivity('deal', {
-      customerName: finalCustomerName,
-      stage:        dbStage,
-      amount:       dealAmount,
-      poNumber:     poNumber,
-      paymentTerms: data.payment_terms,
-      products:     dealItems,
-      senderPhone,
-    });
-
-    // Build reply
-    let replyMsg = '';
-    if (dbStage === 'won') {
-      replyMsg = `🏆 *KRA 1 - Deal Marked as WON!*\n\n` +
-        `Customer: *${finalCustomerName}*\n` +
-        `PO Date: *${poDate}*\n` +
-        `PO Number: *${poNumber || 'Generated'}*\n` +
-        `Stage: *Closed Won 🎉*\n` +
-        (dealAmount > 0 ? `Deal Value: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n` : '') +
-        `\nUpdated KRA 1 Sales Achievement Dashboard & Pipeline! ✅`;
-    } else if (dbStage === 'lost') {
-      replyMsg = `❌ *Deal Marked as LOST*\n\n` +
-        `Customer: *${finalCustomerName}*\n` +
-        `Stage: *Closed Lost*\n` +
-        (data.loss_reason ? `Reason: ${data.loss_reason}\n` : '') +
-        `\nUpdated Loss Analytics Dashboard! 📉`;
-    } else {
-      const stageLabels = {
-        new_inquiry: 'NEW INQUIRY 📋',
-        negotiation: 'NEGOTIATION 🤝',
-        quoted:      'QUOTED 📄',
-        qualified:   'QUALIFIED ✅',
-      };
-      replyMsg =
-        `💼 *Sales Inquiry & Pipeline Logged!* 🏗️\n\n` +
-        `Customer: *${finalCustomerName}*\n` +
-        `Stage: *${stageLabels[dbStage] || dbStage.toUpperCase()}*\n` +
-        (data.product_requirement
-          ? `Requirement: *${data.product_requirement}*\n`
-          : '') +
-        (data.quantity_mt ? `Quantity: *${data.quantity_mt} MT*\n` : '') +
-        (data.rate_per_mt
-          ? `Rate Sheet Price: *₹${Number(data.rate_per_mt).toLocaleString('en-IN')} / MT* ${autoRateInfo ? '(Auto-Applied from Official Rate Sheet 📈)' : ''}\n`
-          : '') +
-        (dealAmount > 0
-          ? `Calculated Deal Total: *₹${Number(dealAmount).toLocaleString('en-IN')}*\n`
-          : '') +
-        (data.delivery_location
-          ? `Delivery Location: *${data.delivery_location}*\n`
-          : '') +
-        `PO Date: *${poDate}*\n` +
-        (poNumber ? `PO Number: *${poNumber}*\n` : '') +
-        `\nSynced live to Sales Pipeline & KRA 1 Dashboard! ✅`;
+    } catch (e) {
+      console.error('[SalesAgent] Zoho Bigin sync error:', e.message);
     }
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
     const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
-    return replyMsg + (missingPrompt || '');
 
-  } catch (error) {
-    console.error('Sales Agent Error:', error.message);
-    return `⚠️ Could not process sales update: ${error.message}`;
-  }
-}
+    const formattedAmount = dealAmount > 0 ? `₹${dealAmount.toLocaleString('en-IN')}` : 'To be calculated';
+    const totalQty = processedItems.reduce((s, i) => s + i.qty, 0);
 
-// (Old syncToBigin removed — replaced by biginSyncAgent.syncActivity)
-
-/**
- * PO Image handler — finds existing deal or creates new won deal.
- * Edge Case 10: Never creates a duplicate deal if one already exists for the customer.
- */
-async function processSalesImage(imageBuffer, mimeType, senderPhone) {
-  try {
-    const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2;
-    const model = new ChatGoogleGenerativeAI({ model: 'gemini-2.5-flash', apiKey, temperature: 0.1 });
-    const base64Img = imageBuffer.toString('base64');
-    const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
-
-    const promptText = `You are the Specialized Sales Achievement & PO Vision Agent for Enlight Metals.
-Analyze this PO image / bill / handwritten slip and extract into JSON:
-{
-  "customer_name": "<company name if present, else null>",
-  "po_number": "<PO number if present, else null>",
-  "quantity_mt": <numeric quantity in MT if present, else 0>,
-  "rate_per_mt": <numeric rate per MT if present, else 0>,
-  "total_amount": <total value in rupees if stated, else 0>,
-  "confidence": <float 0.0 to 1.0>
-}
-Return ONLY JSON.`;
-
-    const message = new HumanMessage({
-      content: [
-        { type: 'text', text: promptText },
-        { type: 'image_url', image_url: { url: imageUrl } }
-      ]
-    });
-
-    const result = await model.invoke([message]);
-    const rawText = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const data = JSON.parse(cleaned);
-
-    if (!data.customer_name) {
-      return `⚠️ *PO Vision Agent — Customer Not Found*\n\nI parsed your PO image but the *Customer/Company Name* is not visible. Please reply with the company name to log this PO.`;
+    let itemsBreakdownStr = '';
+    if (processedItems.length > 0) {
+      itemsBreakdownStr = processedItems
+        .map((pi) => `  • *${pi.pName}*: ${pi.qty > 0 ? pi.qty + ' MT' : ''} ${pi.rate > 0 ? '@ ₹' + pi.rate.toLocaleString('en-IN') + '/MT = ₹' + pi.itemAmount.toLocaleString('en-IN') : ''}`)
+        .join('\n');
     }
 
-    const customerName = data.customer_name.trim();
-
-    // Verify and get official customer name from salesperson's registered customers
-    const { verifyAndGetCustomerName } = require('../supabase');
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
-
-    let finalCustomerName = officialCustomerName || customerName;
-
-    if (!officialCustomerName) {
-      // Auto-create prospect so PO image can still be logged
-      await supabase.from('recurring_customers').insert({
-        customer_name:              customerName,
-        assigned_salesperson_phone: senderPhone,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
-      });
-      console.log(`[SalesAgent] Auto-created new prospect from PO image: ${customerName}`);
-    }
-    // Fetch actual customer phone from recurring_customers (never default to salesperson phone)
-    const { data: custRecord } = await supabase
-      .from('recurring_customers')
-      .select('customer_phone')
-      .ilike('customer_name', `%${finalCustomerName}%`)
-      .limit(1);
-    const actualCustomerPhone = custRecord && custRecord.length > 0 ? custRecord[0].customer_phone : null;
-
-    let totalValue = Number(data.total_amount || 0);
-
-    if (!totalValue && data.quantity_mt && data.rate_per_mt) {
-      totalValue = Number(data.quantity_mt) * Number(data.rate_per_mt);
-    }
-
-    const poDate = data.po_date || new Date().toISOString().split('T')[0];
-    let poNumber = data.po_number || null;
-    if (!poNumber) {
-      const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      poNumber = `PO-${todayStr}-${randomNum}`;
-    }
-
-    // Edge Case 10: Find existing deal first, don't create duplicate
-    const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
-
-    let dealId;
-    if (existingDeal) {
-      const updatePayload = {
-        stage:        'won',
-        total_amount: totalValue || existingDeal.total_amount || 0,
-        po_number:    poNumber || existingDeal.po_number || null,
-        po_date:      poDate,
-        won_at:       new Date().toISOString(),
-      };
-      if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
-      await supabase.from('deals').update(updatePayload).eq('id', existingDeal.id);
-      dealId = existingDeal.id;
-    } else {
-      const { data: newDeal } = await supabase
-        .from('deals')
-        .insert({
-          customer_name:     finalCustomerName,
-          salesperson_phone: senderPhone,
-          customer_phone:    actualCustomerPhone,
-          stage:             'won',
-          total_amount:      totalValue || 0,
-          po_number:         poNumber,
-          po_date:           poDate,
-          inquiry_type:      'purchase_order',
-          won_at:            new Date().toISOString(),
-        })
-        .select()
-        .single();
-      if (newDeal) dealId = newDeal.id;
-    }
-
-    // Edge Case 5: Only log KRA 1 once per customer
-    const alreadyLogged = await isKRA1AlreadyLogged(senderPhone, finalCustomerName);
-    if (!alreadyLogged) {
-      await supabase.from('kra_logs').insert({
-        salesperson_phone: senderPhone,
-        kra_number:        1,
-        kra_type:          'sales_achievement',
-        value:             totalValue,
-        customer_name:     finalCustomerName,
-        description:       `PO Image Logged: ${finalCustomerName} (PO: ${poNumber})`,
-        month: new Date().getMonth() + 1,
-        year:  new Date().getFullYear(),
-      });
-    }
-    await handlePaymentTrackingOnWon(dealId, finalCustomerName, totalValue, senderPhone);
-
-    // Async Zoho Bigin Smart Sync (non-blocking)
-    syncActivity('deal', {
-      customerName: finalCustomerName,
-      stage:        'won',
-      amount:       totalValue,
-      poNumber:     data.po_number,
-      paymentTerms: data.payment_terms,
-      products:     data.items || [],
-      senderPhone,
-    });
-
-    const { getCustomerMissingInfoPrompt } = require('../supabase');
-    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
-
-    return `📦 *PO Document Processed & Logged!*\n\n` +
+    let resultMsg =
+      `💼 *Sales Inquiry & Pipeline Logged!* 🏗️\n\n` +
       `Customer: *${finalCustomerName}*\n` +
-      (data.po_number ? `PO Number: *${data.po_number}*\n` : '') +
-      (totalValue > 0 ? `Deal Value: *₹${Number(totalValue).toLocaleString('en-IN')}*\n` : '') +
-      `Stage: *Closed Won 🎉*\n\n` +
-      `Logged to KRA 1 Sales Achievement Dashboard! ✅` + (missingPrompt || '');
+      `Stage: *${dbStage.toUpperCase()} 📄*\n` +
+      (itemsBreakdownStr ? `Line Items:\n${itemsBreakdownStr}\n` : '') +
+      (totalQty > 0 ? `Total Quantity: *${totalQty} MT*\n` : '') +
+      `Calculated Deal Total: *${formattedAmount}* + GST\n` +
+      `PO Date: *${poDate}*\n\n` +
+      `Synced live to Sales Pipeline & KRA 1 Dashboard! ✅`;
 
-  } catch (err) {
-    console.error('Sales Image Agent Error:', err.message);
-    return `⚠️ Could not extract PO image details: ${err.message}`;
+    if (missingPrompt) {
+      resultMsg += `\n\n${missingPrompt}`;
+    }
+
+    return resultMsg;
+  } catch (error) {
+    console.error('[SalesAgent] Error processing sales message:', error);
+    return `⚠️ Error updating deal: ${error.message}`;
   }
 }
 
-async function handlePaymentTrackingOnWon(dealId, customerName, amount, salespersonPhone) {
-  try {
-    const wonDate = new Date();
-    const dueDate = new Date(wonDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const dueDateStr = dueDate.toISOString().split('T')[0];
-
-    let existingRecord = null;
-    if (dealId) {
-      const { data: byDeal } = await supabase
-        .from('payment_tracking')
-        .select('*')
-        .eq('deal_id', dealId)
-        .limit(1);
-      if (byDeal && byDeal.length > 0) existingRecord = byDeal[0];
-    }
-
-    if (!existingRecord && customerName) {
-      const { data: byCust } = await supabase
-        .from('payment_tracking')
-        .select('*')
-        .ilike('customer_name', `%${customerName}%`)
-        .limit(1);
-      if (byCust && byCust.length > 0) existingRecord = byCust[0];
-    }
-
-    if (existingRecord) {
-      const priorCollected = Number(existingRecord.collected_amount || 0);
-      const newInvoiceAmt  = Number(amount || existingRecord.invoice_amount || 0);
-      const newOutstanding = Math.max(0, newInvoiceAmt - priorCollected);
-      const newStatus      = priorCollected >= newInvoiceAmt ? 'settled' : priorCollected > 0 ? 'partial' : 'pending';
-
-      await supabase
-        .from('payment_tracking')
-        .update({
-          due_date:           dueDateStr,
-          invoice_amount:     newInvoiceAmt,
-          outstanding:        newOutstanding,
-          status:             newStatus,
-          deal_id:            dealId || existingRecord.deal_id || null,
-          credit_period_days: 30,
-          updated_at:         new Date().toISOString()
-        })
-        .eq('id', existingRecord.id);
-    } else {
-      await supabase.from('payment_tracking').insert({
-        salesperson_phone: salespersonPhone,
-        customer_name: customerName,
-        invoice_amount: amount || 0,
-        outstanding: amount || 0,
-        status: 'pending',
-        due_date: dueDateStr,
-        deal_id: dealId || null,
-        credit_period_days: 30,
-        created_at: new Date().toISOString()
-      });
-    }
-  } catch (err) {
-    console.error('Failed to handle payment tracking on won:', err.message);
-  }
-}
-
-module.exports = { processSalesMessage, processSalesImage };
+module.exports = {
+  processSalesMessage,
+  findBestDeal,
+  lookupRateSheetPrice,
+};
