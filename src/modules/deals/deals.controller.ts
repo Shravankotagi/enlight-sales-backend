@@ -13,6 +13,13 @@ import { DealsService } from './deals.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
+function phoneMatches(phone1?: string, phone2?: string): boolean {
+  if (!phone1 || !phone2) return false;
+  const digits1 = phone1.replace(/\D/g, '').slice(-10);
+  const digits2 = phone2.replace(/\D/g, '').slice(-10);
+  return digits1.length === 10 && digits1 === digits2;
+}
+
 @Controller('deals')
 @UseGuards(JwtAuthGuard)
 export class DealsController {
@@ -34,8 +41,8 @@ export class DealsController {
     if (targetPhone) {
       return data.filter(
         (d: any) =>
-          d.salesperson_phone === targetPhone ||
-          d.customer_phone === targetPhone,
+          phoneMatches(d.salesperson_phone, targetPhone) ||
+          phoneMatches(d.customer_phone, targetPhone),
       );
     }
     return data;
@@ -55,8 +62,8 @@ export class DealsController {
     const filtered = targetPhone
       ? deals.filter(
           (d: any) =>
-            d.salesperson_phone === targetPhone ||
-            d.customer_phone === targetPhone,
+            phoneMatches(d.salesperson_phone, targetPhone) ||
+            phoneMatches(d.customer_phone, targetPhone),
         )
       : deals;
 
@@ -97,8 +104,8 @@ export class DealsController {
     const filtered = targetPhone
       ? activeDeals.filter(
           (d: any) =>
-            d.salesperson_phone === targetPhone ||
-            d.customer_phone === targetPhone,
+            phoneMatches(d.salesperson_phone, targetPhone) ||
+            phoneMatches(d.customer_phone, targetPhone),
         )
       : activeDeals;
 
