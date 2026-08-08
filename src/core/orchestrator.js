@@ -116,6 +116,67 @@ let currentTools = [];
 
 // ── Nodes ─────────────────────────────────────────────────────────────────
 
+function normalizeGroqToolCalls(response) {
+  if (!response) return response;
+
+  if (Array.isArray(response.tool_calls) && response.tool_calls.length > 0) {
+    return response;
+  }
+
+  const content = typeof response.content === 'string' ? response.content : '';
+  if (!content) return response;
+
+  const extractedToolCalls = [];
+
+  // Pattern 1: <function(name){...}> or <function(name){...}></function>
+  const pattern1 = /<function\(([^)]+)\)([\s\S]*?)(?:<\/function>|>)/gi;
+  let match;
+  while ((match = pattern1.exec(content)) !== null) {
+    try {
+      const name = match[1].trim();
+      let rawJson = match[2].replace(/'/g, '"').trim();
+      const args = JSON.parse(rawJson);
+      extractedToolCalls.push({
+        name,
+        args,
+        id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        type: 'tool_call',
+      });
+    } catch (e) {
+      console.warn('[Orchestrator] Failed to parse function call JSON:', match[2], e.message);
+    }
+  }
+
+  // Pattern 2: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  const pattern2 = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+  while ((match = pattern2.exec(content)) !== null) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (data.name) {
+        extractedToolCalls.push({
+          name: data.name,
+          args: data.arguments || data.args || {},
+          id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          type: 'tool_call',
+        });
+      }
+    } catch (e) {
+      console.warn('[Orchestrator] Failed to parse tool_call XML:', match[1], e.message);
+    }
+  }
+
+  if (extractedToolCalls.length > 0) {
+    response.tool_calls = extractedToolCalls;
+    response.content = content
+      .replace(/<function\([\s\S]*?<\/function>/gi, '')
+      .replace(/<function\([\s\S]*?>/gi, '')
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .trim();
+  }
+
+  return response;
+}
+
 /**
  * Agent Node: The LLM that reads messages, decides tool calls, and writes responses.
  * Re-runs after each tool_node execution until no more tool calls are needed.
@@ -137,6 +198,7 @@ async function agentNode(state) {
   let response;
   try {
     response = await invokeWithFallback(contextMessages, currentTools);
+    response = normalizeGroqToolCalls(response);
   } catch (err) {
     console.error('[Orchestrator] Model invocation failed:', err.message);
     return {
