@@ -244,7 +244,7 @@ router.post('/', async (req, res) => {
         }
 
         // Save raw inquiry data to Supabase for all incoming messages
-        await saveInquiry({
+        const savedInquiry = await saveInquiry({
           source_channel: "whatsapp",
           raw_text,
           media_urls,
@@ -348,13 +348,15 @@ router.post('/', async (req, res) => {
               raw_text = transcript;
               
               // Update inquiry with transcript
-              await supabase
-                .from('inquiries')
-                .update({ 
-                  raw_text: transcript,
-                  voice_url: voice_url
-                })
-                .eq('id', savedInquiry.id);
+              if (savedInquiry && savedInquiry.id) {
+                await supabase
+                  .from('inquiries')
+                  .update({ 
+                    raw_text: transcript,
+                    voice_url: voice_url
+                  })
+                  .eq('id', savedInquiry.id);
+              }
               
               // Extract inquiry from transcript using Gemini
               extraction = await extractFromText(transcript);
