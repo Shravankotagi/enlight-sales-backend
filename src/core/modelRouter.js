@@ -17,6 +17,7 @@ const GEMINI_KEYS = [
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
   'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
 ];
 
 let roundRobinIdx = 0;
@@ -77,10 +78,10 @@ async function invokeWithFallback(messages, tools = null) {
           return await boundModel.invoke(messages);
         } catch (err) {
           lastError = err;
-          console.warn(`[ModelRouter] Gemini (${modelName}) attempt ${attempt} failed (${err.message?.slice(0, 70)}), retrying...`);
+          console.warn(`[ModelRouter] Gemini (${modelName}) key (***${key.slice(-4)}) attempt ${attempt} failed: ${err.message}`);
           const msg = err.message || '';
-          if (msg.includes('429') || msg.includes('Quota')) {
-            await new Promise((r) => setTimeout(r, 2000));
+          if (msg.includes('429') || msg.includes('Quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+            await new Promise((r) => setTimeout(r, 1500));
           }
           continue;
         }

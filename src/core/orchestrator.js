@@ -259,6 +259,10 @@ async function runOrchestrator(text, senderPhone, options = {}) {
 
   } catch (err) {
     console.error('[Orchestrator] Fatal error:', err);
+    const msg = err.message || '';
+    if (msg.includes('429') || msg.includes('Quota') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('All Gemini API keys')) {
+      return `⏳ *Gemini Traffic Spike*\n\nGoogle Gemini rate limit reached. Please send your message again in 10 seconds.\n\n_(Tip: Add an additional Gemini API key in Railway under GEMINI_API_KEY_1 to double your quota!)_`;
+    }
     return `⚠️ Something went wrong processing your message. Please try again.\n\nError: ${err.message}`;
   }
 }
