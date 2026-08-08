@@ -34,7 +34,9 @@ export class DealsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
     const targetPhone =
-      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
 
     const data = await this.dealsService.findAll({ stage, from, to });
 
@@ -56,7 +58,9 @@ export class DealsController {
     @Query('to') to?: string,
   ) {
     const targetPhone =
-      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
 
     const deals = await this.dealsService.findAll({ from, to });
     const filtered = targetPhone
@@ -94,7 +98,9 @@ export class DealsController {
     @Query('to') to?: string,
   ) {
     const targetPhone =
-      employee.role === 'admin' ? salespersonPhoneOverride : employee.phone;
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
 
     const deals = await this.dealsService.findAll({ from, to });
     const activeDeals = deals.filter(

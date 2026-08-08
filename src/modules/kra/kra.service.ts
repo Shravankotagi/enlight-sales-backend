@@ -24,12 +24,7 @@ export class KraService {
     try {
       const { start, end } = this.getMonthRange(month, year);
 
-      let dealsQuery = this.supabase
-        .from('deals')
-        .select('*')
-        .or(
-          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
-        );
+      let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
@@ -51,7 +46,7 @@ export class KraService {
         .gte('reported_at', start)
         .lte('reported_at', end);
       let paymentsQuery = this.supabase.from('payment_tracking').select('*');
-      let recurringQuery = this.supabase
+      const recurringQuery = this.supabase
         .from('recurring_customers')
         .select('*')
         .eq('is_active', true);
@@ -84,13 +79,14 @@ export class KraService {
         paymentsQuery = paymentsQuery.or(
           `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
-        recurringQuery = recurringQuery.or(
-          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
-        );
         followupsQuery = followupsQuery.or(
           `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
       }
+
+      dealsQuery = dealsQuery.or(
+        `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+      );
 
       const [
         dealsResult,
