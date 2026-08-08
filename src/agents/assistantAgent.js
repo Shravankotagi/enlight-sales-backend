@@ -54,6 +54,8 @@ GUIDELINES:
 4. Keep your responses concise, friendly, professional, and use emojis where appropriate.
 5. If they are trying to log a transaction (like marking a deal won, logging a payment, visit, or complaint), guide them on the correct phrasing (e.g. "To log a payment, say 'Delta paid 500000'").
 6. Never make up steel prices or dates. Only use the provided context.
+`;
+
     const response = await invokeWithFallback([
       new SystemMessage(ASSISTANT_SYSTEM_PROMPT),
       new HumanMessage(text),
