@@ -5,28 +5,16 @@
  * It replaces the giant if/else routing tree in webhook.js.
  *
  * Flow:
- *   [START] → [agent_node] → (tool calls?) → [tool_node] → [agent_node] → ... → [respond_node] → [END]
+ *   [START] → [agent_node] → (tool calls?) → [tool_node] → [agent_node] → ... → [END]
  *
- * The agent_node uses Gemini 2.5 Flash to:
- *   1. Understand any message (English, Hindi, Hinglish, typos)
- *   2. Decide which tools to call (can call multiple tools in sequence)
- *   3. Read tool results
- *   4. Write a natural, intelligent final response
- *
- * Key properties:
- *   - Pre-binds senderPhone to every tool call so writes never fail silently
- *   - Never blocks any activity due to missing customer registration
- *   - Handles multi-intent messages (visit + deal update in one message)
- *   - Maintains conversation context across turns
- *   - Automatic model failover across Gemini API keys
- *   - All DB writes happen inside tools — fully auditable
+ * Primary Model: Google Gemini (gemini-3.1-flash-lite)
  */
 
 const { StateGraph, START, END, Annotation, MessagesAnnotation } = require('@langchain/langgraph');
-const { ToolNode }       = require('@langchain/langgraph/prebuilt');
 const { HumanMessage, SystemMessage, AIMessage, ToolMessage } = require('@langchain/core/messages');
-const { createTools }    = require('./tools');
+const { createTools }        = require('./tools');
 const { invokeWithFallback } = require('./modelRouter');
+const { getChatHistory, addChatHistory, getActiveContextPrompt } = require('./memory');
 
 // ── System Prompt — Persona & Instructions ────────────────────────────────
 
@@ -111,64 +99,8 @@ function getDeterministicIntentHint(text) {
   return `\n[REQUIRED TOOL CALLS THIS TURN: ${anchors.join(' AND ')}. You MUST call ALL of these tools before responding. Missing any = incomplete action.]`;
 }
 
-// Global active tools array for the current execution
-let currentTools = [];
-
-// ── Nodes ─────────────────────────────────────────────────────────────────
-
-const { getChatHistory, addChatHistory, getActiveContextPrompt } = require('./memory');
-
-/**
- * Agent Node: The LLM that reads messages, decides tool calls, and writes responses.
- * Re-runs after each tool_node execution until no more tool calls are needed.
- */
-async function agentNode(state) {
-  const { messages, senderPhone, employeeName, messageType } = state;
-
-  const lastHumanMsg = [...messages].reverse().find(m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage');
-  const userText = lastHumanMsg ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '') : '';
-  const intentAnchor = getDeterministicIntentHint(userText);
-  const activeContextPrompt = await getActiveContextPrompt(senderPhone);
-  const historyMessages = getChatHistory(senderPhone);
-
-  // Build the full message context for the LLM
-  const contextMessages = [
-    new SystemMessage(SYSTEM_PROMPT + `\n\nCurrent salesperson: ${employeeName || 'Salesperson'}\nPhone: ${senderPhone}\nMessage type: ${messageType}${activeContextPrompt}${intentAnchor}`),
-    ...historyMessages,
-    ...messages,
-  ];
-
-  // Get model with current pre-bound tools
-  let response;
-  try {
-    response = await invokeWithFallback(contextMessages, currentTools);
-  } catch (err) {
-    console.error('[Orchestrator] Model invocation failed:', err.message);
-
-    // Warm greeting fallback if simple greeting message was sent
-    const cleanUserText = userText.trim().toLowerCase().replace(/[^a-z]/gi, '');
-    if (['hi', 'hii', 'hiii', 'hello', 'hey', 'namaste', 'hie', 'goodmorning', 'goodevening'].includes(cleanUserText)) {
-      return {
-        messages: [new AIMessage(`Namaste! 🙏 Welcome to Enlight Metals Sales Intelligence Bot.\n\nHow can I assist you with your deals, customer visits, payments, or inquiries today?`)],
-      };
-    }
-
-    const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('rate_limit') || err.message.includes('Quota'));
-    const cleanReply = isRateLimit
-      ? `⏳ *Gemini AI Traffic Spike*\n\nGoogle Gemini API rate limit reached. Please try sending your message again in 10-15 seconds.\n\n_(Tip: Add an additional Gemini API key in Railway settings under GEMINI_API_KEY_1 to double your capacity!)_`
-      : `⚠️ I'm having trouble processing your request right now. Please try again in a moment.`;
-    return {
-      messages: [new AIMessage(cleanReply)],
-    };
-  }
-
-  return { messages: [response] };
-}
-
 /**
  * Router: Decides whether to continue to tools or end the conversation.
- * If the last AI message has tool_calls, route to tool_node.
- * Otherwise, we're done — return to the user.
  */
 function shouldContinue(state) {
   const lastMessage = state.messages[state.messages.length - 1];
@@ -184,16 +116,6 @@ function shouldContinue(state) {
 
 /**
  * Main entry point — called from webhook.js for every incoming message.
- *
- * @param {string} text           - The message text
- * @param {string} senderPhone    - The salesperson's WhatsApp number
- * @param {object} options        - Additional context
- * @param {string} options.employeeName  - Salesperson name from employee record
- * @param {string} options.messageType   - 'text' | 'image' | 'audio'
- * @param {Buffer} options.imageBuffer   - Image buffer if messageType is 'image'
- * @param {string} options.imageMimeType - MIME type of image
- *
- * @returns {string} The final reply to send back on WhatsApp
  */
 async function runOrchestrator(text, senderPhone, options = {}) {
   const {
@@ -206,11 +128,54 @@ async function runOrchestrator(text, senderPhone, options = {}) {
   try {
     console.log(`[Orchestrator] Processing: "${text?.substring(0, 80)}..." from ${senderPhone}`);
 
-    // Create pre-bound tools with senderPhone locked in
-    currentTools = createTools(senderPhone);
+    // Create tools with senderPhone pre-bound per request
+    const TOOLS = createTools(senderPhone);
 
-    // Custom tool execution node that synthesizes combined tool responses directly
-    const customToolNode = async (state) => {
+    // Request-scoped Agent Node
+    const inlineAgentNode = async (state) => {
+      const { messages, senderPhone: sp, employeeName: en, messageType: mt } = state;
+
+      const lastHumanMsg = [...messages].reverse().find(
+        m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage'
+      );
+      const userText = lastHumanMsg
+        ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '')
+        : '';
+      const intentAnchor = getDeterministicIntentHint(userText);
+      const activeContextPrompt = await getActiveContextPrompt(sp);
+      const historyMessages = getChatHistory(sp);
+
+      const contextMessages = [
+        new SystemMessage(
+          SYSTEM_PROMPT +
+          `\n\nCurrent salesperson: ${en || 'Salesperson'}\nPhone: ${sp}\nMessage type: ${mt}${activeContextPrompt}${intentAnchor}`
+        ),
+        ...historyMessages,
+        ...messages,
+      ];
+
+      let response;
+      try {
+        response = await invokeWithFallback(contextMessages, TOOLS);
+      } catch (err) {
+        console.error('[Orchestrator] Model invocation failed:', err.message);
+
+        // Friendly greeting fallback if simple greeting message was sent
+        const cleanUserText = userText.trim().toLowerCase().replace(/[^a-z]/gi, '');
+        if (['hi', 'hii', 'hiii', 'hello', 'hey', 'namaste', 'hie', 'goodmorning', 'goodevening'].includes(cleanUserText)) {
+          return {
+            messages: [new AIMessage(`Namaste! 🙏 Welcome to Enlight Metals Sales Intelligence Bot.\n\nHow can I assist you with your deals, customer visits, payments, or inquiries today?`)],
+          };
+        }
+
+        throw err;
+      }
+
+      return { messages: [response] };
+    };
+
+    // Request-scoped Tool Node
+    const inlineToolNode = async (state) => {
       const { messages } = state;
       const lastAIMsg = [...messages].reverse().find(m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage');
 
@@ -222,7 +187,7 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       const validOutputs = [];
 
       for (const call of lastAIMsg.tool_calls) {
-        const toolObj = currentTools.find(t => t.name === call.name);
+        const toolObj = TOOLS.find(t => t.name === call.name);
         if (toolObj) {
           try {
             const res = await toolObj.invoke(call.args);
@@ -250,17 +215,15 @@ async function runOrchestrator(text, senderPhone, options = {}) {
 
     // Build per-request graph
     const graph = new StateGraph(OrchestratorState)
-      .addNode('agent', agentNode)
-      .addNode('tools', customToolNode)
+      .addNode('agent', inlineAgentNode)
+      .addNode('tools', inlineToolNode)
       .addEdge(START, 'agent')
       .addConditionalEdges('agent', shouldContinue)
       .addEdge('tools', 'agent')
       .compile();
 
-    // Build the initial human message
     const humanMsg = new HumanMessage(text || 'Image received');
 
-    // Run the graph
     const finalState = await graph.invoke({
       messages:      [humanMsg],
       senderPhone,
@@ -270,10 +233,9 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       imageMimeType,
     });
 
-    // Extract the final AI response
     const allMessages = finalState.messages;
-    const lastAIMsg   = [...allMessages].reverse().find(
-      (m) => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage'
+    const lastAIMsg = [...allMessages].reverse().find(
+      m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage'
     );
 
     let rawReply = typeof lastAIMsg?.content === 'string' ? lastAIMsg.content : '';
@@ -287,7 +249,6 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       reply = '✅ Activity updated in your CRM & KRA Dashboard!';
     }
 
-    // Save to multi-turn context memory
     addChatHistory(senderPhone, text, reply);
 
     console.log(`[Orchestrator] Reply ready (${reply.length} chars)`);
