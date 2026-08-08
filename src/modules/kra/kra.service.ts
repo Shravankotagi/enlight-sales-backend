@@ -734,9 +734,32 @@ export class KraService {
         (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
       );
       const kra2Rows = kra2Logs.map((l, index) => {
-        // Look up the real customer record for contact_person and industry
         const custKey = (l.customer_name || '').toLowerCase().trim();
-        const custRecord = customerMap.get(custKey);
+        const custRecord =
+          customerMap.get(custKey) ||
+          safeCustomers.find(
+            (c) =>
+              c.customer_name &&
+              (c.customer_name.toLowerCase().includes(custKey) ||
+                custKey.includes(c.customer_name.toLowerCase())),
+          );
+
+        const visitRecord = safeVisits.find(
+          (v) =>
+            v.customer_name &&
+            (v.customer_name.toLowerCase().trim() === custKey ||
+              v.customer_name.toLowerCase().includes(custKey)),
+        );
+
+        let contactPerson = custRecord?.contact_person;
+        if (!contactPerson || contactPerson === '-') {
+          contactPerson = visitRecord?.person_met;
+        }
+        if (!contactPerson || contactPerson === '-') {
+          const notes = custRecord?.notes || '';
+          const match = notes.match(/Owner:\s*([^|]+)/i);
+          if (match) contactPerson = match[1].trim();
+        }
 
         // Find the first real deal/order for this customer (if any)
         const firstDeal = safeDeals
@@ -776,7 +799,7 @@ export class KraService {
           sr_no: index + 1,
           company_name: l.customer_name || 'New Client',
           industry_segment: custRecord?.industry || '-', // real value or blank
-          contact_person: custRecord?.contact_person || '-', // real contact, not 'Key Contact'
+          contact_person: contactPerson || '-', // real contact resolved across customer profile, visits, and notes
           product_ordered: productOrdered || '-', // blank until real order
           first_order_qty: firstOrderQty ? `${firstOrderQty} MT` : '-', // blank until real order
           billing_date: billingDate || '-', // blank until real billing
