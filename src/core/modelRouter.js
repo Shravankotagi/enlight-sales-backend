@@ -1,8 +1,8 @@
 /**
  * modelRouter.js — Multi-key Groq AI Model Router
  *
- * Rotates through Groq (llama-3.3-70b-versatile) API keys (round-robin).
- * Uses Groq exclusively for model invocation and tool calling.
+ * Rotates through Groq (llama-3.3-70b-versatile) API keys.
+ * Uses process.env.GROQ_API_KEY / GROQ_API_KEY_1 / GROQ_API_KEY_2 / GROQ_API_KEY_3.
  */
 
 const { ChatGroq } = require('@langchain/groq');
