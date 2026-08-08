@@ -96,9 +96,10 @@ async function processComplaintMessage(text, senderPhone) {
       new SystemMessage(COMPLAINT_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const data = JSON.parse(cleaned);
+    const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
+    const { safeParseJSON } = require('../utils/jsonUtils');
+    const data = safeParseJSON(rawText, null);
+    if (!data) throw new Error('Could not parse complaint JSON from Groq response');
 
     // Edge Case 5: Missing customer name
     if (!data.customer_name) {

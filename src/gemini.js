@@ -4,6 +4,7 @@
 
 const { ChatGroq } = require('@langchain/groq');
 const { HumanMessage } = require('@langchain/core/messages');
+const { safeParseJSON } = require('./utils/jsonUtils');
 const { supabase } = require('./supabase');
 
 function getGroqClient(modelName = 'llama-3.3-70b-versatile') {
@@ -151,13 +152,8 @@ async function extractFromText(text) {
     const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     
     // Clean response - remove any markdown backticks if present
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    
-    const parsed = JSON.parse(cleaned);
+    const parsed = safeParseJSON(rawText, null);
+    if (!parsed) throw new Error('Could not parse JSON extraction from Groq response');
     const postProcessed = postProcessExtraction(parsed);
     console.log('Groq text extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;
@@ -188,13 +184,8 @@ async function extractFromImage(imageBuffer, mimeType) {
     const rawText = (typeof response.content === 'string' ? response.content : '').trim();
     
     // Clean response
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    
-    const parsed = JSON.parse(cleaned);
+    const parsed = safeParseJSON(rawText, null);
+    if (!parsed) throw new Error('Could not parse image extraction from Groq vision response');
     const postProcessed = postProcessExtraction(parsed);
     console.log('Groq image extraction successful:', JSON.stringify(postProcessed, null, 2));
     return postProcessed;

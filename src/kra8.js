@@ -73,15 +73,10 @@ Rules:
 Message: "${text}"
     `;
 
-    const response = await model.invoke([new HumanMessage(prompt)]);
-    const rawText = typeof response.content === 'string' ? response.content : '';
-    const raw = rawText.trim()
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
-    return JSON.parse(raw);
+    const { safeParseJSON } = require('./utils/jsonUtils');
+    const parsed = safeParseJSON(rawText, null);
+    if (!parsed) throw new Error('Could not parse complaint details JSON');
+    return parsed;
   } catch (error) {
     console.error('extractComplaintDetails error:', error.message);
     return {

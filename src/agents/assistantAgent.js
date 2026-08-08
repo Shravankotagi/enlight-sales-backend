@@ -62,10 +62,15 @@ GUIDELINES:
 `;
 
     const model = getGroqClient();
-    const prompt = `${ASSISTANT_SYSTEM_PROMPT}\n\nUser's Question: "${text}"`;
-    
-    const result = await model.invoke([new HumanMessage(prompt)]);
-    const reply = (typeof result.content === 'string' ? result.content : '').trim();
+    let reply = (typeof result.content === 'string' ? result.content : '')
+      .replace(/<function\([\s\S]*?<\/function>/gi, '')
+      .replace(/<function\([\s\S]*?>/gi, '')
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .trim();
+
+    if (!reply) {
+      reply = 'I am here to help you with Enlight Metals sales updates!';
+    }
     return reply;
   } catch (error) {
     console.error('Conversational assistant error:', error.message);

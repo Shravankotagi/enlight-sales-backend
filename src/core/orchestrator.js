@@ -282,7 +282,17 @@ async function runOrchestrator(text, senderPhone, options = {}) {
       (m) => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage'
     );
 
-    const reply = lastAIMsg?.content || '✅ Done! Your activity has been logged.';
+    let rawReply = typeof lastAIMsg?.content === 'string' ? lastAIMsg.content : '';
+    let reply = rawReply
+      .replace(/<function\([\s\S]*?<\/function>/gi, '')
+      .replace(/<function\([\s\S]*?>/gi, '')
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .trim();
+
+    if (!reply) {
+      reply = '✅ Activity updated in your CRM & KRA Dashboard!';
+    }
+
     console.log(`[Orchestrator] Reply ready (${reply.length} chars)`);
     return reply;
 

@@ -407,8 +407,9 @@ Return ONLY JSON.`;
 
     const result = await model.invoke([message]);
     const rawText = typeof result.content === 'string' ? result.content : '';
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const data = JSON.parse(cleaned);
+    const { safeParseJSON } = require('../utils/jsonUtils');
+    const data = safeParseJSON(rawText, null);
+    if (!data) throw new Error('Could not parse payment receipt JSON from Groq vision response');
 
     const amountPaid = Math.max(0, Number(data.amount_paid || 0));
     if (amountPaid <= 0) {
