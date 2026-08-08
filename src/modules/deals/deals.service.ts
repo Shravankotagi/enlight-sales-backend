@@ -33,8 +33,11 @@ export class DealsService {
         query = query.eq('stage', filters.stage);
       }
       if (filters?.salesperson_phone) {
+        const cleanDigits = filters.salesperson_phone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
         query = query.or(
-          `salesperson_phone.eq.${filters.salesperson_phone},customer_phone.eq.${filters.salesperson_phone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
         );
       }
       if (filters?.from) {

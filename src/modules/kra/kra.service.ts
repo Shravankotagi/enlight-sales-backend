@@ -62,24 +62,33 @@ export class KraService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        // filter queries by salesperson phone if relevant
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+
         dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
         );
         inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
         );
-        kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
-        visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
-        complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
-        paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
-        recurringQuery = recurringQuery.eq(
-          'assigned_salesperson_phone',
-          salespersonPhone,
+        kraLogsQuery = kraLogsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
-        followupsQuery = followupsQuery.eq(
-          'salesperson_phone',
-          salespersonPhone,
+        visitsQuery = visitsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        complaintsQuery = complaintsQuery.or(
+          `reported_by.eq.${p10},reported_by.eq.${p12}`,
+        );
+        paymentsQuery = paymentsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        recurringQuery = recurringQuery.or(
+          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
+        );
+        followupsQuery = followupsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
       }
 
@@ -437,9 +446,12 @@ export class KraService {
         .order('created_at', { ascending: true })
         .limit(10);
 
-      if (!isAdmin) {
+      if (!isAdmin && salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
         staleQuery = staleQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
         );
       }
 
