@@ -72,16 +72,6 @@ Return ONLY the JSON object.
  */
 async function autoOnboardProspect(customerName, senderPhone, extractedData) {
   try {
-    // Check if already exists (fuzzy) for this salesperson
-    const { data: existing } = await supabase
-      .from('recurring_customers')
-      .select('id, customer_name')
-      .ilike('customer_name', `%${customerName}%`)
-      .eq('assigned_salesperson_phone', senderPhone)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-    // New prospect — create record via ensureCustomerRecord (prevents duplicates)
     const { ensureCustomerRecord } = require('../supabase');
     const rec = await ensureCustomerRecord(customerName, senderPhone, {
       city: extractedData.city,
