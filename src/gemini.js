@@ -133,7 +133,7 @@ function postProcessExtraction(parsed) {
 
 async function extractFromText(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const rateSheetInfo = await getLatestActiveRatesText();
     const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
     const result = await model.generateContent(prompt);
@@ -163,7 +163,7 @@ async function extractFromText(text) {
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     const imagePart = {
       inlineData: {
@@ -313,7 +313,7 @@ IMPORTANT RULES:
 
 async function classifyIntent(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'long' });
     const contextPrompt = `Context:\n- Today's date and time in India: ${nowStr}\n\n`;
     const prompt = contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
@@ -387,7 +387,7 @@ Return ONLY a JSON object (no markdown, no prose, no backticks):
 
 async function classifyQueryType(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const prompt = QUERY_CLASSIFIER_PROMPT + '\n\nQuery: "' + text + '"';
     const result = await model.generateContent(prompt);
     const response = await result.response;

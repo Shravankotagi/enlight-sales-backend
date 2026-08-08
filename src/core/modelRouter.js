@@ -18,9 +18,11 @@ const { ChatGroq } = require('@langchain/groq');
 const GEMINI_KEYS = [
   process.env.GEMINI_API_KEY,
   process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
 ].filter(Boolean);
 
 const GROQ_KEYS = [
+  process.env.GROQ_API_KEY,
   process.env.GROQ_API_KEY_1,
   process.env.GROQ_API_KEY_2,
   process.env.GROQ_API_KEY_3,
@@ -109,18 +111,19 @@ function getGroqModel(tools = null) {
  * @returns {object} LangChain chat model
  */
 function getModel(tools = null) {
-  const gemini = getGeminiModel(tools);
-  if (gemini) return gemini;
-
   const groq = getGroqModel(tools);
   if (groq) return groq;
+
+  const gemini = getGeminiModel(tools);
+  if (gemini) return gemini;
 
   throw new Error('[ModelRouter] All API keys are rate-limited. Try again in a minute.');
 }
 
 /**
  * Invoke a model with automatic fallback on rate-limit errors.
- * Pass messages, get a response. Never throws on rate-limit — switches provider.
+ * Groq llama-3.3-70b-versatile is the PRIMARY model.
+ * Gemini 2.5 Flash is the FALLBACK provider.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -128,34 +131,34 @@ function getModel(tools = null) {
  */
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
-  const geminiModels = ['gemini-3.1-flash-lite', 'gemini-2.0-flash'];
 
-  // 1. Try Gemini model variants
+  // 1. Primary: Try Groq (llama-3.3-70b-versatile) with tools
+  for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
+    const model = getGroqModel(tools);
+    if (!model) break;
+    try {
+      return await model.invoke(messages);
+    } catch (err) {
+      console.warn(`[ModelRouter] Groq (llama-3.3-70b-versatile) attempt failed (${err.message?.slice(0, 60)}), trying next...`);
+      lastError = err;
+      continue;
+    }
+  }
+
+  // 2. Fallback: Try Gemini model variants
+  const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
   for (const mName of geminiModels) {
     for (let i = 0; i < Math.max(GEMINI_KEYS.length, 1); i++) {
       const model = getGeminiModel(tools, mName);
       if (!model) break;
       try {
+        console.warn(`[ModelRouter] Falling back to Gemini (${mName})`);
         return await model.invoke(messages);
       } catch (err) {
         console.warn(`[ModelRouter] Gemini (${mName}) attempt failed (${err.message?.slice(0, 60)}), trying next...`);
         lastError = err;
         continue;
       }
-    }
-  }
-
-  // 2. Try Groq fallback models — WITHOUT tools (Groq tool calling is unreliable)
-  for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
-    const model = getGroqModel(null);
-    if (!model) break;
-    try {
-      console.warn('[ModelRouter] Falling back to Groq WITHOUT tools');
-      return await model.invoke(messages);
-    } catch (err) {
-      console.warn(`[ModelRouter] Groq attempt failed (${err.message?.slice(0, 60)}), trying next...`);
-      lastError = err;
-      continue;
     }
   }
 

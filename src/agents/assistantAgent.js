@@ -57,7 +57,7 @@ GUIDELINES:
 6. Never make up steel prices or dates. Only use the provided context.
 `;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const prompt = `${ASSISTANT_SYSTEM_PROMPT}\n\nUser's Question: "${text}"`;
     
     const result = await model.generateContent(prompt);

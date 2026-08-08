@@ -384,7 +384,7 @@ async function processPaymentMessage(text, senderPhone) {
  */
 async function processPaymentImage(imageBuffer, mimeType, senderPhone) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const imagePart = {
       inlineData: {
         data: imageBuffer.toString('base64'),

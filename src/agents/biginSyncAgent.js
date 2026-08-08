@@ -93,7 +93,7 @@ async function getCustomerDetails(customerName) {
  */
 async function generateSummary(activityType, data) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const prompts = {
       deal:         `Write a concise 2-3 line professional CRM note for a steel B2B deal update. Data: ${JSON.stringify(data)}. Include: what changed, amount if any, key context. No bullet points.`,
       visit:        `Write a concise 2-3 line professional CRM field visit note for a steel B2B company. Data: ${JSON.stringify(data)}. Include: who was met, what was discussed, outcome. No bullet points.`,
