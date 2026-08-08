@@ -145,11 +145,12 @@ async function invokeWithFallback(messages, tools = null) {
     }
   }
 
-  // 2. Try Groq fallback models
+  // 2. Try Groq fallback models — WITHOUT tools (Groq tool calling is unreliable)
   for (let i = 0; i < Math.max(GROQ_KEYS.length, 1); i++) {
-    const model = getGroqModel(tools);
+    const model = getGroqModel(null);
     if (!model) break;
     try {
+      console.warn('[ModelRouter] Falling back to Groq WITHOUT tools');
       return await model.invoke(messages);
     } catch (err) {
       console.warn(`[ModelRouter] Groq attempt failed (${err.message?.slice(0, 60)}), trying next...`);

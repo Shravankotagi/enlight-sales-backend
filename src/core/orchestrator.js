@@ -14,6 +14,7 @@
  *   4. Write a natural, intelligent final response
  *
  * Key properties:
+ *   - Pre-binds senderPhone to every tool call so writes never fail silently
  *   - Never blocks any activity due to missing customer registration
  *   - Handles multi-intent messages (visit + deal update in one message)
  *   - Maintains conversation context across turns
@@ -24,8 +25,8 @@
 const { StateGraph, START, END, Annotation, MessagesAnnotation } = require('@langchain/langgraph');
 const { ToolNode }       = require('@langchain/langgraph/prebuilt');
 const { HumanMessage, SystemMessage, AIMessage } = require('@langchain/core/messages');
-const { ALL_TOOLS }      = require('./tools');
-const { invokeWithFallback, getModel } = require('./modelRouter');
+const { createTools }    = require('./tools');
+const { invokeWithFallback } = require('./modelRouter');
 
 // ── System Prompt — Persona & Instructions ────────────────────────────────
 
@@ -102,6 +103,9 @@ function getDeterministicIntentHint(text) {
   return '';
 }
 
+// Global active tools array for the current execution
+let currentTools = [];
+
 // ── Nodes ─────────────────────────────────────────────────────────────────
 
 /**
@@ -109,7 +113,7 @@ function getDeterministicIntentHint(text) {
  * Re-runs after each tool_node execution until no more tool calls are needed.
  */
 async function agentNode(state) {
-  const { messages, senderPhone, employeeName, messageType, imageBuffer, imageMimeType } = state;
+  const { messages, senderPhone, employeeName, messageType } = state;
 
   const lastHumanMsg = [...messages].reverse().find(m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage');
   const userText = lastHumanMsg ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '') : '';
@@ -121,13 +125,12 @@ async function agentNode(state) {
     ...messages,
   ];
 
-  // Get model with all tools bound
+  // Get model with current pre-bound tools
   let response;
   try {
-    response = await invokeWithFallback(contextMessages, ALL_TOOLS);
+    response = await invokeWithFallback(contextMessages, currentTools);
   } catch (err) {
     console.error('[Orchestrator] Model invocation failed:', err.message);
-    // Return a graceful error response
     return {
       messages: [new AIMessage(`⚠️ I'm having trouble connecting right now. Please try again in a moment. (${err.message})`)],
     };
@@ -135,12 +138,6 @@ async function agentNode(state) {
 
   return { messages: [response] };
 }
-
-/**
- * Tool Node: Executes the tool calls made by the agent node.
- * LangGraph's built-in ToolNode handles this automatically.
- */
-const toolNode = new ToolNode(ALL_TOOLS);
 
 /**
  * Router: Decides whether to continue to tools or end the conversation.
@@ -151,22 +148,11 @@ function shouldContinue(state) {
   const lastMessage = state.messages[state.messages.length - 1];
 
   if (lastMessage.tool_calls && lastMessage.tool_calls.length > 0) {
-    // Track which tools were used
     return 'tools';
   }
 
   return END;
 }
-
-// ── Build the Graph ───────────────────────────────────────────────────────
-
-const graph = new StateGraph(OrchestratorState)
-  .addNode('agent', agentNode)
-  .addNode('tools', toolNode)
-  .addEdge(START, 'agent')
-  .addConditionalEdges('agent', shouldContinue)
-  .addEdge('tools', 'agent')
-  .compile();
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -193,6 +179,19 @@ async function runOrchestrator(text, senderPhone, options = {}) {
 
   try {
     console.log(`[Orchestrator] Processing: "${text?.substring(0, 80)}..." from ${senderPhone}`);
+
+    // Create pre-bound tools with senderPhone locked in
+    currentTools = createTools(senderPhone);
+    const toolNode = new ToolNode(currentTools);
+
+    // Build per-request graph
+    const graph = new StateGraph(OrchestratorState)
+      .addNode('agent', agentNode)
+      .addNode('tools', toolNode)
+      .addEdge(START, 'agent')
+      .addConditionalEdges('agent', shouldContinue)
+      .addEdge('tools', 'agent')
+      .compile();
 
     // Build the initial human message
     const humanMsg = new HumanMessage(text || 'Image received');
