@@ -1,62 +1,57 @@
 /**
- * modelRouter.js — Multi-key Groq AI Model Router
- *
- * Rotates through Groq (llama-3.3-70b-versatile) API keys.
- * Uses process.env.GROQ_API_KEY / GROQ_API_KEY_1 / GROQ_API_KEY_2 / GROQ_API_KEY_3.
+ * modelRouter.js — Multi-provider AI Model Router
+ * Primary: Google Gemini (gemini-3.1-flash-lite)
+ * Secondary: Groq Fallback (llama-3.3-70b-versatile / llama-3.1-8b-instant)
  */
 
+const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { ChatGroq } = require('@langchain/groq');
 
 // ── Key Pools ──────────────────────────────────────────────────────────────
 
-// Load all available Groq API keys dynamically
+const GEMINI_KEYS = [
+  process.env.GEMINI_API_KEY,
+  process.env.GEMINI_API_KEY_1,
+  process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
+].filter(Boolean);
+
 const GROQ_KEYS = [
   process.env.GROQ_API_KEY,
   process.env.GROQ_API_KEY_1,
   process.env.GROQ_API_KEY_2,
   process.env.GROQ_API_KEY_3,
-  process.env.GROQ_API_KEY_4,
-  process.env.GROQ_API_KEY_5,
 ].filter(Boolean);
 
-// Track which keys are rate-limited / expired
-const rateLimitedUntil = {};
-let groqRoundRobinIdx = 0;
-
-function isKeyAvailable(key) {
-  if (!rateLimitedUntil[key]) return true;
-  if (Date.now() > rateLimitedUntil[key]) {
-    delete rateLimitedUntil[key];
-    return true;
-  }
-  return false;
-}
-
-function markKeyRateLimited(key, cooldownMs = 30000) {
-  rateLimitedUntil[key] = Date.now() + cooldownMs;
-  console.warn(`[ModelRouter] Key marked rate-limited for ${cooldownMs / 1000}s`);
-}
-
-function getNextGroqKey() {
-  const available = GROQ_KEYS.filter(isKeyAvailable);
-  if (available.length === 0) return GROQ_KEYS[0] || null;
-  const key = available[groqRoundRobinIdx % available.length];
-  groqRoundRobinIdx++;
-  return key;
-}
+const GEMINI_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash',
+];
 
 const GROQ_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
 ];
 
-// ── Model Factory ──────────────────────────────────────────────────────────
+let roundRobinIdx = 0;
 
-function getGroqModel(tools = null, modelName = 'llama-3.3-70b-versatile') {
-  const key = getNextGroqKey();
+function getNextGeminiKey() {
+  if (GEMINI_KEYS.length === 0) return process.env.GEMINI_API_KEY || null;
+  const key = GEMINI_KEYS[roundRobinIdx % GEMINI_KEYS.length];
+  roundRobinIdx++;
+  return key;
+}
+
+/**
+ * Returns a ChatGoogleGenerativeAI instance using gemini-3.1-flash-lite.
+ */
+function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
+  const key = getNextGeminiKey();
   if (!key) return null;
 
-  const model = new ChatGroq({
+  const model = new ChatGoogleGenerativeAI({
     model:       modelName,
     apiKey:      key,
     temperature: 0.1,
@@ -67,13 +62,13 @@ function getGroqModel(tools = null, modelName = 'llama-3.3-70b-versatile') {
 }
 
 function getModel(tools = null) {
-  const groq = getGroqModel(tools);
-  if (groq) return groq;
-  throw new Error('[ModelRouter] All Groq API keys are rate-limited. Try again in a minute.');
+  const gemini = getGeminiModel(tools);
+  if (gemini) return gemini;
+  throw new Error('[ModelRouter] No Gemini API key configured.');
 }
 
 /**
- * Invoke a model with automatic failover across Groq models (70b -> 8b) & keys with smart rate-limit retry.
+ * Invoke a model with automatic failover across Gemini 3.1 Flash Lite & fallback keys/models.
  *
  * @param {Array} messages - LangChain message array
  * @param {Array} tools - Optional tools to bind
@@ -82,40 +77,54 @@ function getModel(tools = null) {
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
 
-  const keysToUse = GROQ_KEYS.length > 0 ? GROQ_KEYS : [process.env.GROQ_API_KEY];
-
-  for (const modelName of GROQ_MODELS) {
-    for (const key of keysToUse) {
+  // 1. Primary Engine: Google Gemini 3.1 Flash Lite
+  const geminiKeys = GEMINI_KEYS.length > 0 ? GEMINI_KEYS : [process.env.GEMINI_API_KEY];
+  for (const modelName of GEMINI_MODELS) {
+    for (const key of geminiKeys) {
       if (!key) continue;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const model = new ChatGroq({
-            model:       modelName,
-            apiKey:      key,
-            temperature: 0.1,
-            maxRetries:  0,
-          });
-          const boundModel = tools ? model.bindTools(tools) : model;
-          return await boundModel.invoke(messages);
-        } catch (err) {
-          lastError = err;
-          const msg = err.message || '';
-          if (msg.includes('rate_limit') || msg.includes('429')) {
-            const match = msg.match(/Please try again in ([\d\.]+)s/i);
-            let waitSec = match ? parseFloat(match[1]) : 3.0;
-            if (waitSec > 6.0) waitSec = 4.0; // Don't block WhatsApp webhook beyond 5-6s
-
-            console.warn(`[ModelRouter] Groq (${modelName}) 429 rate limit hit (attempt ${attempt}/2). Sleeping ${waitSec.toFixed(1)}s before retry...`);
-            await new Promise((r) => setTimeout(r, Math.round(waitSec * 1000) + 500));
-            continue;
-          }
-          break; // Non-rate-limit error — try next key/model
+      try {
+        const model = new ChatGoogleGenerativeAI({
+          model:       modelName,
+          apiKey:      key,
+          temperature: 0.1,
+          maxRetries:  0,
+        });
+        const boundModel = tools ? model.bindTools(tools) : model;
+        return await boundModel.invoke(messages);
+      } catch (err) {
+        lastError = err;
+        console.warn(`[ModelRouter] Gemini (${modelName}) attempt failed (${err.message?.slice(0, 70)}), trying fallback...`);
+        const msg = err.message || '';
+        if (msg.includes('429') || msg.includes('Quota')) {
+          await new Promise((r) => setTimeout(r, 2000));
         }
+        continue;
       }
     }
   }
 
-  throw lastError || new Error('[ModelRouter] All Groq API providers failed');
+  // 2. Secondary Engine: Groq Fallback if Gemini is rate limited or unconfigured
+  const groqKeys = GROQ_KEYS.length > 0 ? GROQ_KEYS : [process.env.GROQ_API_KEY];
+  for (const modelName of GROQ_MODELS) {
+    for (const key of groqKeys) {
+      if (!key) continue;
+      try {
+        const model = new ChatGroq({
+          model:       modelName,
+          apiKey:      key,
+          temperature: 0.1,
+          maxRetries:  0,
+        });
+        const boundModel = tools ? model.bindTools(tools) : model;
+        return await boundModel.invoke(messages);
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('[ModelRouter] All AI model providers failed');
 }
 
-module.exports = { getModel, getGroqModel, invokeWithFallback, markKeyRateLimited };
+module.exports = { getModel, getGeminiModel, invokeWithFallback };
