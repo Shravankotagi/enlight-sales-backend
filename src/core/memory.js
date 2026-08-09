@@ -96,7 +96,8 @@ async function getActiveContextPrompt(senderPhone) {
 INSTRUCTIONS FOR PROFILE UPDATES & MEMORY:
 1. If the salesperson provides any profile info (mobile phone, owner name, location, or GST) WITHOUT specifying a company name, attribute it to the active customer "${activeCustomer}"!
 2. Immediately call onboard_new_customer tool to update the customer's missing/blank fields.
-3. NEVER ask "which company" if an active customer is present in this context window.`;
+3. NEVER ask "which company" if an active customer is present in this context window.
+4. If a message specifies a quantity or requirement (e.g. "Need 25 MT", "change it to 30 MT", "wants HR Coil") WITHOUT repeating the customer name, assume it refers to "${activeCustomer}" and pass "${activeCustomer}" into tool call parameters!`;
   } catch (err) {
     console.error('[Memory] Error getting active context prompt:', err.message);
     return '';

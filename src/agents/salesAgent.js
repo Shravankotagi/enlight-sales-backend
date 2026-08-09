@@ -152,17 +152,8 @@ async function lookupRateSheetPrice(productText) {
       );
     }
 
-    // 3. Word token match
-    if (!matched) {
-      const words = textLower.split(/\s+/).filter((w) => w.length > 2);
-      matched = items.find((i) =>
-        words.some(
-          (w) =>
-            (i.sku_text && i.sku_text.toLowerCase().includes(w)) ||
-            (i.category && i.category.toLowerCase().includes(w)),
-        ),
-      );
-    }
+    // Word token matching removed to prevent loose mis-matching (e.g. "HR Sheet" matching "HR Coil")
+    // Only exact or direct substring match is safe. If no match found -> return null.
 
     if (matched && Number(matched.price_per_mt) > 0) {
       return {
@@ -451,7 +442,7 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     // Edge Case 3: Log KRA 1 when deal is won
-    if (dbStage === 'won') {
+    if (dbStage === 'won' && dealId) {
       const alreadyLogged = await isKRA1AlreadyLogged(
         senderPhone,
         finalCustomerName,
