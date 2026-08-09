@@ -440,6 +440,16 @@ async function processSalesMessage(text, senderPhone) {
       }
     }
 
+    // Update last_order_date in recurring_customers table
+    try {
+      await supabase
+        .from('recurring_customers')
+        .update({ last_order_date: new Date().toISOString() })
+        .ilike('customer_name', `%${finalCustomerName}%`);
+    } catch (err) {
+      console.error('[SalesAgent] Failed to update last_order_date:', err.message);
+    }
+
     // Edge Case 3: Log KRA 1 when deal is won
     if (dbStage === 'won') {
       const alreadyLogged = await isKRA1AlreadyLogged(
