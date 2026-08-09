@@ -130,9 +130,11 @@ export class ReportsService {
           total_value: totalValue,
           won_value: wonValue,
           conversion_rate:
-            inquiries.length > 0
-              ? Math.round((wonDeals.length / inquiries.length) * 100)
-              : 0,
+            deals.length > 0
+              ? Math.round((wonDeals.length / deals.length) * 100)
+              : inquiries.length > 0
+                ? Math.round((wonDeals.length / inquiries.length) * 100)
+                : 0,
           total_inquiries: inquiries.length,
         },
         by_customer: Object.values(byCustomer).sort(
@@ -338,11 +340,14 @@ export class ReportsService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
         dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
         inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
         );
       }
 
@@ -423,8 +428,11 @@ export class ReportsService {
         .lte('deals.created_at', end);
 
       if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
         itemsQuery = itemsQuery.or(
-          `deals.salesperson_phone.eq.${salespersonPhone},deals.customer_phone.eq.${salespersonPhone}`,
+          `deals.salesperson_phone.eq.${p10},deals.salesperson_phone.eq.${p12}`,
         );
       }
 
