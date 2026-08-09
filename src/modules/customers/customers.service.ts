@@ -33,7 +33,6 @@ export class CustomersService {
 
   async findOne(id: string) {
     try {
-      // Get customer
       const { data: customer, error } = await this.supabase
         .from('recurring_customers')
         .select('*')
@@ -41,7 +40,6 @@ export class CustomersService {
         .single();
       if (error) throw error;
 
-      // Get deals for this customer
       const { data: deals } = await this.supabase
         .from('deals')
         .select('*, deal_items(*)')
@@ -49,7 +47,11 @@ export class CustomersService {
         .order('created_at', { ascending: false })
         .limit(10);
 
-      // Get visits for this customer
+      const latestDeal = deals && deals.length > 0 ? deals[0] : null;
+      const effectiveLastOrderDate = latestDeal
+        ? latestDeal.won_at || latestDeal.created_at
+        : customer.last_order_date;
+
       const { data: visits } = await this.supabase
         .from('customer_visits')
         .select('*')
@@ -57,14 +59,12 @@ export class CustomersService {
         .order('visited_at', { ascending: false })
         .limit(5);
 
-      // Get payments
       const { data: payments } = await this.supabase
         .from('payment_tracking')
         .select('*')
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('created_at', { ascending: false });
 
-      // Get complaints
       const { data: complaints } = await this.supabase
         .from('complaints')
         .select('*')
@@ -73,6 +73,7 @@ export class CustomersService {
 
       return {
         ...customer,
+        last_order_date: effectiveLastOrderDate,
         deals: deals || [],
         visits: visits || [],
         payments: payments || [],
@@ -96,7 +97,6 @@ export class CustomersService {
       }
 
       const { data: customers, error } = await query;
-
       if (error) throw error;
 
       const now = new Date();
@@ -110,20 +110,35 @@ export class CustomersService {
         (customers || []).map(async (customer) => {
           const { data: deals } = await this.supabase
             .from('deals')
-            .select('id')
+            .select('id, created_at, won_at, stage')
             .ilike('customer_name', `%${customer.customer_name}%`)
-            .gte('created_at', monthStart);
+            .order('created_at', { ascending: false });
 
-          const hasOrderThisMonth = deals && deals.length > 0;
-          const lastOrderDate = customer.last_order_date
-            ? new Date(customer.last_order_date)
+          const latestDeal = deals && deals.length > 0 ? deals[0] : null;
+          const effectiveLastOrderStr = latestDeal
+            ? latestDeal.won_at || latestDeal.created_at
+            : customer.last_order_date;
+
+          const lastOrderDate = effectiveLastOrderStr
+            ? new Date(effectiveLastOrderStr)
             : null;
           const daysSinceOrder = lastOrderDate
-            ? Math.floor(
-                (now.getTime() - lastOrderDate.getTime()) /
-                  (1000 * 60 * 60 * 24),
+            ? Math.max(
+                0,
+                Math.floor(
+                  (now.getTime() - lastOrderDate.getTime()) /
+                    (1000 * 60 * 60 * 24),
+                ),
               )
             : null;
+
+          const hasOrderThisMonth =
+            deals &&
+            deals.some(
+              (d) =>
+                d.created_at >= monthStart ||
+                (d.won_at && d.won_at >= monthStart),
+            );
 
           let churnRisk = 'low';
           if (!hasOrderThisMonth) {
@@ -136,6 +151,7 @@ export class CustomersService {
 
           return {
             ...customer,
+            last_order_date: effectiveLastOrderStr,
             has_order_this_month: hasOrderThisMonth,
             days_since_order: daysSinceOrder,
             churn_risk: churnRisk,
@@ -144,8 +160,12 @@ export class CustomersService {
       );
 
       return results.sort((a, b) => {
-        const riskOrder = { high: 0, medium: 1, low: 2 };
-        return riskOrder[a.churn_risk] - riskOrder[b.churn_risk];
+        const riskOrder: Record<string, number> = {
+          high: 0,
+          medium: 1,
+          low: 2,
+        };
+        return (riskOrder[a.churn_risk] ?? 2) - (riskOrder[b.churn_risk] ?? 2);
       });
     } catch (error) {
       this.logger.error('Error in getChurnRisk:', error);
@@ -168,33 +188,51 @@ export class CustomersService {
       const { data: customers, error } = await query;
       if (error) throw error;
 
-      const reorderList = (customers || [])
-        .map((customer: any) => {
-          const lastOrder = customer.last_order_date
-            ? new Date(customer.last_order_date)
-            : null;
-          const avgFrequency = customer.avg_order_frequency_days || 30;
-          const predictedDate = lastOrder
-            ? new Date(lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000)
-            : null;
-          const daysUntilReorder = predictedDate
-            ? Math.floor(
-                (predictedDate.getTime() - now.getTime()) /
-                  (1000 * 60 * 60 * 24),
-              )
-            : null;
+      const reorderList = (
+        await Promise.all(
+          (customers || []).map(async (customer: any) => {
+            const { data: deals } = await this.supabase
+              .from('deals')
+              .select('created_at, won_at')
+              .ilike('customer_name', `%${customer.customer_name}%`)
+              .order('created_at', { ascending: false })
+              .limit(1);
 
-          return {
-            ...customer,
-            predicted_reorder_date: predictedDate?.toISOString() || null,
-            days_until_reorder: daysUntilReorder,
-            is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
-            is_due_soon:
-              daysUntilReorder !== null &&
-              daysUntilReorder >= 0 &&
-              daysUntilReorder <= 7,
-          };
-        })
+            const latestDeal = deals && deals.length > 0 ? deals[0] : null;
+            const effectiveLastOrderStr = latestDeal
+              ? latestDeal.won_at || latestDeal.created_at
+              : customer.last_order_date;
+
+            const lastOrder = effectiveLastOrderStr
+              ? new Date(effectiveLastOrderStr)
+              : null;
+            const avgFrequency = customer.avg_order_frequency_days || 30;
+            const predictedDate = lastOrder
+              ? new Date(
+                  lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000,
+                )
+              : null;
+            const daysUntilReorder = predictedDate
+              ? Math.floor(
+                  (predictedDate.getTime() - now.getTime()) /
+                    (1000 * 60 * 60 * 24),
+                )
+              : null;
+
+            return {
+              ...customer,
+              last_order_date: effectiveLastOrderStr,
+              predicted_reorder_date: predictedDate?.toISOString() || null,
+              days_until_reorder: daysUntilReorder,
+              is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
+              is_due_soon:
+                daysUntilReorder !== null &&
+                daysUntilReorder >= 0 &&
+                daysUntilReorder <= 7,
+            };
+          }),
+        )
+      )
         .filter(
           (c: any) =>
             c.days_until_reorder !== null && c.days_until_reorder <= 14,
