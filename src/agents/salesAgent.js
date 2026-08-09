@@ -690,4 +690,5 @@ module.exports = {
   processSalesMessage,
   findBestDeal,
   lookupRateSheetPrice,
+  detectInvalidUnitInMessage,
 };
