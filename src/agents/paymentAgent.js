@@ -84,6 +84,86 @@ async function getDealTotal(customerName, senderPhone) {
 }
 
 /**
+ * Gets the active (non-won/lost) deal for a customer if one exists.
+ */
+async function getActiveDealForCustomer(customerName, senderPhone) {
+  let query = supabase
+    .from('deals')
+    .select('id, stage, total_amount, customer_name')
+    .ilike('customer_name', `%${customerName}%`)
+    .not('stage', 'in', '("won","lost")');
+
+  if (senderPhone) {
+    const cleanDigits = senderPhone.replace(/\D/g, '');
+    const p10 = cleanDigits.slice(-10);
+    const p12 = '91' + p10;
+    query = query.or(
+      `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+    );
+  }
+
+  const { data } = await query
+    .order('created_at', { ascending: false })
+    .limit(1);
+  return data && data.length > 0 ? data[0] : null;
+}
+
+/**
+ * Checks if salesperson-reported amounts are consistent with the deal total.
+ * Returns null if OK, or a discrepancy object if numbers don't add up.
+ */
+function checkAmountDiscrepancy(amountPaid, explicitPending, dealTotal) {
+  if (!dealTotal || dealTotal <= 0) return null;
+  if (amountPaid <= 0 && explicitPending <= 0) return null;
+
+  if (amountPaid > 0 && explicitPending > 0) {
+    const reportedTotal = amountPaid + explicitPending;
+    const tolerance = dealTotal * 0.05;
+    const diff = Math.abs(reportedTotal - dealTotal);
+
+    if (diff > tolerance) {
+      const dealTotalFormatted = `₹${Number(dealTotal).toLocaleString('en-IN')}`;
+      const reportedTotalFormatted = `₹${Number(reportedTotal).toLocaleString('en-IN')}`;
+      const paidFormatted = `₹${Number(amountPaid).toLocaleString('en-IN')}`;
+      const pendingFormatted = `₹${Number(explicitPending).toLocaleString('en-IN')}`;
+      const correctedPending = Math.max(0, dealTotal - amountPaid);
+
+      return {
+        hasDiscrepancy: true,
+        message:
+          `⚠️ *Amount Mismatch Detected*\n\n` +
+          `Deal Total on Record: *${dealTotalFormatted}*\n` +
+          `You reported: Paid *${paidFormatted}* + Pending *${pendingFormatted}* = *${reportedTotalFormatted}*\n\n` +
+          `These don't add up to the deal total. Please confirm:\n\n` +
+          `1️⃣ *Use deal total* — Paid ${paidFormatted}, Pending *₹${correctedPending.toLocaleString('en-IN')}* (correct based on deal)\n` +
+          `2️⃣ *Use my numbers* — Paid ${paidFormatted}, Pending ${pendingFormatted} (override)\n` +
+          `3️⃣ *Cancel* — I'll re-check and resend\n\n` +
+          `Reply *1*, *2*, or *3* to proceed.`,
+        correctedPending,
+      };
+    }
+  }
+
+  if (amountPaid > 0 && explicitPending === 0) {
+    if (amountPaid > dealTotal * 1.05) {
+      return {
+        hasDiscrepancy: true,
+        message:
+          `⚠️ *Amount Exceeds Deal Total*\n\n` +
+          `Deal Total on Record: *₹${Number(dealTotal).toLocaleString('en-IN')}*\n` +
+          `Amount you reported: *₹${Number(amountPaid).toLocaleString('en-IN')}*\n\n` +
+          `The payment exceeds the deal value. Please confirm:\n\n` +
+          `1️⃣ *Correct, overpayment received* — log as-is\n` +
+          `2️⃣ *Cancel* — I'll re-check and resend`,
+        correctedPending: 0,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Get recent deal customer name for context memory.
  */
 async function getLastCustomerForSalesperson(senderPhone) {
@@ -284,6 +364,64 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     const finalCustomerName = officialCustomerName;
+
+    // ── 1. Deal Stage Check (Open/Non-Won Deal) ────────────────────────────────
+    const activeDeal = await getActiveDealForCustomer(finalCustomerName, senderPhone);
+
+    if (activeDeal && !isModeUpdateOnly) {
+      const { getFullActiveSession, saveActiveSession } = require('../supabase');
+      const session = await getFullActiveSession(senderPhone);
+      const isPendingPaymentConfirm = session?.last_intent?.startsWith('pending_payment_confirm|');
+
+      if (!isPendingPaymentConfirm) {
+        const stageLabels = {
+          new_inquiry: 'New Inquiry 📋',
+          qualified: 'Qualified ✅',
+          quoted: 'Quoted 📄',
+          negotiation: 'Negotiation 🤝',
+        };
+        const stageLabel = stageLabels[activeDeal.stage] || activeDeal.stage;
+        const dealValue = activeDeal.total_amount
+          ? `₹${Number(activeDeal.total_amount).toLocaleString('en-IN')}`
+          : 'value not set';
+
+        await saveActiveSession(
+          senderPhone,
+          finalCustomerName,
+          `pending_payment_confirm|${activeDeal.id}|${finalCustomerName}|${amountPaid}|${amountPending}|${isFullPayment}`,
+        );
+
+        return (
+          `⚠️ *Payment Confirmation Required*\n\n` +
+          `*${finalCustomerName}* currently has an open deal:\n` +
+          `Stage: *${stageLabel}*\n` +
+          `Deal Value: *${dealValue}*\n\n` +
+          `Before logging this payment of *₹${amountPaid.toLocaleString('en-IN')}*, please confirm:\n\n` +
+          `1️⃣ *Yes, log payment* — deal will remain at ${stageLabel}\n` +
+          `2️⃣ *Mark deal as Won first* — then payment will be logged automatically\n\n` +
+          `Reply *1* or *2* to proceed.`
+        );
+      }
+    }
+
+    // ── 2. Amount Discrepancy Check ─────────────────────────────────────────
+    const dealTotal = await getDealTotal(finalCustomerName, senderPhone);
+    const discrepancy = checkAmountDiscrepancy(amountPaid, amountPending, dealTotal);
+
+    if (discrepancy && !isModeUpdateOnly) {
+      const { getFullActiveSession, saveActiveSession } = require('../supabase');
+      const session = await getFullActiveSession(senderPhone);
+      const isPendingAmountConfirm = session?.last_intent?.startsWith('pending_amount_confirm|');
+
+      if (!isPendingAmountConfirm) {
+        await saveActiveSession(
+          senderPhone,
+          finalCustomerName,
+          `pending_amount_confirm|${finalCustomerName}|${amountPaid}|${amountPending}|${isFullPayment}|${discrepancy.correctedPending}`,
+        );
+        return discrepancy.message;
+      }
+    }
 
     // Handle payment mode update only
     if (isModeUpdateOnly) {

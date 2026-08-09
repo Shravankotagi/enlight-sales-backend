@@ -50,6 +50,34 @@ Return ONLY the JSON object.
 `;
 
 /**
+ * Check if a product text matches existing deal line items.
+ * Returns true if the new product is the SAME category/family as existing items.
+ */
+async function isProductMatchForExistingDeal(dealId, newProductText) {
+  if (!newProductText || !dealId) return true; // no product info → assume stage update
+
+  const { data: items } = await supabase
+    .from('deal_items')
+    .select('sku_text')
+    .eq('deal_id', dealId);
+
+  if (!items || items.length === 0) return true; // no existing items → safe to update
+
+  const newLower = newProductText.toLowerCase();
+  const newKeywords = newLower.split(/\s+/).filter((w) => w.length > 2);
+
+  for (const item of items) {
+    if (!item.sku_text) continue;
+    const existingLower = item.sku_text.toLowerCase();
+    const hasMatch = newKeywords.some((kw) => existingLower.includes(kw));
+    if (hasMatch) return true; // same product family → update existing deal
+  }
+
+  // No keyword match → different product → should be a new deal
+  return false;
+}
+
+/**
  * Finds the best matching existing deal for a customer.
  * Priority: salesperson's own deals → active stages first → most recent.
  */
@@ -292,7 +320,31 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
-    let dealId = existingDeal ? existingDeal.id : null;
+    let dealId = null;
+
+    if (existingDeal) {
+      const isStageUpdateOnly =
+        !data.product_requirement &&
+        !data.quantity_mt &&
+        rawItems.length === 0;
+      const productMatchesExisting = await isProductMatchForExistingDeal(
+        existingDeal.id,
+        data.product_requirement ||
+          (rawItems.length > 0 ? rawItems[0].product_requirement : null),
+      );
+
+      if (isStageUpdateOnly || productMatchesExisting) {
+        dealId = existingDeal.id;
+        console.log(
+          `[SalesAgent] Updating existing deal ${existingDeal.id} for ${finalCustomerName}`,
+        );
+      } else {
+        dealId = null;
+        console.log(
+          `[SalesAgent] New product detected — creating separate deal for ${finalCustomerName}`,
+        );
+      }
+    }
 
     if (dealAmount === 0 && dealId) {
       const itemsTotal = await getDealAmountFromItems(dealId);

@@ -255,6 +255,94 @@ router.post('/', async (req, res) => {
           return;
         }
 
+        if (activeSession?.last_intent?.startsWith('pending_payment_confirm|')) {
+          const parts = activeSession.last_intent.split('|');
+          const dealId = parts[1];
+          const customerName = parts[2];
+          const amountPaid = Number(parts[3]);
+          const amountPending = Number(parts[4]);
+          const isFullPayment = parts[5] === 'true';
+
+          const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+
+          if (cleanInput === '2' || cleanInput.toLowerCase().includes('won')) {
+            // Mark deal as won first, then proceed to log payment automatically
+            await supabase
+              .from('deals')
+              .update({ stage: 'won', won_at: new Date().toISOString() })
+              .eq('id', dealId);
+
+            await saveActiveSession(senderPhone, customerName, 'general');
+
+            const { processPaymentMessage } = require('./agents/paymentAgent');
+            const syntheticText =
+              `${customerName} paid ₹${amountPaid}` +
+              (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
+              (isFullPayment ? ' full payment' : '');
+            const reply = await processPaymentMessage(syntheticText, senderPhone);
+
+            await sendTextMessage(
+              senderPhone,
+              `🎉 *Deal Marked as WON & Payment Logged!*\n\n` + reply,
+            );
+            return;
+          }
+
+          if (cleanInput === '1' || cleanInput.toLowerCase().includes('yes')) {
+            await saveActiveSession(senderPhone, customerName, 'general');
+
+            const { processPaymentMessage } = require('./agents/paymentAgent');
+            const syntheticText =
+              `${customerName} paid ₹${amountPaid}` +
+              (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
+              (isFullPayment ? ' full payment' : '');
+            const reply = await processPaymentMessage(syntheticText, senderPhone);
+
+            await sendTextMessage(senderPhone, reply);
+            return;
+          }
+
+          await sendTextMessage(
+            senderPhone,
+            `Please reply *1* to log payment for the open deal, or *2* to mark the deal as Won first.`,
+          );
+          return;
+        }
+
+        if (activeSession?.last_intent?.startsWith('pending_amount_confirm|')) {
+          const parts = activeSession.last_intent.split('|');
+          const customerName = parts[1];
+          const amountPaid = Number(parts[2]);
+          const amountPending = Number(parts[3]);
+          const isFullPayment = parts[4] === 'true';
+          const correctedPending = Number(parts[5]);
+
+          const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+          await saveActiveSession(senderPhone, customerName, 'general');
+
+          if (cleanInput === '3' || cleanInput.toLowerCase().includes('cancel')) {
+            await sendTextMessage(
+              senderPhone,
+              `✅ Cancelled. Please resend the correct payment details when ready.`,
+            );
+            return;
+          }
+
+          let finalPending = amountPending;
+          if (cleanInput === '1') {
+            finalPending = correctedPending;
+          }
+
+          const { processPaymentMessage } = require('./agents/paymentAgent');
+          const syntheticText =
+            `${customerName} paid ₹${amountPaid}` +
+            (finalPending > 0 ? ` outstanding ₹${finalPending}` : ' full payment');
+          const reply = await processPaymentMessage(syntheticText, senderPhone);
+
+          await sendTextMessage(senderPhone, reply);
+          return;
+        }
+
         // ── AGENTIC ORCHESTRATOR (LangGraph + Google Gemini 3.1 Flash Lite) ──────────────
         // Replaces all manual intent classification and if/else routing.
         // The orchestrator understands any message (English/Hindi/Hinglish),
