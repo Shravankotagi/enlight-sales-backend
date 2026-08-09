@@ -161,8 +161,25 @@ router.post('/', async (req, res) => {
           raw_text = raw_text.substring(0, 2000) + "... (truncated)";
         }
 
+        // Save incoming inquiry to `inquiries` table so it shows on the web dashboard
+        const { saveInquiry, getFullActiveSession, saveActiveSession } = require('./supabase');
+        try {
+          await saveInquiry({
+            source_channel: 'whatsapp',
+            raw_text: raw_text || `${messageType} message`,
+            media_urls: media_urls || [],
+            voice_url: voice_url || null,
+            sender_phone: senderPhone,
+            sender_name: employeeRecord ? employeeRecord.name : senderName,
+            message_id: messageId,
+            status: 'processed',
+            employee_id: employeeRecord ? employeeRecord.employee_id : null,
+          });
+        } catch (inqErr) {
+          console.error('[Webhook] Failed to save inquiry:', inqErr.message);
+        }
+
         // --- CHECK ACTIVE REJECTION FLOWS (multi-turn logic) ---
-        const { getFullActiveSession, saveActiveSession } = require('./supabase');
         const activeSession = await getFullActiveSession(senderPhone);
         
         if (activeSession && activeSession.last_intent && activeSession.last_intent.startsWith('pending_loss_reason|')) {

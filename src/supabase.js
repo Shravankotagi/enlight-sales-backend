@@ -60,12 +60,12 @@ async function saveInquiry(data) {
       raw_text: data.raw_text,
       media_urls: data.media_urls || [],
       voice_url: data.voice_url || null,
-      sender_phone: data.sender_phone,
+      sender_phone: data.sender_phone || data.salesperson_phone,
       sender_name: data.sender_name || null,
-      whatsapp_message_id: data.message_id,
-      status: "pending",
+      whatsapp_message_id: data.message_id || null,
+      status: data.status || "processed",
       created_at: new Date().toISOString(),
-      salesperson_phone: data.sender_phone || null,
+      salesperson_phone: data.salesperson_phone || data.sender_phone || null,
       employee_id: data.employee_id || null,
     };
 
@@ -79,11 +79,11 @@ async function saveInquiry(data) {
       throw error;
     }
 
-    console.log('Successfully saved inquiry to Supabase:', savedRow);
+    console.log('Successfully saved inquiry to Supabase:', savedRow.id);
     return savedRow;
   } catch (error) {
     console.error("Error in saveInquiry:", error.message || error);
-    throw error;
+    return null;
   }
 }
 
