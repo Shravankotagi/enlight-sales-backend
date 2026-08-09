@@ -330,8 +330,9 @@ export class ReportsService {
         .from('deals')
         .select('*')
         .neq('inquiry_type', 'unknown')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        .or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+        );
 
       let inquiriesQuery = this.supabase
         .from('inquiries')
