@@ -180,9 +180,9 @@ export class CustomersService {
 
         let churnRisk = 'low';
         if (!hasOrderThisMonth) {
-          if (daysSinceOrder && daysSinceOrder > 45) {
+          if (daysSinceOrder === null || daysSinceOrder > 45) {
             churnRisk = 'high';
-          } else if (daysSinceOrder && daysSinceOrder > 30) {
+          } else if (daysSinceOrder > 30) {
             churnRisk = 'medium';
           }
         }
@@ -302,36 +302,59 @@ export class CustomersService {
         .eq('stage', 'lost')
         .gte('created_at', threeMonthsAgo);
 
+      let logsQuery = this.supabase
+        .from('kra_logs')
+        .select('*')
+        .eq('kra_type', 'deal_lost')
+        .gte('created_at', threeMonthsAgo);
+
       if (salespersonPhone) {
         const cleanDigits = salespersonPhone.replace(/\D/g, '');
         const last10 = cleanDigits.slice(-10);
         query = query.or(
           `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
         );
+        logsQuery = logsQuery.or(
+          `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
+        );
       }
 
-      const { data: lostDeals, error } = await query;
-      if (error) throw error;
+      const [{ data: lostDeals }, { data: lostLogs }] = await Promise.all([
+        query,
+        logsQuery,
+      ]);
 
-      const byReason = (lostDeals || []).reduce((acc: any, deal: any) => {
+      const combinedLosses = [
+        ...(lostDeals || []),
+        ...(lostLogs || []).map((l) => ({
+          customer_name: l.customer_name,
+          lost_reason:
+            l.description?.match(/Reason:\s*([^|]+)/)?.[1]?.trim() ||
+            l.notes ||
+            'Price / Commercials',
+          total_amount: l.value || 0,
+          created_at: l.created_at,
+        })),
+      ];
+
+      const byReason = combinedLosses.reduce((acc: any, deal: any) => {
         const reason = deal.lost_reason || 'Unknown';
         if (!acc[reason]) acc[reason] = { count: 0, value: 0 };
         acc[reason].count++;
-        acc[reason].value += deal.total_amount || 0;
+        acc[reason].value += Number(deal.total_amount || 0);
         return acc;
       }, {});
 
       return {
-        total_lost: lostDeals?.length || 0,
-        total_lost_value:
-          lostDeals?.reduce(
-            (sum: number, d: any) => sum + (d.total_amount || 0),
-            0,
-          ) || 0,
+        total_lost: combinedLosses.length,
+        total_lost_value: combinedLosses.reduce(
+          (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
+          0,
+        ),
         by_reason: Object.entries(byReason)
           .map(([reason, data]: [string, any]) => ({ reason, ...data }))
           .sort((a, b) => b.count - a.count),
-        recent_losses: (lostDeals || []).slice(0, 5),
+        recent_losses: combinedLosses.slice(0, 5),
       };
     } catch (error) {
       this.logger.error('Error in getLossAnalytics:', error);
