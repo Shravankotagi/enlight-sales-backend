@@ -78,6 +78,98 @@ async function isProductMatchForExistingDeal(dealId, newProductText) {
 }
 
 /**
+ * Detects if a message contains a number with an invalid/non-steel unit (e.g. "15 apple", "20 boxes").
+ */
+function detectInvalidUnitInMessage(text) {
+  if (!text) return null;
+  const VALID_STEEL_UNITS = [
+    'mt',
+    'ton',
+    'tons',
+    'tonne',
+    'tonnes',
+    'kg',
+    'kgs',
+    'kilogram',
+    'kilograms',
+    'bundle',
+    'bundles',
+    'pcs',
+    'piece',
+    'pieces',
+    'nos',
+    'coil',
+    'coils',
+    'sheet',
+    'sheets',
+    'plate',
+    'plates',
+    'bar',
+    'bars',
+    'meter',
+    'meters',
+    'm',
+  ];
+
+  const matches = text.match(/(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/g);
+  if (!matches) return null;
+
+  for (const m of matches) {
+    const parts = m.trim().split(/\s+/);
+    if (parts.length === 2) {
+      const num = parts[0];
+      const unit = parts[1].toLowerCase();
+
+      const SKIP_WORDS = [
+        'th',
+        'st',
+        'nd',
+        'rd',
+        'mm',
+        'aug',
+        'august',
+        'july',
+        'sept',
+        'oct',
+        'nov',
+        'dec',
+        'jan',
+        'feb',
+        'mar',
+        'apr',
+        'may',
+        'june',
+        'pm',
+        'am',
+        'hr',
+        'cr',
+        'ms',
+        'tmt',
+        'lakh',
+        'lakhs',
+        'k',
+        'cr',
+        'of',
+        'to',
+        'for',
+        'in',
+        'and',
+      ];
+      if (SKIP_WORDS.includes(unit)) continue;
+
+      if (!VALID_STEEL_UNITS.includes(unit)) {
+        return {
+          number: num,
+          invalidUnit: parts[1],
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Finds the best matching existing deal for a customer.
  * Priority: salesperson's own deals → active stages first → most recent.
  */
@@ -247,8 +339,40 @@ async function processSalesMessage(text, senderPhone) {
       rawItems = [{
         product_requirement: data.product_requirement,
         quantity_mt: data.quantity_mt,
-        rate_per_mt: data.rate_per_mt,
       }];
+    }
+
+    // Unit validation check: check if user typed an invalid/non-steel unit like "15 apple" or "20 boxes"
+    const invalidCheck =
+      detectInvalidUnitInMessage(text) ||
+      (data.invalid_unit_detected
+        ? {
+            number: data.unconfirmed_number || 15,
+            invalidUnit: data.invalid_unit_detected,
+          }
+        : null);
+
+    if (invalidCheck) {
+      const pName =
+        rawItems.length > 0 && rawItems[0].product_requirement
+          ? rawItems[0].product_requirement
+          : 'Steel Material';
+
+      await saveActiveSession(
+        senderPhone,
+        finalCustomerName,
+        `pending_unit_confirm|${finalCustomerName}|${pName}|${invalidCheck.number}`,
+      );
+
+      return (
+        `⚠️ *Unit Confirmation Required*\n\n` +
+        `You specified *${invalidCheck.number} ${invalidCheck.invalidUnit}* of *${pName}* for *${finalCustomerName}*.\n\n` +
+        `In B2B steel sales, quantities are measured in **Metric Tons (MT)** or **Kg**.\n\n` +
+        `Did you mean *${invalidCheck.number} MT* of *${pName}*?\n\n` +
+        `1️⃣ *Yes, log as ${invalidCheck.number} MT*\n` +
+        `2️⃣ *Specify valid unit* (e.g. reply *"15 MT"* or *"1500 Kg"*)\n\n` +
+        `Reply *1* to confirm ${invalidCheck.number} MT, or reply with the correct quantity and unit.`
+      );
     }
 
     let calculatedTotal = 0;
