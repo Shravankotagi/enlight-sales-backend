@@ -88,10 +88,11 @@ export class CustomersService {
       const payments = paymentsRes.data || [];
       const complaints = complaintsRes.data || [];
 
-      const latestDeal = deals.length > 0 ? deals[0] : null;
-      const effectiveLastOrderDate = latestDeal
-        ? latestDeal.won_at || latestDeal.created_at
-        : customer.last_order_date;
+      const wonDeals = deals.filter((d) => d.stage === 'won');
+      const latestWonDeal = wonDeals.length > 0 ? wonDeals[0] : null;
+      const effectiveLastOrderDate = latestWonDeal
+        ? latestWonDeal.won_at || latestWonDeal.created_at
+        : customer.last_order_date || null;
 
       return {
         ...customer,
@@ -147,15 +148,17 @@ export class CustomersService {
 
       const results = (customers || []).map((customer) => {
         const custKey = (customer.customer_name || '').toLowerCase().trim();
-        const customerDeals = safeAllDeals.filter((d) => {
+        const customerWonDeals = safeAllDeals.filter((d) => {
+          if (d.stage !== 'won') return false;
           const dKey = (d.customer_name || '').toLowerCase().trim();
           return dKey.includes(custKey) || custKey.includes(dKey);
         });
 
-        const latestDeal = customerDeals.length > 0 ? customerDeals[0] : null;
-        const effectiveLastOrderStr = latestDeal
-          ? latestDeal.won_at || latestDeal.created_at
-          : customer.last_order_date;
+        const latestWonDeal =
+          customerWonDeals.length > 0 ? customerWonDeals[0] : null;
+        const effectiveLastOrderStr = latestWonDeal
+          ? latestWonDeal.won_at || latestWonDeal.created_at
+          : customer.last_order_date || null;
 
         const lastOrderDate = effectiveLastOrderStr
           ? new Date(effectiveLastOrderStr)
@@ -170,7 +173,7 @@ export class CustomersService {
             )
           : null;
 
-        const hasOrderThisMonth = customerDeals.some(
+        const hasOrderThisMonth = customerWonDeals.some(
           (d) =>
             d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
         );
@@ -229,13 +232,14 @@ export class CustomersService {
               .from('deals')
               .select('created_at, won_at')
               .ilike('customer_name', `%${customer.customer_name}%`)
+              .eq('stage', 'won')
               .order('created_at', { ascending: false })
               .limit(1);
 
-            const latestDeal = deals && deals.length > 0 ? deals[0] : null;
-            const effectiveLastOrderStr = latestDeal
-              ? latestDeal.won_at || latestDeal.created_at
-              : customer.last_order_date;
+            const latestWonDeal = deals && deals.length > 0 ? deals[0] : null;
+            const effectiveLastOrderStr = latestWonDeal
+              ? latestWonDeal.won_at || latestWonDeal.created_at
+              : customer.last_order_date || null;
 
             const lastOrder = effectiveLastOrderStr
               ? new Date(effectiveLastOrderStr)
