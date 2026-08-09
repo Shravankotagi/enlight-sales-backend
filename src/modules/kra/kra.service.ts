@@ -46,7 +46,7 @@ export class KraService {
         .gte('reported_at', start)
         .lte('reported_at', end);
       let paymentsQuery = this.supabase.from('payment_tracking').select('*');
-      const recurringQuery = this.supabase
+      let recurringQuery = this.supabase
         .from('recurring_customers')
         .select('*')
         .eq('is_active', true);
@@ -81,6 +81,9 @@ export class KraService {
         );
         followupsQuery = followupsQuery.or(
           `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        recurringQuery = recurringQuery.or(
+          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
         );
       }
 
