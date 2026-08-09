@@ -1015,6 +1015,25 @@ export class KraService {
           dueDateStr = calculatedDue.toLocaleDateString('en-IN');
         }
 
+        const isFullyCollected =
+          p.status === 'collected' ||
+          (p.outstanding !== null && Number(p.outstanding) === 0);
+
+        const collectedAmount = Number(p.collected_amount) || 0;
+        const advanceAmountStr =
+          collectedAmount > 0
+            ? `₹${collectedAmount.toLocaleString('en-IN')}`
+            : '-';
+
+        // Full payment received date: ONLY show date when final total is 100% reached
+        const fullPaymentDateStr = isFullyCollected
+          ? p.paid_date
+            ? new Date(p.paid_date).toLocaleDateString('en-IN')
+            : p.updated_at
+              ? new Date(p.updated_at).toLocaleDateString('en-IN')
+              : new Date(p.created_at).toLocaleDateString('en-IN')
+          : '-';
+
         return {
           sr_no: index + 1,
           customer_name: p.customer_name || 'Customer',
@@ -1023,21 +1042,19 @@ export class KraService {
             : '-',
           credit_period_days: p.credit_period_days || 30,
           payment_due_date: dueDateStr,
-          payment_received_date: p.paid_date
-            ? new Date(p.paid_date).toLocaleDateString('en-IN')
-            : '-',
+          advance_payment_received: advanceAmountStr,
+          payment_received_date: fullPaymentDateStr,
           outstanding:
             p.outstanding !== null && p.outstanding !== undefined
               ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
               : '₹0',
-          remarks:
-            p.status === 'collected'
-              ? 'Fully Collected 🎉'
-              : p.status === 'pending'
-                ? 'Pending Collection ⏳'
-                : p.status === 'partial'
-                  ? 'Partial Payment Pending 💳'
-                  : p.status || 'In Progress',
+          remarks: isFullyCollected
+            ? 'Fully Collected 🎉'
+            : p.status === 'pending'
+              ? 'Pending Collection ⏳'
+              : p.status === 'partial'
+                ? 'Partial Payment Pending 💳'
+                : p.status || 'In Progress',
         };
       });
 
@@ -1284,7 +1301,8 @@ export class KraService {
             'Invoice Amount (₹)',
             'Credit Period (Days)',
             'Payment Due Date',
-            'Payment Received Date',
+            'Advance Payment Received (₹)',
+            'Full Payment Received Date',
             'Outstanding (₹)',
             'Remarks',
           ],
