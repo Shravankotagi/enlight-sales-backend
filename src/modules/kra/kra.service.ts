@@ -629,29 +629,45 @@ export class KraService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
-        inquiriesQuery = inquiriesQuery.eq(
-          'salesperson_phone',
-          salespersonPhone,
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+
+        dealsQuery = dealsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
-        kraLogsQuery = kraLogsQuery.eq('salesperson_phone', salespersonPhone);
-        paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
-        visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
-        complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
-        followupsQuery = followupsQuery.eq(
-          'salesperson_phone',
-          salespersonPhone,
+        inquiriesQuery = inquiriesQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
+        );
+        kraLogsQuery = kraLogsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        paymentsQuery = paymentsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        visitsQuery = visitsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+        complaintsQuery = complaintsQuery.or(
+          `reported_by.eq.${p10},reported_by.eq.${p12}`,
+        );
+        followupsQuery = followupsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
       }
 
       // Also fetch recurring_customers to get real contact_person/industry for KRA 2
       let customersQuery = this.supabase
         .from('recurring_customers')
-        .select('customer_name, contact_person, industry, notes');
+        .select(
+          'customer_name, contact_person, industry, notes, customer_address, customer_phone, created_at',
+        );
       if (salespersonPhone) {
-        customersQuery = customersQuery.eq(
-          'assigned_salesperson_phone',
-          salespersonPhone,
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+        customersQuery = customersQuery.or(
+          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
         );
       }
 
@@ -714,83 +730,101 @@ export class KraService {
       });
 
       // KRA 2 Sheet: New Customer Acquisition
-      // Only maps CUSTOMER MASTER DATA — no sales fields populated during onboarding.
-      // Sales fields (Product Ordered, First Order Qty, Billing Date) only fill when actual order exists.
-      const kra2Logs = safeKraLogs.filter(
-        (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
-      );
-      const kra2Rows = kra2Logs.map((l, index) => {
-        const custKey = (l.customer_name || '').toLowerCase().trim();
-        const custRecord =
-          customerMap.get(custKey) ||
-          safeCustomers.find(
-            (c) =>
-              c.customer_name &&
-              (c.customer_name.toLowerCase().includes(custKey) ||
-                custKey.includes(c.customer_name.toLowerCase())),
+      const kra2LogNames = safeKraLogs
+        .filter((l) => l.kra_number === 2)
+        .map((l) => l.customer_name)
+        .filter(Boolean);
+
+      const newCustNames = safeCustomers
+        .filter((c) => c.created_at >= start && c.created_at <= end)
+        .map((c) => c.customer_name)
+        .filter(Boolean);
+
+      const uniqueCustMap = new Map<string, string>();
+      [...kra2LogNames, ...newCustNames].forEach((name) => {
+        const key = name.toLowerCase().trim();
+        if (!uniqueCustMap.has(key)) {
+          uniqueCustMap.set(key, name);
+        }
+      });
+
+      const kra2Rows = Array.from(uniqueCustMap.entries()).map(
+        ([custKey, originalName], index) => {
+          const custRecord =
+            customerMap.get(custKey) ||
+            safeCustomers.find(
+              (c) =>
+                c.customer_name &&
+                (c.customer_name.toLowerCase().includes(custKey) ||
+                  custKey.includes(c.customer_name.toLowerCase())),
+            );
+
+          const visitRecord = safeVisits.find(
+            (v) =>
+              v.customer_name &&
+              (v.customer_name.toLowerCase().trim() === custKey ||
+                v.customer_name.toLowerCase().includes(custKey)),
           );
 
-        const visitRecord = safeVisits.find(
-          (v) =>
-            v.customer_name &&
-            (v.customer_name.toLowerCase().trim() === custKey ||
-              v.customer_name.toLowerCase().includes(custKey)),
-        );
+          let contactPerson = custRecord?.contact_person;
+          if (!contactPerson || contactPerson === '-') {
+            contactPerson = visitRecord?.person_met;
+          }
+          if (!contactPerson || contactPerson === '-') {
+            const notes = custRecord?.notes || '';
+            const match = notes.match(/Owner:\s*([^|]+)/i);
+            if (match) contactPerson = match[1].trim();
+          }
 
-        let contactPerson = custRecord?.contact_person;
-        if (!contactPerson || contactPerson === '-') {
-          contactPerson = visitRecord?.person_met;
-        }
-        if (!contactPerson || contactPerson === '-') {
-          const notes = custRecord?.notes || '';
-          const match = notes.match(/Owner:\s*([^|]+)/i);
-          if (match) contactPerson = match[1].trim();
-        }
+          const industrySegment =
+            custRecord?.industry || custRecord?.customer_address || '-';
 
-        // Find the first real deal/order for this customer (if any)
-        const firstDeal = safeDeals
-          .filter(
-            (d) =>
-              d.stage === 'won' &&
-              d.customer_name?.toLowerCase().trim() === custKey,
-          )
-          .sort(
-            (a, b) =>
-              new Date(a.created_at).getTime() -
-              new Date(b.created_at).getTime(),
-          )[0];
+          // Find the first real deal/order for this customer (if any)
+          const firstDeal = safeDeals
+            .filter(
+              (d) =>
+                d.stage === 'won' &&
+                d.customer_name?.toLowerCase().trim() === custKey,
+            )
+            .sort(
+              (a, b) =>
+                new Date(a.created_at).getTime() -
+                new Date(b.created_at).getTime(),
+            )[0];
 
-        const firstDealItems = firstDeal?.deal_items || [];
-        const productOrdered = firstDeal
-          ? firstDealItems
-              .map((i: any) => i.sku_text)
-              .filter(Boolean)
-              .join(', ') ||
-            firstDeal.inquiry_type ||
-            'Steel Products'
-          : null; // blank — no order yet
+          const firstDealItems = firstDeal?.deal_items || [];
+          const productOrdered = firstDeal
+            ? firstDealItems
+                .map((i: any) => i.sku_text)
+                .filter(Boolean)
+                .join(', ') ||
+              firstDeal.inquiry_type ||
+              'Steel Products'
+            : null;
 
-        const firstOrderQty = firstDeal
-          ? firstDealItems.reduce(
-              (s: number, i: any) => s + (i.quantity || 0),
-              0,
-            ) || null
-          : null; // blank — no order yet
+          const firstOrderQty = firstDeal
+            ? firstDealItems.reduce(
+                (s: number, i: any) => s + (i.quantity || 0),
+                0,
+              ) || null
+            : null;
 
-        const billingDate = firstDeal?.won_at
-          ? new Date(firstDeal.won_at).toLocaleDateString('en-IN')
-          : null; // blank — no billing during onboarding
+          const billingDate = firstDeal?.won_at
+            ? new Date(firstDeal.won_at).toLocaleDateString('en-IN')
+            : null;
 
-        return {
-          sr_no: index + 1,
-          company_name: l.customer_name || 'New Client',
-          industry_segment: custRecord?.industry || '-', // real value or blank
-          contact_person: contactPerson || '-', // real contact resolved across customer profile, visits, and notes
-          product_ordered: productOrdered || '-', // blank until real order
-          first_order_qty: firstOrderQty ? `${firstOrderQty} MT` : '-', // blank until real order
-          billing_date: billingDate || '-', // blank until real billing
-        };
-      });
+          return {
+            sr_no: index + 1,
+            company_name:
+              custRecord?.customer_name || originalName || 'New Client',
+            industry_segment: industrySegment,
+            contact_person: contactPerson || '-',
+            product_ordered: productOrdered || '-',
+            first_order_qty: firstOrderQty ? `${firstOrderQty} MT` : '-',
+            billing_date: billingDate || '-',
+          };
+        },
+      );
 
       // KRA 3 Sheet: Customer Retention & Recurring Business
       const kra3Logs = safeKraLogs.filter((l) => l.kra_number === 3);
