@@ -15,10 +15,11 @@ export class ReportsService {
     const now = new Date();
     const m = month !== undefined ? month : now.getMonth();
     const y = year || now.getFullYear();
-    const start = new Date(y, m, 1).toISOString();
-    const end = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
-    const monthName = new Date(y, m, 1).toLocaleString('en-IN', {
+    const start = new Date(Date.UTC(y, m, 1, 0, 0, 0)).toISOString();
+    const end = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999)).toISOString();
+    const monthName = new Date(Date.UTC(y, m, 1)).toLocaleString('en-IN', {
       month: 'long',
+      timeZone: 'UTC',
     });
     return { start, end, monthName, year: y, month: m };
   }

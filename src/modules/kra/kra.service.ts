@@ -15,8 +15,8 @@ export class KraService {
     const now = new Date();
     const m = month !== undefined ? month : now.getMonth();
     const y = year !== undefined ? year : now.getFullYear();
-    const start = new Date(y, m, 1).toISOString();
-    const end = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
+    const start = new Date(Date.UTC(y, m, 1, 0, 0, 0)).toISOString();
+    const end = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999)).toISOString();
     return { start, end };
   }
 
