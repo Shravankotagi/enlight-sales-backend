@@ -128,6 +128,11 @@ export class KraService {
         const dealDate = d.won_at || d.created_at;
         return dealDate >= start && dealDate <= end;
       });
+      const lostDeals = deals.filter((d) => {
+        if (d.stage !== 'lost') return false;
+        const dealDate = d.created_at;
+        return dealDate >= start && dealDate <= end;
+      });
 
       const totalValue = wonDeals.reduce((sum, d) => {
         if (d.total_amount && Number(d.total_amount) > 0) {
@@ -214,10 +219,8 @@ export class KraService {
           label: 'Sales Achievement',
           deals_count: dealsCreatedThisMonth.length,
           won_count: wonDeals.length,
-          total_value: dealsCreatedThisMonth.reduce(
-            (sum, d) => sum + (Number(d.total_amount) || 0),
-            0,
-          ),
+          lost_count: lostDeals.length,
+          total_value: totalValue,
           won_value: totalValue,
           status: dealsCreatedThisMonth.length > 0 ? 'on_track' : 'at_risk',
         },
@@ -708,8 +711,7 @@ export class KraService {
       });
 
       // KRA 1 Sheet: Sales Achievement
-      const wonDeals = safeDeals.filter((d) => d.stage === 'won');
-      const kra1Rows = wonDeals.map((d, index) => {
+      const kra1Rows = safeDeals.map((d, index) => {
         const items = d.deal_items || [];
         const productText =
           items
@@ -720,12 +722,27 @@ export class KraService {
           'Steel Products';
         const qtyMT =
           items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0) ||
-          1;
+          0;
+        const statusStr =
+          d.stage === 'won'
+            ? 'Won 🎉'
+            : d.stage === 'lost'
+              ? 'Lost ❌'
+              : 'In Pipeline 📄';
+        const amountStr =
+          d.stage === 'won' && d.total_amount
+            ? `₹${Number(d.total_amount).toLocaleString('en-IN')}`
+            : '-';
+        const reasonStr = d.stage === 'lost' ? d.lost_reason || 'Lost' : '-';
+
         return {
           sr_no: index + 1,
           customer_name: d.customer_name || 'Customer',
           product_supplied: productText,
-          quantity_mt: qtyMT,
+          quantity_mt: qtyMT > 0 ? qtyMT : '-',
+          status: statusStr,
+          amount: amountStr,
+          reason: reasonStr,
         };
       });
 
@@ -1149,10 +1166,16 @@ export class KraService {
         };
       });
 
-      const kra1Tonnage = kra1Rows.reduce(
-        (sum, r) => sum + (r.quantity_mt || 0),
-        0,
-      );
+      const kra1Tonnage = safeDeals
+        .filter((d) => d.stage === 'won')
+        .reduce((sum, d) => {
+          const items = d.deal_items || [];
+          const qtyMT = items.reduce(
+            (s: number, i: any) => s + (i.quantity || 0),
+            0,
+          );
+          return sum + qtyMT;
+        }, 0);
 
       // Distinct customer count for KRA 2 — matches bot's getMonthlyOnboardCount distinct Set logic
       const kra2DistinctCount = new Set(
@@ -1172,6 +1195,9 @@ export class KraService {
             'Customer Name',
             'Product Supplied',
             'Quantity (MT)',
+            'Status',
+            'Won Amount (₹)',
+            'Loss Reason / Notes',
           ],
           rows: kra1Rows,
         },
