@@ -223,12 +223,22 @@ export class KraService {
         },
         kra2: {
           label: 'New Customer Acquisition',
-          count: kraLogs.filter(
-            (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
-          ).length,
+          count: new Set(
+            kraLogs
+              .filter(
+                (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
+              )
+              .map((l) => (l.customer_name || '').toLowerCase().trim()),
+          ).size,
           target: 3,
           status:
-            kraLogs.filter((l) => l.kra_number === 2).length >= 3
+            new Set(
+              kraLogs
+                .filter(
+                  (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
+                )
+                .map((l) => (l.customer_name || '').toLowerCase().trim()),
+            ).size >= 3
               ? 'achieved'
               : 'in_progress',
         },
