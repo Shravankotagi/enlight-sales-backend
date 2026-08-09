@@ -31,7 +31,7 @@ export class CustomersService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, salespersonPhone?: string) {
     try {
       const { data: customer, error } = await this.supabase
         .from('recurring_customers')
@@ -40,44 +40,66 @@ export class CustomersService {
         .single();
       if (error) throw error;
 
-      const { data: deals } = await this.supabase
+      let dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('created_at', { ascending: false })
         .limit(10);
+      if (salespersonPhone) {
+        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+      }
 
-      const latestDeal = deals && deals.length > 0 ? deals[0] : null;
-      const effectiveLastOrderDate = latestDeal
-        ? latestDeal.won_at || latestDeal.created_at
-        : customer.last_order_date;
-
-      const { data: visits } = await this.supabase
+      let visitsQuery = this.supabase
         .from('customer_visits')
         .select('*')
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('visited_at', { ascending: false })
         .limit(5);
+      if (salespersonPhone) {
+        visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
+      }
 
-      const { data: payments } = await this.supabase
+      let paymentsQuery = this.supabase
         .from('payment_tracking')
         .select('*')
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('created_at', { ascending: false });
+      if (salespersonPhone) {
+        paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
+      }
 
-      const { data: complaints } = await this.supabase
+      const complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('reported_at', { ascending: false });
 
+      const [dealsRes, visitsRes, paymentsRes, complaintsRes] =
+        await Promise.all([
+          dealsQuery,
+          visitsQuery,
+          paymentsQuery,
+          complaintsQuery,
+        ]);
+
+      const deals = dealsRes.data || [];
+      const visits = visitsRes.data || [];
+      const payments = paymentsRes.data || [];
+      const complaints = complaintsRes.data || [];
+
+      const latestDeal = deals.length > 0 ? deals[0] : null;
+      const effectiveLastOrderDate = latestDeal
+        ? latestDeal.won_at || latestDeal.created_at
+        : customer.last_order_date;
+
       return {
         ...customer,
         last_order_date: effectiveLastOrderDate,
-        deals: deals || [],
-        visits: visits || [],
-        payments: payments || [],
-        complaints: complaints || [],
+        deals,
+        visits,
+        payments,
+        complaints,
       };
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
@@ -106,58 +128,70 @@ export class CustomersService {
         1,
       ).toISOString();
 
-      const results = await Promise.all(
-        (customers || []).map(async (customer) => {
-          const { data: deals } = await this.supabase
-            .from('deals')
-            .select('id, created_at, won_at, stage')
-            .ilike('customer_name', `%${customer.customer_name}%`)
-            .order('created_at', { ascending: false });
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('customer_name, created_at, won_at, stage')
+        .order('created_at', { ascending: false });
 
-          const latestDeal = deals && deals.length > 0 ? deals[0] : null;
-          const effectiveLastOrderStr = latestDeal
-            ? latestDeal.won_at || latestDeal.created_at
-            : customer.last_order_date;
+      if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+        dealsQuery = dealsQuery.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+        );
+      }
 
-          const lastOrderDate = effectiveLastOrderStr
-            ? new Date(effectiveLastOrderStr)
-            : null;
-          const daysSinceOrder = lastOrderDate
-            ? Math.max(
-                0,
-                Math.floor(
-                  (now.getTime() - lastOrderDate.getTime()) /
-                    (1000 * 60 * 60 * 24),
-                ),
-              )
-            : null;
+      const { data: allDeals } = await dealsQuery;
+      const safeAllDeals = allDeals || [];
 
-          const hasOrderThisMonth =
-            deals &&
-            deals.some(
-              (d) =>
-                d.created_at >= monthStart ||
-                (d.won_at && d.won_at >= monthStart),
-            );
+      const results = (customers || []).map((customer) => {
+        const custKey = (customer.customer_name || '').toLowerCase().trim();
+        const customerDeals = safeAllDeals.filter((d) => {
+          const dKey = (d.customer_name || '').toLowerCase().trim();
+          return dKey.includes(custKey) || custKey.includes(dKey);
+        });
 
-          let churnRisk = 'low';
-          if (!hasOrderThisMonth) {
-            if (daysSinceOrder && daysSinceOrder > 45) {
-              churnRisk = 'high';
-            } else if (daysSinceOrder && daysSinceOrder > 30) {
-              churnRisk = 'medium';
-            }
+        const latestDeal = customerDeals.length > 0 ? customerDeals[0] : null;
+        const effectiveLastOrderStr = latestDeal
+          ? latestDeal.won_at || latestDeal.created_at
+          : customer.last_order_date;
+
+        const lastOrderDate = effectiveLastOrderStr
+          ? new Date(effectiveLastOrderStr)
+          : null;
+        const daysSinceOrder = lastOrderDate
+          ? Math.max(
+              0,
+              Math.floor(
+                (now.getTime() - lastOrderDate.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              ),
+            )
+          : null;
+
+        const hasOrderThisMonth = customerDeals.some(
+          (d) =>
+            d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
+        );
+
+        let churnRisk = 'low';
+        if (!hasOrderThisMonth) {
+          if (daysSinceOrder && daysSinceOrder > 45) {
+            churnRisk = 'high';
+          } else if (daysSinceOrder && daysSinceOrder > 30) {
+            churnRisk = 'medium';
           }
+        }
 
-          return {
-            ...customer,
-            last_order_date: effectiveLastOrderStr,
-            has_order_this_month: hasOrderThisMonth,
-            days_since_order: daysSinceOrder,
-            churn_risk: churnRisk,
-          };
-        }),
-      );
+        return {
+          ...customer,
+          last_order_date: effectiveLastOrderStr,
+          has_order_this_month: hasOrderThisMonth,
+          days_since_order: daysSinceOrder,
+          churn_risk: churnRisk,
+        };
+      });
 
       return results.sort((a, b) => {
         const riskOrder: Record<string, number> = {

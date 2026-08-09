@@ -11,7 +11,12 @@ export class InquiriesService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll(filters?: { status?: string; from?: string; to?: string }) {
+  async findAll(filters?: {
+    status?: string;
+    from?: string;
+    to?: string;
+    salespersonPhone?: string;
+  }) {
     try {
       let query = this.supabase
         .from('inquiries')
@@ -22,6 +27,15 @@ export class InquiriesService {
       if (filters?.from) query = query.gte('created_at', filters.from);
       if (filters?.to) query = query.lte('created_at', filters.to);
 
+      if (filters?.salespersonPhone) {
+        const cleanDigits = filters.salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+        query = query.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
+        );
+      }
+
       const { data, error } = await query;
       if (error) throw error;
       return data;
@@ -31,13 +45,24 @@ export class InquiriesService {
     }
   }
 
-  async findReviewQueue() {
+  async findReviewQueue(salespersonPhone?: string) {
     try {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('inquiries')
         .select('*')
         .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
+
+      if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+        query = query.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
+        );
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     } catch (error) {
@@ -62,18 +87,33 @@ export class InquiriesService {
     }
   }
 
-  async getStats() {
+  async getStats(salespersonPhone?: string) {
     try {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('inquiries')
-        .select('status, source_channel, created_at');
+        .select(
+          'status, source_channel, created_at, salesperson_phone, sender_phone',
+        );
+
+      if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
+        query = query.or(
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
+        );
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
 
       return {
         total: data?.length || 0,
         pending: data?.filter((i) => i.status === 'pending').length || 0,
         processed: data?.filter((i) => i.status === 'processed').length || 0,
-        review: data?.filter((i) => i.status === 'review').length || 0,
+        review:
+          data?.filter((i) => ['review', 'needs_review'].includes(i.status))
+            .length || 0,
         by_channel: {
           whatsapp:
             data?.filter((i) => i.source_channel === 'whatsapp').length || 0,

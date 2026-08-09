@@ -90,7 +90,8 @@ export class CustomersController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.customersService.findOne(id);
+  async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const sp = employee.role === 'admin' ? undefined : employee.phone;
+    return this.customersService.findOne(id, sp);
   }
 }

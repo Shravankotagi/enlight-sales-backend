@@ -50,11 +50,14 @@ export class ReportsService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
+        const cleanDigits = salespersonPhone.replace(/\D/g, '');
+        const p10 = cleanDigits.slice(-10);
+        const p12 = '91' + p10;
         dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},customer_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
         inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
         );
       }
 

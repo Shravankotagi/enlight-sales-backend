@@ -35,6 +35,9 @@ export class ReportsController {
     @Query('month') month?: string,
     @Query('year') year?: string,
   ) {
+    if (employee.role !== 'admin') {
+      return [];
+    }
     return this.reportsService.getSalespersonReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
