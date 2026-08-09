@@ -217,17 +217,29 @@ router.post('/', async (req, res) => {
             })
             .eq('id', dealId);
 
-          // 2. Log to KRA 4 logs
-          await supabase.from('kra_logs').insert({
-            salesperson_phone: senderPhone,
-            kra_number:        4,
-            kra_type:          'deal_lost',
-            value:             dealAmount,
-            customer_name:     customerName,
-            description:       `Deal Lost: ${customerName} — Reason: ${selectedReason}`,
-            month: new Date().getMonth() + 1,
-            year:  new Date().getFullYear(),
-          });
+          // 2. Log to KRA logs (both KRA 1 and KRA 4 so both dashboards reflect the activity immediately)
+          await supabase.from('kra_logs').insert([
+            {
+              salesperson_phone: senderPhone,
+              kra_number: 1,
+              kra_type: 'deal_lost',
+              value: dealAmount,
+              customer_name: customerName,
+              description: `Deal Lost: ${customerName} — Reason: ${selectedReason}`,
+              month: new Date().getMonth() + 1,
+              year: new Date().getFullYear(),
+            },
+            {
+              salesperson_phone: senderPhone,
+              kra_number: 4,
+              kra_type: 'deal_lost',
+              value: dealAmount,
+              customer_name: customerName,
+              description: `Deal Lost: ${customerName} — Reason: ${selectedReason}`,
+              month: new Date().getMonth() + 1,
+              year: new Date().getFullYear(),
+            },
+          ]);
 
           // 3. Clear/Reset session intent to general so we exit the loss flow
           await saveActiveSession(senderPhone, customerName, 'general');
