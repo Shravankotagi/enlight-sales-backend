@@ -420,12 +420,10 @@ export class ReportsService {
       let itemsQuery = this.supabase
         .from('deal_items')
         .select(
-          '*, deals!inner(created_at, stage, salesperson_phone, inquiry_type)',
+          '*, deals!inner(created_at, won_at, stage, salesperson_phone, inquiry_type)',
         )
         .neq('deals.inquiry_type', 'unknown')
-        .eq('deals.stage', 'won')
-        .gte('deals.created_at', start)
-        .lte('deals.created_at', end);
+        .eq('deals.stage', 'won');
 
       if (salespersonPhone) {
         const cleanDigits = salespersonPhone.replace(/\D/g, '');
@@ -440,7 +438,14 @@ export class ReportsService {
 
       if (error) throw error;
 
-      const bysku = (items || []).reduce(
+      const validItems = (items || []).filter((item: any) => {
+        const d = item.deals;
+        if (!d) return false;
+        const dealDate = d.won_at || d.created_at;
+        return dealDate >= start && dealDate <= end;
+      });
+
+      const bysku = validItems.reduce(
         (acc, item) => {
           const sku = item.sku_text || 'Unknown';
           if (!acc[sku]) {
