@@ -315,12 +315,33 @@ function buildCustomerSummary(data, salespersonName) {
 
 async function findContact(customerName, token) {
   try {
+    if (!customerName) return null;
+    // 1. Try exact match first
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
       headers: zohoHeaders(token),
-      params: { criteria: `(Last_Name:equals:${customerName})`, fields: 'id,Last_Name' },
+      params: { criteria: `(Last_Name:equals:${customerName})`, fields: 'id,Last_Name,Company_Name,Account_Name' },
     });
-    return res.data?.data?.[0]?.id || null;
-  } catch { return null; }
+    if (res.data?.data?.[0]?.id) return res.data.data[0].id;
+
+    // 2. Fallback: search by first word for fuzzy/partial match
+    const firstWord = customerName.trim().split(' ')[0];
+    if (firstWord && firstWord.length > 2) {
+      const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
+        headers: zohoHeaders(token),
+        params: { criteria: `(Last_Name:starts_with:${firstWord})`, fields: 'id,Last_Name' },
+      });
+      const matches = res2.data?.data || [];
+      const best = matches.find(m =>
+        m.Last_Name?.toLowerCase().includes(customerName.toLowerCase()) ||
+        customerName.toLowerCase().includes(m.Last_Name?.toLowerCase())
+      );
+      return best?.id || matches[0]?.id || null;
+    }
+    return null;
+  } catch (err) {
+    console.error('[BiginSync] findContact error:', err.response?.data || err.message);
+    return null;
+  }
 }
 
 async function upsertContact(profile, salespersonName, token) {
@@ -330,10 +351,12 @@ async function upsertContact(profile, salespersonName, token) {
   const payload = {
     data: [{
       Last_Name:    name,
+      Company_Name: name,
       Account_Name: name,
       Phone:        profile.customer_phone || profile.phone || '',
       Mobile:       profile.customer_phone || profile.phone || '',
       Email:        profile.email || '',
+      Mailing_City: profile.customer_address || profile.city || '',
       City:         profile.customer_address || profile.city || '',
       Description: [
         profile.contact_person  ? `Contact Person: ${profile.contact_person}` : '',
@@ -351,27 +374,51 @@ async function upsertContact(profile, salespersonName, token) {
     return existingId;
   }
 
-  const res = await axios.post(`${ZOHO_BIGIN_BASE}/Contacts`, payload,
-    { headers: zohoHeaders(token) });
-  return res.data?.data?.[0]?.details?.id || null;
+  try {
+    const res = await axios.post(`${ZOHO_BIGIN_BASE}/Contacts`, payload,
+      { headers: zohoHeaders(token) });
+    const newId = res.data?.data?.[0]?.details?.id || null;
+    if (!newId) {
+      console.error('[BiginSync] Contact create notice:', JSON.stringify(res.data?.data));
+    }
+    return newId;
+  } catch (err) {
+    console.error('[BiginSync] Contact POST error:', err.response?.data || err.message);
+    return null;
+  }
 }
 
 async function findDeal(customerName, token) {
   try {
+    if (!customerName) return null;
+    // 1. Search by full customer name
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
       headers: zohoHeaders(token),
       params: { criteria: `(Deal_Name:contains:${customerName})`, fields: 'id,Deal_Name,Stage' },
     });
-    const records = res.data?.data;
-    return records?.length > 0 ? records[0] : null;
-  } catch { return null; }
+    if (res.data?.data?.[0]) return res.data.data[0];
+
+    // 2. Fallback: search by first word
+    const firstWord = customerName.trim().split(' ')[0];
+    if (firstWord && firstWord.length > 2) {
+      const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
+        headers: zohoHeaders(token),
+        params: { criteria: `(Deal_Name:starts_with:${firstWord})`, fields: 'id,Deal_Name,Stage' },
+      });
+      return res2.data?.data?.[0] || null;
+    }
+    return null;
+  } catch (err) {
+    console.error('[BiginSync] findDeal error:', err.response?.data || err.message);
+    return null;
+  }
 }
 
 const STAGE_MAP = {
   won:         'Closed Won',
   lost:        'Closed Lost',
   negotiation: 'Negotiation/Review',
-  quoted:      'Value Proposition',
+  quoted:      'Proposal/Price Quote',
   qualified:   'Qualification',
   new_inquiry: 'Qualification',
 };
@@ -384,13 +431,14 @@ async function upsertDeal({ customerName, stage, amount, poNumber,
 
   const payload = {
     data: [{
-      Deal_Name:    dealName,
-      Stage:        STAGE_MAP[stage] || 'Qualification',
-      Amount:       Number(amount) || 0,
-      Closing_Date: new Date().toISOString().split('T')[0],
-      Description:  summary,
-      Lead_Source:  'WhatsApp Bot',
-      Pipeline:     '1384628000000000173',
+      Deal_Name:     dealName,
+      Stage:         STAGE_MAP[stage] || 'Qualification',
+      Pipeline_Name: process.env.ZOHO_PIPELINE_NAME || 'Sales Pipeline',
+      Pipeline:      process.env.ZOHO_PIPELINE_ID || '1384628000000000173',
+      Amount:        Number(amount) || 0,
+      Closing_Date:  new Date().toISOString().split('T')[0],
+      Description:   summary,
+      Lead_Source:   'WhatsApp Bot',
       ...(poNumber ? { PO_Number: poNumber } : {}),
       ...(contactId ? { Contact_Name: { id: contactId } } : {}),
     }],
@@ -413,8 +461,12 @@ async function upsertDeal({ customerName, stage, amount, poNumber,
 }
 
 async function addNote({ parentId, parentModule, noteTitle, noteContent }, token) {
+  if (!parentId) {
+    console.warn(`[BiginSync] addNote skipped — no parentId for ${parentModule}`);
+    return null;
+  }
   try {
-    await axios.post(`${ZOHO_BIGIN_BASE}/Notes`, {
+    const res = await axios.post(`${ZOHO_BIGIN_BASE}/Notes`, {
       data: [{
         Note_Title:   noteTitle,
         Note_Content: noteContent,
@@ -422,8 +474,10 @@ async function addNote({ parentId, parentModule, noteTitle, noteContent }, token
         Parent_Id:    parentId,
       }],
     }, { headers: zohoHeaders(token) });
+    return res.data?.data?.[0]?.details?.id || null;
   } catch (err) {
     console.error('[BiginSync] Note add error:', err.response?.data || err.message);
+    return null;
   }
 }
 
