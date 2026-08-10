@@ -178,11 +178,6 @@ export class CustomersService {
             d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
         );
 
-        const hasOrderThisMonth = customerWonDeals.some(
-          (d) =>
-            d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
-        );
-
         const daysSinceCreated = customer.created_at
           ? Math.floor(
               (now.getTime() - new Date(customer.created_at).getTime()) /
@@ -322,7 +317,9 @@ export class CustomersService {
 
       let query = this.supabase
         .from('deals')
-        .select('lost_reason, total_amount, customer_name, created_at')
+        .select(
+          'id, deal_number, lost_reason, total_amount, customer_name, created_at',
+        )
         .eq('stage', 'lost')
         .gte('created_at', threeMonthsAgo);
 
@@ -348,9 +345,35 @@ export class CustomersService {
         logsQuery,
       ]);
 
-      const combinedLosses = [
-        ...(lostDeals || []),
-        ...(lostLogs || []).map((l) => ({
+      const primaryLostDeals = (lostDeals || []).map((d) => ({
+        id: d.id,
+        deal_number:
+          d.deal_number ||
+          (d.id ? `DEAL-${d.id.substring(0, 6).toUpperCase()}` : undefined),
+        customer_name: d.customer_name,
+        lost_reason: d.lost_reason || 'Not specified',
+        total_amount: d.total_amount || 0,
+        created_at: d.created_at,
+      }));
+
+      // Add kra_logs ONLY if no corresponding deal exists for that customer & amount (prevents double-counting)
+      const orphanLogs = (lostLogs || [])
+        .filter((l) => {
+          const lAmount = Number(l.value || 0);
+          const lName = (l.customer_name || '').toLowerCase().trim();
+          const matchInDeals = primaryLostDeals.some((d) => {
+            const dName = (d.customer_name || '').toLowerCase().trim();
+            return (
+              (dName.includes(lName) || lName.includes(dName)) &&
+              (lAmount === 0 ||
+                Math.abs(Number(d.total_amount) - lAmount) < 100)
+            );
+          });
+          return !matchInDeals;
+        })
+        .map((l) => ({
+          id: l.id,
+          deal_number: undefined,
           customer_name: l.customer_name,
           lost_reason:
             l.description?.match(/Reason:\s*([^|]+)/)?.[1]?.trim() ||
@@ -358,8 +381,34 @@ export class CustomersService {
             'Price / Commercials',
           total_amount: l.value || 0,
           created_at: l.created_at,
-        })),
-      ];
+        }));
+
+      // Deduplicate log records by customer + date (within 60 seconds) or exact amount
+      const combinedLosses: any[] = [];
+      for (const item of [...primaryLostDeals, ...orphanLogs]) {
+        const itemDateStr = new Date(item.created_at)
+          .toISOString()
+          .slice(0, 10);
+        const itemName = (item.customer_name || '').toLowerCase().trim();
+        const isDuplicate = combinedLosses.some((existing) => {
+          const existingDateStr = new Date(existing.created_at)
+            .toISOString()
+            .slice(0, 10);
+          const existingName = (existing.customer_name || '')
+            .toLowerCase()
+            .trim();
+          return (
+            existingName === itemName &&
+            existingDateStr === itemDateStr &&
+            Math.abs(
+              Number(existing.total_amount) - Number(item.total_amount),
+            ) < 100
+          );
+        });
+        if (!isDuplicate) {
+          combinedLosses.push(item);
+        }
+      }
 
       const byReason = combinedLosses.reduce((acc: any, deal: any) => {
         const reason = deal.lost_reason || 'Unknown';
