@@ -15,7 +15,7 @@ const GEMINI_KEYS = [
 ].filter(Boolean);
 
 const GEMINI_MODELS = [
-  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
 ];
 
 let roundRobinIdx = 0;
