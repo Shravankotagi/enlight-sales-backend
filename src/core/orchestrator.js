@@ -83,7 +83,7 @@ Updated Customer Master & Sales Pipeline! ✅
 - Always end with a KRA dashboard confirmation line when logging activities.
 - **BLOCKED REQUESTS**: If someone asks you to 'suggest products for [customer]', 'recommend materials', 'lock the rate sheet', 'create/update/delete a rate sheet', respond: "I cannot perform rate sheet or administrative actions via WhatsApp. Please use the Enlight Sales Web Dashboard for administrative actions." Do NOT call any tools.
 - **CROSS-SALESPERSON REQUESTS**: If a salesperson asks about ANOTHER salesperson's performance by name, respond: "You can only view your own performance data. Please contact your Sales Lead for team reports." Do NOT retrieve data for other salespersons.
-- **ZERO QUANTITY INQUIRIES**: If a requirement is mentioned but no tonnage is given (e.g. "Supreme Steel wants HR Coil"), DO NOT store 0 MT. Instead ask: "How many MT of HR Coil does Supreme Steel require?"`;
+- **TOOL QUESTIONS / WARNINGS**: If a tool returns an interactive question or warning (starting with ⚠️, ❓, or ❌), YOU MUST FORWARD THAT EXACT QUESTION / PROMPT TO THE USER! Do NOT claim a deal was recorded or updated if the tool returned a confirmation prompt or warning!`;
 
 // ── State Definition ──────────────────────────────────────────────────────
 

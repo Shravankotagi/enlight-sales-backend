@@ -82,6 +82,9 @@ async function isProductMatchForExistingDeal(dealId, newProductText) {
  */
 function detectInvalidUnitInMessage(text) {
   if (!text) return null;
+  // Remove commas inside numbers (e.g. "58,000" -> "58000")
+  const cleanText = text.replace(/(\d+),(\d+)/g, '$1$2');
+
   const VALID_STEEL_UNITS = [
     'mt',
     'ton',
@@ -111,7 +114,7 @@ function detectInvalidUnitInMessage(text) {
     'm',
   ];
 
-  const matches = text.match(/(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/g);
+  const matches = cleanText.match(/(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/g);
   if (!matches) return null;
 
   for (const m of matches) {
@@ -154,6 +157,14 @@ function detectInvalidUnitInMessage(text) {
         'for',
         'in',
         'and',
+        'per',
+        'rs',
+        'rupees',
+        'inr',
+        'rate',
+        'price',
+        'at',
+        'by',
       ];
       if (SKIP_WORDS.includes(unit)) continue;
 
