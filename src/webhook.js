@@ -173,6 +173,7 @@ router.post('/', async (req, res) => {
             sender_name: employeeRecord ? employeeRecord.name : senderName,
             message_id: messageId,
             status: 'processed',
+            overall_confidence: 0.92,
             employee_id: employeeRecord ? employeeRecord.employee_id : null,
           });
         } catch (inqErr) {
