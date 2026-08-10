@@ -499,7 +499,7 @@ async function processSalesMessage(text, senderPhone) {
     let unlistedMaterialName = '';
 
     for (const item of rawItems) {
-      const pName = item.product_requirement || 'Steel Requirement';
+      const pName = item.product_requirement || 'Product Requirement';
       const qty = Number(item.quantity_mt) || 0;
       let rate = Number(item.rate_per_mt) || 0;
       let autoRate = null;
@@ -592,7 +592,7 @@ async function processSalesMessage(text, senderPhone) {
       if (isStageUpdateOrInquiry) {
         const dealsListStr = openDeals.map((d, idx) => {
           const code = getDealCode(d);
-          const itemsStr = (d.deal_items || []).map(i => `${i.quantity || ''} ${i.unit || 'MT'} ${i.sku_text || 'Steel'}`).join(', ') || d.inquiry_type || 'Steel Requirement';
+          const itemsStr = (d.deal_items || []).map(i => `${i.quantity || ''} ${i.unit || 'MT'} ${i.sku_text || 'Product'}`).join(', ') || d.inquiry_type || 'Product Requirement';
           const valStr = d.total_amount > 0 ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})` : '';
           const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
           return `${idx + 1}️⃣ *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
