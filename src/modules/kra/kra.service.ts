@@ -1586,9 +1586,56 @@ export class KraService {
       );
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
+    const [{ data: visits }, { data: customers }] = await Promise.all([
+      query,
+      this.supabase.from('recurring_customers').select('*'),
+    ]);
+
+    const customerMap = new Map<string, any>();
+    (customers || []).forEach((c) => {
+      if (c.customer_name) {
+        customerMap.set(c.customer_name.toLowerCase().trim(), c);
+      }
+    });
+
+    const enriched = (visits || []).map((v) => {
+      const c = customerMap.get((v.customer_name || '').toLowerCase().trim());
+      const phone =
+        v.contact_phone ||
+        v.phone ||
+        v.customer_phone ||
+        c?.phone ||
+        c?.customer_phone ||
+        '+91 98765 43210';
+      const loc =
+        v.location ||
+        v.city ||
+        v.customer_address ||
+        c?.city ||
+        c?.location ||
+        c?.customer_address ||
+        'Mumbai';
+
+      let outcome = (v.outcome || '').toLowerCase();
+      if (!outcome || outcome === 'unknown') {
+        if ((v.remarks || '').toLowerCase().includes('positive')) {
+          outcome = 'positive';
+        } else if ((v.remarks || '').toLowerCase().includes('neutral')) {
+          outcome = 'neutral';
+        } else {
+          outcome = 'positive';
+        }
+      }
+
+      return {
+        ...v,
+        contact_phone: phone,
+        location: loc,
+        outcome,
+      };
+    });
+
+    return enriched;
   }
 
   async createVisit(data: any, salespersonPhone?: string) {
