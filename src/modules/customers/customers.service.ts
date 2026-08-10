@@ -178,6 +178,11 @@ export class CustomersService {
             d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
         );
 
+        const hasOrderThisMonth = customerWonDeals.some(
+          (d) =>
+            d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
+        );
+
         const daysSinceCreated = customer.created_at
           ? Math.floor(
               (now.getTime() - new Date(customer.created_at).getTime()) /
