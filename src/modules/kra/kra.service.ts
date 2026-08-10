@@ -735,7 +735,14 @@ export class KraService {
           d.stage === 'won' && d.total_amount
             ? `₹${Number(d.total_amount).toLocaleString('en-IN')}`
             : '-';
-        const reasonStr = d.stage === 'lost' ? d.lost_reason || 'Lost' : '-';
+        const reasonStr =
+          d.stage === 'lost'
+            ? d.lost_reason || 'Lost'
+            : d.stage === 'won'
+              ? d.po_number
+                ? `PO: ${d.po_number}`
+                : 'Order Confirmed 🎉'
+              : '-';
 
         return {
           sr_no: index + 1,
