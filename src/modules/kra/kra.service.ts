@@ -1392,9 +1392,31 @@ export class KraService {
           target:
             'Ensure 100% payment collection within the agreed credit period',
           achieved:
-            kra5Rows.filter((r) => r.remarks === 'Fully Collected').length > 0
-              ? '100%'
-              : 'In Progress',
+            safePayments.filter((p) => (Number(p.outstanding) || 0) > 0)
+              .length > 0
+              ? `${safePayments.filter((p) => (Number(p.outstanding) || 0) > 0).length} Pending`
+              : '100% Collected',
+          invoiceTotal: safePayments.reduce(
+            (sum, p) => sum + (Number(p.invoice_amount) || 0),
+            0,
+          ),
+          collectedTotal: safePayments.reduce(
+            (sum, p) =>
+              sum +
+              (Number(p.collected_amount) || Number(p.advance_payment) || 0),
+            0,
+          ),
+          outstandingTotal: safePayments.reduce(
+            (sum, p) => sum + (Number(p.outstanding) || 0),
+            0,
+          ),
+          overdueTotal: safePayments.reduce(
+            (sum, p) => sum + (Number(p.outstanding) || 0),
+            0,
+          ),
+          pendingCount: safePayments.filter(
+            (p) => (Number(p.outstanding) || 0) > 0,
+          ).length,
           meaning:
             "This metric measures the salesperson's effectiveness in collecting customer payments within the agreed credit terms and proactively managing outstanding receivables. It evaluates regular follow-ups, timely coordination with customers, and efforts to minimize overdue payments, thereby supporting healthy cash flow and reducing financial risk for the company.",
           headers: [
