@@ -721,7 +721,7 @@ export class KraService {
             .filter(Boolean)
             .join(', ') ||
           d.inquiry_type ||
-          'Steel Products';
+          'Product Requirement';
         const qtyMT =
           items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0) ||
           0;
@@ -997,7 +997,7 @@ export class KraService {
               .join(', ') ||
             item.inquiry_type ||
             item.raw_text?.substring(0, 40) ||
-            'Steel Requirement';
+            'Product Requirement';
           const status = isDeal
             ? item.stage === 'won'
               ? 'Won 🎉'
