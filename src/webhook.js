@@ -386,6 +386,22 @@ router.post('/', async (req, res) => {
           return;
         }
 
+        if (activeSession?.last_intent?.startsWith('pending_deal_choice|')) {
+          const parts = activeSession.last_intent.split('|');
+          const customerName = parts[1];
+          const dbStage = parts[2];
+          const originalMsg = parts[3] || '';
+
+          const cleanInput = raw_text.trim();
+          await saveActiveSession(senderPhone, customerName, 'general');
+
+          const { processSalesMessage } = require('./agents/salesAgent');
+          const syntheticText = `${originalMsg} deal ${cleanInput}`;
+          const reply = await processSalesMessage(syntheticText, senderPhone);
+          await sendTextMessage(senderPhone, reply);
+          return;
+        }
+
         // ── AGENTIC ORCHESTRATOR (LangGraph + Google Gemini 3.1 Flash Lite) ──────────────
         // Replaces all manual intent classification and if/else routing.
         // The orchestrator understands any message (English/Hindi/Hinglish),

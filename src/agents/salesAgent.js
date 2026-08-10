@@ -181,6 +181,31 @@ function detectInvalidUnitInMessage(text) {
 }
 
 /**
+ * Gets human-readable Deal Code e.g. #DEAL-B8018B
+ */
+function getDealCode(deal) {
+  if (!deal) return '#DEAL-UNKNOWN';
+  if (deal.deal_number) return `#${deal.deal_number}`;
+  const code = (deal.id || '').substring(0, 6).toUpperCase();
+  return `#DEAL-${code}`;
+}
+
+/**
+ * Fetch ALL open/active (non-won, non-lost) deals for a customer.
+ */
+async function getAllOpenDealsForCustomer(customerName, senderPhone) {
+  if (!customerName) return [];
+  const { data } = await supabase
+    .from('deals')
+    .select('*, deal_items(*)')
+    .ilike('customer_name', `%${customerName}%`)
+    .not('stage', 'in', '("won","lost")')
+    .order('created_at', { ascending: false });
+
+  return data || [];
+}
+
+/**
  * Finds the best matching existing deal for a customer.
  * Priority: salesperson's own deals → active stages first → most recent.
  */
@@ -283,9 +308,6 @@ async function lookupRateSheetPrice(productText) {
       );
     }
 
-    // Word token matching removed to prevent loose mis-matching (e.g. "HR Sheet" matching "HR Coil")
-    // Only exact or direct substring match is safe. If no match found -> return null.
-
     if (matched && Number(matched.price_per_mt) > 0) {
       return {
         price_per_mt: Number(matched.price_per_mt),
@@ -350,44 +372,31 @@ async function processSalesMessage(text, senderPhone) {
       rawItems = [{
         product_requirement: data.product_requirement,
         quantity_mt: data.quantity_mt,
+        rate_per_mt: data.rate_per_mt,
       }];
     }
 
-    // Unit validation check: check if user typed an invalid/non-steel unit like "15 apple" or "20 boxes"
-    const invalidCheck =
-      detectInvalidUnitInMessage(text) ||
-      (data.invalid_unit_detected
-        ? {
-            number: data.unconfirmed_number || 15,
-            invalidUnit: data.invalid_unit_detected,
-          }
-        : null);
-
-    if (invalidCheck) {
-      const pName =
-        rawItems.length > 0 && rawItems[0].product_requirement
-          ? rawItems[0].product_requirement
-          : 'Steel Material';
-
+    // Check for invalid units (e.g. "15 apple")
+    const invalidUnitCheck = detectInvalidUnitInMessage(text);
+    if (invalidUnitCheck) {
+      const { saveActiveSession } = require('../supabase');
+      const itemPName = rawItems.length > 0 ? (rawItems[0].product_requirement || 'material') : 'material';
       await saveActiveSession(
         senderPhone,
         finalCustomerName,
-        `pending_unit_confirm|${finalCustomerName}|${pName}|${invalidCheck.number}`,
+        `pending_unit_confirm|${finalCustomerName}|${itemPName}|${invalidUnitCheck.number}`,
       );
-
-      return (
-        `⚠️ *Unit Confirmation Required*\n\n` +
-        `You specified *${invalidCheck.number} ${invalidCheck.invalidUnit}* of *${pName}* for *${finalCustomerName}*.\n\n` +
+      return `⚠️ *Unit Confirmation Required*\n\n` +
+        `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}* of *${itemPName}* for *${finalCustomerName}*.\n\n` +
         `In B2B steel sales, quantities are measured in **Metric Tons (MT)** or **Kg**.\n\n` +
-        `Did you mean *${invalidCheck.number} MT* of *${pName}*?\n\n` +
-        `1️⃣ *Yes, log as ${invalidCheck.number} MT*\n` +
-        `2️⃣ *Specify valid unit* (e.g. reply *"15 MT"* or *"1500 Kg"*)\n\n` +
-        `Reply *1* to confirm ${invalidCheck.number} MT, or reply with the correct quantity and unit.`
-      );
+        `Did you mean *${invalidUnitCheck.number} MT* of *${itemPName}*?\n\n` +
+        `1️⃣ *Yes, log as ${invalidUnitCheck.number} MT*\n` +
+        `2️⃣ *Specify valid unit* (e.g. reply _"15 MT"_ or _"1500 Kg"_)\n\n` +
+        `Reply *1* to confirm ${invalidUnitCheck.number} MT, or reply with the correct quantity and unit.`;
     }
 
+    let processedItems = [];
     let calculatedTotal = 0;
-    const processedItems = [];
     let hasUnlistedMaterial = false;
     let unlistedMaterialName = '';
 
@@ -454,8 +463,52 @@ async function processSalesMessage(text, senderPhone) {
       console.log(`[SalesAgent] Auto-created new prospect: ${customerName}`);
     }
 
-    const existingDeal = await findBestDeal(finalCustomerName, senderPhone);
+    // MULTI-DEAL RESOLUTION: Fetch all active open deals for this client
+    const openDeals = await getAllOpenDealsForCustomer(finalCustomerName, senderPhone);
+    let existingDeal = null;
     let dealId = null;
+
+    // Check if salesperson explicitly specified a Deal ID/Code in raw message e.g. #DEAL-B8018B or DEAL-B8018B or B8018B or index 1/2
+    const dealIdMatch = text.match(/#?(DEAL-[A-F0-9]{4,6}|[A-F0-9]{6})/i);
+    const numChoiceMatch = text.trim().match(/^([1-9])$/);
+
+    if (dealIdMatch && openDeals.length > 0) {
+      const targetCode = dealIdMatch[1].toUpperCase().replace('DEAL-', '');
+      existingDeal = openDeals.find(d => (d.id || '').toUpperCase().includes(targetCode) || (d.deal_number && d.deal_number.toUpperCase().includes(targetCode)));
+      if (existingDeal) {
+        console.log(`[SalesAgent] Explicitly targeted deal ${getDealCode(existingDeal)} for ${finalCustomerName}`);
+      }
+    } else if (numChoiceMatch && openDeals.length > 0) {
+      const idx = parseInt(numChoiceMatch[1], 10) - 1;
+      if (openDeals[idx]) {
+        existingDeal = openDeals[idx];
+        console.log(`[SalesAgent] Selected deal #${idx + 1} (${getDealCode(existingDeal)}) for ${finalCustomerName}`);
+      }
+    }
+
+    if (!existingDeal && openDeals.length === 1) {
+      existingDeal = openDeals[0];
+    } else if (!existingDeal && openDeals.length > 1) {
+      // Multiple active open deals exist for this client and no specific Deal ID was mentioned!
+      const isStageUpdateOrInquiry = data.action === 'stage_update' || !data.product_requirement;
+      if (isStageUpdateOrInquiry) {
+        const dealsListStr = openDeals.map((d, idx) => {
+          const code = getDealCode(d);
+          const itemsStr = (d.deal_items || []).map(i => `${i.quantity || ''} ${i.unit || 'MT'} ${i.sku_text || 'Steel'}`).join(', ') || d.inquiry_type || 'Steel Requirement';
+          const valStr = d.total_amount > 0 ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})` : '';
+          const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
+          return `${idx + 1}️⃣ *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
+        }).join('\n');
+
+        const { saveActiveSession } = require('../supabase');
+        await saveActiveSession(senderPhone, finalCustomerName, `pending_deal_choice|${finalCustomerName}|${dbStage}|${text}`);
+
+        return `❓ *Multiple Active Deals Found for ${finalCustomerName}*\n\n` +
+          `${finalCustomerName} has *${openDeals.length} active deals* in your sales pipeline:\n\n` +
+          `${dealsListStr}\n\n` +
+          `Please reply with the **Deal ID** (e.g. _"${getDealCode(openDeals[0])}"_) or option number to specify which deal to update! 📈`;
+      }
+    }
 
     if (existingDeal) {
       const isStageUpdateOnly =
@@ -471,12 +524,12 @@ async function processSalesMessage(text, senderPhone) {
       if (isStageUpdateOnly || productMatchesExisting) {
         dealId = existingDeal.id;
         console.log(
-          `[SalesAgent] Updating existing deal ${existingDeal.id} for ${finalCustomerName}`,
+          `[SalesAgent] Updating existing deal ${getDealCode(existingDeal)} for ${finalCustomerName}`,
         );
       } else {
         dealId = null;
         console.log(
-          `[SalesAgent] New product detected — creating separate deal for ${finalCustomerName}`,
+          `[SalesAgent] New product category detected — creating separate deal for ${finalCustomerName}`,
         );
       }
     }
@@ -487,11 +540,17 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     const poDate = data.po_date || new Date().toISOString().split('T')[0];
-    let poNumber = data.po_number || (existingDeal ? existingDeal.po_number : null);
-    if (!poNumber && (dbStage === 'won' || data.action === 'purchase_order')) {
-      const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      poNumber = `PO-${todayStr}-${randomNum}`;
+    let poNumber = existingDeal ? existingDeal.po_number : null;
+
+    // PO is created ONLY after the deal is WON!
+    if (dbStage === 'won') {
+      if (!poNumber) {
+        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        poNumber = `PO-${todayStr}-${randomNum}`;
+      }
+    } else {
+      poNumber = null; // Ensure PO remains null for non-won pipeline deals
     }
 
     if (dealId) {
@@ -499,9 +558,9 @@ async function processSalesMessage(text, senderPhone) {
       const updatePayload = {
         stage: dbStage,
         po_date: poDate,
+        po_number: poNumber,
       };
 
-      if (poNumber) updatePayload.po_number = poNumber;
       if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
       if (data.delivery_location) updatePayload.delivery_location = data.delivery_location;
       if (data.delivery_date) updatePayload.delivery_date = data.delivery_date;
@@ -680,9 +739,29 @@ async function processSalesMessage(text, senderPhone) {
         .join('\n');
     }
 
+    const activeDeal = existingDeal || { id: dealId };
+    const dealCode = getDealCode(activeDeal);
+
+    if (dbStage === 'won') {
+      let resultMsg =
+        `🎉 *DEAL WON & PURCHASE ORDER GENERATED!* 🏆\n\n` +
+        `Customer: *${finalCustomerName}*\n` +
+        `Deal ID: *${dealCode}*\n` +
+        `Official PO Number: *${poNumber}* 📄\n` +
+        `Total Value: *₹${Number(dealAmount).toLocaleString('en-IN')}* + GST\n` +
+        (poDate ? `PO Date: *${poDate}*\n` : '') +
+        `\nSynced live to KRA 1 Sales Achievement & Zoho Bigin CRM! ✅`;
+
+      if (missingPrompt) {
+        resultMsg += `\n\n${missingPrompt}`;
+      }
+      return resultMsg;
+    }
+
     let resultMsg =
       `💼 *Sales Inquiry & Pipeline Logged!* 🏗️\n\n` +
       `Customer: *${finalCustomerName}*\n` +
+      `Deal ID: *${dealCode}*\n` +
       `Stage: *${dbStage.toUpperCase()} 📄*\n` +
       (itemsBreakdownStr ? `Line Items:\n${itemsBreakdownStr}\n` : '') +
       (totalQty > 0 ? `Total Quantity: *${totalQty} MT*\n` : '') +
