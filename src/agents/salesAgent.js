@@ -267,6 +267,36 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
 /**
  * Looks up price per MT from official active rate sheet for a given product text.
  */
+function extractDimensions(str) {
+  if (!str) return [];
+  const matches = str.toLowerCase().match(/\b(\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|x\d+)?)\b/g);
+  if (!matches) return [];
+  return matches.filter((m) => /\d+/.test(m) && (m.includes('mm') || m.includes('x') || m.includes('cm') || m.includes('inch')));
+}
+
+function isDimensionCompatible(requestedText, skuText) {
+  const reqDims = extractDimensions(requestedText);
+  const skuDims = extractDimensions(skuText);
+
+  if (reqDims.length === 0 && skuDims.length === 0) return true;
+  if (reqDims.length > 0 && skuDims.length === 0) return true;
+
+  if (reqDims.length > 0 && skuDims.length > 0) {
+    for (const rd of reqDims) {
+      const rdClean = rd.replace(/\s+/g, '').toLowerCase();
+      const rdNum = rdClean.replace(/[^\d.]/g, '');
+      const skuHasMatchingDim = skuDims.some((sd) => {
+        const sdClean = sd.replace(/\s+/g, '').toLowerCase();
+        const sdNum = sdClean.replace(/[^\d.]/g, '');
+        return rdClean === sdClean || rdNum === sdNum;
+      });
+      if (!skuHasMatchingDim) return false;
+    }
+  }
+
+  return true;
+}
+
 async function lookupRateSheetPrice(productText) {
   try {
     if (!productText) return null;
@@ -289,23 +319,34 @@ async function lookupRateSheetPrice(productText) {
     if (!items || items.length === 0) return null;
 
     const textLower = productText.toLowerCase();
+    let matched = null;
 
-    // 1. Exact/substring match on sku_text (e.g. "CR Sheets", "MS Plates")
-    let matched = items.find(
-      (i) =>
-        i.sku_text &&
-        (textLower.includes(i.sku_text.toLowerCase()) ||
-          i.sku_text.toLowerCase().includes(textLower)),
-    );
+    // 1. Priority 1: Match on sku_text with dimension compatibility
+    for (const i of items) {
+      const skuLower = (i.sku_text || '').toLowerCase();
+      if (!skuLower) continue;
 
-    // 2. Substring match on category
+      if (textLower.includes(skuLower) || skuLower.includes(textLower)) {
+        if (isDimensionCompatible(productText, i.sku_text)) {
+          matched = i;
+          break;
+        }
+      }
+    }
+
+    // 2. Priority 2: Match on category ONLY if dimension is compatible
     if (!matched) {
-      matched = items.find(
-        (i) =>
-          i.category &&
-          (textLower.includes(i.category.toLowerCase()) ||
-            i.category.toLowerCase().includes(textLower)),
-      );
+      for (const i of items) {
+        const catLower = (i.category || '').toLowerCase();
+        if (!catLower) continue;
+
+        if (textLower.includes(catLower) || catLower.includes(textLower)) {
+          if (isDimensionCompatible(productText, i.sku_text)) {
+            matched = i;
+            break;
+          }
+        }
+      }
     }
 
     if (matched && Number(matched.price_per_mt) > 0) {
