@@ -1460,4 +1460,136 @@ export class KraService {
       throw error;
     }
   }
+
+  async getComplaints(salespersonPhone?: string) {
+    let query = this.supabase
+      .from('complaints')
+      .select('*')
+      .order('reported_at', { ascending: false });
+
+    if (salespersonPhone) {
+      const clean = salespersonPhone.replace(/\D/g, '').slice(-10);
+      query = query.or(`reported_by.eq.${clean},reported_by.eq.91${clean}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+
+  async createComplaint(data: any, salespersonPhone?: string) {
+    const reported_at = new Date().toISOString();
+    const sla_due_at = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+
+    const payload = {
+      customer_name: data.customer_name,
+      affected_product:
+        data.affected_product || data.product || 'General Material',
+      complaint_type: data.complaint_type || 'Quality Defect',
+      description: data.description || '',
+      status: data.status || 'reported',
+      resolution_notes: data.resolution_notes || null,
+      reported_at,
+      sla_due_at,
+      reported_by: salespersonPhone || 'Web Admin',
+    };
+
+    const { data: created, error } = await this.supabase
+      .from('complaints')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Log to kra_logs (KRA 8)
+    await this.supabase.from('kra_logs').insert({
+      kra_number: 8,
+      salesperson_phone: salespersonPhone || '910000000000',
+      customer_name: data.customer_name,
+      action: 'complaint_logged',
+      details: `Logged complaint: ${data.complaint_type} for ${data.affected_product || 'product'}`,
+      created_at: reported_at,
+    });
+
+    return created;
+  }
+
+  async updateComplaintStatus(
+    id: string,
+    status: string,
+    resolution_notes?: string,
+  ) {
+    const updateData: any = { status };
+    if (status === 'resolved') {
+      updateData.resolved_at = new Date().toISOString();
+    }
+    if (resolution_notes) {
+      updateData.resolution_notes = resolution_notes;
+    }
+
+    const { data, error } = await this.supabase
+      .from('complaints')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  async getVisits(salespersonPhone?: string) {
+    let query = this.supabase
+      .from('customer_visits')
+      .select('*')
+      .order('visited_at', { ascending: false });
+
+    if (salespersonPhone) {
+      const clean = salespersonPhone.replace(/\D/g, '').slice(-10);
+      query = query.or(
+        `salesperson_phone.eq.${clean},salesperson_phone.eq.91${clean}`,
+      );
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+
+  async createVisit(data: any, salespersonPhone?: string) {
+    const visited_at = data.visited_at || new Date().toISOString();
+
+    const payload = {
+      customer_name: data.customer_name,
+      person_met: data.person_met || 'Contact Person',
+      contact_phone: data.contact_phone || '',
+      location: data.location || data.city || '',
+      outcome: data.outcome || 'positive',
+      remarks: data.remarks || '',
+      follow_up_action: data.follow_up_action || data.followup || '',
+      visited_at,
+      salesperson_phone: salespersonPhone || 'Web Admin',
+    };
+
+    const { data: created, error } = await this.supabase
+      .from('customer_visits')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Log to kra_logs (KRA 9)
+    await this.supabase.from('kra_logs').insert({
+      kra_number: 9,
+      salesperson_phone: salespersonPhone || '910000000000',
+      customer_name: data.customer_name,
+      action: 'visit_logged',
+      details: `Visited ${data.customer_name} (${data.person_met}) - Outcome: ${data.outcome}`,
+      created_at: visited_at,
+    });
+
+    return created;
+  }
 }

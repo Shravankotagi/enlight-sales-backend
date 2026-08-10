@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Param,
   Body,
@@ -72,5 +73,10 @@ export class InquiriesController {
     @Body() body: { status: string },
   ) {
     return this.inquiriesService.updateStatus(id, body.status);
+  }
+
+  @Post()
+  async createInquiry(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.inquiriesService.createInquiry(body, employee.phone);
   }
 }

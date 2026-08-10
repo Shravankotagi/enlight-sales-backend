@@ -124,4 +124,40 @@ export class InquiriesService {
       throw error;
     }
   }
+
+  async createInquiry(data: any, salespersonPhone?: string) {
+    const now = new Date().toISOString();
+    const payload = {
+      sender_name: data.sender_name || data.customer_name || 'Web Customer',
+      sender_phone:
+        data.sender_phone || data.customer_phone || salespersonPhone || '',
+      salesperson_phone: salespersonPhone || '910000000000',
+      raw_text: data.raw_text || data.requirement || '',
+      inquiry_type: data.inquiry_type || 'Product Requirement',
+      status: data.status || 'review',
+      overall_confidence: Number(data.overall_confidence) || 0.95,
+      source_channel: 'web_dashboard',
+      created_at: now,
+    };
+
+    const { data: created, error } = await this.supabase
+      .from('inquiries')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Log to kra_logs (KRA 4)
+    await this.supabase.from('kra_logs').insert({
+      kra_number: 4,
+      salesperson_phone: salespersonPhone || '910000000000',
+      customer_name: payload.sender_name,
+      action: 'inquiry_logged',
+      details: `Logged inquiry: ${payload.inquiry_type} - "${payload.raw_text.substring(0, 50)}"`,
+      created_at: now,
+    });
+
+    return created;
+  }
 }

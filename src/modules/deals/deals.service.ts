@@ -226,4 +226,60 @@ export class DealsService {
       throw error;
     }
   }
+
+  async createOrder(data: any, salespersonPhone?: string) {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const poNumber = data.po_number || `PO-${todayStr}-${randomNum}`;
+    const now = new Date().toISOString();
+
+    const dealPayload = {
+      customer_name: data.customer_name,
+      salesperson_phone: salespersonPhone || '910000000000',
+      customer_phone: data.customer_phone || '',
+      stage: 'won',
+      won_at: now,
+      po_number: poNumber,
+      po_date: data.po_date || now.split('T')[0],
+      total_amount: Number(data.total_amount) || 0,
+      delivery_location: data.delivery_location || '',
+      delivery_date: data.delivery_date || null,
+      inquiry_type: 'inquiry',
+      created_at: now,
+    };
+
+    const { data: deal, error } = await this.supabase
+      .from('deals')
+      .insert(dealPayload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+      for (const item of data.items) {
+        await this.supabase.from('deal_items').insert({
+          deal_id: deal.id,
+          sku_text: item.sku_text || item.product_name || 'Steel Material',
+          quantity: Number(item.quantity) || null,
+          unit: item.unit || 'MT',
+          rate: Number(item.rate) || null,
+          amount: Number(item.amount) || null,
+          created_at: now,
+        });
+      }
+    }
+
+    // Log KRA 1 achievement
+    await this.supabase.from('kra_logs').insert({
+      kra_number: 1,
+      salesperson_phone: salespersonPhone || '910000000000',
+      customer_name: data.customer_name,
+      action: 'order_created',
+      details: `Created order ${poNumber} for ${data.customer_name} (₹${data.total_amount})`,
+      created_at: now,
+    });
+
+    return deal;
+  }
 }

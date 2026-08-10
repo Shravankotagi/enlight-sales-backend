@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Param,
   Body,
@@ -138,5 +139,10 @@ export class DealsController {
     @Body() body: { stage: string; lost_reason?: string },
   ) {
     return this.dealsService.updateStage(id, body.stage, body.lost_reason);
+  }
+
+  @Post('order')
+  async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.dealsService.createOrder(body, employee.phone);
   }
 }

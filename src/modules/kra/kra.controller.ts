@@ -1,4 +1,13 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { KraService } from './kra.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
@@ -90,5 +99,51 @@ export class KraController {
       parsedMonth,
       parsedYear,
     );
+  }
+
+  @Get('complaints')
+  async getComplaints(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const targetPhone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+    return this.kraService.getComplaints(targetPhone);
+  }
+
+  @Post('complaints')
+  async createComplaint(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.kraService.createComplaint(body, employee.phone);
+  }
+
+  @Patch('complaints/:id')
+  async updateComplaint(
+    @Param('id') id: string,
+    @Body() body: { status: string; resolution_notes?: string },
+  ) {
+    return this.kraService.updateComplaintStatus(
+      id,
+      body.status,
+      body.resolution_notes,
+    );
+  }
+
+  @Get('visits')
+  async getVisits(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    const targetPhone =
+      employee.role === 'admin'
+        ? salespersonPhoneOverride || undefined
+        : employee.phone;
+    return this.kraService.getVisits(targetPhone);
+  }
+
+  @Post('visits')
+  async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.kraService.createVisit(body, employee.phone);
   }
 }
