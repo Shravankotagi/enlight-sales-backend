@@ -355,23 +355,31 @@ router.post('/', async (req, res) => {
           const qtyNum = parts[3];
 
           const cleanInput = raw_text.trim();
-          await saveActiveSession(senderPhone, customerName, 'general');
 
-          const { processSalesMessage } = require('./agents/salesAgent');
+          // Check if user is sending a brand new inquiry/requirement instead of answering confirmation
+          const isNewInquiry = /\b(need|requires|new deal|inquiry|requirement|want|order)\b/i.test(cleanInput);
 
-          if (cleanInput === '1' || cleanInput.toLowerCase().includes('yes')) {
-            // Confirmed as MT
-            const syntheticText = `${customerName} requirement ${qtyNum} MT ${productName}`;
+          if (!isNewInquiry) {
+            await saveActiveSession(senderPhone, customerName, 'general');
+            const { processSalesMessage } = require('./agents/salesAgent');
+
+            if (cleanInput === '1' || cleanInput.toLowerCase().includes('yes')) {
+              // Confirmed as MT
+              const syntheticText = `${customerName} requirement ${qtyNum} MT ${productName}`;
+              const reply = await processSalesMessage(syntheticText, senderPhone);
+              await sendTextMessage(senderPhone, reply);
+              return;
+            }
+
+            // If salesperson supplied a valid unit answer e.g. "15 MT" or "1500 kg"
+            const syntheticText = `${customerName} requirement ${raw_text} ${productName}`;
             const reply = await processSalesMessage(syntheticText, senderPhone);
             await sendTextMessage(senderPhone, reply);
             return;
           }
 
-          // If salesperson supplied a different answer e.g. "15 MT" or "1500 kg"
-          const syntheticText = `${customerName} requirement ${raw_text} ${productName}`;
-          const reply = await processSalesMessage(syntheticText, senderPhone);
-          await sendTextMessage(senderPhone, reply);
-          return;
+          // If new inquiry, clear stale session and let orchestrator process fresh
+          await saveActiveSession(senderPhone, 'Unknown', 'general');
         }
 
         if (activeSession?.last_intent?.startsWith('pending_deal_choice|')) {

@@ -367,6 +367,15 @@ async function lookupRateSheetPrice(productText) {
  */
 async function processSalesMessage(text, senderPhone) {
   try {
+    // 1. Immediately reject invalid/nonsense units (e.g. "15 apple") before processing
+    const invalidUnitCheck = detectInvalidUnitInMessage(text);
+    if (invalidUnitCheck) {
+      return `❌ *Invalid Steel Quantity Unit*\n\n` +
+        `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
+        `Steel products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
+        `Please specify the quantity using a valid steel unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`;
+    }
+
     const { invokeWithFallback } = require('../core/modelRouter');
     const response = await invokeWithFallback([
       new SystemMessage(SALES_AGENT_PROMPT),
@@ -380,11 +389,33 @@ async function processSalesMessage(text, senderPhone) {
       return `❓ I couldn't clearly understand the deal update. Could you please specify the customer name and status (e.g. "Mehta Engineering 20 MT CR sheets quote sent")?`;
     }
 
-    const customerName = data.customer_name;
+    let customerName = data.customer_name;
+    const textLower = (text || '').toLowerCase();
+    const isNewReqMessage = /\b(need|requires|required|want|order|inquiry|rfq|new deal)\b/i.test(textLower);
+
+    if (customerName && isNewReqMessage) {
+      // Check if user actually wrote the company name in the text
+      const nameWords = customerName.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      const nameInText = nameWords.some((w) => textLower.includes(w));
+      if (!nameInText) {
+        customerName = null; // Ignore LLM history hallucination for new inquiries
+      }
+    }
+
+    if (!customerName || customerName.length < 2) {
+      if (!isNewReqMessage) {
+        const { getActiveSession } = require('../supabase');
+        const activeCust = await getActiveSession(senderPhone);
+        if (activeCust && activeCust !== 'Unknown') {
+          customerName = activeCust;
+        }
+      }
+    }
+
     if (!customerName || customerName.length < 2) {
       const { saveActiveSession } = require('../supabase');
       await saveActiveSession(senderPhone, 'Unknown', 'pending_customer_for_deal');
-      return `Which customer is this deal update for? Please reply with the customer/company name.`;
+      return `❓ Which customer is this deal update for? Please reply with the customer/company name.`;
     }
 
     const officialCustomerName = await verifyAndGetCustomerName(
@@ -415,25 +446,6 @@ async function processSalesMessage(text, senderPhone) {
         quantity_mt: data.quantity_mt,
         rate_per_mt: data.rate_per_mt,
       }];
-    }
-
-    // Check for invalid units (e.g. "15 apple")
-    const invalidUnitCheck = detectInvalidUnitInMessage(text);
-    if (invalidUnitCheck) {
-      const { saveActiveSession } = require('../supabase');
-      const itemPName = rawItems.length > 0 ? (rawItems[0].product_requirement || 'material') : 'material';
-      await saveActiveSession(
-        senderPhone,
-        finalCustomerName,
-        `pending_unit_confirm|${finalCustomerName}|${itemPName}|${invalidUnitCheck.number}`,
-      );
-      return `⚠️ *Unit Confirmation Required*\n\n` +
-        `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}* of *${itemPName}* for *${finalCustomerName}*.\n\n` +
-        `In B2B steel sales, quantities are measured in **Metric Tons (MT)** or **Kg**.\n\n` +
-        `Did you mean *${invalidUnitCheck.number} MT* of *${itemPName}*?\n\n` +
-        `1️⃣ *Yes, log as ${invalidUnitCheck.number} MT*\n` +
-        `2️⃣ *Specify valid unit* (e.g. reply _"15 MT"_ or _"1500 Kg"_)\n\n` +
-        `Reply *1* to confirm ${invalidUnitCheck.number} MT, or reply with the correct quantity and unit.`;
     }
 
     let processedItems = [];
