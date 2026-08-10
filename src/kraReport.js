@@ -166,51 +166,51 @@ async function generateFullKRAReport(senderPhone, customMonthRange = null) {
 
     // Build report
     const report =
-      `📊 *MONTHLY KRA REPORT*\n` +
+      `📊 *MONTHLY PERFORMANCE & SALES REPORT*\n` +
       `${monthName} ${year}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
 
-      `*KRA 1 - Sales Achievement*\n` +
+      `*1️⃣ Sales Achievement*\n` +
       `Deals: ${totalDeals} | Won: ${wonDeals}\n` +
       `Value: ${formatINR(totalValue)}\n` +
       `${totalValue > 0 ? '✅' : '⚠️'} ` +
       `${totalValue > 0 ? 'Sales logged' : 'No sales yet'}\n\n` +
 
-      `*KRA 2 - New Customers*\n` +
+      `*2️⃣ New Customer Acquisition*\n` +
       `Acquired: ${newCustomers}/3\n` +
       `${newCustomers >= 3 ? '✅ Target met!' : `⚠️ ${3 - newCustomers} more needed`}\n\n` +
 
-      `*KRA 3 - Customer Retention*\n` +
+      `*3️⃣ Customer Retention & Order Frequency*\n` +
       `Recurring customers: ${recurring.length}\n` +
       `Ordered this month: ${recurringWithOrder}\n` +
       `${retentionRate >= 80 ? '✅' : '⚠️'} Retention: ${retentionRate}%\n\n` +
 
-      `*KRA 4 - Enquiry Conversion*\n` +
+      `*4️⃣ Enquiry & Pipeline Conversion*\n` +
       `Inquiries: ${totalInquiries} | Won: ${wonDeals}\n` +
       `${conversionRate >= 70 ? '✅' : '⚠️'} Rate: ${conversionRate}%` +
       ` (target: 70-80%)\n\n` +
 
-      `*KRA 5 - Payment Collection*\n` +
+      `*5️⃣ Payment Collection & Outstanding*\n` +
       `Collected: ${collectedPayments.length}\n` +
       `Pending: ${pendingPayments.length}\n` +
       `🔴 Overdue: ${overduePayments.length}\n` +
       `Outstanding: ${formatINR(totalOutstanding)}\n\n` +
 
-      `*KRA 6 - CRM Compliance*\n` +
+      `*6️⃣ CRM & Zoho Bigin Sync*\n` +
       `Active days: ${daysWithActivity}/${workingDays}\n` +
       `${crmCompliance >= 90 ? '✅' : '⚠️'} Compliance: ${crmCompliance}%\n\n` +
 
-      `*KRA 7 - Zero Rejection*\n` +
+      `*7️⃣ Order Accuracy & Zero Rejection*\n` +
       `${rejections === 0 ? '✅ Zero rejections!' : `⚠️ ${rejections} rejection(s) logged`}\n\n` +
 
-      `*KRA 8 - Complaint Resolution*\n` +
+      `*8️⃣ Customer Complaint Resolution*\n` +
       `Total: ${totalComplaints} | Resolved: ${resolvedComplaints.length}\n` +
       `Within 48h: ${withinTarget}/${resolvedComplaints.length}\n` +
       `${avgResolutionTime > 0 ? `Avg: ${avgResolutionTime}h\n` : ''}` +
       `${totalComplaints === 0 || withinTarget === resolvedComplaints.length ? '✅' : '⚠️'} ` +
       `${totalComplaints === 0 ? 'No complaints!' : 'Resolution tracked'}\n\n` +
 
-      `*KRA 9 - Customer Visits*\n` +
+      `*9️⃣ Field Customer Visits*\n` +
       `Visits: ${totalVisits}/${targetVisits}\n` +
       `Field days: ${visitDays}/${targetDays}\n` +
       `${totalVisits >= targetVisits ? '✅' : '⚠️'} ` +

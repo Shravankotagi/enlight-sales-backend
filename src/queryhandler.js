@@ -45,10 +45,11 @@ function isQuery(text) {
     'outstanding', 'overdue', 'due payment',
     'pending payment', 'baaki payment', 'baaki list',
     'who hasn\'t paid', 'payment aging', 'collection due',
-    // KRA queries
-    'my kra', 'performance report', 'target achievements',
-    'performance', 'performace', 'kra status', 'kra report',
-    'my performance', 'target status',
+    // Performance & Summary queries
+    'my performance', 'performance report', 'target achievements',
+    'performance', 'performace', 'status report', 'performance status',
+    'target status', 'sales achievement', 'my target', 'my status',
+    'kra status', 'kra report', 'my kra',
     // Visit queries
     'my visits', 'visit log', 'who did i visit', 'field visits',
     'customer visits', 'site visits',
