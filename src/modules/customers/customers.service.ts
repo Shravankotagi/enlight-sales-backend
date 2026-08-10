@@ -178,12 +178,31 @@ export class CustomersService {
             d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
         );
 
+        const daysSinceCreated = customer.created_at
+          ? Math.floor(
+              (now.getTime() - new Date(customer.created_at).getTime()) /
+                (1000 * 60 * 60 * 24),
+            )
+          : 0;
+
+        const avgFreq = customer.avg_order_frequency_days || 30;
+
         let churnRisk = 'low';
         if (!hasOrderThisMonth) {
-          if (daysSinceOrder === null || daysSinceOrder > 45) {
-            churnRisk = 'high';
-          } else if (daysSinceOrder > 30) {
-            churnRisk = 'medium';
+          if (daysSinceOrder !== null) {
+            if (daysSinceOrder > avgFreq + 15) {
+              churnRisk = 'high';
+            } else if (daysSinceOrder > avgFreq) {
+              churnRisk = 'medium';
+            }
+          } else {
+            // Newly onboarded customers (within 30 days) are New Prospects -> Low Risk
+            // Registered > 30 days ago without any order -> High Risk
+            if (daysSinceCreated > 30) {
+              churnRisk = 'high';
+            } else {
+              churnRisk = 'low';
+            }
           }
         }
 

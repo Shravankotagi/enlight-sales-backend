@@ -670,7 +670,7 @@ export class KraService {
         const p10 = cleanDigits.slice(-10);
         const p12 = '91' + p10;
         customersQuery = customersQuery.or(
-          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
+          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12},assigned_salesperson_phone.is.null`,
         );
       }
 
@@ -788,9 +788,23 @@ export class KraService {
             contactPerson = visitRecord?.person_met;
           }
           if (!contactPerson || contactPerson === '-') {
-            const notes = custRecord?.notes || '';
-            const match = notes.match(/Owner:\s*([^|]+)/i);
+            const kraLogMatch = safeKraLogs.find(
+              (l) =>
+                l.customer_name &&
+                l.customer_name.toLowerCase().trim().includes(custKey) &&
+                (l.description?.includes('Contact Person:') ||
+                  l.description?.includes('Owner:')),
+            );
+            const match =
+              kraLogMatch?.description?.match(/Contact Person:\s*([^\n|]+)/i) ||
+              kraLogMatch?.description?.match(/Owner:\s*([^\n|]+)/i);
             if (match) contactPerson = match[1].trim();
+          }
+
+          if (contactPerson && custRecord?.customer_phone) {
+            contactPerson = `${contactPerson} (${custRecord.customer_phone})`;
+          } else if (!contactPerson && custRecord?.customer_phone) {
+            contactPerson = custRecord.customer_phone;
           }
 
           const industrySegment =
