@@ -37,14 +37,17 @@ export class DealsService {
         const p10 = cleanDigits.slice(-10);
         const p12 = '91' + p10;
         query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12},salesperson_phone.is.null`,
         );
       }
       if (filters?.from) {
         query = query.gte('created_at', filters.from);
       }
       if (filters?.to) {
-        query = query.lte('created_at', filters.to);
+        const toEnd = filters.to.includes('T')
+          ? filters.to
+          : `${filters.to}T23:59:59.999Z`;
+        query = query.lte('created_at', toEnd);
       }
 
       const { data, error } = await query;

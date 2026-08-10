@@ -675,7 +675,7 @@ export class KraService {
         const p12 = '91' + p10;
 
         dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},salesperson_phone.is.null`,
         );
         inquiriesQuery = inquiriesQuery.or(
           `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
