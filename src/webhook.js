@@ -218,20 +218,31 @@ router.post('/', async (req, res) => {
           let dealAmount = 0;
           const { data: dealRow } = await supabase
             .from('deals')
-            .select('total_amount')
+            .select('total_amount, deal_items(amount, quantity, rate)')
             .eq('id', dealId)
             .limit(1);
           if (dealRow && dealRow.length > 0) {
             dealAmount = Number(dealRow[0].total_amount || 0);
+            if (dealAmount === 0 && dealRow[0].deal_items && dealRow[0].deal_items.length > 0) {
+              dealAmount = dealRow[0].deal_items.reduce(
+                (sum, item) => sum + (Number(item.amount) || (Number(item.quantity || 0) * Number(item.rate || 0))),
+                0,
+              );
+            }
           }
 
-          // 1. Update deal to lost stage
+          // 1. Update deal to lost stage using correct column name lost_reason
+          const dealUpdatePayload = {
+            stage: 'lost',
+            lost_reason: selectedReason,
+          };
+          if (dealAmount > 0) {
+            dealUpdatePayload.total_amount = dealAmount;
+          }
+
           await supabase
             .from('deals')
-            .update({
-              stage: 'lost',
-              loss_reason: selectedReason,
-            })
+            .update(dealUpdatePayload)
             .eq('id', dealId);
 
           // 2. Log to KRA 4 loss analytics (single record to avoid double-counting)
