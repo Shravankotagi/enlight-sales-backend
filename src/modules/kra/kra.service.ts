@@ -20,9 +20,27 @@ export class KraService {
     return { start, end };
   }
 
-  async getDashboard(salespersonPhone?: string, month?: number, year?: number) {
+  async getDashboard(
+    salespersonPhone?: string,
+    month?: number,
+    year?: number,
+    from?: string,
+    to?: string,
+  ) {
     try {
-      const { start, end } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+      }
 
       let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
@@ -591,9 +609,27 @@ export class KraService {
     };
   }
 
-  async getSheets(salespersonPhone?: string, month?: number, year?: number) {
+  async getSheets(
+    salespersonPhone?: string,
+    month?: number,
+    year?: number,
+    from?: string,
+    to?: string,
+  ) {
     try {
-      const { start, end } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+      }
 
       let dealsQuery = this.supabase
         .from('deals')

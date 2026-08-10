@@ -23,6 +23,8 @@ export class KraController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const salesperson_phone =
       employee.role === 'admin'
@@ -33,6 +35,8 @@ export class KraController {
       salesperson_phone,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      from,
+      to,
     );
   }
 
@@ -42,6 +46,8 @@ export class KraController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const salesperson_phone =
       employee.role === 'admin'
@@ -52,6 +58,8 @@ export class KraController {
       salesperson_phone,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
+      from,
+      to,
     );
   }
 
