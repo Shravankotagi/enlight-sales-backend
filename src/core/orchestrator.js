@@ -157,8 +157,8 @@ async function runOrchestrator(text, senderPhone, options = {}) {
   try {
     console.log(`[Orchestrator] Processing: "${text?.substring(0, 80)}..." from ${senderPhone}`);
 
-    // Create tools with senderPhone pre-bound per request
-    const TOOLS = createTools(senderPhone);
+    // Create tools with senderPhone and raw text pre-bound per request
+    const TOOLS = createTools(senderPhone, text);
 
     // Request-scoped Agent Node
     const inlineAgentNode = async (state) => {
@@ -257,13 +257,12 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     const allMessages = finalState.messages;
 
     // Direct Forwarding: If any tool returned a direct prompt or error (starting with ❌, ⚠️, or ❓), forward it directly
-    const toolMessages = allMessages.filter(m => m._getType?.() === 'tool' || m.constructor?.name === 'ToolMessage');
-    for (const tm of toolMessages) {
-      const tmContent = typeof tm.content === 'string' ? tm.content : '';
-      if (tmContent.startsWith('❌') || tmContent.startsWith('⚠️') || tmContent.startsWith('❓')) {
-        addChatHistory(senderPhone, text, tmContent);
-        console.log(`[Orchestrator] Direct tool warning/error forwarded (${tmContent.length} chars)`);
-        return tmContent;
+    for (const m of allMessages) {
+      const content = typeof m.content === 'string' ? m.content : '';
+      if (content.startsWith('❌') || content.startsWith('⚠️') || content.startsWith('❓')) {
+        addChatHistory(senderPhone, text, content);
+        console.log(`[Orchestrator] Direct tool warning/error forwarded (${content.length} chars)`);
+        return content;
       }
     }
 

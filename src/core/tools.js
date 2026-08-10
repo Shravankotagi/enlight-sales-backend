@@ -23,11 +23,11 @@ function getCustomerAgent()  { return require('../agents/customerAgent');  }
 function getQueryHandler()   { return require('../queryhandler');          }
 function getSupabase()       { return require('../supabase');              }
 
-function createTools(senderPhone) {
+function createTools(senderPhone, rawUserText = '') {
   const logCustomerVisitTool = tool(
     async ({ text }) => {
       try {
-        return await getVisitAgent().processVisitMessage(text, senderPhone);
+        return await getVisitAgent().processVisitMessage(rawUserText || text, senderPhone);
       } catch (err) {
         return `Error logging visit: ${err.message}`;
       }
@@ -44,7 +44,7 @@ function createTools(senderPhone) {
   const updateDealStageTool = tool(
     async ({ text }) => {
       try {
-        return await getSalesAgent().processSalesMessage(text, senderPhone);
+        return await getSalesAgent().processSalesMessage(rawUserText || text, senderPhone);
       } catch (err) {
         return `Error updating deal: ${err.message}`;
       }
