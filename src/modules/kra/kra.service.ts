@@ -1059,15 +1059,60 @@ export class KraService {
       });
 
       // KRA 6 Sheet: CRM Compliance
-      const kra6Rows = safeKraLogs.map((l, index) => ({
-        sr_no: index + 1,
-        activity_date: new Date(l.created_at).toLocaleDateString('en-IN'),
-        activity_type: l.kra_type || 'Activity Log',
-        customer_name: l.customer_name || '-',
-        channel: 'WhatsApp Bot / CRM',
-        logged_status: 'Compliant ✅',
-        remarks: l.description || 'Logged via WhatsApp',
-      }));
+      let crmSyncLogs: any[] = [];
+      try {
+        let syncLogQuery = this.supabase
+          .from('crm_sync_log')
+          .select('*')
+          .gte('synced_at', start)
+          .lte('synced_at', end)
+          .order('synced_at', { ascending: false });
+
+        if (salespersonPhone) {
+          const cleanDigits = salespersonPhone.replace(/\D/g, '');
+          const p10 = cleanDigits.slice(-10);
+          const p12 = '91' + p10;
+          syncLogQuery = syncLogQuery.or(
+            `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
+          );
+        }
+        const { data: syncData } = await syncLogQuery;
+        if (syncData && syncData.length > 0) {
+          crmSyncLogs = syncData;
+        }
+      } catch {
+        this.logger.log('crm_sync_log query fallback to kra_logs');
+      }
+
+      const kra6Rows =
+        crmSyncLogs.length > 0
+          ? crmSyncLogs.map((log, index) => ({
+              sr_no: index + 1,
+              activity_date: new Date(
+                log.synced_at || log.created_at,
+              ).toLocaleDateString('en-IN'),
+              activity_type: log.activity_type
+                ?.replace(/_/g, ' ')
+                .replace(/\b\w/g, (c: string) => c.toUpperCase()),
+              customer_name: log.customer_name || '-',
+              channel: 'WhatsApp Bot → Zoho Bigin CRM',
+              logged_status:
+                log.sync_status === 'success' ? 'Synced ✅' : 'Sync Failed ⚠️',
+              remarks: log.summary || log.description || '-',
+            }))
+          : safeKraLogs.map((l, index) => ({
+              sr_no: index + 1,
+              activity_date: new Date(l.created_at).toLocaleDateString('en-IN'),
+              activity_type:
+                l.kra_type
+                  ?.replace(/_/g, ' ')
+                  .replace(/\b\w/g, (c: string) => c.toUpperCase()) ||
+                'CRM Activity',
+              customer_name: l.customer_name || '-',
+              channel: 'WhatsApp Bot → Zoho Bigin CRM',
+              logged_status: 'Synced ✅',
+              remarks: l.description || 'Logged via WhatsApp Bot',
+            }));
 
       // KRA 7 Sheet: Zero Rejection in Order
       const kra7Logs = safeKraLogs.filter((l) => l.kra_number === 7);
