@@ -329,11 +329,12 @@ async function upsertContact(profile, salespersonName, token) {
 
   const payload = {
     data: [{
-      Last_Name:   name,
-      Company:     name,
-      Phone:       profile.customer_phone || profile.phone || '',
-      Mobile:      profile.customer_phone || profile.phone || '',
-      City:        profile.customer_address || profile.city || '',
+      Last_Name:    name,
+      Account_Name: name,
+      Phone:        profile.customer_phone || profile.phone || '',
+      Mobile:       profile.customer_phone || profile.phone || '',
+      Email:        profile.email || '',
+      City:         profile.customer_address || profile.city || '',
       Description: [
         profile.contact_person  ? `Contact Person: ${profile.contact_person}` : '',
         profile.customer_gst    ? `GST: ${profile.customer_gst}` : '',
@@ -389,6 +390,7 @@ async function upsertDeal({ customerName, stage, amount, poNumber,
       Closing_Date: new Date().toISOString().split('T')[0],
       Description:  summary,
       Lead_Source:  'WhatsApp Bot',
+      Pipeline:     '1384628000000000173',
       ...(poNumber ? { PO_Number: poNumber } : {}),
       ...(contactId ? { Contact_Name: { id: contactId } } : {}),
     }],
