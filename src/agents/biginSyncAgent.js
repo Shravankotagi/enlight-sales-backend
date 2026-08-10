@@ -174,7 +174,7 @@ function buildDealSummary(data, salespersonName) {
   }
   if (deal.stage === 'lost') {
     timeline.push(`❌ Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
-      (deal.loss_reason ? ` — Reason: ${deal.loss_reason}` : ''));
+      (deal.lost_reason || deal.loss_reason ? ` — Reason: ${deal.lost_reason || deal.loss_reason}` : ''));
   }
 
   const paymentSection = payment

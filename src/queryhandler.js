@@ -575,7 +575,7 @@ async function getLostDeals(senderPhone, text = '') {
 
     const { data: deals } = await supabase
       .from('deals')
-      .select('customer_name, total_amount, loss_reason, created_at')
+      .select('customer_name, total_amount, lost_reason, created_at')
       .eq('salesperson_phone', senderPhone)
       .eq('stage', 'lost')
       .gte('created_at', start)
@@ -587,7 +587,7 @@ async function getLostDeals(senderPhone, text = '') {
     }
 
     const lines = deals.map((d, i) =>
-      `${i + 1}. *${d.customer_name}*\n   Amount: ${formatINR(d.total_amount)}\n   Reason: ${d.loss_reason || 'Not specified'}`
+      `${i + 1}. *${d.customer_name}*\n   Amount: ${formatINR(d.total_amount)}\n   Reason: ${d.lost_reason || 'Not specified'}`
     );
 
     const totalLost = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
