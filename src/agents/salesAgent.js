@@ -642,7 +642,10 @@ async function processSalesMessage(text, senderPhone) {
 
     // PO is created ONLY after the deal is WON!
     if (dbStage === 'won') {
-      if (!poNumber) {
+      const explicitPo = data.po_number || data.poNumber;
+      if (explicitPo && explicitPo !== 'null' && explicitPo !== 'None' && String(explicitPo).trim().length > 2) {
+        poNumber = String(explicitPo).trim();
+      } else if (!poNumber) {
         const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const randomNum = Math.floor(1000 + Math.random() * 9000);
         poNumber = `PO-${todayStr}-${randomNum}`;

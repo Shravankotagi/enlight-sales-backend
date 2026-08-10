@@ -283,10 +283,28 @@ router.post('/', async (req, res) => {
           const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
 
           if (cleanInput === '2' || cleanInput.toLowerCase().includes('won')) {
-            // Mark deal as won first, then proceed to log payment automatically
+            // Fetch existing PO number or generate a unique PO number if missing
+            const { data: existingDealRow } = await supabase
+              .from('deals')
+              .select('po_number')
+              .eq('id', dealId)
+              .limit(1);
+
+            let targetPoNumber = existingDealRow?.[0]?.po_number;
+            if (!targetPoNumber) {
+              const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+              const randomNum = Math.floor(1000 + Math.random() * 9000);
+              targetPoNumber = `PO-${todayStr}-${randomNum}`;
+            }
+
+            // Mark deal as won with auto-generated PO number
             await supabase
               .from('deals')
-              .update({ stage: 'won', won_at: new Date().toISOString() })
+              .update({
+                stage: 'won',
+                won_at: new Date().toISOString(),
+                po_number: targetPoNumber,
+              })
               .eq('id', dealId);
 
             await saveActiveSession(senderPhone, customerName, 'general');
