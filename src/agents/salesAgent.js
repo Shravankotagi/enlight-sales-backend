@@ -642,14 +642,18 @@ async function processSalesMessage(text, senderPhone) {
 
     // Trigger Zoho Bigin Sync
     try {
-      syncActivity('deal', {
-        customer_name: finalCustomerName,
+      const syncType = dbStage === 'won' ? 'deal_won' : dbStage === 'lost' ? 'deal_lost' : 'deal_stage';
+      syncActivity(syncType, {
+        customerName: finalCustomerName,
+        dealId,
         amount: dealAmount,
         stage: dbStage,
-        po_number: poNumber,
+        poNumber,
+        paymentTerms: data.payment_terms,
+        senderPhone,
       });
     } catch (e) {
-      console.error('[SalesAgent] Zoho Bigin sync error:', e.message);
+      console.warn('[SalesAgent] Bigin sync trigger notice:', e.message);
     }
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');

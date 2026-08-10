@@ -178,6 +178,21 @@ async function processComplaintMessage(text, senderPhone) {
           });
         }
 
+        try {
+          const { syncActivity } = require('./biginSyncAgent');
+          syncActivity('complaint_resolved', {
+            customerName: finalCustomerName,
+            complaintType,
+            description: data.description,
+            affectedProduct,
+            action: 'resolve',
+            resolutionTimeHrs,
+            senderPhone,
+          });
+        } catch (e) {
+          console.warn('[ComplaintAgent] Bigin sync notice:', e.message);
+        }
+
         const { getCustomerMissingInfoPrompt } = require('../supabase');
         const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
 
