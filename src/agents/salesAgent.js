@@ -322,7 +322,9 @@ function isDimensionCompatible(requestedText, skuText) {
   const skuDims = extractDimensions(skuText);
 
   if (reqDims.length === 0 && skuDims.length === 0) return true;
-  if (reqDims.length > 0 && skuDims.length === 0) return true;
+  // If user requested a specific mm dimension, but candidate SKU has no dimension specified:
+  // Reject so it triggers explicit price confirmation for that specific mm dimension!
+  if (reqDims.length > 0 && skuDims.length === 0) return false;
 
   if (reqDims.length > 0 && skuDims.length > 0) {
     for (const rd of reqDims) {
