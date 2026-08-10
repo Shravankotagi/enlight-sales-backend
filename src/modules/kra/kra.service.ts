@@ -560,15 +560,17 @@ export class KraService {
       }
 
       const { data: monthDeals } = await dealsQuery;
-      const monthValue =
-        monthDeals?.reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0;
-      const wonDeals = monthDeals?.filter((d) => d.stage === 'won').length || 0;
+      const wonDealsList = monthDeals?.filter((d) => d.stage === 'won') || [];
+      const wonValue = wonDealsList.reduce(
+        (sum, d) => sum + (d.total_amount || 0),
+        0,
+      );
 
       actions.push({
         type: 'monthly_progress',
         priority: 'low',
         title: `${monthDeals?.length || 0} deals this month`,
-        subtitle: `${wonDeals} won · ₹${Number(monthValue).toLocaleString('en-IN')} value`,
+        subtitle: `${wonDealsList.length} won · ₹${Number(wonValue).toLocaleString('en-IN')} value`,
         count: monthDeals?.length || 0,
         link: '/reports',
         color: 'green',
