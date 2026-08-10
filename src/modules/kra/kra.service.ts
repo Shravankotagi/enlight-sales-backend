@@ -1306,11 +1306,11 @@ export class KraService {
       return {
         kra1: {
           number: 1,
-          title: 'KRA 1: Sales Achievement',
+          title: 'Sales Achievement',
           target: 'Assigned Monthly Tonnage',
           achieved: `${kra1Tonnage} MT`,
           meaning:
-            "This KRA measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat steel, structural steel, TMT Bars, and Value added products.",
+            "This metric measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat steel, structural steel, TMT Bars, and Value added products.",
           headers: [
             'Sr. No.',
             'Customer Name',
@@ -1324,7 +1324,7 @@ export class KraService {
         },
         kra2: {
           number: 2,
-          title: 'KRA 2: New Customer Acquisition',
+          title: 'New Customer Acquisition',
           target: 'Minimum 3 new customers per month',
           achieved: `${kra2DistinctCount}/3`,
           meaning:
@@ -1342,12 +1342,12 @@ export class KraService {
         },
         kra3: {
           number: 3,
-          title: 'KRA 3: Customer Retention & Recurring Business',
+          title: 'Customer Retention & Recurring Business',
           target:
             'Ensure at least one bill per month from every active recurring customer, wherever business potential exists.',
           achieved: `${kra3Rows.length} Follow-ups`,
           meaning:
-            "This KRA measures the salesperson's ability to maintain strong relationships with existing customers and generate repeat business. It focuses on customer retention by encouraging recurring orders, increasing customer loyalty, and ensuring continuous business growth through repeat billing rather than one-time transactions.",
+            "This metric measures the salesperson's ability to maintain strong relationships with existing customers and generate repeat business. It focuses on customer retention by encouraging recurring orders, increasing customer loyalty, and ensuring continuous business growth through repeat billing rather than one-time transactions.",
           headers: [
             'Sr. No.',
             'Existing Customer Name',
@@ -1360,10 +1360,8 @@ export class KraService {
         },
         kra4: {
           number: 4,
-          title: 'KRA 4: Enquiry Conversion',
+          title: 'Enquiry & Pipeline Conversion',
           target: 'Achieve a minimum 70-80% enquiry-to-order conversion ratio',
-          // Only count won deals that are directly linked to an inquiry
-          // Prevents >100% rates from deals created via salesAgent without inquiry pipeline
           achieved:
             safeInquiries.length > 0
               ? `${Math.min(
@@ -1376,7 +1374,7 @@ export class KraService {
                 )}%`
               : '0%',
           meaning:
-            "This KRA measures the salesperson's ability to convert customer enquiries into confirmed sales orders. It evaluates the effectiveness of follow-ups, quotation management, customer engagement, and negotiation skills across enquiries received through calls, emails, walk-ins, website leads, Zoho CRM, referrals, exhibitions, and other sales channels.",
+            "This metric measures the salesperson's ability to convert customer enquiries into confirmed sales orders. It evaluates the effectiveness of follow-ups, quotation management, customer engagement, and negotiation skills across enquiries received through calls, emails, walk-ins, website leads, Zoho CRM, referrals, exhibitions, and other sales channels.",
           headers: [
             'Sr. No.',
             'Enquiry Date',
@@ -1390,7 +1388,7 @@ export class KraService {
         },
         kra5: {
           number: 5,
-          title: 'KRA 5: Payment Collection & Outstanding Management',
+          title: 'Payment Collection & Outstanding Management',
           target:
             'Ensure 100% payment collection within the agreed credit period',
           achieved:
@@ -1398,7 +1396,7 @@ export class KraService {
               ? '100%'
               : 'In Progress',
           meaning:
-            "This KRA measures the salesperson's effectiveness in collecting customer payments within the agreed credit terms and proactively managing outstanding receivables. It evaluates regular follow-ups, timely coordination with customers, and efforts to minimize overdue payments, thereby supporting healthy cash flow and reducing financial risk for the company.",
+            "This metric measures the salesperson's effectiveness in collecting customer payments within the agreed credit terms and proactively managing outstanding receivables. It evaluates regular follow-ups, timely coordination with customers, and efforts to minimize overdue payments, thereby supporting healthy cash flow and reducing financial risk for the company.",
           headers: [
             'Sr. No.',
             'Customer Name',
@@ -1414,11 +1412,11 @@ export class KraService {
         },
         kra6: {
           number: 6,
-          title: 'KRA 6: CRM Compliance',
+          title: 'CRM & Zoho Bigin Sync',
           target: 'Ensure 100% daily updates in Zoho CRM',
           achieved: `${kra6Rows.length} Logged`,
           meaning:
-            "This KRA measures the salesperson's discipline in maintaining accurate and timely records of all sales activities in Zoho Bigin CRM. It evaluates whether customer interactions including new company creation, contacts, calls, customer visits, enquiries, quotations, follow-ups, deals, and order updates are recorded on the same day to ensure complete customer data, accurate sales pipeline visibility, and effective sales management.",
+            "This metric measures the salesperson's discipline in maintaining accurate and timely records of all sales activities in Zoho Bigin CRM. It evaluates whether customer interactions including new company creation, contacts, calls, customer visits, enquiries, quotations, follow-ups, deals, and order updates are recorded on the same day to ensure complete customer data, accurate sales pipeline visibility, and effective sales management.",
           headers: [
             'Sr. No.',
             'Activity Date',
@@ -1432,11 +1430,11 @@ export class KraService {
         },
         kra7: {
           number: 7,
-          title: 'KRA 7: Zero Rejection in Order',
+          title: 'Order Accuracy & Zero Rejection',
           target: 'Ensure zero order rejections due to sales-related errors.',
           achieved: `${kra7Rows.length} Rejections`,
           meaning:
-            "This KRA measures the salesperson's accuracy in understanding customer requirements and processing orders correctly. It evaluates whether orders are placed with the correct material specifications, dimensions, quantities, pricing, delivery instructions, and commercial terms, thereby minimizing order cancellations, customer rejections, and internal rework caused by sales-related errors.",
+            "This metric measures the salesperson's accuracy in understanding customer requirements and processing orders correctly. It evaluates whether orders are placed with the correct material specifications, dimensions, quantities, pricing, delivery instructions, and commercial terms, thereby minimizing order cancellations, customer rejections, and internal rework caused by sales-related errors.",
           headers: [
             'Sr. No.',
             'Customer Name',
@@ -1450,11 +1448,11 @@ export class KraService {
         },
         kra8: {
           number: 8,
-          title: 'KRA 8: Customer Complaint Resolution',
+          title: 'Customer Complaint Resolution',
           target: 'Close customer complaints within 48 hours',
           achieved: `${safeComplaints.filter((c) => c.status === 'resolved').length}/${safeComplaints.length} Closed`,
           meaning:
-            "This KRA measures the salesperson's responsiveness and effectiveness in resolving customer complaints related to product quality, quantity, pricing, billing, dispatch, delivery, or other service issues within the defined 48-hour resolution timeline. It evaluates timely communication, coordination with internal departments, and customer satisfaction after resolution.",
+            "This metric measures the salesperson's responsiveness and effectiveness in resolving customer complaints related to product quality, quantity, pricing, billing, dispatch, delivery, or other service issues within the defined 48-hour resolution timeline. It evaluates timely communication, coordination with internal departments, and customer satisfaction after resolution.",
           headers: [
             'Sr. No.',
             'Complaint Date',
@@ -1471,7 +1469,7 @@ export class KraService {
         },
         kra9: {
           number: 9,
-          title: 'KRA 9: Customer Visits',
+          title: 'Field Customer Visits',
           target:
             'Conduct a minimum of 10 customer visits per week, with field visits on at least 3 days per week',
           achieved: `${kra9Rows.length}/40 Visits`,
