@@ -29,14 +29,28 @@ export class ReportsService {
     month?: number,
     year?: number,
     salespersonPhone?: string,
+    from?: string,
+    to?: string,
   ) {
     try {
-      const {
-        start,
-        end,
-        monthName,
-        year: y,
-      } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+      let monthName = '';
+      let y = year || new Date().getFullYear();
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+        monthName = 'Selected Range';
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+        monthName = range.monthName;
+        y = range.year;
+      }
 
       let dealsQuery = this.supabase
         .from('deals')
@@ -151,14 +165,31 @@ export class ReportsService {
   }
 
   // Salesperson performance report
-  async getSalespersonReport(month?: number, year?: number) {
+  async getSalespersonReport(
+    month?: number,
+    year?: number,
+    from?: string,
+    to?: string,
+  ) {
     try {
-      const {
-        start,
-        end,
-        monthName,
-        year: y,
-      } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+      let monthName = '';
+      let y = year || new Date().getFullYear();
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+        monthName = 'Selected Range';
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+        monthName = range.monthName;
+        y = range.year;
+      }
 
       const [
         dealsResult,
@@ -313,19 +344,32 @@ export class ReportsService {
     }
   }
 
-  // Funnel report
   async getFunnelReport(
     month?: number,
     year?: number,
     salespersonPhone?: string,
+    from?: string,
+    to?: string,
   ) {
     try {
-      const {
-        start,
-        end,
-        monthName,
-        year: y,
-      } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+      let monthName = '';
+      let y = year || new Date().getFullYear();
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+        monthName = 'Selected Range';
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+        monthName = range.monthName;
+        y = range.year;
+      }
 
       let dealsQuery = this.supabase
         .from('deals')
@@ -409,15 +453,32 @@ export class ReportsService {
     }
   }
 
-  // SKU / product report
-  async getSkuReport(month?: number, year?: number, salespersonPhone?: string) {
+  async getSkuReport(
+    month?: number,
+    year?: number,
+    salespersonPhone?: string,
+    from?: string,
+    to?: string,
+  ) {
     try {
-      const {
-        start,
-        end,
-        monthName,
-        year: y,
-      } = this.getMonthRange(month, year);
+      let start: string;
+      let end: string;
+      let monthName = '';
+      let y = year || new Date().getFullYear();
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+        monthName = 'Selected Range';
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+        monthName = range.monthName;
+        y = range.year;
+      }
 
       let itemsQuery = this.supabase
         .from('deal_items')
