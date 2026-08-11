@@ -275,7 +275,7 @@ export class DealsService {
       for (const item of data.items) {
         await this.supabase.from('deal_items').insert({
           deal_id: deal.id,
-          sku_text: item.sku_text || item.product_name || 'Steel Material',
+          sku_text: item.sku_text || item.product_name || 'Metal Material',
           quantity: Number(item.quantity) || null,
           unit: item.unit || 'MT',
           rate: Number(item.rate) || null,

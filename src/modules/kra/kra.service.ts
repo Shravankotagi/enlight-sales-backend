@@ -875,7 +875,7 @@ export class KraService {
                 .filter(Boolean)
                 .join(', ') ||
               firstDeal.inquiry_type ||
-              'Steel Products'
+              'Metal Products'
             : null;
 
           const firstOrderQty = firstDeal
@@ -1012,7 +1012,7 @@ export class KraService {
           return {
             sr_no: index + 1,
             existing_customer_name: rc.customer_name || 'Active Account',
-            product_supplied: rc.notes || 'Steel Products',
+            product_supplied: rc.notes || 'Metal Products',
             order_quantity: rc.avg_order_qty_mt
               ? `${rc.avg_order_qty_mt} MT`
               : '-',
@@ -1178,7 +1178,7 @@ export class KraService {
       const kra7Rows = kra7Logs.map((l, index) => ({
         sr_no: index + 1,
         customer_name: l.customer_name || 'Customer',
-        product: l.description?.split(':')[0] || 'Steel Item',
+        product: l.description?.split(':')[0] || 'Metal Item',
         order_date: new Date(l.created_at).toLocaleDateString('en-IN'),
         reason_for_rejection: l.description || 'Quality / Order Error',
         corrective_action_taken: 'Replacement Processed',
@@ -1310,7 +1310,7 @@ export class KraService {
           target: 'Assigned Monthly Tonnage',
           achieved: `${kra1Tonnage} MT`,
           meaning:
-            "This metric measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat steel, structural steel, TMT Bars, and Value added products.",
+            "This metric measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat metal, structural metal, TMT Bars, and Value added products.",
           headers: [
             'Sr. No.',
             'Customer Name',
