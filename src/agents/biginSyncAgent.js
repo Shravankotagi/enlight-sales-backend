@@ -973,4 +973,114 @@ async function clearAllBiginData() {
   }
 }
 
-module.exports = { syncActivity, clearAllBiginData };
+async function syncAllDatabaseToBigin() {
+  const sb = getSupabase();
+  const token = await getZohoToken();
+  const results = { contactsSynced: 0, dealsSynced: 0, errors: [] };
+
+  try {
+    // 1. Fetch all recurring_customers
+    const { data: customers } = await sb
+      .from('recurring_customers')
+      .select('*');
+
+    const contactIdMap = {};
+
+    for (const cust of (customers || [])) {
+      try {
+        const profile = {
+          customer_name: cust.customer_name,
+          customer_phone: cust.customer_phone || cust.phone || '',
+          customer_gst: cust.customer_gst || cust.gst || '',
+          customer_address: cust.customer_address || cust.city || cust.location || '',
+          contact_person: cust.contact_person || '',
+          industry: cust.industry || '',
+        };
+        const contactId = await upsertContact(profile, cust.salesperson_name || 'Admin', token);
+        if (contactId) {
+          contactIdMap[cust.customer_name.trim().toLowerCase()] = contactId;
+          results.contactsSynced++;
+        }
+      } catch (err) {
+        results.errors.push(`Customer ${cust.customer_name}: ${err.message}`);
+      }
+    }
+
+    // 2. Fetch all deals with deal_items
+    const { data: deals } = await sb
+      .from('deals')
+      .select('*, deal_items(*)')
+      .neq('inquiry_type', 'unknown');
+
+    for (const deal of (deals || [])) {
+      try {
+        const custName = (deal.customer_name || '').trim();
+        if (!custName) continue;
+        let contactId = contactIdMap[custName.toLowerCase()] || null;
+
+        // If customer was not in recurring_customers table, upsert contact now
+        if (!contactId) {
+          const profile = {
+            customer_name: custName,
+            customer_phone: deal.customer_phone || '',
+            customer_gst: deal.customer_gst || '',
+            contact_person: deal.contact_person || '',
+          };
+          contactId = await upsertContact(profile, deal.salesperson_phone || 'Admin', token);
+          if (contactId) {
+            contactIdMap[custName.toLowerCase()] = contactId;
+            results.contactsSynced++;
+          }
+        }
+
+        const items = deal.deal_items || [];
+        const itemLines = items.map(i =>
+          `  • ${i.sku_text || 'Steel'}: ${i.quantity || 0} ${i.unit || 'MT'}` +
+          (i.rate ? ` @ ₹${Number(i.rate).toLocaleString('en-IN')}/MT` : '') +
+          (i.amount ? ` = ₹${Number(i.amount).toLocaleString('en-IN')}` : '')
+        ).join('\n');
+
+        const summary = [
+          `📊 DEAL SUMMARY — ${custName}`,
+          `Status: ${(deal.stage || 'NEW_INQUIRY').toUpperCase()}`,
+          deal.po_number ? `PO Number: ${deal.po_number}` : '',
+          '📦 LINE ITEMS',
+          itemLines || '  No items recorded',
+          deal.total_amount ? `  Total: ₹${Number(deal.total_amount).toLocaleString('en-IN')}` : '',
+        ].filter(Boolean).join('\n');
+
+        const dealId = await upsertDeal({
+          customerName: custName,
+          stage: deal.stage || 'new_inquiry',
+          amount: deal.total_amount || 0,
+          poNumber: deal.po_number,
+          salespersonName: deal.salesperson_phone || 'Admin',
+          summary,
+          dealItems: items,
+          contactId,
+        }, token);
+
+        if (dealId) {
+          results.dealsSynced++;
+          if (deal.stage === 'won' || deal.stage === 'lost') {
+            await addNote({
+              parentId: dealId,
+              parentModule: 'Deals',
+              noteTitle: `${deal.stage === 'won' ? '🏆 Deal Closed Won' : '❌ Deal Closed Lost'} — ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
+              noteContent: summary,
+            }, token);
+          }
+        }
+      } catch (err) {
+        results.errors.push(`Deal ${deal.id} (${deal.customer_name}): ${err.message}`);
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.error('[BiginSync] syncAllDatabaseToBigin error:', err.message);
+    throw err;
+  }
+}
+
+module.exports = { syncActivity, clearAllBiginData, syncAllDatabaseToBigin };

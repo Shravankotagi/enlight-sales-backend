@@ -774,20 +774,48 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── Admin: Trigger full Zoho Bigin data cleanup ──────────────────────────────
+// ── Admin: Trigger full Zoho Bigin data cleanup & re-sync from DB ─────────────
 router.post('/admin/bigin-cleanup', async (req, res) => {
   const { secret } = req.body;
   if (secret !== process.env.ADMIN_SECRET && secret !== 'enlight_admin_2024') {
     return res.status(403).json({ error: 'Unauthorized' });
   }
   try {
-    const { clearAllBiginData } = require('./agents/biginSyncAgent');
-    const results = await clearAllBiginData();
+    const { clearAllBiginData, syncAllDatabaseToBigin } = require('./agents/biginSyncAgent');
+    const deleteResults = await clearAllBiginData();
+    const syncResults = await syncAllDatabaseToBigin();
     res.json({
       success: true,
-      message: 'All Zoho Bigin data cleared successfully',
-      deleted: results.deleted,
-      errors:  results.errors,
+      message: 'All Zoho Bigin data cleared and re-synced from database successfully',
+      deleted: deleteResults.deleted,
+      synced: {
+        contacts: syncResults.contactsSynced,
+        deals: syncResults.dealsSynced,
+      },
+      errors: [...deleteResults.errors, ...syncResults.errors],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: Sync all database records (customers & deals) to Zoho Bigin ────────
+router.post('/admin/bigin-sync', async (req, res) => {
+  const { secret } = req.body;
+  if (secret !== process.env.ADMIN_SECRET && secret !== 'enlight_admin_2024') {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { syncAllDatabaseToBigin } = require('./agents/biginSyncAgent');
+    const results = await syncAllDatabaseToBigin();
+    res.json({
+      success: true,
+      message: 'Database synced to Zoho Bigin successfully',
+      synced: {
+        contacts: results.contactsSynced,
+        deals: results.dealsSynced,
+      },
+      errors: results.errors,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
