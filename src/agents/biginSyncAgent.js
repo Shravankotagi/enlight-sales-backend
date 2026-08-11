@@ -1090,4 +1090,131 @@ async function syncAllDatabaseToBigin() {
   }
 }
 
-module.exports = { syncActivity, clearAllBiginData, syncAllDatabaseToBigin };
+// ── Inbound Import: Pull all Contacts & Deals from Zoho Bigin → Supabase DB ──
+async function pullBiginToDatabase() {
+  const sb = getSupabase();
+  const token = await getZohoToken();
+  const results = { contactsImported: 0, dealsImported: 0, errors: [] };
+
+  try {
+    // 1. Pull Contacts from Zoho Bigin
+    const contactRes = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts`, {
+      headers: zohoHeaders(token),
+      params: { per_page: 200 },
+    });
+    const biginContacts = contactRes.data?.data || [];
+
+    for (const c of biginContacts) {
+      try {
+        const custName = (c.Company_Name || c.Last_Name || `${c.First_Name || ''} ${c.Last_Name || ''}`).trim();
+        if (!custName) continue;
+
+        const phone = c.Mobile || c.Phone || '';
+        const address = [c.Mailing_Street, c.Mailing_City, c.Mailing_State].filter(Boolean).join(', ');
+        const contactPerson = [c.First_Name, c.Last_Name].filter(Boolean).join(' ');
+
+        // Check if customer already exists in DB
+        const { data: existing } = await sb
+          .from('recurring_customers')
+          .select('id, customer_phone, customer_address')
+          .ilike('customer_name', custName)
+          .limit(1);
+
+        if (!existing || existing.length === 0) {
+          // Insert new customer into Supabase DB
+          await sb.from('recurring_customers').insert([{
+            customer_name: custName,
+            customer_phone: phone,
+            customer_address: address,
+            contact_person: contactPerson,
+            is_active: true,
+          }]);
+          results.contactsImported++;
+          console.log(`[BiginPull] Imported new customer to DB: ${custName}`);
+        } else {
+          // Update existing customer fields if missing
+          const existingCust = existing[0];
+          const updateData = {};
+          if (!existingCust.customer_phone && phone) updateData.customer_phone = phone;
+          if (!existingCust.customer_address && address) updateData.customer_address = address;
+
+          if (Object.keys(updateData).length > 0) {
+            await sb.from('recurring_customers').update(updateData).eq('id', existingCust.id);
+            results.contactsImported++;
+            console.log(`[BiginPull] Updated existing customer in DB: ${custName}`);
+          }
+        }
+      } catch (err) {
+        results.errors.push(`Contact import error (${c.Last_Name}): ${err.message}`);
+      }
+    }
+
+    // 2. Pull Deals from Zoho Bigin
+    const dealRes = await axios.get(`${ZOHO_BIGIN_BASE}/Deals`, {
+      headers: zohoHeaders(token),
+      params: { per_page: 200 },
+    });
+    const biginDeals = dealRes.data?.data || [];
+
+    const REVERSE_STAGE_MAP = {
+      'Closed Won': 'won',
+      'Closed Lost': 'lost',
+      'Negotiation/Review': 'negotiation',
+      'Proposal/Price Quote': 'quoted',
+      'Qualification': 'qualified',
+      'Needs Analysis': 'qualified',
+    };
+
+    for (const d of biginDeals) {
+      try {
+        const dealId = d.id;
+        const dealName = d.Deal_Name || '';
+        const custName = d.Contact_Name?.name || d.Account_Name?.name || dealName.split('—')[0].trim();
+        if (!custName) continue;
+
+        const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';
+        const amount = Number(d.Amount) || 0;
+
+        // Check if deal exists in DB by bigin_deal_id or customer_name
+        const { data: existingDeal } = await sb
+          .from('deals')
+          .select('id, stage, total_amount')
+          .or(`bigin_deal_id.eq.${dealId},customer_name.ilike.${custName}`)
+          .limit(1);
+
+        if (!existingDeal || existingDeal.length === 0) {
+          // Insert new deal into Supabase DB
+          await sb.from('deals').insert([{
+            customer_name: custName,
+            stage: dbStage,
+            total_amount: amount,
+            bigin_deal_id: dealId,
+            inquiry_type: 'inquiry',
+            status: 'needs_review',
+          }]);
+          results.dealsImported++;
+          console.log(`[BiginPull] Imported new deal to DB: ${dealName} (₹${amount})`);
+        } else {
+          // Update existing deal in DB
+          const ex = existingDeal[0];
+          await sb.from('deals').update({
+            stage: dbStage,
+            total_amount: amount || ex.total_amount,
+            bigin_deal_id: dealId,
+          }).eq('id', ex.id);
+          results.dealsImported++;
+          console.log(`[BiginPull] Synced existing deal in DB: ${dealName} → ${dbStage}`);
+        }
+      } catch (err) {
+        results.errors.push(`Deal import error (${d.Deal_Name}): ${err.message}`);
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.error('[BiginPull] pullBiginToDatabase error:', err.message);
+    throw err;
+  }
+}
+
+module.exports = { syncActivity, clearAllBiginData, syncAllDatabaseToBigin, pullBiginToDatabase };

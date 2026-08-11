@@ -6,7 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const webhookRouter = require('./src/webhook');
-const { syncAllDatabaseToBigin, clearAllBiginData } = require('./src/agents/biginSyncAgent');
+const { syncAllDatabaseToBigin, clearAllBiginData, pullBiginToDatabase } = require('./src/agents/biginSyncAgent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -57,23 +57,39 @@ const renderSyncResult = (res, title, subtitle, results, error) => {
         
         <div class="grid">
           <div class="stat">
-            <div class="num">${results?.contactsSynced || 0}</div>
-            <div class="label">Contacts Synced</div>
+            <div class="num">${results?.contactsSynced || results?.contactsImported || 0}</div>
+            <div class="label">Contacts</div>
           </div>
           <div class="stat">
-            <div class="num">${results?.dealsSynced || 0}</div>
-            <div class="label">Deals Synced</div>
+            <div class="num">${results?.dealsSynced || results?.dealsImported || 0}</div>
+            <div class="label">Deals</div>
           </div>
         </div>
 
         <div class="actions">
           <a href="https://bigin.zoho.in/" target="_blank" class="btn">Open Zoho Bigin ↗</a>
-          <a href="/bigin-sync" class="btn btn-sec">Re-sync 🔄</a>
+          <a href="/" class="btn btn-sec">Dashboard 🏠</a>
         </div>
       </div>
     </body>
     </html>
   `);
+};
+
+// Handle bigin-import across all possible URL aliases (GET & POST)
+const importRouteHandler = async (req, res) => {
+  try {
+    const results = await pullBiginToDatabase();
+    if (req.method === 'GET' || req.headers.accept?.includes('html')) {
+      return renderSyncResult(res, "📥 Bigin Data Imported to Database!", "Customer contacts and active deals have been pulled from Zoho Bigin into your database.", results);
+    }
+    return res.json({ success: true, imported: results });
+  } catch (err) {
+    if (req.method === 'GET' || req.headers.accept?.includes('html')) {
+      return renderSyncResult(res, "", "", null, err.message);
+    }
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // Handle bigin-sync across all possible URL aliases (GET & POST)
@@ -110,6 +126,11 @@ const cleanupRouteHandler = async (req, res) => {
 };
 
 // Register all route aliases
+['/bigin-import', '/admin/bigin-import', '/webhook/bigin-import', '/webhook/admin/bigin-import'].forEach(p => {
+  app.get(p, importRouteHandler);
+  app.post(p, importRouteHandler);
+});
+
 ['/bigin-sync', '/admin/bigin-sync', '/webhook/bigin-sync', '/webhook/admin/bigin-sync'].forEach(p => {
   app.get(p, syncRouteHandler);
   app.post(p, syncRouteHandler);
@@ -126,7 +147,7 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Enlight Sales Bot & CRM Engine</title>
+      <title>Enlight Sales Bot & CRM AI Agent</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
         body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px 20px; }
@@ -137,17 +158,19 @@ app.get('/', (req, res) => {
         .btn-group { display: flex; flex-direction: column; gap: 12px; }
         .btn { display: block; text-align: center; background: #2563eb; color: white; text-decoration: none; font-weight: 600; font-size: 15px; padding: 14px 20px; border-radius: 12px; transition: all 0.2s; }
         .btn-sec { background: #334155; color: #f8fafc; }
+        .btn-imp { background: #059669; color: white; }
         .btn:hover { opacity: 0.9; transform: translateY(-1px); }
       </style>
     </head>
     <body>
       <div class="card">
-        <span class="badge">ENLIGHT BOT ENGINE 🟢</span>
-        <h1>Enlight Metals Sales Bot & CRM Sync</h1>
-        <p>WhatsApp Sales Assistant & Automated Zoho Bigin CRM Synchronization Service.</p>
+        <span class="badge">ENLIGHT CRM AI AGENT 🟢</span>
+        <h1>Enlight Metals Sales Bot & CRM Agent</h1>
+        <p>Bi-Directional Automated Zoho Bigin CRM Agent & WhatsApp Sales Assistant.</p>
         
         <div class="btn-group">
-          <a href="/bigin-sync" class="btn">🔄 Sync Database to Zoho Bigin Now</a>
+          <a href="/bigin-import" class="btn btn-imp">📥 Import All Data from Bigin → Database</a>
+          <a href="/bigin-sync" class="btn">📤 Push All Database Records → Bigin</a>
           <a href="/bigin-cleanup" class="btn btn-sec">🧹 Clean & Re-sync Zoho Bigin</a>
           <a href="https://bigin.zoho.in/" target="_blank" class="btn btn-sec">Open Zoho Bigin CRM ↗</a>
         </div>

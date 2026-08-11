@@ -920,4 +920,76 @@ const handleBiginCleanup = async (req, res) => {
 router.post('/admin/bigin-cleanup', handleBiginCleanup);
 router.get('/admin/bigin-cleanup', handleBiginCleanup);
 
+// ── Admin: Inbound Import (Pull from Bigin → Database) ────────────────────────
+const handleBiginImport = async (req, res) => {
+  try {
+    const { pullBiginToDatabase } = require('./agents/biginSyncAgent');
+    const results = await pullBiginToDatabase();
+
+    if (req.method === 'GET' || req.headers.accept?.includes('html')) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Zoho Bigin Import Result</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; padding: 40px 20px; }
+            .card { background: white; max-width: 560px; margin: 0 auto; padding: 32px; border-radius: 20px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+            .badge { display: inline-block; background: #dbeafe; color: #1e40af; font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 999px; margin-bottom: 12px; }
+            h2 { font-size: 22px; margin: 0 0 8px 0; color: #0f172a; }
+            p { font-size: 14px; color: #64748b; margin: 0 0 24px 0; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+            .stat { background: #f1f5f9; padding: 16px; border-radius: 14px; text-align: center; }
+            .num { font-size: 28px; font-weight: 800; color: #2563eb; }
+            .label { font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; margin-top: 4px; }
+            .btn { display: inline-block; background: #2563eb; color: white; text-decoration: none; font-weight: 600; font-size: 14px; padding: 12px 24px; border-radius: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <span class="badge">INBOUND IMPORT COMPLETED</span>
+            <h2>📥 Bigin Data Imported to Database!</h2>
+            <p>Customer contacts and active pipeline deals have been pulled from Zoho Bigin into your database.</p>
+            
+            <div class="grid">
+              <div class="stat">
+                <div class="num">${results.contactsImported}</div>
+                <div class="label">Contacts Imported</div>
+              </div>
+              <div class="stat">
+                <div class="num">${results.dealsImported}</div>
+                <div class="label">Deals Imported</div>
+              </div>
+            </div>
+
+            <a href="/" class="btn">Return to Control Dashboard ↗</a>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    res.json({
+      success: true,
+      message: 'Zoho Bigin data imported to database successfully',
+      imported: {
+        contacts: results.contactsImported,
+        deals: results.dealsImported,
+      },
+      errors: results.errors,
+    });
+  } catch (err) {
+    res.status(500).send(`
+      <div style="font-family: system-ui; padding: 40px; max-width: 500px; margin: 0 auto; color: #ef4444;">
+        <h3>❌ Bigin Import Error</h3>
+        <p>${err.message}</p>
+      </div>
+    `);
+  }
+};
+
+router.post('/admin/bigin-import', handleBiginImport);
+router.get('/admin/bigin-import', handleBiginImport);
+
 module.exports = router;
