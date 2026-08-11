@@ -498,27 +498,43 @@ async function processSalesMessage(text, senderPhone) {
     let hasUnlistedMaterial = false;
     let unlistedMaterialName = '';
 
+    const GENERIC_PRODUCT_REGEX = /^(steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined)$/i;
+
     for (const item of rawItems) {
-      const pName = item.product_requirement || 'Product Requirement';
+      let pName = item.product_requirement ? item.product_requirement.trim() : null;
+      if (pName && GENERIC_PRODUCT_REGEX.test(pName)) {
+        pName = null;
+      }
+
       const qty = Number(item.quantity_mt) || 0;
       let rate = Number(item.rate_per_mt) || 0;
       let autoRate = null;
 
-      if (!rate) {
-        autoRate = await lookupRateSheetPrice(pName);
-        if (autoRate) {
-          rate = autoRate.price_per_mt;
-        } else if (qty > 0 || data.action === 'purchase_order') {
-          hasUnlistedMaterial = true;
-          unlistedMaterialName = pName;
+      if (pName) {
+        if (!rate) {
+          autoRate = await lookupRateSheetPrice(pName);
+          if (autoRate) {
+            rate = autoRate.price_per_mt;
+            pName = autoRate.matched_sku || pName;
+          } else if (qty > 0 || data.action === 'purchase_order') {
+            hasUnlistedMaterial = true;
+            unlistedMaterialName = pName;
+          }
         }
+      } else if (qty > 0) {
+        // Quantity specified but NO specific steel product name was mentioned!
+        const { saveActiveSession } = require('../supabase');
+        await saveActiveSession(senderPhone, finalCustomerName, `pending_product_for_deal|${finalCustomerName}|${qty}|MT`);
+        return `❓ *Which steel product is ${finalCustomerName} asking for?*\n\n` +
+          `You specified a quantity of *${qty} MT*, but no specific steel product was mentioned.\n\n` +
+          `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can check our active rate sheet and calculate the quotation for KRA 1 & Sales Pipeline! 📈`;
       }
 
       const itemAmount = qty > 0 && rate > 0 ? qty * rate : 0;
       calculatedTotal += itemAmount;
 
       processedItems.push({
-        pName,
+        pName: pName || 'Steel Product',
         qty,
         rate,
         itemAmount,

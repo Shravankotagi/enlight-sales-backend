@@ -412,6 +412,42 @@ router.post('/', async (req, res) => {
           await saveActiveSession(senderPhone, 'Unknown', 'general');
         }
 
+        if (activeSession?.last_intent?.startsWith('pending_product_for_deal|')) {
+          const parts = activeSession.last_intent.split('|');
+          const customerName = parts[1];
+          const qtyNum = parts[2];
+          const unitStr = parts[3] || 'MT';
+
+          const cleanInput = raw_text.trim();
+          await saveActiveSession(senderPhone, customerName, 'general');
+
+          const { processSalesMessage } = require('./agents/salesAgent');
+          const syntheticText = `${customerName} requirement ${qtyNum} ${unitStr} ${cleanInput}`;
+          const reply = await processSalesMessage(syntheticText, senderPhone);
+          await sendTextMessage(senderPhone, reply);
+          return;
+        }
+
+        if (activeSession?.last_intent?.startsWith('pending_custom_rate|')) {
+          const parts = activeSession.last_intent.split('|');
+          const customerName = parts[1];
+          const materialName = parts[2];
+
+          const cleanInput = raw_text.trim();
+          await saveActiveSession(senderPhone, customerName, 'general');
+
+          const rateMatch = cleanInput.match(/\d[\d,.]*/);
+          const customRate = rateMatch ? Number(rateMatch[0].replace(/,/g, '')) : 0;
+
+          if (customRate > 0) {
+            const { processSalesMessage } = require('./agents/salesAgent');
+            const syntheticText = `${customerName} requirement ${materialName} rate ${customRate}`;
+            const reply = await processSalesMessage(syntheticText, senderPhone);
+            await sendTextMessage(senderPhone, reply);
+            return;
+          }
+        }
+
         if (activeSession?.last_intent?.startsWith('pending_deal_choice|')) {
           const parts = activeSession.last_intent.split('|');
           const customerName = parts[1];
