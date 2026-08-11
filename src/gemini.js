@@ -14,7 +14,7 @@ async function callLightweightModel(prompt) {
 }
 
 const EXTRACTION_PROMPT = `
-You are an inquiry parser for an Indian B2B steel distributor called Enlight Metals.
+You are an inquiry parser for an Indian B2B metal distributor called Enlight Metals.
 Input may be English, Hindi, or Hinglish. It could be typed text OR a photo of a 
 Purchase Order, handwritten requirement, or printed RFQ.
 
@@ -197,7 +197,7 @@ async function extractFromImage(imageBuffer, mimeType) {
 }
 
 const INTENT_PROMPT = `
-You are the intelligent message router for Enlight Metals, an Indian B2B steel distributor.
+You are the intelligent message router for Enlight Metals, an Indian B2B metal distributor.
 A salesperson sends a WhatsApp message in English, Hindi, or Hinglish — casually, informally, 
 without any fixed format. Your job is to understand the INTENT behind what they are reporting.
 
@@ -301,7 +301,7 @@ async function classifyIntent(text) {
 }
 
 const QUERY_CLASSIFIER_PROMPT = `
-You are an intelligent query router for a B2B steel sales system.
+You are an intelligent query router for a B2B metal sales system.
 Your job is to classify the salesperson's request into one of the following categories:
 
 DATA QUERIES:

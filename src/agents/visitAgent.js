@@ -26,7 +26,7 @@ const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 
 const VISIT_AGENT_PROMPT = `
-You are the Specialized Site Visit & Meeting AI Agent (KRA 9) for Enlight Metals, a B2B steel distributor.
+You are the Specialized Site Visit & Meeting AI Agent (KRA 9) for Enlight Metals, a B2B metal distributor.
 Your job is to parse salesperson customer site visit reports, prospect meetings, or field activity logs.
 
 The salesperson message may be informal, in Hinglish, or missing expected keywords.

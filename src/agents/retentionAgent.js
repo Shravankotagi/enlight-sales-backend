@@ -26,7 +26,7 @@ const { supabase } = require('../supabase');
 
 
 const RETENTION_AGENT_PROMPT = `
-You are the Specialized Customer Retention AI Agent (KRA 3) for Enlight Metals, a B2B steel distributor.
+You are the Specialized Customer Retention AI Agent (KRA 3) for Enlight Metals, a B2B metal distributor.
 Your job is to parse customer follow-up reports, re-order inquiries, or client check-in notes.
 
 The salesperson message may be informal, in Hinglish, or missing expected keywords.

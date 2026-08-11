@@ -440,7 +440,7 @@ async function getRateSheet() {
     const rates = await getLatestActiveRatesText();
     if (!rates) return '❌ No active rate sheet found. Please contact your Sales Lead.';
     const now = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full' });
-    return `💹 *Active Steel Rate Sheet*\n📅 ${now}\n\n${rates}\n\n_Rates managed by Admin via Enlight Sales OS_`;
+    return `💹 *Active Metal Rate Sheet*\n📅 ${now}\n\n${rates}\n\n_Rates managed by Admin via Enlight Sales OS_`;
   } catch (err) {
     console.error('getRateSheet error:', err.message);
     return '❌ Could not fetch rate sheet.';

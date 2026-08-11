@@ -536,7 +536,7 @@ async function upsertDeal({
   const name = (customerName || '').trim();
   const primaryItem = (dealItems && dealItems[0] && dealItems[0].sku_text)
     ? `${dealItems[0].sku_text}${dealItems[0].quantity ? ` (${dealItems[0].quantity} ${dealItems[0].unit || 'MT'})` : ''}`
-    : 'Steel Deal';
+    : 'Metal Deal';
   const shortId = dbDealId ? ` [#${dbDealId.substring(0, 6)}]` : '';
   const dealName = `${name} — ${primaryItem}${shortId}`.trim();
 
@@ -1075,7 +1075,7 @@ async function syncAllDatabaseToBigin() {
 
         const items = deal.deal_items || [];
         const itemLines = items.map(i =>
-          `  • ${i.sku_text || 'Steel'}: ${i.quantity || 0} ${i.unit || 'MT'}` +
+          `  • ${i.sku_text || 'Metal'}: ${i.quantity || 0} ${i.unit || 'MT'}` +
           (i.rate ? ` @ ₹${Number(i.rate).toLocaleString('en-IN')}/MT` : '') +
           (i.amount ? ` = ₹${Number(i.amount).toLocaleString('en-IN')}` : '')
         ).join('\n');

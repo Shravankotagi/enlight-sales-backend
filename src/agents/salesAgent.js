@@ -415,10 +415,10 @@ async function processSalesMessage(text, senderPhone) {
     // 1. Immediately reject invalid/nonsense units (e.g. "15 apple") before processing
     const invalidUnitCheck = detectInvalidUnitInMessage(text);
     if (invalidUnitCheck) {
-      return `❌ *Invalid Steel Quantity Unit*\n\n` +
+      return `❌ *Invalid Quantity Unit*\n\n` +
         `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
-        `Steel products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
-        `Please specify the quantity using a valid steel unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`;
+        `Metal products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
+        `Please specify the quantity using a valid unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`;
     }
 
     const { invokeWithFallback } = require('../core/modelRouter');
@@ -522,11 +522,11 @@ async function processSalesMessage(text, senderPhone) {
           }
         }
       } else if (qty > 0) {
-        // Quantity specified but NO specific steel product name was mentioned!
+        // Quantity specified but NO specific metal product name was mentioned!
         const { saveActiveSession } = require('../supabase');
         await saveActiveSession(senderPhone, finalCustomerName, `pending_product_for_deal|${finalCustomerName}|${qty}|MT`);
-        return `❓ *Which steel product is ${finalCustomerName} asking for?*\n\n` +
-          `You specified a quantity of *${qty} MT*, but no specific steel product was mentioned.\n\n` +
+        return `❓ *Which metal product is ${finalCustomerName} asking for?*\n\n` +
+          `You specified a quantity of *${qty} MT*, but no specific metal product was mentioned.\n\n` +
           `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can check our active rate sheet and calculate the quotation for KRA 1 & Sales Pipeline! 📈`;
       }
 
@@ -534,7 +534,7 @@ async function processSalesMessage(text, senderPhone) {
       calculatedTotal += itemAmount;
 
       processedItems.push({
-        pName: pName || 'Steel Product',
+        pName: pName || 'Metal Product',
         qty,
         rate,
         itemAmount,

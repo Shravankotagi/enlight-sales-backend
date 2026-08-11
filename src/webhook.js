@@ -599,7 +599,7 @@ router.post('/', async (req, res) => {
           if (lineItems.length === 0) {
             await sendTextMessage(
               senderPhone,
-              `❓ *Which steel product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name, quantity, and unit (e.g. _15 MT HR Coil_ or _20 sheets MS Plate_).`
+              `❓ *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name, quantity, and unit (e.g. _15 MT HR Coil_ or _20 sheets MS Plate_).`
             );
             return;
           }
@@ -608,7 +608,7 @@ router.post('/', async (req, res) => {
             if (!item.sku_text || item.sku_text.toLowerCase().trim() === 'unknown' || item.sku_text.toLowerCase().trim() === 'null') {
               await sendTextMessage(
                 senderPhone,
-                `❓ *Which steel product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name (e.g. _HR Coil_ or _MS Sheet_).`
+                `❓ *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name (e.g. _HR Coil_ or _MS Sheet_).`
               );
               return;
             }
@@ -630,7 +630,7 @@ router.post('/', async (req, res) => {
             if (!validUnits.includes(normUnit)) {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid unit*\n\nUnit *"${item.unit}"* is not a valid steel unit. Please specify a valid unit like MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`
+                `⚠️ *Invalid unit*\n\nUnit *"${item.unit}"* is not a valid unit. Please specify a valid unit like MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`
               );
               return;
             }
