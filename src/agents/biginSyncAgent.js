@@ -316,28 +316,48 @@ function buildCustomerSummary(data, salespersonName) {
 async function findContact(customerName, token) {
   try {
     if (!customerName) return null;
-    // 1. Try exact match first
+    const cleanName = customerName.trim();
+
+    // Strategy 1: exact search via API
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
       headers: zohoHeaders(token),
-      params: { criteria: `(Last_Name:equals:${customerName})`, fields: 'id,Last_Name,Company_Name,Account_Name' },
+      params: {
+        criteria: `(Last_Name:equals:${cleanName})`,
+        fields: 'id,Last_Name,Company_Name',
+      },
     });
-    if (res.data?.data?.[0]?.id) return res.data.data[0].id;
 
-    // 2. Fallback: search by first word for fuzzy/partial match
-    const firstWord = customerName.trim().split(' ')[0];
-    if (firstWord && firstWord.length > 2) {
-      const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
-        headers: zohoHeaders(token),
-        params: { criteria: `(Last_Name:starts_with:${firstWord})`, fields: 'id,Last_Name' },
-      });
-      const matches = res2.data?.data || [];
-      const best = matches.find(m =>
-        m.Last_Name?.toLowerCase().includes(customerName.toLowerCase()) ||
-        customerName.toLowerCase().includes(m.Last_Name?.toLowerCase())
-      );
-      return best?.id || matches[0]?.id || null;
+    const exact = res.data?.data;
+    if (exact && exact.length > 0) {
+      // If multiple matches (duplicates exist), return the one with most data
+      const withCompany = exact.find(c => c.Company_Name);
+      return withCompany?.id || exact[0].id;
     }
-    return null;
+
+    // Strategy 2: search by first significant word
+    const firstWord = cleanName.split(' ')[0];
+    if (firstWord.length < 3) return null;
+
+    const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
+      headers: zohoHeaders(token),
+      params: {
+        criteria: `(Last_Name:starts_with:${firstWord})`,
+        fields: 'id,Last_Name,Company_Name,Phone',
+      },
+    });
+
+    const candidates = res2.data?.data || [];
+    const nameLower = cleanName.toLowerCase();
+
+    // Find best match by checking if names overlap
+    const best = candidates.find(c => {
+      const cName = (c.Last_Name || '').toLowerCase();
+      return cName === nameLower ||
+        cName.includes(nameLower) ||
+        nameLower.includes(cName);
+    });
+
+    return best?.id || null;
   } catch (err) {
     console.error('[BiginSync] findContact error:', err.response?.data || err.message);
     return null;
@@ -345,8 +365,25 @@ async function findContact(customerName, token) {
 }
 
 async function upsertContact(profile, salespersonName, token) {
-  const name = profile.customer_name || profile.customerName || 'Unknown';
-  const existingId = await findContact(name, token);
+  const name = (profile.customer_name || profile.customerName || '').trim();
+  if (!name) return null;
+
+  // Try to find existing contact (handles duplicates by picking best one)
+  let existingId = await findContact(name, token);
+
+  // If still not found, try searching by Company_Name as fallback
+  if (!existingId) {
+    try {
+      const res = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts/search`, {
+        headers: zohoHeaders(token),
+        params: {
+          criteria: `(Company_Name:equals:${name})`,
+          fields: 'id,Last_Name,Company_Name',
+        },
+      });
+      existingId = res.data?.data?.[0]?.id || null;
+    } catch { /* ignore */ }
+  }
 
   const payload = {
     data: [{
@@ -358,7 +395,7 @@ async function upsertContact(profile, salespersonName, token) {
       Email:        profile.email || '',
       Mailing_City: profile.customer_address || profile.city || '',
       City:         profile.customer_address || profile.city || '',
-      Description: [
+      Description:  [
         profile.contact_person  ? `Contact Person: ${profile.contact_person}` : '',
         profile.customer_gst    ? `GST: ${profile.customer_gst}` : '',
         profile.industry        ? `Industry: ${profile.industry}` : '',
@@ -369,21 +406,37 @@ async function upsertContact(profile, salespersonName, token) {
   };
 
   if (existingId) {
-    await axios.put(`${ZOHO_BIGIN_BASE}/Contacts/${existingId}`, payload,
-      { headers: zohoHeaders(token) });
-    return existingId;
+    // UPDATE existing — this fixes blank fields on old contacts
+    try {
+      await axios.put(
+        `${ZOHO_BIGIN_BASE}/Contacts/${existingId}`,
+        payload,
+        { headers: zohoHeaders(token) }
+      );
+      console.log(`[BiginSync] Contact updated: ${name} (${existingId})`);
+      return existingId;
+    } catch (err) {
+      console.error('[BiginSync] Contact update error:', err.response?.data || err.message);
+      return existingId; // return ID even if update fails
+    }
   }
 
+  // CREATE new contact
   try {
-    const res = await axios.post(`${ZOHO_BIGIN_BASE}/Contacts`, payload,
-      { headers: zohoHeaders(token) });
+    const res = await axios.post(
+      `${ZOHO_BIGIN_BASE}/Contacts`,
+      payload,
+      { headers: zohoHeaders(token) }
+    );
     const newId = res.data?.data?.[0]?.details?.id || null;
-    if (!newId) {
-      console.error('[BiginSync] Contact create notice:', JSON.stringify(res.data?.data));
+    if (newId) {
+      console.log(`[BiginSync] Contact created: ${name} (${newId})`);
+    } else {
+      console.error('[BiginSync] Contact create returned no ID:', JSON.stringify(res.data));
     }
     return newId;
   } catch (err) {
-    console.error('[BiginSync] Contact POST error:', err.response?.data || err.message);
+    console.error('[BiginSync] Contact create error:', err.response?.data || err.message);
     return null;
   }
 }
@@ -423,39 +476,99 @@ const STAGE_MAP = {
   new_inquiry: 'Qualification',
 };
 
-async function upsertDeal({ customerName, stage, amount, poNumber,
-  salespersonName, summary, dealItems, paymentTerms, contactId }, token) {
+let cachedPipelineName = null;
 
-  const existing = await findDeal(customerName, token);
-  const dealName = `${customerName} — Steel Deal`;
+async function getPipelineName(token) {
+  if (cachedPipelineName) return cachedPipelineName;
 
-  const payload = {
-    data: [{
-      Deal_Name:     dealName,
-      Stage:         STAGE_MAP[stage] || 'Qualification',
-      Pipeline_Name: process.env.ZOHO_PIPELINE_NAME || 'Sales Pipeline',
-      Pipeline:      process.env.ZOHO_PIPELINE_ID || '1384628000000000173',
-      Amount:        Number(amount) || 0,
-      Closing_Date:  new Date().toISOString().split('T')[0],
-      Description:   summary,
-      Lead_Source:   'WhatsApp Bot',
-      ...(poNumber ? { PO_Number: poNumber } : {}),
-      ...(contactId ? { Contact_Name: { id: contactId } } : {}),
-    }],
-  };
-
-  if (existing) {
-    await axios.put(`${ZOHO_BIGIN_BASE}/Deals/${existing.id}`, payload,
-      { headers: zohoHeaders(token) });
-    return existing.id;
+  // Use env var if set
+  if (process.env.ZOHO_PIPELINE_NAME) {
+    cachedPipelineName = process.env.ZOHO_PIPELINE_NAME;
+    return cachedPipelineName;
   }
 
+  // Auto-detect from Bigin
   try {
-    const res = await axios.post(`${ZOHO_BIGIN_BASE}/Deals`, payload,
-      { headers: zohoHeaders(token) });
-    return res.data?.data?.[0]?.details?.id || null;
+    const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals`, {
+      headers: zohoHeaders(token),
+      params: { fields: 'Pipeline_Name', per_page: 1 },
+    });
+    // Get pipeline name from first deal if exists
+    const pipelineName = res.data?.data?.[0]?.Pipeline_Name;
+    if (pipelineName) {
+      cachedPipelineName = pipelineName;
+      console.log(`[BiginSync] Auto-detected pipeline: "${pipelineName}"`);
+      return pipelineName;
+    }
+  } catch { /* ignore */ }
+
+  // Final fallback
+  cachedPipelineName = 'Sales Pipeline';
+  return cachedPipelineName;
+}
+
+async function upsertDeal({
+  customerName, stage, amount, poNumber,
+  salespersonName, summary, dealItems, paymentTerms, contactId
+}, token) {
+  const name = (customerName || '').trim();
+  const dealName = `${name} — Steel Deal`;
+  const pipelineName = await getPipelineName(token);
+
+  const existing = await findDeal(name, token);
+
+  // Build payload — only include Contact_Name if we have a valid ID
+  const dealPayload = {
+    Deal_Name:     dealName,
+    Stage:         STAGE_MAP[stage] || 'Qualification',
+    Pipeline_Name: pipelineName,
+    Amount:        Number(amount) || 0,
+    Closing_Date:  new Date().toISOString().split('T')[0],
+    Description:   summary || '',
+    Lead_Source:   'WhatsApp Bot',
+  };
+
+  // Only add Contact_Name if we have a real Zoho contact ID
+  if (contactId && typeof contactId === 'string' && contactId.length > 5) {
+    dealPayload.Contact_Name = { id: contactId };
+  }
+
+  if (poNumber) dealPayload.Description =
+    `PO: ${poNumber}\n\n` + (dealPayload.Description || '');
+
+  const payload = { data: [dealPayload] };
+
+  if (existing) {
+    try {
+      await axios.put(
+        `${ZOHO_BIGIN_BASE}/Deals/${existing.id}`,
+        payload,
+        { headers: zohoHeaders(token) }
+      );
+      console.log(`[BiginSync] Deal updated: ${dealName} → ${STAGE_MAP[stage] || 'Qualification'} (${existing.id})`);
+      return existing.id;
+    } catch (err) {
+      console.error('[BiginSync] Deal update error:', err.response?.data || err.message);
+      return existing.id;
+    }
+  }
+
+  // Create new deal
+  try {
+    const res = await axios.post(
+      `${ZOHO_BIGIN_BASE}/Deals`,
+      payload,
+      { headers: zohoHeaders(token) }
+    );
+    const newId = res.data?.data?.[0]?.details?.id || null;
+    if (newId) {
+      console.log(`[BiginSync] Deal created: ${dealName} (${newId})`);
+    } else {
+      console.error('[BiginSync] Deal create returned no ID:', JSON.stringify(res.data?.data));
+    }
+    return newId;
   } catch (err) {
-    console.warn(`[BiginSync] Deal upsert notice: ${err.response?.data?.data?.[0]?.message || err.message}`);
+    console.error('[BiginSync] Deal create error:', err.response?.data || err.message);
     return null;
   }
 }
