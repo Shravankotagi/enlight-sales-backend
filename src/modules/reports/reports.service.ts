@@ -406,26 +406,33 @@ export class ReportsService {
       const safeInquiries = inquiries || [];
 
       const stages = [
-        'new_inquiry',
-        'qualified',
-        'quoted',
-        'negotiation',
-        'won',
-        'lost',
+        { key: 'new_deals', label: 'New Deals' },
+        { key: 'qualified', label: 'Qualified' },
+        { key: 'quoted', label: 'Quoted' },
+        { key: 'negotiation', label: 'Negotiation' },
+        { key: 'won', label: 'Won' },
+        { key: 'lost', label: 'Lost' },
       ];
 
-      const funnel = stages.map((stage) => {
-        const stageDeals = safeDeals.filter((d) => d.stage === stage);
+      const funnel = stages.map(({ key, label }) => {
+        const stageDeals = safeDeals.filter((d) => {
+          if (key === 'new_deals') {
+            return (
+              d.stage === 'new_inquiry' ||
+              d.stage === 'new_deals' ||
+              d.stage === 'new' ||
+              d.stage === 'inquiry'
+            );
+          }
+          return d.stage === key;
+        });
         let count = stageDeals.length;
-        if (
-          stage === 'new_inquiry' &&
-          count === 0 &&
-          safeInquiries.length > 0
-        ) {
+        if (key === 'new_deals' && count === 0 && safeInquiries.length > 0) {
           count = safeInquiries.length;
         }
         return {
-          stage,
+          stage: key,
+          label,
           count,
           value: stageDeals.reduce(
             (sum, d) => sum + (Number(d.total_amount) || 0),
