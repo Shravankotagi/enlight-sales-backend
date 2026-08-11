@@ -10,11 +10,12 @@ It is designed to be easily understood by **everyone** — whether you are a bus
 
 The Enlight Sales OS consists of 3 synchronized modules working together:
 
-| Module | Location | Purpose | Local Port | Detailed Guide |
-| :--- | :--- | :--- | :--- | :--- |
-| **Central Backend** | `/backend` | Manages database records, user authentication, KRA calculations, and Zoho Bigin CRM sync. | `http://localhost:3001` | [backend/README.md](backend/README.md) |
-| **Web Dashboard** | `/frontend` | Executive web portal for sales tracking, order generation, metal price sheets, and reports. | `http://localhost:5173` | [frontend/README.md](frontend/README.md) |
-| **WhatsApp AI Bot** | `/bot` | Automated AI assistant powered by Google Gemini 1.5 Flash Lite that processes sales messages from WhatsApp. | `http://localhost:3000` | [bot/README.md](bot/README.md) |
+| Module | Location | Purpose | Local Port |
+| :--- | :--- | :--- | :--- |
+| **Central Backend** | `/backend` | Manages database records, user authentication, KRA calculations, and Zoho Bigin CRM sync. | `http://localhost:3001` |
+| **Web Dashboard** | `/frontend` | Executive web portal for sales tracking, order generation, metal price sheets, and reports. | `http://localhost:5173` |
+| **WhatsApp AI Bot** | `/bot` | Automated AI assistant powered by Google Gemini 1.5 Flash Lite that processes sales messages from WhatsApp. | `http://localhost:3000` |
+
 
 ---
 
