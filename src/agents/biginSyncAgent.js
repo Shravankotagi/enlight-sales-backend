@@ -180,7 +180,7 @@ function buildDealSummary(data, salespersonName) {
   const items = deal.deal_items || [];
 
   const itemLines = items.map(i =>
-    `  • ${i.sku_text || 'Steel'}: ${i.quantity || 0} ${i.unit || 'MT'}` +
+    `  • ${i.sku_text || 'Metal'}: ${i.quantity || 0} ${i.unit || 'MT'}` +
     (i.rate ? ` @ ₹${Number(i.rate).toLocaleString('en-IN')}/MT` : '') +
     (i.amount ? ` = ₹${Number(i.amount).toLocaleString('en-IN')}` : '')
   ).join('\n');

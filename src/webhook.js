@@ -757,7 +757,7 @@ router.post('/', async (req, res) => {
             .map((item) => {
               const rateStr = item.rate && item.rate > 0 ? ` @ ₹${Number(item.rate).toLocaleString('en-IN')}/MT` : '';
               const amtStr = item.amount && item.amount > 0 ? `: ₹${Number(item.amount).toLocaleString('en-IN')}` : '';
-              return `• ${item.sku_text || 'Steel'} (${item.quantity} ${item.unit || 'MT'}${rateStr})${amtStr}`;
+              return `• ${item.sku_text || 'Metal'} (${item.quantity} ${item.unit || 'MT'}${rateStr})${amtStr}`;
             })
             .join('\n');
           
