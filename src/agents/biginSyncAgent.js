@@ -507,6 +507,25 @@ async function findDeal(customerName, token) {
   }
 }
 
+let cachedDealsLayout = null;
+
+async function getDealsLayout(token) {
+  if (cachedDealsLayout) return cachedDealsLayout;
+  try {
+    const res = await axios.get(`${ZOHO_BIGIN_BASE}/settings/layouts?module=Deals`, {
+      headers: zohoHeaders(token),
+    });
+    const layout = res.data?.layouts?.[0];
+    if (layout && layout.id) {
+      cachedDealsLayout = { id: layout.id, name: layout.name || 'Sales Pipeline' };
+      return cachedDealsLayout;
+    }
+  } catch (err) {
+    console.error('[BiginSync] getDealsLayout error:', err.message);
+  }
+  return { id: '1384628000000000173', name: 'Sales Pipeline' };
+}
+
 const STAGE_MAP = {
   won:         'Closed Won',
   lost:        'Closed Lost',
@@ -525,6 +544,10 @@ async function upsertDeal({
 
   const existing = await findDeal(name, token);
 
+  const layoutObj = await getDealsLayout(token);
+  const layoutId = layoutObj?.id || '1384628000000000173';
+  const layoutName = layoutObj?.name || 'Sales Pipeline';
+
   // Build payload — only include valid fields accepted by Bigin API
   const dealPayload = {
     Deal_Name:    dealName,
@@ -532,6 +555,8 @@ async function upsertDeal({
     Amount:       Number(amount) || 0,
     Closing_Date: new Date().toISOString().split('T')[0],
     Description:  summary || '',
+    Pipeline:     `${layoutName} Standard`,
+    Layout:       { id: layoutId },
   };
 
   // Link to Contact if valid contact ID exists
