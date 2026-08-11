@@ -40,13 +40,26 @@ function getSupabase() {
   );
 }
 
-// ── OAuth Token Management ────────────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+const TOKEN_CACHE_FILE = path.join(__dirname, '../../.zoho_token_cache.json');
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
-async function getZohoToken() {
+async function getZohoToken(retryCount = 0) {
   if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
+
+  try {
+    if (fs.existsSync(TOKEN_CACHE_FILE)) {
+      const fileData = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf8'));
+      if (fileData.access_token && Date.now() < fileData.expires_at) {
+        cachedToken = fileData.access_token;
+        tokenExpiresAt = fileData.expires_at;
+        return cachedToken;
+      }
+    }
+  } catch { /* ignore disk read error */ }
 
   const params = new URLSearchParams({
     refresh_token: process.env.ZOHO_REFRESH_TOKEN,
@@ -55,14 +68,33 @@ async function getZohoToken() {
     grant_type:    'refresh_token',
   });
 
-  const res = await axios.post(ZOHO_TOKEN_URL, params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
+  try {
+    const res = await axios.post(ZOHO_TOKEN_URL, params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
 
-  if (!res.data.access_token) throw new Error('No access_token in Zoho response');
-  cachedToken = res.data.access_token;
-  tokenExpiresAt = Date.now() + 50 * 60 * 1000;
-  return cachedToken;
+    if (!res.data.access_token) throw new Error('No access_token in Zoho response');
+    cachedToken = res.data.access_token;
+    tokenExpiresAt = Date.now() + 50 * 60 * 1000;
+
+    try {
+      fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify({
+        access_token: cachedToken,
+        expires_at: tokenExpiresAt,
+      }), 'utf8');
+    } catch { /* ignore disk write error */ }
+
+    return cachedToken;
+  } catch (err) {
+    const isRateLimit = err.response?.data?.error_description?.includes('too many requests');
+    if (isRateLimit && retryCount < 5) {
+      const delayMs = (retryCount + 1) * 5000;
+      console.log(`[BiginSync] Zoho token rate limited. Retrying in ${delayMs / 1000}s (attempt ${retryCount + 1})...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      return getZohoToken(retryCount + 1);
+    }
+    throw err;
+  }
 }
 
 function zohoHeaders(token) {
