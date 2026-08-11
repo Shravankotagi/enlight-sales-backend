@@ -163,6 +163,18 @@ export class DealsService {
         }
       }
 
+      // Trigger background sync to Zoho Bigin so Web App updates reflect in Bigin immediately
+      const botUrl =
+        process.env.BOT_SERVICE_URL ||
+        'https://enlight-sales-bot-production.up.railway.app';
+      fetch(`${botUrl}/webhook/admin/bigin-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: 'enlight_admin_2024' }),
+      }).catch((err) =>
+        this.logger.error('Bigin auto-sync notice:', err.message),
+      );
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStage for id ${id}:`, error);
