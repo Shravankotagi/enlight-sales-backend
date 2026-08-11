@@ -444,21 +444,29 @@ async function upsertContact(profile, salespersonName, token) {
 async function findDeal(customerName, token) {
   try {
     if (!customerName) return null;
-    // 1. Search by full customer name
+    const cleanName = customerName.trim();
+
+    // 1. Search by exact Deal_Name
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
       headers: zohoHeaders(token),
-      params: { criteria: `(Deal_Name:contains:${customerName})`, fields: 'id,Deal_Name,Stage' },
+      params: { criteria: `(Deal_Name:equals:${cleanName} — Steel Deal)`, fields: 'id,Deal_Name,Stage' },
     });
     if (res.data?.data?.[0]) return res.data.data[0];
 
-    // 2. Fallback: search by first word
-    const firstWord = customerName.trim().split(' ')[0];
+    // 2. Fallback: search by starts_with first word
+    const firstWord = cleanName.split(' ')[0];
     if (firstWord && firstWord.length > 2) {
       const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
         headers: zohoHeaders(token),
         params: { criteria: `(Deal_Name:starts_with:${firstWord})`, fields: 'id,Deal_Name,Stage' },
       });
-      return res2.data?.data?.[0] || null;
+      const candidates = res2.data?.data || [];
+      const nameLower = cleanName.toLowerCase();
+      const best = candidates.find(c => {
+        const dName = (c.Deal_Name || '').toLowerCase();
+        return dName.includes(nameLower) || nameLower.includes(dName);
+      });
+      return best || candidates[0] || null;
     }
     return null;
   } catch (err) {
@@ -476,65 +484,32 @@ const STAGE_MAP = {
   new_inquiry: 'Qualification',
 };
 
-let cachedPipelineName = null;
-
-async function getPipelineName(token) {
-  if (cachedPipelineName) return cachedPipelineName;
-
-  // Use env var if set
-  if (process.env.ZOHO_PIPELINE_NAME) {
-    cachedPipelineName = process.env.ZOHO_PIPELINE_NAME;
-    return cachedPipelineName;
-  }
-
-  // Auto-detect from Bigin
-  try {
-    const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals`, {
-      headers: zohoHeaders(token),
-      params: { fields: 'Pipeline_Name', per_page: 1 },
-    });
-    // Get pipeline name from first deal if exists
-    const pipelineName = res.data?.data?.[0]?.Pipeline_Name;
-    if (pipelineName) {
-      cachedPipelineName = pipelineName;
-      console.log(`[BiginSync] Auto-detected pipeline: "${pipelineName}"`);
-      return pipelineName;
-    }
-  } catch { /* ignore */ }
-
-  // Final fallback
-  cachedPipelineName = 'Sales Pipeline';
-  return cachedPipelineName;
-}
-
 async function upsertDeal({
   customerName, stage, amount, poNumber,
   salespersonName, summary, dealItems, paymentTerms, contactId
 }, token) {
   const name = (customerName || '').trim();
   const dealName = `${name} — Steel Deal`;
-  const pipelineName = await getPipelineName(token);
 
   const existing = await findDeal(name, token);
 
-  // Build payload — only include Contact_Name if we have a valid ID
+  // Build payload — only include valid fields accepted by Bigin API
   const dealPayload = {
-    Deal_Name:     dealName,
-    Stage:         STAGE_MAP[stage] || 'Qualification',
-    Pipeline_Name: pipelineName,
-    Amount:        Number(amount) || 0,
-    Closing_Date:  new Date().toISOString().split('T')[0],
-    Description:   summary || '',
-    Lead_Source:   'WhatsApp Bot',
+    Deal_Name:    dealName,
+    Stage:        STAGE_MAP[stage] || 'Qualification',
+    Amount:       Number(amount) || 0,
+    Closing_Date: new Date().toISOString().split('T')[0],
+    Description:  summary || '',
   };
 
-  // Only add Contact_Name if we have a real Zoho contact ID
+  // Link to Contact if valid contact ID exists
   if (contactId && typeof contactId === 'string' && contactId.length > 5) {
     dealPayload.Contact_Name = { id: contactId };
   }
 
-  if (poNumber) dealPayload.Description =
-    `PO: ${poNumber}\n\n` + (dealPayload.Description || '');
+  if (poNumber) {
+    dealPayload.Description = `PO: ${poNumber}\n\n` + (dealPayload.Description || '');
+  }
 
   const payload = { data: [dealPayload] };
 
