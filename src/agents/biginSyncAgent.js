@@ -473,33 +473,27 @@ async function upsertContact(profile, salespersonName, token) {
   }
 }
 
-async function findDeal(customerName, token) {
+async function findDeal(dealName, biginDealId, token) {
   try {
-    if (!customerName) return null;
-    const cleanName = customerName.trim();
+    if (biginDealId) {
+      try {
+        const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/${biginDealId}`, {
+          headers: zohoHeaders(token),
+        });
+        if (res.data?.data?.[0]) return res.data.data[0];
+      } catch { /* fallback to search */ }
+    }
 
-    // 1. Search by exact Deal_Name
+    if (!dealName) return null;
+    const cleanSearchName = dealName.replace(/[\[\]#()]/g, '').trim();
+
+    // Search by Deal_Name prefix
     const res = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
       headers: zohoHeaders(token),
-      params: { criteria: `(Deal_Name:equals:${cleanName} — Steel Deal)`, fields: 'id,Deal_Name,Stage' },
+      params: { criteria: `(Deal_Name:starts_with:${cleanSearchName.substring(0, 30)})`, fields: 'id,Deal_Name,Stage' },
     });
     if (res.data?.data?.[0]) return res.data.data[0];
 
-    // 2. Fallback: search by starts_with first word
-    const firstWord = cleanName.split(' ')[0];
-    if (firstWord && firstWord.length > 2) {
-      const res2 = await axios.get(`${ZOHO_BIGIN_BASE}/Deals/search`, {
-        headers: zohoHeaders(token),
-        params: { criteria: `(Deal_Name:starts_with:${firstWord})`, fields: 'id,Deal_Name,Stage' },
-      });
-      const candidates = res2.data?.data || [];
-      const nameLower = cleanName.toLowerCase();
-      const best = candidates.find(c => {
-        const dName = (c.Deal_Name || '').toLowerCase();
-        return dName.includes(nameLower) || nameLower.includes(dName);
-      });
-      return best || candidates[0] || null;
-    }
     return null;
   } catch (err) {
     console.error('[BiginSync] findDeal error:', err.response?.data || err.message);
@@ -537,12 +531,16 @@ const STAGE_MAP = {
 
 async function upsertDeal({
   customerName, stage, amount, poNumber,
-  salespersonName, summary, dealItems, paymentTerms, contactId
+  salespersonName, summary, dealItems, paymentTerms, contactId, dbDealId, biginDealId
 }, token) {
   const name = (customerName || '').trim();
-  const dealName = `${name} — Steel Deal`;
+  const primaryItem = (dealItems && dealItems[0] && dealItems[0].sku_text)
+    ? `${dealItems[0].sku_text}${dealItems[0].quantity ? ` (${dealItems[0].quantity} ${dealItems[0].unit || 'MT'})` : ''}`
+    : 'Steel Deal';
+  const shortId = dbDealId ? ` [#${dbDealId.substring(0, 6)}]` : '';
+  const dealName = `${name} — ${primaryItem}${shortId}`.trim();
 
-  const existing = await findDeal(name, token);
+  const existing = await findDeal(dealName, biginDealId, token);
 
   const layoutObj = await getDealsLayout(token);
   const layoutId = layoutObj?.id || '1384628000000000173';
@@ -569,6 +567,7 @@ async function upsertDeal({
   }
 
   const payload = { data: [dealPayload] };
+  let finalId = null;
 
   if (existing) {
     try {
@@ -578,31 +577,40 @@ async function upsertDeal({
         { headers: zohoHeaders(token) }
       );
       console.log(`[BiginSync] Deal updated: ${dealName} → ${STAGE_MAP[stage] || 'Qualification'} (${existing.id})`);
-      return existing.id;
+      finalId = existing.id;
     } catch (err) {
       console.error('[BiginSync] Deal update error:', err.response?.data || err.message);
-      return existing.id;
+      finalId = existing.id;
+    }
+  } else {
+    // Create new deal
+    try {
+      const res = await axios.post(
+        `${ZOHO_BIGIN_BASE}/Deals`,
+        payload,
+        { headers: zohoHeaders(token) }
+      );
+      finalId = res.data?.data?.[0]?.details?.id || null;
+      if (finalId) {
+        console.log(`[BiginSync] Deal created: ${dealName} (${finalId})`);
+      } else {
+        console.error('[BiginSync] Deal create returned no ID:', JSON.stringify(res.data?.data));
+      }
+    } catch (err) {
+      console.error('[BiginSync] Deal create error:', err.response?.data || err.message);
+      return null;
     }
   }
 
-  // Create new deal
-  try {
-    const res = await axios.post(
-      `${ZOHO_BIGIN_BASE}/Deals`,
-      payload,
-      { headers: zohoHeaders(token) }
-    );
-    const newId = res.data?.data?.[0]?.details?.id || null;
-    if (newId) {
-      console.log(`[BiginSync] Deal created: ${dealName} (${newId})`);
-    } else {
-      console.error('[BiginSync] Deal create returned no ID:', JSON.stringify(res.data?.data));
-    }
-    return newId;
-  } catch (err) {
-    console.error('[BiginSync] Deal create error:', err.response?.data || err.message);
-    return null;
+  // Update bigin_deal_id back to Supabase DB
+  if (finalId && dbDealId) {
+    try {
+      const sb = getSupabase();
+      await sb.from('deals').update({ bigin_deal_id: finalId }).eq('id', dbDealId);
+    } catch { /* ignore db update error */ }
   }
+
+  return finalId;
 }
 
 async function addNote({ parentId, parentModule, noteTitle, noteContent }, token) {
@@ -1090,6 +1098,8 @@ async function syncAllDatabaseToBigin() {
           summary,
           dealItems: items,
           contactId,
+          dbDealId: deal.id,
+          biginDealId: deal.bigin_deal_id,
         }, token);
 
         if (dealId) {
