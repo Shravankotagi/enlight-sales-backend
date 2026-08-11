@@ -371,7 +371,7 @@ export class ReportsService {
         y = range.year;
       }
 
-      let dealsQuery = this.supabase
+      const dealsQuery = this.supabase
         .from('deals')
         .select('*')
         .neq('inquiry_type', 'unknown')
@@ -379,31 +379,8 @@ export class ReportsService {
           `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
         );
 
-      let inquiriesQuery = this.supabase
-        .from('inquiries')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
-
-      if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
-      }
-
-      const [{ data: deals }, { data: inquiries }] = await Promise.all([
-        dealsQuery,
-        inquiriesQuery,
-      ]);
-
+      const { data: deals } = await dealsQuery;
       const safeDeals = deals || [];
-      const safeInquiries = inquiries || [];
 
       const stages = [
         { key: 'new_deals', label: 'New Deals' },
@@ -426,10 +403,7 @@ export class ReportsService {
           }
           return d.stage === key;
         });
-        let count = stageDeals.length;
-        if (key === 'new_deals' && count === 0 && safeInquiries.length > 0) {
-          count = safeInquiries.length;
-        }
+        const count = stageDeals.length;
         return {
           stage: key,
           label,
@@ -443,7 +417,7 @@ export class ReportsService {
 
       const maxCount = Math.max(...funnel.map((f) => f.count), 1);
       const wonCount = funnel.find((f) => f.stage === 'won')?.count || 0;
-      const totalBase = Math.max(safeDeals.length, safeInquiries.length);
+      const totalBase = safeDeals.length;
 
       const overallWinRate =
         totalBase > 0 ? Math.round((wonCount / totalBase) * 100) : 0;
