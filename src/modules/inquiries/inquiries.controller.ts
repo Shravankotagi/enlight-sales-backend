@@ -80,8 +80,19 @@ export class InquiriesController {
     return this.inquiriesService.createInquiry(body, employee.phone);
   }
 
+  @Post('send-quotation/:id')
   @Post(':id/send-quotation')
   async sendQuotation(@Param('id') id: string, @Body() body: any) {
     return this.inquiriesService.sendQuotation(id, body);
+  }
+
+  @Post('parse-document')
+  async parseDocument(
+    @Body() body: { file_base64: string; mime_type: string },
+  ) {
+    return this.inquiriesService.parseDocumentWithGemini(
+      body.file_base64,
+      body.mime_type,
+    );
   }
 }

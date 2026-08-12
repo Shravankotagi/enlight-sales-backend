@@ -413,9 +413,69 @@ startxref
         message: emailNotice,
         inquiry_id: id,
       };
-    } catch (error) {
-      this.logger.error(`Error in sendQuotation for id ${id}:`, error);
-      throw error;
+    } catch (err) {
+      this.logger.error('Error in sendQuotation:', err);
+      throw err;
+    }
+  }
+
+  async parseDocumentWithGemini(fileBase64: string, mimeType: string) {
+    const apiKey =
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!apiKey) {
+      throw new Error(
+        'GEMINI_PAID_API_KEY is not configured in backend environment variables',
+      );
+    }
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+
+    try {
+      const response = await axios.post(url, {
+        contents: [
+          {
+            parts: [
+              {
+                text: `You are an expert OCR document parser for steel inquiry purchase orders. Extract fields from this document image and return ONLY a valid JSON object with no markdown formatting or codeblocks:
+{
+  "customer_name": "company or customer name",
+  "contact_phone": "10-digit phone number if present",
+  "requirement": "detailed material specification, quantity in MT, rate if present, and delivery location"
+}`,
+              },
+              {
+                inline_data: {
+                  mime_type: mimeType || 'image/jpeg',
+                  data: cleanBase64,
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const text =
+        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const cleanJsonStr = text
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
+      const parsed = JSON.parse(cleanJsonStr);
+
+      return {
+        success: true,
+        data: parsed,
+      };
+    } catch (err: any) {
+      this.logger.error(
+        'Gemini vision document extraction failed:',
+        err?.response?.data || err.message,
+      );
+      return {
+        success: false,
+        error: err.message,
+      };
     }
   }
 }
