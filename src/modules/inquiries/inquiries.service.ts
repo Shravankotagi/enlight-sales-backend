@@ -194,46 +194,99 @@ export class InquiriesService {
 
       if (resendApiKey) {
         try {
+          const qRefNum = `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          const todayDateStr = new Date().toLocaleDateString('en-IN');
+          const totalAmt = Number(details.totalAmount || 1860000);
+          const gstAmt = Math.round(totalAmt * 0.18);
+          const grandTotalAmt = Math.round(totalAmt * 1.18);
+          const unitRateStr = Number(details.unitPrice || 62000).toLocaleString(
+            'en-IN',
+          );
+          const totalAmtStr = totalAmt.toLocaleString('en-IN');
+
           const htmlContent = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; background: #ffffff;">
-              <div style="text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px;">
-                <h2 style="color: #1e3a8a; margin: 0;">ENLIGHT METALS PRIVATE LIMITED</h2>
-                <p style="color: #64748b; font-size: 12px; margin-top: 4px;">Official Commercial Quotation & Material Proposal</p>
+            <div style="font-family: Arial, Helvetica, sans-serif; max-width: 680px; margin: 0 auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+              <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); padding: 24px; text-align: center; color: #ffffff;">
+                <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px;">ENLIGHT METALS PRIVATE LIMITED</h1>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px;">Authorized B2B Metal Distributor &amp; Steel Processor</p>
+                <div style="margin-top: 12px; display: inline-block; background: #2563eb; color: #ffffff; padding: 4px 14px; border-radius: 20px; font-size: 11px; font-weight: bold;">
+                  OFFICIAL COMMERCIAL PRICE QUOTATION
+                </div>
               </div>
-              <div style="margin-top: 20px;">
-                <p style="font-size: 14px; color: #334155;">Dear <strong>${customerName}</strong>,</p>
-                <p style="font-size: 13px; color: #475569;">Thank you for your inquiry. Please find below our official price quotation for your steel requirements:</p>
-                
-                <table style="width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px;">
+
+              <div style="padding: 24px;">
+                <table style="width: 100%; font-size: 12px; color: #334155; margin-bottom: 20px; border-bottom: 2px dashed #e2e8f0; padding-bottom: 16px;">
+                  <tr>
+                    <td style="width: 50%; vertical-align: top;">
+                      <p style="margin: 0 0 4px 0; color: #64748b; font-size: 10px; font-weight: bold; text-transform: uppercase;">QUOTATION TO (CUSTOMER)</p>
+                      <p style="margin: 0; font-size: 15px; font-weight: bold; color: #0f172a;">${customerName}</p>
+                      <p style="margin: 2px 0 0 0; color: #475569;">Email: ${customerEmail}</p>
+                      <p style="margin: 2px 0 0 0; color: #475569;">Phone: ${details.customerPhone || 'As registered'}</p>
+                    </td>
+                    <td style="width: 50%; text-align: right; vertical-align: top;">
+                      <p style="margin: 0 0 4px 0; color: #64748b; font-size: 10px; font-weight: bold; text-transform: uppercase;">QUOTATION DETAILS</p>
+                      <p style="margin: 0; font-size: 13px; font-weight: bold; color: #2563eb;">Ref #: ${qRefNum}</p>
+                      <p style="margin: 2px 0 0 0; color: #475569;">Date: ${todayDateStr}</p>
+                      <p style="margin: 2px 0 0 0; color: #059669; font-weight: bold;">Validity: 7 Days</p>
+                    </td>
+                  </tr>
+                </table>
+
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; border: 1px solid #cbd5e1;">
                   <thead>
-                    <tr style="background: #0f172a; color: #ffffff;">
-                      <th style="padding: 10px; text-align: left;">Product</th>
-                      <th style="padding: 10px; text-align: left;">Spec / Form</th>
-                      <th style="padding: 10px; text-align: right;">Qty (MT)</th>
-                      <th style="padding: 10px; text-align: right;">Rate (₹/MT)</th>
-                      <th style="padding: 10px; text-align: right;">Amount (₹)</th>
+                    <tr style="background: #0f172a; color: #ffffff; font-size: 11px; text-transform: uppercase;">
+                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: left; width: 18%;">Quantity</th>
+                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: left; width: 42%;">Material Description</th>
+                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: right; width: 20%;">Unit Rate</th>
+                      <th style="padding: 10px; text-align: right; width: 20%;">Amount (₹)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr style="border-bottom: 1px solid #cbd5e1;">
-                      <td style="padding: 10px; font-weight: bold; color: #0f172a;">${details.productType || 'Steel Material'}</td>
-                      <td style="padding: 10px; color: #475569;">${details.productForm || 'Coil'} (${details.thickness || ''} ${details.width || ''})</td>
-                      <td style="padding: 10px; text-align: right; font-weight: bold; color: #2563eb;">${details.quantityTons || 30} MT</td>
-                      <td style="padding: 10px; text-align: right;">₹${Number(details.unitPrice || 62000).toLocaleString('en-IN')}</td>
-                      <td style="padding: 10px; text-align: right; font-weight: bold; color: #059669;">₹${Number(details.totalAmount || 1860000).toLocaleString('en-IN')}</td>
+                    <tr style="background: #ffffff; border-bottom: 1px solid #e2e8f0;">
+                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0; font-weight: bold; color: #1e40af;">
+                        ${details.quantityTons || 30} MT
+                        <span style="display: block; font-size: 10px; color: #64748b; font-weight: normal;">(${details.quantityUnits || 350} nos)</span>
+                      </td>
+                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0;">
+                        <div style="font-weight: bold; color: #0f172a; font-size: 13px;">${details.productType || 'Steel Material'}</div>
+                        <div style="font-size: 11px; color: #475569; margin-top: 4px;">
+                          Form: <strong style="color: #6b21a8;">${details.productForm || 'Coil'}</strong> | Spec: ${details.thickness || '2.0 mm'} ${details.width ? `x ${details.width}` : ''} ${details.length ? `x ${details.length}` : ''}
+                        </div>
+                      </td>
+                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0; text-align: right; font-weight: bold; color: #334155;">
+                        ₹${unitRateStr}/MT
+                      </td>
+                      <td style="padding: 12px 10px; text-align: right; font-weight: 900; color: #047857; font-size: 14px;">
+                        ₹${totalAmtStr}
+                      </td>
                     </tr>
                   </tbody>
+                  <tfoot>
+                    <tr style="background: #f8fafc; font-weight: bold;">
+                      <td style="padding: 10px; border-right: 1px solid #e2e8f0; border-top: 2px solid #cbd5e1;">Total: ${details.quantityTons || 30} MT</td>
+                      <td colSpan="2" style="padding: 10px; border-right: 1px solid #e2e8f0; border-top: 2px solid #cbd5e1; text-align: right; text-transform: uppercase; color: #475569;">Subtotal Amount:</td>
+                      <td style="padding: 10px; border-top: 2px solid #cbd5e1; text-align: right; color: #047857; font-size: 14px;">₹${totalAmtStr}</td>
+                    </tr>
+                    <tr style="background: #f1f5f9; font-weight: bold;">
+                      <td colSpan="3" style="padding: 10px; border-right: 1px solid #e2e8f0; text-align: right; text-transform: uppercase; color: #475569;">GST @ 18%:</td>
+                      <td style="padding: 10px; text-align: right; color: #334155;">₹${gstAmt.toLocaleString('en-IN')}</td>
+                    </tr>
+                    <tr style="background: #e0f2fe; font-weight: 900;">
+                      <td colSpan="3" style="padding: 12px 10px; border-right: 1px solid #bae6fd; text-align: right; text-transform: uppercase; color: #0369a1; font-size: 12px;">Grand Total (Incl. GST):</td>
+                      <td style="padding: 12px 10px; text-align: right; color: #0369a1; font-size: 15px;">₹${grandTotalAmt.toLocaleString('en-IN')}</td>
+                    </tr>
+                  </tfoot>
                 </table>
 
-                <div style="margin-top: 20px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 12px; color: #334155;">
-                  <p style="margin: 4px 0;"><strong>Payment Terms:</strong> ${details.paymentTerms || '30 Days Credit'}</p>
-                  <p style="margin: 4px 0;"><strong>Delivery Address:</strong> ${details.deliveryLocation || 'Warehouse'}</p>
-                  <p style="margin: 4px 0;"><strong>Validity:</strong> 7 Days from date of issuance</p>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; font-size: 11px; color: #334155;">
+                  <p style="margin: 0 0 4px 0;"><strong>Payment Terms:</strong> ${details.paymentTerms || '30 Days Credit'}</p>
+                  <p style="margin: 0;"><strong>Delivery Address:</strong> ${details.deliveryLocation || 'Warehouse'}</p>
                 </div>
 
-                <p style="margin-top: 24px; font-size: 12px; color: #64748b; text-align: center;">
-                  To confirm this order, please issue your Purchase Order (PO) or reply to this email.
-                </p>
+                <div style="margin-top: 16px; text-align: center; padding: 14px; background: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe;">
+                  <p style="margin: 0; font-size: 13px; font-weight: bold; color: #1e40af;">Ready to Confirm This Order?</p>
+                  <p style="margin: 4px 0 0 0; font-size: 12px; color: #3b82f6;">Please reply to this email with your Purchase Order (PO) or confirmation.</p>
+                </div>
               </div>
             </div>
           `;
