@@ -11,8 +11,8 @@
   "scripts": {
     "prebuild": "rimraf dist",
     "postinstall": "prisma generate",
-    "build": "nest build --builder swc",
-    "start": "nest start --builder swc",
+    "build": "rimraf dist && nest build",
+    "start": "nest start",
     "start:dev": "nest build --webpack --webpackPath webpack-hmr.config.js --watch",
     "dev": "pnpm run start:dev",
     "start:debug": "nest start --debug --watch",
