@@ -23,9 +23,18 @@ export class InquiriesService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (filters?.status) query = query.eq('status', filters.status);
-      if (filters?.from) query = query.gte('created_at', filters.from);
-      if (filters?.to) query = query.lte('created_at', filters.to);
+      if (filters?.from) {
+        const fromDate = filters.from.includes('T')
+          ? filters.from
+          : `${filters.from}T00:00:00.000Z`;
+        query = query.gte('created_at', fromDate);
+      }
+      if (filters?.to) {
+        const toDate = filters.to.includes('T')
+          ? filters.to
+          : `${filters.to}T23:59:59.999Z`;
+        query = query.lte('created_at', toDate);
+      }
 
       if (filters?.salespersonPhone) {
         const cleanDigits = filters.salespersonPhone.replace(/\D/g, '');
