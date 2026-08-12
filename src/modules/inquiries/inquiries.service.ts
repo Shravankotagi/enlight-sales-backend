@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
 @Injectable()
@@ -80,11 +81,19 @@ export class InquiriesService {
     }
   }
 
-  async updateStatus(id: string, status: string) {
+  async updateStatus(id: string, status: string, details?: any) {
     try {
+      const updatePayload: any = { status };
+      if (details) {
+        if (details.companyName) updatePayload.sender_name = details.companyName;
+        if (details.customerPhone) updatePayload.sender_phone = details.customerPhone;
+        if (details.requirement) updatePayload.raw_text = details.requirement;
+        updatePayload.ai_extraction_json = details;
+      }
+
       const { data, error } = await this.supabase
         .from('inquiries')
-        .update({ status })
+        .update(updatePayload)
         .eq('id', id)
         .select()
         .single();

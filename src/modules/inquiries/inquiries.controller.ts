@@ -70,9 +70,9 @@ export class InquiriesController {
   @HttpCode(HttpStatus.OK)
   async updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: string },
+    @Body() body: { status: string; details?: any },
   ) {
-    return this.inquiriesService.updateStatus(id, body.status);
+    return this.inquiriesService.updateStatus(id, body.status, body.details);
   }
 
   @Post()
@@ -81,7 +81,6 @@ export class InquiriesController {
   }
 
   @Post('send-quotation/:id')
-  @Post(':id/send-quotation')
   async sendQuotation(@Param('id') id: string, @Body() body: any) {
     return this.inquiriesService.sendQuotation(id, body);
   }
