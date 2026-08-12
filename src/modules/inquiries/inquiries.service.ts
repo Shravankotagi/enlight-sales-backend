@@ -137,7 +137,12 @@ export class InquiriesService {
   async createInquiry(data: any, salespersonPhone?: string) {
     const now = new Date();
     const nowIso = now.toISOString();
-    const payload = {
+
+    if (data && typeof data === 'object') {
+      delete data.inquiry_type;
+    }
+
+    const payload: any = {
       sender_name: data.sender_name || data.customer_name || 'Web Customer',
       sender_phone:
         data.sender_phone || data.customer_phone || salespersonPhone || '',
@@ -155,6 +160,8 @@ export class InquiriesService {
       },
       created_at: nowIso,
     };
+
+    delete payload.inquiry_type;
 
     const { data: created, error } = await this.supabase
       .from('inquiries')
