@@ -79,4 +79,9 @@ export class InquiriesController {
   async createInquiry(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.inquiriesService.createInquiry(body, employee.phone);
   }
+
+  @Post(':id/send-quotation')
+  async sendQuotation(@Param('id') id: string, @Body() body: any) {
+    return this.inquiriesService.sendQuotation(id, body);
+  }
 }

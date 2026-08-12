@@ -169,4 +169,120 @@ export class InquiriesService {
 
     return created;
   }
+
+  async sendQuotation(id: string, payload: any) {
+    try {
+      // 1. Fetch inquiry
+      const { data: inquiry, error: inqErr } = await this.supabase
+        .from('inquiries')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (inqErr) throw inqErr;
+
+      const customerEmail = payload.customer_email || 'customer@example.com';
+      const customerName =
+        payload.customer_name || inquiry.customer_name || 'Valued Customer';
+      const details = payload.details || {};
+      const resendApiKey = process.env.RESEND_API_KEY;
+
+      let emailSent = false;
+      let emailNotice = '';
+
+      if (resendApiKey) {
+        try {
+          const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; background: #ffffff;">
+              <div style="text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px;">
+                <h2 style="color: #1e3a8a; margin: 0;">ENLIGHT METALS PRIVATE LIMITED</h2>
+                <p style="color: #64748b; font-size: 12px; margin-top: 4px;">Official Commercial Quotation & Material Proposal</p>
+              </div>
+              <div style="margin-top: 20px;">
+                <p style="font-size: 14px; color: #334155;">Dear <strong>${customerName}</strong>,</p>
+                <p style="font-size: 13px; color: #475569;">Thank you for your inquiry. Please find below our official price quotation for your steel requirements:</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px;">
+                  <thead>
+                    <tr style="background: #0f172a; color: #ffffff;">
+                      <th style="padding: 10px; text-align: left;">Product</th>
+                      <th style="padding: 10px; text-align: left;">Spec / Form</th>
+                      <th style="padding: 10px; text-align: right;">Qty (MT)</th>
+                      <th style="padding: 10px; text-align: right;">Rate (₹/MT)</th>
+                      <th style="padding: 10px; text-align: right;">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="border-bottom: 1px solid #cbd5e1;">
+                      <td style="padding: 10px; font-weight: bold; color: #0f172a;">${details.productType || 'Steel Material'}</td>
+                      <td style="padding: 10px; color: #475569;">${details.productForm || 'Coil'} (${details.thickness || ''} ${details.width || ''})</td>
+                      <td style="padding: 10px; text-align: right; font-weight: bold; color: #2563eb;">${details.quantityTons || 30} MT</td>
+                      <td style="padding: 10px; text-align: right;">₹${Number(details.unitPrice || 62000).toLocaleString('en-IN')}</td>
+                      <td style="padding: 10px; text-align: right; font-weight: bold; color: #059669;">₹${Number(details.totalAmount || 1860000).toLocaleString('en-IN')}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div style="margin-top: 20px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 12px; color: #334155;">
+                  <p style="margin: 4px 0;"><strong>Payment Terms:</strong> ${details.paymentTerms || '30 Days Credit'}</p>
+                  <p style="margin: 4px 0;"><strong>Delivery Address:</strong> ${details.deliveryLocation || 'Warehouse'}</p>
+                  <p style="margin: 4px 0;"><strong>Validity:</strong> 7 Days from date of issuance</p>
+                </div>
+
+                <p style="margin-top: 24px; font-size: 12px; color: #64748b; text-align: center;">
+                  To confirm this order, please issue your Purchase Order (PO) or reply to this email.
+                </p>
+              </div>
+            </div>
+          `;
+
+          const resendRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: 'Enlight Metals Sales <sales@enlightmetals.com>',
+              to: [customerEmail],
+              subject: `Official Price Quotation for ${customerName} - Enlight Metals`,
+              html: htmlContent,
+            }),
+          });
+
+          const resendData = await resendRes.json();
+          if (resendRes.ok) {
+            emailSent = true;
+            emailNotice = `Live email dispatched to ${customerEmail} via Resend! (ID: ${resendData.id})`;
+          } else {
+            this.logger.warn('Resend API call error:', resendData);
+            emailNotice = `Quotation logged! Resend notice: ${resendData.message || 'Check RESEND_API_KEY domain verification.'}`;
+          }
+        } catch (rErr) {
+          this.logger.error('Resend fetch exception:', rErr);
+          emailNotice =
+            'Quotation logged! Add valid RESEND_API_KEY in backend .env to send live emails.';
+        }
+      } else {
+        emailNotice =
+          'Quotation generated & recorded! Add RESEND_API_KEY in backend .env to dispatch live emails.';
+      }
+
+      // Update inquiry status to quoted
+      await this.supabase
+        .from('inquiries')
+        .update({ status: 'quoted' })
+        .eq('id', id);
+
+      return {
+        success: true,
+        email_sent: emailSent,
+        message: emailNotice,
+        inquiry_id: id,
+      };
+    } catch (error) {
+      this.logger.error(`Error in sendQuotation for id ${id}:`, error);
+      throw error;
+    }
+  }
 }
