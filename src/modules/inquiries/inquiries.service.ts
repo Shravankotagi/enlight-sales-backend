@@ -237,11 +237,14 @@ export class InquiriesService {
 
           const htmlContent = `
             <div style="font-family: Arial, Helvetica, sans-serif; max-width: 680px; margin: 0 auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-              <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); padding: 24px; text-align: center; color: #ffffff;">
-                <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px;">ENLIGHT METALS PRIVATE LIMITED</h1>
-                <p style="margin: 4px 0 0 0; font-size: 12px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px;">Authorized B2B Metal Distributor &amp; Steel Processor</p>
-                <div style="margin-top: 12px; display: inline-block; background: #2563eb; color: #ffffff; padding: 4px 14px; border-radius: 20px; font-size: 11px; font-weight: bold;">
-                  OFFICIAL COMMERCIAL PRICE QUOTATION
+              <div style="background: #0f172a; position: relative;">
+                <img src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=1200&auto=format&fit=crop" alt="Enlight Metals Steel Processing Plant" style="width: 100%; height: 150px; object-fit: cover; opacity: 0.88; display: block; border-bottom: 3px solid #2563eb;" />
+                <div style="padding: 20px 24px; background: linear-gradient(180deg, #0f172a 0%, #1e3a8a 100%); text-align: center; color: #ffffff;">
+                  <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px; color: #ffffff;">ENLIGHT METALS PRIVATE LIMITED</h1>
+                  <p style="margin: 4px 0 0 0; font-size: 11px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Authorized B2B Metal Distributor &amp; Steel Processor</p>
+                  <div style="margin-top: 12px; display: inline-block; background: #2563eb; color: #ffffff; padding: 5px 16px; border-radius: 20px; font-size: 11px; font-weight: bold; box-shadow: 0 2px 6px rgba(37,99,235,0.4);">
+                    OFFICIAL COMMERCIAL PRICE QUOTATION
+                  </div>
                 </div>
               </div>
 
