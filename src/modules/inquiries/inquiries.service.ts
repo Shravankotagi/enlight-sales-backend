@@ -142,10 +142,16 @@ export class InquiriesService {
         data.sender_phone || data.customer_phone || salespersonPhone || '',
       salesperson_phone: salespersonPhone || '910000000000',
       raw_text: data.raw_text || data.requirement || '',
-      inquiry_type: data.inquiry_type || 'Product Requirement',
       status: data.status || 'review',
       overall_confidence: Number(data.overall_confidence) || 0.95,
       source_channel: 'web_dashboard',
+      ai_extraction_json: {
+        inquiry_type: data.inquiry_type || 'Product Requirement',
+        customer: {
+          name: data.sender_name || data.customer_name || 'Web Customer',
+          phone: data.sender_phone || data.customer_phone || '',
+        },
+      },
       created_at: now,
     };
 
@@ -163,7 +169,7 @@ export class InquiriesService {
       salesperson_phone: salespersonPhone || '910000000000',
       customer_name: payload.sender_name,
       action: 'inquiry_logged',
-      details: `Logged inquiry: ${payload.inquiry_type} - "${payload.raw_text.substring(0, 50)}"`,
+      details: `Logged inquiry: "${payload.raw_text.substring(0, 50)}"`,
       created_at: now,
     });
 
