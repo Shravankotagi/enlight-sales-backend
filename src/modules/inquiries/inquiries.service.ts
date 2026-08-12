@@ -186,6 +186,8 @@ export class InquiriesService {
         payload.customer_name || inquiry.customer_name || 'Valued Customer';
       const details = payload.details || {};
       const resendApiKey = process.env.RESEND_API_KEY;
+      const fromEmail =
+        process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
       let emailSent = false;
       let emailNotice = '';
@@ -243,7 +245,7 @@ export class InquiriesService {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              from: 'Enlight Metals Sales <sales@enlightmetals.com>',
+              from: `Enlight Metals <${fromEmail}>`,
               to: [customerEmail],
               subject: `Official Price Quotation for ${customerName} - Enlight Metals`,
               html: htmlContent,
