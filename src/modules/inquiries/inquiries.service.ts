@@ -258,12 +258,11 @@ export class InquiriesService {
             emailNotice = `Live email dispatched to ${customerEmail} via Resend! (ID: ${resendData.id})`;
           } else {
             this.logger.warn('Resend API call error:', resendData);
-            emailNotice = `Quotation logged! Resend notice: ${resendData.message || 'Check RESEND_API_KEY domain verification.'}`;
+            emailNotice = `Resend Notice: ${resendData.message || 'Check recipient email or domain verification.'}`;
           }
-        } catch (rErr) {
+        } catch (rErr: any) {
           this.logger.error('Resend fetch exception:', rErr);
-          emailNotice =
-            'Quotation logged! Add valid RESEND_API_KEY in backend .env to send live emails.';
+          emailNotice = `Quotation logged! ${rErr.message || 'Add valid RESEND_API_KEY to send live emails.'}`;
         }
       } else {
         emailNotice =
