@@ -1559,14 +1559,21 @@ export class KraService {
     if (error) throw error;
 
     // Log to kra_logs (KRA 8)
-    await this.supabase.from('kra_logs').insert({
-      kra_number: 8,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_name: data.customer_name,
-      action: 'complaint_logged',
-      details: `Logged complaint: ${data.complaint_type} for ${data.affected_product || 'product'}`,
-      created_at: reported_at,
-    });
+    try {
+      const now = new Date(reported_at);
+      await this.supabase.from('kra_logs').insert({
+        kra_number: 8,
+        kra_type: 'complaint_logged',
+        description: `Logged complaint: ${data.complaint_type} for ${data.affected_product || 'product'}`,
+        salesperson_phone: salespersonPhone || '910000000000',
+        customer_name: data.customer_name,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+        created_at: reported_at,
+      });
+    } catch (kraErr: any) {
+      this.logger.warn('Non-blocking kra_logs complaint insert notice:', kraErr?.message);
+    }
 
     return created;
   }
@@ -1684,14 +1691,21 @@ export class KraService {
     if (error) throw error;
 
     // Log to kra_logs (KRA 9)
-    await this.supabase.from('kra_logs').insert({
-      kra_number: 9,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_name: data.customer_name,
-      action: 'visit_logged',
-      details: `Visited ${data.customer_name} (${data.person_met}) - Outcome: ${data.outcome}`,
-      created_at: visited_at,
-    });
+    try {
+      const now = new Date(visited_at);
+      await this.supabase.from('kra_logs').insert({
+        kra_number: 9,
+        kra_type: 'visit_logged',
+        description: `Visited ${data.customer_name} (${data.person_met}) - Outcome: ${data.outcome}`,
+        salesperson_phone: salespersonPhone || '910000000000',
+        customer_name: data.customer_name,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+        created_at: visited_at,
+      });
+    } catch (kraErr: any) {
+      this.logger.warn('Non-blocking kra_logs visit insert notice:', kraErr?.message);
+    }
 
     return created;
   }
