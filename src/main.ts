@@ -57,7 +57,9 @@ async function bootstrap() {
 
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  await app.listen(4000, '0.0.0.0');
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+  await app.listen(port, '0.0.0.0');
+  console.log(`[DeployCheck] Backend running on port ${port} | Build: v2026-08-12-1710`);
 
   if (module.hot) {
     module.hot.accept();
