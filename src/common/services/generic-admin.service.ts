@@ -99,7 +99,7 @@ export abstract class BaseAdminService<
     const { data, error } = await this.supabaseService
       .getAdminClient()
       .from(this.tableName)
-      .insert(dto)
+      .insert(dto as any)
       .select('*')
       .single();
 
@@ -115,7 +115,7 @@ export abstract class BaseAdminService<
     const { data, error } = await this.supabaseService
       .getAdminClient()
       .from(this.tableName)
-      .update(dto)
+      .update(dto as any)
       .eq('id', id)
       .select('*')
       .single();

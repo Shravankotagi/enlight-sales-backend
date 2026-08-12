@@ -283,13 +283,66 @@ export class InquiriesService {
                   <p style="margin: 0;"><strong>Delivery Address:</strong> ${details.deliveryLocation || 'Warehouse'}</p>
                 </div>
 
-                <div style="margin-top: 16px; text-align: center; padding: 14px; background: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe;">
-                  <p style="margin: 0; font-size: 13px; font-weight: bold; color: #1e40af;">Ready to Confirm This Order?</p>
-                  <p style="margin: 4px 0 0 0; font-size: 12px; color: #3b82f6;">Please reply to this email with your Purchase Order (PO) or confirmation.</p>
                 </div>
               </div>
             </div>
           `;
+
+          const pdfStream = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+6 0 obj << /Length 1200 >> stream
+BT /F1 18 Tf 50 740 Td (ENLIGHT METALS PRIVATE LIMITED) Tj ET
+BT /F2 10 Tf 50 722 Td (Authorized B2B Metal Distributor & Steel Processor) Tj ET
+BT /F1 12 Tf 50 690 Td (OFFICIAL COMMERCIAL PRICE QUOTATION) Tj ET
+BT /F2 10 Tf 50 670 Td (Ref #: ${qRefNum}) Tj ET
+BT /F2 10 Tf 380 670 Td (Date: ${todayDateStr}) Tj ET
+BT /F1 11 Tf 50 640 Td (QUOTATION TO: ${customerName}) Tj ET
+BT /F2 10 Tf 50 625 Td (Email: ${customerEmail}) Tj ET
+
+BT /F1 10 Tf 50 585 Td (QTY) Tj ET
+BT /F1 10 Tf 120 585 Td (MATERIAL DESCRIPTION) Tj ET
+BT /F1 10 Tf 340 585 Td (UNIT RATE) Tj ET
+BT /F1 10 Tf 460 585 Td (AMOUNT (RS)) Tj ET
+
+BT /F2 10 Tf 50 565 Td (${details.quantityTons || 30} MT) Tj ET
+BT /F1 10 Tf 120 565 Td (${details.productType || 'Steel Material'}) Tj ET
+BT /F2 9 Tf 120 550 Td (Form: ${details.productForm || 'Coil'} | Spec: ${details.thickness || '2.0 mm'} ${details.width ? 'x ' + details.width : ''}) Tj ET
+BT /F2 10 Tf 340 565 Td (Rs. ${unitRateStr} / MT) Tj ET
+BT /F1 10 Tf 460 565 Td (Rs. ${totalAmtStr}) Tj ET
+
+BT /F2 10 Tf 300 510 Td (Subtotal Amount:) Tj ET
+BT /F2 10 Tf 460 510 Td (Rs. ${totalAmtStr}) Tj ET
+BT /F2 10 Tf 300 490 Td (GST @ 18%:) Tj ET
+BT /F2 10 Tf 460 490 Td (Rs. ${gstAmt.toLocaleString('en-IN')}) Tj ET
+BT /F1 11 Tf 300 465 Td (Grand Total:) Tj ET
+BT /F1 11 Tf 460 465 Td (Rs. ${grandTotalAmt.toLocaleString('en-IN')}) Tj ET
+
+BT /F1 10 Tf 50 420 Td (COMMERCIAL TERMS & CONDITIONS) Tj ET
+BT /F2 10 Tf 50 400 Td (Payment Terms: ${details.paymentTerms || '30 Days Credit'}) Tj ET
+BT /F2 10 Tf 50 380 Td (Delivery Location: ${details.deliveryLocation || 'Warehouse'}) Tj ET
+BT /F2 10 Tf 50 360 Td (Validity: 7 Days from date of issuance) Tj ET
+
+BT /F2 9 Tf 150 300 Td (This is an officially generated commercial price quotation document.) Tj ET
+endstream endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000252 00000 n 
+0000000319 00000 n 
+0000000381 00000 n 
+trailer << /Size 7 /Root 1 0 R >>
+startxref
+1650
+%%EOF`;
+
+          const pdfBase64 = Buffer.from(pdfStream).toString('base64');
 
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -300,15 +353,21 @@ export class InquiriesService {
             body: JSON.stringify({
               from: `Enlight Metals <${fromEmail}>`,
               to: [customerEmail],
-              subject: `Official Price Quotation for ${customerName} - Enlight Metals`,
+              subject: `Official Commercial Quotation ${qRefNum} - ${customerName}`,
               html: htmlContent,
+              attachments: [
+                {
+                  filename: `Official_Quotation_${qRefNum}.pdf`,
+                  content: pdfBase64,
+                },
+              ],
             }),
           });
 
           const resendData = await resendRes.json();
           if (resendRes.ok) {
             emailSent = true;
-            emailNotice = `Live email dispatched to ${customerEmail} via Resend! (ID: ${resendData.id})`;
+            emailNotice = `Live email & PDF Quotation (${qRefNum}.pdf) dispatched to ${customerEmail} via Resend!`;
           } else {
             this.logger.warn('Resend API call error:', resendData);
             emailNotice = `Resend Notice: ${resendData.message || 'Check recipient email or domain verification.'}`;

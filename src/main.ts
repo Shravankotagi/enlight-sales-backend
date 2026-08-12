@@ -47,7 +47,7 @@ async function bootstrap() {
 
   // Setup Swagger
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  await app.register(fastifySwagger, {
+  await app.register(fastifySwagger as any, {
     mode: 'static',
     specification: {
       document: document as OpenAPIV3.Document,

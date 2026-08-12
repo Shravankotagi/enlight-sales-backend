@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # compiled output
 /dist
 /node_modules
@@ -58,3 +59,11 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Compodoc
 documentation
+=======
+node_modules/
+.env
+.env.local
+.zoho_token_cache.json
+fields_dump.json
+layout_dump.json
+>>>>>>> 49ca9295b7315c9ca6e9d13055b0648e3bd959e0
