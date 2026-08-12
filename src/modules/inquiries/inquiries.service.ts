@@ -135,7 +135,8 @@ export class InquiriesService {
   }
 
   async createInquiry(data: any, salespersonPhone?: string) {
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
     const payload = {
       sender_name: data.sender_name || data.customer_name || 'Web Customer',
       sender_phone:
@@ -152,7 +153,7 @@ export class InquiriesService {
           phone: data.sender_phone || data.customer_phone || '',
         },
       },
-      created_at: now,
+      created_at: nowIso,
     };
 
     const { data: created, error } = await this.supabase
@@ -163,15 +164,21 @@ export class InquiriesService {
 
     if (error) throw error;
 
-    // Log to kra_logs (KRA 4)
-    await this.supabase.from('kra_logs').insert({
-      kra_number: 4,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_name: payload.sender_name,
-      action: 'inquiry_logged',
-      details: `Logged inquiry: "${payload.raw_text.substring(0, 50)}"`,
-      created_at: now,
-    });
+    // Log to kra_logs (KRA 4) safely without blocking inquiry creation
+    try {
+      await this.supabase.from('kra_logs').insert({
+        kra_number: 4,
+        kra_type: 'inquiry_logged',
+        description: `Logged inquiry: "${payload.raw_text.substring(0, 50)}"`,
+        salesperson_phone: salespersonPhone || '910000000000',
+        customer_name: payload.sender_name,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+        created_at: nowIso,
+      });
+    } catch (kraErr: any) {
+      this.logger.warn('Non-blocking kra_logs insert notice:', kraErr?.message);
+    }
 
     return created;
   }
