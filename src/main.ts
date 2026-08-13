@@ -3,33 +3,25 @@ import { AppModule } from './app.module';
 import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './config/swagger.config';
 import { ValidationPipe } from '@nestjs/common';
-import {
-  FastifyAdapter,
-  NestFastifyApplication,
-} from '@nestjs/platform-fastify';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { CustomLoggerService } from './common/services/logger.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import fastifySwagger from '@fastify/swagger';
-import { OpenAPIV3 } from 'openapi-types';
 
 declare const module: any;
 
 async function bootstrap() {
-  // Create Fastify instance
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter(),
-    {
-      logger: ['error', 'warn', 'log', 'debug', 'verbose'],
-    },
-  );
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+  });
 
   const logger = app.get(CustomLoggerService);
 
-  // Enable CORS
-  app.enableCors();
+  // Enable CORS for all origins
+  app.enableCors({
+    origin: '*',
+    credentials: true,
+  });
 
   // Apply global interceptors
   app.useGlobalInterceptors(
@@ -48,12 +40,6 @@ async function bootstrap() {
   // Setup Swagger safely
   try {
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    await app.register(fastifySwagger as any, {
-      mode: 'static',
-      specification: {
-        document: document as OpenAPIV3.Document,
-      },
-    });
     SwaggerModule.setup('api/docs', app, document);
   } catch (swgErr: any) {
     console.warn('[Swagger] Setup notice (non-fatal):', swgErr?.message || swgErr);
@@ -63,7 +49,7 @@ async function bootstrap() {
 
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
   await app.listen(port, '0.0.0.0');
-  console.log(`[DeployCheck] Backend running on port ${port} | Build: v2026-08-13-1032`);
+  console.log(`[DeployCheck] Express Backend running on port ${port} | v2026-08-13-1034`);
 
   if (module.hot) {
     module.hot.accept();
