@@ -2,14 +2,18 @@
  * Migration: Add missing columns to followup_tasks table
  * Run once: node scripts/migrate_followup_tasks.js
  */
-require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
+require('dotenv').config({
+  path: require('path').resolve(__dirname, '../.env'),
+});
+require('dotenv').config({
+  path: require('path').resolve(__dirname, '../../.env'),
+});
 
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
 );
 
 async function migrate() {
@@ -43,7 +47,10 @@ async function migrate() {
   if (error) {
     console.error('Verification failed:', error.message);
   } else {
-    console.log('\n✅ Migration complete. Sample columns:', data.length > 0 ? Object.keys(data[0]) : 'No rows yet — table is ready');
+    console.log(
+      '\n✅ Migration complete. Sample columns:',
+      data.length > 0 ? Object.keys(data[0]) : 'No rows yet — table is ready',
+    );
   }
 }
 

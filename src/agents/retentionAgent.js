@@ -24,7 +24,6 @@
 
 const { supabase } = require('../supabase');
 
-
 const RETENTION_AGENT_PROMPT = `
 You are the Specialized Customer Retention AI Agent (KRA 3) for Enlight Metals, a B2B metal distributor.
 Your job is to parse customer follow-up reports, re-order inquiries, or client check-in notes.
@@ -79,7 +78,7 @@ async function getExistingFollowupTask(customerName, senderPhone) {
     .order('created_at', { ascending: false })
     .limit(1);
 
-  return (data && data.length > 0) ? data[0] : null;
+  return data && data.length > 0 ? data[0] : null;
 }
 
 /**
@@ -94,8 +93,10 @@ async function getLinkedDeal(customerName, senderPhone) {
       .eq('salesperson_phone', senderPhone)
       .order('created_at', { ascending: false })
       .limit(1);
-    return (data && data.length > 0) ? data[0] : null;
-  } catch { return null; }
+    return data && data.length > 0 ? data[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -122,10 +123,10 @@ async function ensureCustomerExists(customerName, senderPhone) {
     const { data: newRec } = await supabase
       .from('recurring_customers')
       .insert({
-        customer_name:              customerName,
+        customer_name: customerName,
         assigned_salesperson_phone: senderPhone,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
+        is_active: true,
+        avg_order_frequency_days: 30,
       })
       .select('id')
       .single();
@@ -141,10 +142,14 @@ async function processRetentionMessage(text, senderPhone) {
       new SystemMessage(RETENTION_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
+    const rawText =
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content || '');
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
-    if (!data) throw new Error('Could not parse retention JSON from LLM response');
+    if (!data)
+      throw new Error('Could not parse retention JSON from LLM response');
 
     // Edge Case 4: Missing customer name
     if (!data.customer_name) {
@@ -154,39 +159,55 @@ async function processRetentionMessage(text, senderPhone) {
     const customerName = data.customer_name.trim();
 
     // Verify official customer name
-    const { verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
+    const {
+      verifyAndGetCustomerName,
+      saveActiveSession,
+    } = require('../supabase');
 
-    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(
+      customerName,
+      senderPhone,
+    );
     let isNewProspect = false;
 
     if (!officialCustomerName) {
       // Auto-create prospect instead of rejecting
       isNewProspect = true;
-      const { error: insertError } = await supabase.from('recurring_customers').insert({
-        customer_name:              customerName,
-        assigned_salesperson_phone: senderPhone,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
-      });
+      const { error: insertError } = await supabase
+        .from('recurring_customers')
+        .insert({
+          customer_name: customerName,
+          assigned_salesperson_phone: senderPhone,
+          is_active: true,
+          avg_order_frequency_days: 30,
+        });
       if (!insertError) {
-        console.log(`[RetentionAgent] Auto-created new prospect: ${customerName}`);
+        console.log(
+          `[RetentionAgent] Auto-created new prospect: ${customerName}`,
+        );
       }
       officialCustomerName = customerName;
     }
 
-    const finalCustomerName     = officialCustomerName;
-    const followupSummary       = data.followup_summary       || 'Routine check-in';
-    const followupStatus        = data.followup_status        || 'routine_checkin';
-    const reorderExpected       = !!data.reorder_expected;
+    const finalCustomerName = officialCustomerName;
+    const followupSummary = data.followup_summary || 'Routine check-in';
+    const followupStatus = data.followup_status || 'routine_checkin';
+    const reorderExpected = !!data.reorder_expected;
     const orderExpectedTimeline = data.order_expected_timeline || null;
-    const previousQuoteLinked   = !!data.previous_quotation_mentioned;
-    const isChurned             = !!data.is_churned && !reorderExpected;
-    const followupDays          = Number(data.followup_days) || (reorderExpected ? 7 : 14);
+    const previousQuoteLinked = !!data.previous_quotation_mentioned;
+    const isChurned = !!data.is_churned && !reorderExpected;
+    const followupDays =
+      Number(data.followup_days) || (reorderExpected ? 7 : 14);
 
     // Calculate scheduled follow-up date
-    const followupDate = new Date(Date.now() + followupDays * 24 * 60 * 60 * 1000);
+    const followupDate = new Date(
+      Date.now() + followupDays * 24 * 60 * 60 * 1000,
+    );
     const followupDateStr = followupDate.toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Kolkata',
     });
 
     // Edge Case 5: Ensure customer exists
@@ -201,7 +222,7 @@ async function processRetentionMessage(text, senderPhone) {
     if (previousQuoteLinked) {
       const linkedDeal = await getLinkedDeal(finalCustomerName, senderPhone);
       if (linkedDeal) {
-        linkedDealId     = linkedDeal.id;
+        linkedDealId = linkedDeal.id;
         linkedDealAmount = linkedDeal.total_amount;
       }
     }
@@ -216,9 +237,9 @@ async function processRetentionMessage(text, senderPhone) {
       await supabase
         .from('followup_tasks')
         .update({
-          status:           'closed',
-          followup_status:  'churned',
-          resolved_at:      new Date().toISOString(),
+          status: 'closed',
+          followup_status: 'churned',
+          resolved_at: new Date().toISOString(),
           resolution_notes: followupSummary,
         })
         .ilike('customer_name', `%${finalCustomerName}%`)
@@ -227,34 +248,39 @@ async function processRetentionMessage(text, senderPhone) {
 
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
-        kra_number:        3,
-        kra_type:          'customer_churned',
-        customer_name:     finalCustomerName,
-        description:       `Churn Detected: ${finalCustomerName} — ${followupSummary}`,
+        kra_number: 3,
+        kra_type: 'customer_churned',
+        customer_name: finalCustomerName,
+        description: `Churn Detected: ${finalCustomerName} — ${followupSummary}`,
         month: new Date().getMonth() + 1,
-        year:  new Date().getFullYear(),
+        year: new Date().getFullYear(),
       });
 
-      return `⚠️ *KRA 3 - Churn Signal Logged*\n\n` +
+      return (
+        `⚠️ *KRA 3 - Churn Signal Logged*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Status: *Marked Inactive — No Further Orders Expected*\n` +
         (followupSummary ? `Note: ${followupSummary}\n` : '') +
-        `\nCustomer flagged in Retention Dashboard. 📉`;
+        `\nCustomer flagged in Retention Dashboard. 📉`
+      );
     }
 
     // ── Normal follow-up path ─────────────────────────────────────────────────
     const taskStatus = reorderExpected ? 'reorder_expected' : 'pending';
 
     const taskPayload = {
-      status:                   taskStatus,
-      followup_status:          followupStatus,
-      resolution_notes:         followupSummary,
-      order_expected_timeline:  orderExpectedTimeline,
-      next_followup_date:       followupDate.toISOString(),
-      linked_deal_id:           linkedDealId,
+      status: taskStatus,
+      followup_status: followupStatus,
+      resolution_notes: followupSummary,
+      order_expected_timeline: orderExpectedTimeline,
+      next_followup_date: followupDate.toISOString(),
+      linked_deal_id: linkedDealId,
     };
 
-    const existingTask = await getExistingFollowupTask(finalCustomerName, senderPhone);
+    const existingTask = await getExistingFollowupTask(
+      finalCustomerName,
+      senderPhone,
+    );
 
     if (existingTask) {
       // Update existing task — increment follow_up_count, try with new columns first
@@ -263,39 +289,44 @@ async function processRetentionMessage(text, senderPhone) {
         .update({
           ...taskPayload,
           follow_up_count: (Number(existingTask.follow_up_count) || 0) + 1,
-          updated_at:      new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .eq('id', existingTask.id);
 
       if (updateResult.error) {
         // Fallback: update only safe columns (migration may not have run yet)
-        await supabase.from('followup_tasks').update({
-          status:           taskStatus,
-          resolution_notes: followupSummary,
-          follow_up_count:  (Number(existingTask.follow_up_count) || 0) + 1,
-        }).eq('id', existingTask.id);
+        await supabase
+          .from('followup_tasks')
+          .update({
+            status: taskStatus,
+            resolution_notes: followupSummary,
+            follow_up_count: (Number(existingTask.follow_up_count) || 0) + 1,
+          })
+          .eq('id', existingTask.id);
       }
     } else {
       // Create new task — try with all new columns first
       const insertResult = await supabase.from('followup_tasks').insert({
-        task_type:                reorderExpected ? 'reorder_followup' : 'retention_followup',
-        customer_name:            finalCustomerName,
-        salesperson_phone:        senderPhone,
-        follow_up_count:          1,
-        due_date:                 followupDate.toISOString(),
+        task_type: reorderExpected ? 'reorder_followup' : 'retention_followup',
+        customer_name: finalCustomerName,
+        salesperson_phone: senderPhone,
+        follow_up_count: 1,
+        due_date: followupDate.toISOString(),
         ...taskPayload,
       });
 
       if (insertResult.error) {
         // Fallback: insert only safe columns
         await supabase.from('followup_tasks').insert({
-          task_type:         reorderExpected ? 'reorder_followup' : 'retention_followup',
-          customer_name:     finalCustomerName,
+          task_type: reorderExpected
+            ? 'reorder_followup'
+            : 'retention_followup',
+          customer_name: finalCustomerName,
           salesperson_phone: senderPhone,
-          status:            taskStatus,
-          resolution_notes:  followupSummary,
-          follow_up_count:   1,
-          due_date:          followupDate.toISOString(),
+          status: taskStatus,
+          resolution_notes: followupSummary,
+          follow_up_count: 1,
+          due_date: followupDate.toISOString(),
         });
       }
     }
@@ -308,18 +339,22 @@ async function processRetentionMessage(text, senderPhone) {
       `Next follow-up: ${followupDateStr}`,
       linkedDealId && linkedDealAmount && Number(linkedDealAmount) > 0
         ? `Linked deal: ₹${Number(linkedDealAmount).toLocaleString('en-IN')}`
-        : linkedDealId ? `Linked deal: No amount recorded` : null,
+        : linkedDealId
+          ? `Linked deal: No amount recorded`
+          : null,
       `Notes: ${followupSummary}`,
-    ].filter(Boolean).join(' | ');
+    ]
+      .filter(Boolean)
+      .join(' | ');
 
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
-      kra_number:        3,
-      kra_type:          'customer_retention',
-      customer_name:     finalCustomerName,
-      description:       kraDescription,
+      kra_number: 3,
+      kra_type: 'customer_retention',
+      customer_name: finalCustomerName,
+      description: kraDescription,
       month: new Date().getMonth() + 1,
-      year:  new Date().getFullYear(),
+      year: new Date().getFullYear(),
     });
 
     // Count this month's follow-ups
@@ -335,31 +370,38 @@ async function processRetentionMessage(text, senderPhone) {
     const followupCount = monthlyLogs ? monthlyLogs.length : 1;
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
-    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+    const missingPrompt = await getCustomerMissingInfoPrompt(
+      finalCustomerName,
+      senderPhone,
+    );
 
     // Status display map
     const statusLabels = {
       reviewing_quotation: '📄 Reviewing Quotation',
-      awaiting_decision:   '⏳ Awaiting Decision',
-      reorder_confirmed:   '✅ Reorder Confirmed',
-      price_negotiation:   '💬 Price Negotiation',
-      site_visit_pending:  '🏭 Site Visit Pending',
-      payment_pending:     '💰 Payment Pending',
-      routine_checkin:     '📞 Routine Check-in',
+      awaiting_decision: '⏳ Awaiting Decision',
+      reorder_confirmed: '✅ Reorder Confirmed',
+      price_negotiation: '💬 Price Negotiation',
+      site_visit_pending: '🏭 Site Visit Pending',
+      payment_pending: '💰 Payment Pending',
+      routine_checkin: '📞 Routine Check-in',
     };
 
-    return `🔄 *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
+    return (
+      `🔄 *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Status: *${statusLabels[followupStatus] || followupStatus}*\n` +
       `Summary: ${followupSummary}\n` +
-      (orderExpectedTimeline ? `📅 Order Expected: *${orderExpectedTimeline}*\n` : '') +
+      (orderExpectedTimeline
+        ? `📅 Order Expected: *${orderExpectedTimeline}*\n`
+        : '') +
       (linkedDealId && linkedDealAmount && Number(linkedDealAmount) > 0
         ? `🔗 Linked Deal: *₹${Number(linkedDealAmount).toLocaleString('en-IN')}*\n`
         : '') +
       `📌 Next Follow-up Scheduled: *${followupDateStr}* (${followupDays} days)\n` +
       `Monthly Follow-ups: *${followupCount} logged this month*\n\n` +
-      `Updated KRA 3 Customer Retention Dashboard! ✅` + (missingPrompt || '');
-
+      `Updated KRA 3 Customer Retention Dashboard! ✅` +
+      (missingPrompt || '')
+    );
   } catch (error) {
     console.error('Retention Agent Error:', error.message);
     return `⚠️ Could not process retention update: ${error.message}`;

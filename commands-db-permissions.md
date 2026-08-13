@@ -7,6 +7,7 @@ npx prisma migrate dev --name grant_public_permissions --create-only
 ```
 
 ## Copy sql code to Prisma
+
 ```sql
 -- Grant usage on public schema
 GRANT USAGE ON SCHEMA public TO anon;
@@ -21,14 +22,14 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO anon;
 
 -- Make sure new tables get the same grants
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT ON TABLES TO anon;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-GRANT USAGE ON SEQUENCES TO authenticated, anon; 
+GRANT USAGE ON SEQUENCES TO authenticated, anon;
 ```
 
 ## Apply Migration
@@ -36,4 +37,3 @@ GRANT USAGE ON SEQUENCES TO authenticated, anon;
 ```bash
 npx prisma migrate deploy
 ```
-    

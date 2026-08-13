@@ -8,11 +8,26 @@
  * Primary Model: Google Gemini (gemini-3.1-flash-lite)
  */
 
-const { StateGraph, START, END, Annotation, MessagesAnnotation } = require('@langchain/langgraph');
-const { HumanMessage, SystemMessage, AIMessage, ToolMessage } = require('@langchain/core/messages');
-const { createTools }        = require('./tools');
+const {
+  StateGraph,
+  START,
+  END,
+  Annotation,
+  MessagesAnnotation,
+} = require('@langchain/langgraph');
+const {
+  HumanMessage,
+  SystemMessage,
+  AIMessage,
+  ToolMessage,
+} = require('@langchain/core/messages');
+const { createTools } = require('./tools');
 const { invokeWithFallback } = require('./modelRouter');
-const { getChatHistory, addChatHistory, getActiveContextPrompt } = require('./memory');
+const {
+  getChatHistory,
+  addChatHistory,
+  getActiveContextPrompt,
+} = require('./memory');
 
 // ── System Prompt — Senior Sales Operations Manager Persona & Few-Shot Examples ──
 
@@ -91,12 +106,18 @@ Updated Customer Master & Sales Pipeline! ✅
 
 const OrchestratorState = Annotation.Root({
   ...MessagesAnnotation.spec,
-  senderPhone:     Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
-  employeeName:    Annotation({ reducer: (x, y) => y ?? x, default: () => 'Salesperson' }),
-  messageType:     Annotation({ reducer: (x, y) => y ?? x, default: () => 'text' }),
-  imageBuffer:     Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
-  imageMimeType:   Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
-  toolsUsed:       Annotation({ reducer: (x, y) => [...(x || []), ...(y || [])], default: () => [] }),
+  senderPhone: Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
+  employeeName: Annotation({
+    reducer: (x, y) => y ?? x,
+    default: () => 'Salesperson',
+  }),
+  messageType: Annotation({ reducer: (x, y) => y ?? x, default: () => 'text' }),
+  imageBuffer: Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
+  imageMimeType: Annotation({ reducer: (x, y) => y ?? x, default: () => null }),
+  toolsUsed: Annotation({
+    reducer: (x, y) => [...(x || []), ...(y || [])],
+    default: () => [],
+  }),
 });
 
 // ── Deterministic Intent Anchor ───────────────────────────────────────────
@@ -107,19 +128,39 @@ function getDeterministicIntentHint(text) {
 
   const anchors = [];
 
-  if (/\b(payment|advance|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki|paid|amount received|payment collected)\b/i.test(lower)) {
+  if (
+    /\b(payment|advance|cheque|upi|neft|rtgs|invoice|balance|outstanding|baki|paid|amount received|payment collected)\b/i.test(
+      lower,
+    )
+  ) {
     anchors.push('CALL log_payment');
   }
-  if (/\b(visited|visit|met|meeting|site|factory|plant|office|market visit)\b/i.test(lower)) {
+  if (
+    /\b(visited|visit|met|meeting|site|factory|plant|office|market visit)\b/i.test(
+      lower,
+    )
+  ) {
     anchors.push('CALL log_customer_visit');
   }
-  if (/\b(complaint|defective|damaged|scratch|rust|quality|rejected|rejection|faulty)\b/i.test(lower)) {
+  if (
+    /\b(complaint|defective|damaged|scratch|rust|quality|rejected|rejection|faulty)\b/i.test(
+      lower,
+    )
+  ) {
     anchors.push('CALL log_complaint');
   }
-  if (/\b(requires|requirement|need|inquiry|quote|quotation|rfq|ton|mt|coil|plate|sheet|tmt|bar|hr|cr|ms)\b/i.test(lower)) {
+  if (
+    /\b(requires|requirement|need|inquiry|quote|quotation|rfq|ton|mt|coil|plate|sheet|tmt|bar|hr|cr|ms)\b/i.test(
+      lower,
+    )
+  ) {
     anchors.push('CALL update_deal_stage');
   }
-  if (/\b(won|lost|closed|confirmed|order placed|po received|deal done|finalized)\b/i.test(lower)) {
+  if (
+    /\b(won|lost|closed|confirmed|order placed|po received|deal done|finalized)\b/i.test(
+      lower,
+    )
+  ) {
     anchors.push('CALL update_deal_stage');
   }
 
@@ -148,39 +189,55 @@ function shouldContinue(state) {
  */
 async function runOrchestrator(text, senderPhone, options = {}) {
   const {
-    employeeName  = 'Salesperson',
-    messageType   = 'text',
-    imageBuffer   = null,
+    employeeName = 'Salesperson',
+    messageType = 'text',
+    imageBuffer = null,
     imageMimeType = null,
   } = options;
 
   try {
-    console.log(`[Orchestrator] Processing: "${text?.substring(0, 80)}..." from ${senderPhone}`);
+    console.log(
+      `[Orchestrator] Processing: "${text?.substring(0, 80)}..." from ${senderPhone}`,
+    );
 
     // Create tools with senderPhone and raw text pre-bound per request
     const TOOLS = createTools(senderPhone, text);
 
     // Request-scoped Agent Node
     const inlineAgentNode = async (state) => {
-      const { messages, senderPhone: sp, employeeName: en, messageType: mt } = state;
+      const {
+        messages,
+        senderPhone: sp,
+        employeeName: en,
+        messageType: mt,
+      } = state;
 
-      const lastHumanMsg = [...messages].reverse().find(
-        m => m._getType?.() === 'human' || m.constructor?.name === 'HumanMessage'
-      );
+      const lastHumanMsg = [...messages]
+        .reverse()
+        .find(
+          (m) =>
+            m._getType?.() === 'human' ||
+            m.constructor?.name === 'HumanMessage',
+        );
       const userText = lastHumanMsg
-        ? (typeof lastHumanMsg.content === 'string' ? lastHumanMsg.content : '')
+        ? typeof lastHumanMsg.content === 'string'
+          ? lastHumanMsg.content
+          : ''
         : '';
       const hasToolResultsAlready = messages.some(
-        m => m._getType?.() === 'tool' || m.constructor?.name === 'ToolMessage'
+        (m) =>
+          m._getType?.() === 'tool' || m.constructor?.name === 'ToolMessage',
       );
-      const intentAnchor = hasToolResultsAlready ? '' : getDeterministicIntentHint(userText);
+      const intentAnchor = hasToolResultsAlready
+        ? ''
+        : getDeterministicIntentHint(userText);
       const activeContextPrompt = await getActiveContextPrompt(sp);
       const historyMessages = getChatHistory(sp);
 
       const contextMessages = [
         new SystemMessage(
           SYSTEM_PROMPT +
-          `\n\nCurrent salesperson: ${en || 'Salesperson'}\nPhone: ${sp}\nMessage type: ${mt}${activeContextPrompt}${intentAnchor}`
+            `\n\nCurrent salesperson: ${en || 'Salesperson'}\nPhone: ${sp}\nMessage type: ${mt}${activeContextPrompt}${intentAnchor}`,
         ),
         ...historyMessages,
         ...messages,
@@ -193,10 +250,29 @@ async function runOrchestrator(text, senderPhone, options = {}) {
         console.error('[Orchestrator] Model invocation failed:', err.message);
 
         // Friendly greeting fallback if simple greeting message was sent
-        const cleanUserText = userText.trim().toLowerCase().replace(/[^a-z]/gi, '');
-        if (['hi', 'hii', 'hiii', 'hello', 'hey', 'namaste', 'hie', 'goodmorning', 'goodevening'].includes(cleanUserText)) {
+        const cleanUserText = userText
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z]/gi, '');
+        if (
+          [
+            'hi',
+            'hii',
+            'hiii',
+            'hello',
+            'hey',
+            'namaste',
+            'hie',
+            'goodmorning',
+            'goodevening',
+          ].includes(cleanUserText)
+        ) {
           return {
-            messages: [new AIMessage(`Namaste! 🙏 Welcome to Enlight Metals Sales Intelligence Bot.\n\nHow can I assist you with your deals, customer visits, payments, or inquiries today?`)],
+            messages: [
+              new AIMessage(
+                `Namaste! 🙏 Welcome to Enlight Metals Sales Intelligence Bot.\n\nHow can I assist you with your deals, customer visits, payments, or inquiries today?`,
+              ),
+            ],
           };
         }
 
@@ -209,24 +285,42 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     // Request-scoped Tool Node — returns ToolMessages to allow agent synthesis
     const inlineToolNode = async (state) => {
       const { messages } = state;
-      const lastAIMsg = [...messages].reverse().find(m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage');
+      const lastAIMsg = [...messages]
+        .reverse()
+        .find(
+          (m) => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage',
+        );
 
-      if (!lastAIMsg || !lastAIMsg.tool_calls || lastAIMsg.tool_calls.length === 0) {
+      if (
+        !lastAIMsg ||
+        !lastAIMsg.tool_calls ||
+        lastAIMsg.tool_calls.length === 0
+      ) {
         return { messages: [] };
       }
 
       const toolResults = [];
 
       for (const call of lastAIMsg.tool_calls) {
-        const toolObj = TOOLS.find(t => t.name === call.name);
+        const toolObj = TOOLS.find((t) => t.name === call.name);
         if (toolObj) {
           try {
             const res = await toolObj.invoke(call.args);
             const resStr = typeof res === 'string' ? res : JSON.stringify(res);
-            toolResults.push(new ToolMessage({ content: resStr, tool_call_id: call.id }));
+            toolResults.push(
+              new ToolMessage({ content: resStr, tool_call_id: call.id }),
+            );
           } catch (err) {
-            console.error(`[Orchestrator] Tool ${call.name} execution error:`, err.message);
-            toolResults.push(new ToolMessage({ content: `Error: ${err.message}`, tool_call_id: call.id }));
+            console.error(
+              `[Orchestrator] Tool ${call.name} execution error:`,
+              err.message,
+            );
+            toolResults.push(
+              new ToolMessage({
+                content: `Error: ${err.message}`,
+                tool_call_id: call.id,
+              }),
+            );
           }
         }
       }
@@ -246,11 +340,11 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     const humanMsg = new HumanMessage(text || 'Image received');
 
     const finalState = await graph.invoke({
-      messages:      [humanMsg],
+      messages: [humanMsg],
       senderPhone,
       employeeName,
       messageType,
-      imageBuffer:   imageBuffer ? imageBuffer.toString('base64') : null,
+      imageBuffer: imageBuffer ? imageBuffer.toString('base64') : null,
       imageMimeType,
     });
 
@@ -259,18 +353,27 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     // Direct Forwarding: If any tool returned a direct prompt or error (starting with ❌, ⚠️, or ❓), forward it directly
     for (const m of allMessages) {
       const content = typeof m.content === 'string' ? m.content : '';
-      if (content.startsWith('❌') || content.startsWith('⚠️') || content.startsWith('❓')) {
+      if (
+        content.startsWith('❌') ||
+        content.startsWith('⚠️') ||
+        content.startsWith('❓')
+      ) {
         addChatHistory(senderPhone, text, content);
-        console.log(`[Orchestrator] Direct tool warning/error forwarded (${content.length} chars)`);
+        console.log(
+          `[Orchestrator] Direct tool warning/error forwarded (${content.length} chars)`,
+        );
         return content;
       }
     }
 
-    const lastAIMsg = [...allMessages].reverse().find(
-      m => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage'
-    );
+    const lastAIMsg = [...allMessages]
+      .reverse()
+      .find(
+        (m) => m._getType?.() === 'ai' || m.constructor?.name === 'AIMessage',
+      );
 
-    let rawReply = typeof lastAIMsg?.content === 'string' ? lastAIMsg.content : '';
+    let rawReply =
+      typeof lastAIMsg?.content === 'string' ? lastAIMsg.content : '';
     let reply = rawReply
       .replace(/<function\([\s\S]*?<\/function>/gi, '')
       .replace(/<function\([\s\S]*?>/gi, '')
@@ -285,7 +388,10 @@ async function runOrchestrator(text, senderPhone, options = {}) {
     for (const tm of allMessages) {
       const tmContent = typeof tm.content === 'string' ? tm.content : '';
       const dealCodeMatch = tmContent.match(/#DEAL-[A-F0-9]{4,6}/i);
-      if (dealCodeMatch && !reply.toUpperCase().includes(dealCodeMatch[0].toUpperCase())) {
+      if (
+        dealCodeMatch &&
+        !reply.toUpperCase().includes(dealCodeMatch[0].toUpperCase())
+      ) {
         reply += `\n\n📌 *Deal ID: ${dealCodeMatch[0].toUpperCase()}*`;
       }
     }
@@ -294,11 +400,15 @@ async function runOrchestrator(text, senderPhone, options = {}) {
 
     console.log(`[Orchestrator] Reply ready (${reply.length} chars)`);
     return reply;
-
   } catch (err) {
     console.error('[Orchestrator] Fatal error:', err);
     const msg = err.message || '';
-    if (msg.includes('429') || msg.includes('Quota') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('All Gemini API keys')) {
+    if (
+      msg.includes('429') ||
+      msg.includes('Quota') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      msg.includes('All Gemini API keys')
+    ) {
       return `⏳ *Gemini Traffic Spike*\n\nGoogle Gemini rate limit reached. Please send your message again in 10 seconds.\n\n_(Tip: Add an additional Gemini API key in Railway under GEMINI_API_KEY_1 to double your quota!)_`;
     }
     return `⚠️ Something went wrong processing your message. Please try again.\n\nError: ${err.message}`;

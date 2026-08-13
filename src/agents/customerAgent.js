@@ -50,7 +50,7 @@ Return ONLY the JSON object.
  */
 async function isKRA2AlreadyLogged(senderPhone, customerName) {
   const month = new Date().getMonth() + 1;
-  const year  = new Date().getFullYear();
+  const year = new Date().getFullYear();
 
   const { data } = await supabase
     .from('kra_logs')
@@ -70,7 +70,7 @@ async function isKRA2AlreadyLogged(senderPhone, customerName) {
  */
 async function getMonthlyOnboardCount(senderPhone) {
   const month = new Date().getMonth() + 1;
-  const year  = new Date().getFullYear();
+  const year = new Date().getFullYear();
 
   const { data } = await supabase
     .from('kra_logs')
@@ -83,7 +83,9 @@ async function getMonthlyOnboardCount(senderPhone) {
   if (!data || data.length === 0) return 0;
 
   // Count distinct customer names
-  const distinct = new Set(data.map(r => (r.customer_name || '').toLowerCase().trim()));
+  const distinct = new Set(
+    data.map((r) => (r.customer_name || '').toLowerCase().trim()),
+  );
   return distinct.size;
 }
 
@@ -95,38 +97,62 @@ async function processCustomerMessage(text, senderPhone) {
       new SystemMessage(CUSTOMER_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
+    const rawText =
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content || '');
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
-    if (!data) throw new Error('Could not parse customer onboarding JSON from LLM response');
+    if (!data)
+      throw new Error(
+        'Could not parse customer onboarding JSON from LLM response',
+      );
 
-    const { getActiveSession, getFullActiveSession, saveActiveSession, verifyAndGetCustomerName } = require('../supabase');
+    const {
+      getActiveSession,
+      getFullActiveSession,
+      saveActiveSession,
+      verifyAndGetCustomerName,
+    } = require('../supabase');
 
     // ── Session Context & Pending Payload Resolution ──────────────────────
     let activeCustomer = await getActiveSession(senderPhone);
-    const fullSession  = await getFullActiveSession(senderPhone);
+    const fullSession = await getFullActiveSession(senderPhone);
 
     // If company name is missing, try to resolve from active customer session
-    if (!data.customer_name && activeCustomer && activeCustomer !== 'PENDING_PROFILE') {
+    if (
+      !data.customer_name &&
+      activeCustomer &&
+      activeCustomer !== 'PENDING_PROFILE'
+    ) {
       data.customer_name = activeCustomer;
-      console.log(`[CustomerAgent] Resolved missing company name from active session: "${activeCustomer}"`);
+      console.log(
+        `[CustomerAgent] Resolved missing company name from active session: "${activeCustomer}"`,
+      );
     }
 
     // Check if there was a pending profile update payload from a previous turn
     let pendingPayload = null;
-    if (fullSession && fullSession.last_intent && fullSession.last_intent.startsWith('pending_profile|')) {
+    if (
+      fullSession &&
+      fullSession.last_intent &&
+      fullSession.last_intent.startsWith('pending_profile|')
+    ) {
       try {
         const jsonStr = fullSession.last_intent.replace('pending_profile|', '');
         pendingPayload = JSON.parse(jsonStr);
-      } catch (e) { /* ignore parse error */ }
+      } catch (e) {
+        /* ignore parse error */
+      }
     }
 
     // Merge pending profile details if available
     if (pendingPayload) {
-      data.phone          = data.phone          || pendingPayload.phone          || null;
-      data.contact_person = data.contact_person || pendingPayload.contact_person || null;
-      data.city           = data.city           || pendingPayload.city           || null;
-      data.gst            = data.gst            || pendingPayload.gst            || null;
+      data.phone = data.phone || pendingPayload.phone || null;
+      data.contact_person =
+        data.contact_person || pendingPayload.contact_person || null;
+      data.city = data.city || pendingPayload.city || null;
+      data.gst = data.gst || pendingPayload.gst || null;
     }
 
     // If STILL no customer name after session check
@@ -134,16 +160,23 @@ async function processCustomerMessage(text, senderPhone) {
       if (data.phone || data.contact_person || data.city || data.gst) {
         // Save pending profile data so when user responds with company name, it merges!
         const payloadStr = JSON.stringify({
-          phone:          data.phone,
+          phone: data.phone,
           contact_person: data.contact_person,
-          city:           data.city,
-          gst:            data.gst
+          city: data.city,
+          gst: data.gst,
         });
-        await saveActiveSession(senderPhone, 'PENDING_PROFILE', `pending_profile|${payloadStr}`);
-        return `Oops! I missed getting the *Company Name* for this customer. 😅\n\n` +
+        await saveActiveSession(
+          senderPhone,
+          'PENDING_PROFILE',
+          `pending_profile|${payloadStr}`,
+        );
+        return (
+          `Oops! I missed getting the *Company Name* for this customer. 😅\n\n` +
           `Could you please tell me the Company Name for ${data.contact_person ? `*${data.contact_person}*` : 'this contact'}` +
-          (data.phone ? ` with mobile number *${data.phone}*` : '') + `?\n\n` +
-          `Once I have that, I'll get their profile updated right away!`;
+          (data.phone ? ` with mobile number *${data.phone}*` : '') +
+          `?\n\n` +
+          `Once I have that, I'll get their profile updated right away!`
+        );
       }
 
       return `⚠️ *Customer Agent — Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
@@ -152,13 +185,18 @@ async function processCustomerMessage(text, senderPhone) {
     const customerName = data.customer_name.trim();
 
     // Verify and get official customer name from salesperson's registered customers (handles typos)
-    const officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    const officialCustomerName = await verifyAndGetCustomerName(
+      customerName,
+      senderPhone,
+    );
 
     let existing = null;
     if (officialCustomerName) {
       const { data: found } = await supabase
         .from('recurring_customers')
-        .select('id, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes')
+        .select(
+          'id, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes',
+        )
         .eq('customer_name', officialCustomerName)
         .eq('assigned_salesperson_phone', senderPhone)
         .limit(1);
@@ -166,7 +204,9 @@ async function processCustomerMessage(text, senderPhone) {
     }
 
     const finalCustomerName = officialCustomerName || customerName;
-    const notesText = data.contact_person ? `Owner: ${data.contact_person}` : null;
+    const notesText = data.contact_person
+      ? `Owner: ${data.contact_person}`
+      : null;
     let isNewAcquisition = true;
 
     if (existing && existing.length > 0) {
@@ -183,13 +223,13 @@ async function processCustomerMessage(text, senderPhone) {
         .from('recurring_customers')
         .update({
           assigned_salesperson_phone: senderPhone,
-          customer_phone:    data.phone          || record.customer_phone    || null,
-          customer_gst:      data.gst            || record.customer_gst      || null,
-          customer_address:  data.city           || record.customer_address  || null,
-          contact_person:    data.contact_person || record.contact_person    || null,
-          notes:             notesText           || record.notes             || null,
-          is_active:         true,
-          updated_at:        new Date().toISOString(),
+          customer_phone: data.phone || record.customer_phone || null,
+          customer_gst: data.gst || record.customer_gst || null,
+          customer_address: data.city || record.customer_address || null,
+          contact_person: data.contact_person || record.contact_person || null,
+          notes: notesText || record.notes || null,
+          is_active: true,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', record.id);
     } else {
@@ -197,7 +237,9 @@ async function processCustomerMessage(text, senderPhone) {
       // This catches typo variations ("Mehta Engg" vs "Mehta Engineering")
       const { data: fuzzyMatch } = await supabase
         .from('recurring_customers')
-        .select('id, customer_name, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes')
+        .select(
+          'id, customer_name, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes',
+        )
         .ilike('customer_name', `%${customerName.split(' ')[0]}%`) // search by first word
         .eq('assigned_salesperson_phone', senderPhone)
         .limit(1);
@@ -209,33 +251,43 @@ async function processCustomerMessage(text, senderPhone) {
         await supabase
           .from('recurring_customers')
           .update({
-            customer_phone:   data.phone          || record.customer_phone    || null,
-            customer_gst:     data.gst            || record.customer_gst      || null,
-            customer_address: data.city           || record.customer_address  || null,
-            contact_person:   data.contact_person || record.contact_person    || null,
-            notes:            notesText           || record.notes             || null,
-            is_active:        true,
-            updated_at:       new Date().toISOString(),
+            customer_phone: data.phone || record.customer_phone || null,
+            customer_gst: data.gst || record.customer_gst || null,
+            customer_address: data.city || record.customer_address || null,
+            contact_person:
+              data.contact_person || record.contact_person || null,
+            notes: notesText || record.notes || null,
+            is_active: true,
+            updated_at: new Date().toISOString(),
           })
           .eq('id', record.id);
 
         // Prompt missing info for the found customer
         const missingInfo = [];
-        if (!record.customer_phone && !data.phone) missingInfo.push('• 📱 *Mobile Number*');
-        if (!record.contact_person && !data.contact_person) missingInfo.push('• 👤 *Owner / Contact Person Name*');
-        if (!record.customer_address && !data.city) missingInfo.push('• 📍 *City / Location*');
-        if (!record.customer_gst && !data.gst) missingInfo.push('• 🧾 *GSTIN* (optional)');
-        const promptSuffix = missingInfo.length > 0
-          ? `\n\n📌 *To complete the profile, reply with:*\n${missingInfo.join('\n')}`
-          : '';
+        if (!record.customer_phone && !data.phone)
+          missingInfo.push('• 📱 *Mobile Number*');
+        if (!record.contact_person && !data.contact_person)
+          missingInfo.push('• 👤 *Owner / Contact Person Name*');
+        if (!record.customer_address && !data.city)
+          missingInfo.push('• 📍 *City / Location*');
+        if (!record.customer_gst && !data.gst)
+          missingInfo.push('• 🧾 *GSTIN* (optional)');
+        const promptSuffix =
+          missingInfo.length > 0
+            ? `\n\n📌 *To complete the profile, reply with:*\n${missingInfo.join('\n')}`
+            : '';
 
-        return `ℹ️ *Customer Already Exists*\n\n` +
+        return (
+          `ℹ️ *Customer Already Exists*\n\n` +
           `*${record.customer_name}* is already registered under your account.\n` +
-          (data.contact_person ? `Contact updated to: *${data.contact_person}*\n` : '') +
-          (data.phone          ? `Phone updated to: *${data.phone}*\n` : '') +
-          (data.city           ? `City updated to: *${data.city}*\n` : '') +
+          (data.contact_person
+            ? `Contact updated to: *${data.contact_person}*\n`
+            : '') +
+          (data.phone ? `Phone updated to: *${data.phone}*\n` : '') +
+          (data.city ? `City updated to: *${data.city}*\n` : '') +
           `\n_Profile updated — KRA 2 not re-counted to avoid duplicates._` +
-          promptSuffix;
+          promptSuffix
+        );
       } else {
         // Genuinely brand new customer — use ensureCustomerRecord to prevent race condition duplicates
         const { ensureCustomerRecord } = require('../supabase');
@@ -252,7 +304,7 @@ async function processCustomerMessage(text, senderPhone) {
     if (data.contact_person || data.phone) {
       const visitUpdate = {};
       if (data.contact_person) visitUpdate.person_met = data.contact_person;
-      if (data.phone)          visitUpdate.contact_no = data.phone;
+      if (data.phone) visitUpdate.contact_no = data.phone;
 
       await supabase
         .from('customer_visits')
@@ -262,20 +314,27 @@ async function processCustomerMessage(text, senderPhone) {
     }
 
     // Save active customer session context
-    await saveActiveSession(senderPhone, finalCustomerName, 'onboarding_prompted');
+    await saveActiveSession(
+      senderPhone,
+      finalCustomerName,
+      'onboarding_prompted',
+    );
 
     // Log KRA 2 once per customer per salesperson per month
-    const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
+    const alreadyLogged = await isKRA2AlreadyLogged(
+      senderPhone,
+      finalCustomerName,
+    );
 
     if (!alreadyLogged) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
-        kra_number:        2,
-        kra_type:          'new_customer',
-        customer_name:     finalCustomerName,
-        description:       `New Customer Onboarded: ${finalCustomerName}`,
-        month:             new Date().getMonth() + 1,
-        year:              new Date().getFullYear(),
+        kra_number: 2,
+        kra_type: 'new_customer',
+        customer_name: finalCustomerName,
+        description: `New Customer Onboarded: ${finalCustomerName}`,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
       });
     }
 
@@ -284,45 +343,50 @@ async function processCustomerMessage(text, senderPhone) {
 
     // Prompt for missing info
     const missingInfo = [];
-    if (!data.phone)          missingInfo.push('• 📱 *Mobile Number*');
-    if (!data.contact_person) missingInfo.push('• 👤 *Owner / Contact Person Name*');
-    if (!data.city)           missingInfo.push('• 📍 *City / Location*');
-    if (!data.gst)            missingInfo.push('• 🧾 *GSTIN* (optional)');
+    if (!data.phone) missingInfo.push('• 📱 *Mobile Number*');
+    if (!data.contact_person)
+      missingInfo.push('• 👤 *Owner / Contact Person Name*');
+    if (!data.city) missingInfo.push('• 📍 *City / Location*');
+    if (!data.gst) missingInfo.push('• 🧾 *GSTIN* (optional)');
 
-    const promptSuffix = missingInfo.length > 0
-      ? `\n\n📌 *To complete ${finalCustomerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
-        `\n\n_(e.g. "${finalCustomerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
-      : '';
+    const promptSuffix =
+      missingInfo.length > 0
+        ? `\n\n📌 *To complete ${finalCustomerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
+          `\n\n_(e.g. "${finalCustomerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
+        : '';
 
     if (alreadyLogged && !isNewAcquisition) {
-      return `✅ *Customer Profile Updated!*\n\n` +
+      return (
+        `✅ *Customer Profile Updated!*\n\n` +
         `Company: *${finalCustomerName}*\n` +
         (data.contact_person ? `Contact: *${data.contact_person}*\n` : '') +
-        (data.phone          ? `Phone: *${data.phone}*\n` : '') +
-        (data.city           ? `City: *${data.city}*\n` : '') +
+        (data.phone ? `Phone: *${data.phone}*\n` : '') +
+        (data.city ? `City: *${data.city}*\n` : '') +
         `\n_Note: ${finalCustomerName} profile updated on your dashboard._` +
-        promptSuffix;
+        promptSuffix
+      );
     }
 
     // Async Zoho Bigin Smart Sync (both new onboarding and profile update)
     syncActivity('new_customer', {
-      customerName:  finalCustomerName,
-      phone:         data.phone || null,
-      gst:           data.gst || null,
-      city:          data.city || null,
+      customerName: finalCustomerName,
+      phone: data.phone || null,
+      gst: data.gst || null,
+      city: data.city || null,
       contactPerson: data.contact_person || null,
       senderPhone,
     });
 
-    return `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
+    return (
+      `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
       `Company: *${finalCustomerName}*\n` +
       (data.contact_person ? `Contact/Owner: *${data.contact_person}*\n` : '') +
-      (data.phone          ? `Phone: *${data.phone}*\n` : '') +
-      (data.city           ? `City: *${data.city}*\n` : '') +
+      (data.phone ? `Phone: *${data.phone}*\n` : '') +
+      (data.city ? `City: *${data.city}*\n` : '') +
       `Monthly Progress: *${currentCount} / 3 Onboarded*\n\n` +
       `Added live to your Customers Dashboard! ✅` +
-      promptSuffix;
-
+      promptSuffix
+    );
   } catch (error) {
     console.error('Customer Agent Error:', error.message);
     return `⚠️ Could not process customer onboarding: ${error.message}`;

@@ -4,21 +4,33 @@ const { sendTextMessage } = require('./whatsapp');
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
   );
 }
 
 // Detect if message is a visit log
 function isVisitLog(text) {
   const visitKeywords = [
-    'visited', 'visit kiya', 'gaya tha', 'mil ke aaya',
-    'customer visit', 'site visit', 'meeting done',
-    'met with', 'mil gaye', 'gaya', 'visited today',
-    'aaj gaya', 'site pe gaya', 'office gaya',
-    'visited at', 'reached', 'factory visit'
+    'visited',
+    'visit kiya',
+    'gaya tha',
+    'mil ke aaya',
+    'customer visit',
+    'site visit',
+    'meeting done',
+    'met with',
+    'mil gaye',
+    'gaya',
+    'visited today',
+    'aaj gaya',
+    'site pe gaya',
+    'office gaya',
+    'visited at',
+    'reached',
+    'factory visit',
   ];
   const lower = text.toLowerCase();
-  return visitKeywords.some(k => lower.includes(k));
+  return visitKeywords.some((k) => lower.includes(k));
 }
 
 // Extract visit details from message using Google Gemini
@@ -67,7 +79,7 @@ Message: "${text}"
       person_met: null,
       contact_no: null,
       remarks: text,
-      outcome: 'neutral'
+      outcome: 'neutral',
     };
   }
 }
@@ -85,7 +97,7 @@ async function saveVisit(details, senderPhone) {
         person_met: details.person_met,
         contact_no: details.contact_no,
         remarks: details.remarks,
-        visited_at: new Date().toISOString()
+        visited_at: new Date().toISOString(),
       })
       .select()
       .single();
@@ -118,13 +130,13 @@ async function getWeeklyVisitCount(senderPhone) {
 
     // Count unique visit days
     const visitDays = new Set(
-      data?.map(v => new Date(v.visited_at).toDateString())
+      data?.map((v) => new Date(v.visited_at).toDateString()),
     );
 
     return {
       count: data?.length || 0,
       days: visitDays.size,
-      visits: data || []
+      visits: data || [],
     };
   } catch (error) {
     console.error('getWeeklyVisitCount error:', error.message);
@@ -136,26 +148,31 @@ async function getWeeklyVisitCount(senderPhone) {
 function buildVisitConfirmation(details, weekStats) {
   const remaining = Math.max(0, 10 - weekStats.count);
   const daysRemaining = Math.max(0, 3 - weekStats.days);
-  
-  const outcomeEmoji = {
-    'positive': '😊',
-    'order_received': '🎉',
-    'follow_up_needed': '📞',
-    'negative': '😔',
-    'neutral': '👍'
-  }[details.outcome] || '👍';
 
-  return `✅ *Visit Logged - KRA 9*\n\n` +
+  const outcomeEmoji =
+    {
+      positive: '😊',
+      order_received: '🎉',
+      follow_up_needed: '📞',
+      negative: '😔',
+      neutral: '👍',
+    }[details.outcome] || '👍';
+
+  return (
+    `✅ *Visit Logged - KRA 9*\n\n` +
     `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
     (details.person_met ? `👤 Met: ${details.person_met}\n` : '') +
     (details.remarks ? `💬 Remarks: ${details.remarks}\n` : '') +
     `${outcomeEmoji} Outcome: ${details.outcome || 'neutral'}\n\n` +
     `📊 *This Week's Progress*\n` +
     `Visits: ${weekStats.count}/10` +
-    (remaining > 0 ? ` (${remaining} more needed)` : ' ✅ Target met!') + '\n' +
+    (remaining > 0 ? ` (${remaining} more needed)` : ' ✅ Target met!') +
+    '\n' +
     `Field days: ${weekStats.days}/3` +
-    (daysRemaining > 0 ? ` (${daysRemaining} more days needed)` : ' ✅') + '\n\n' +
-    `_Keep it up! 💪_`;
+    (daysRemaining > 0 ? ` (${daysRemaining} more days needed)` : ' ✅') +
+    '\n\n' +
+    `_Keep it up! 💪_`
+  );
 }
 
 // Weekly KRA 9 check - send reminder if below target
@@ -178,8 +195,8 @@ async function checkWeeklyVisits() {
 
     // Combine unique phones
     const phones = new Set([
-      ...(salespeople?.map(s => s.salesperson_phone) || []),
-      ...(rcSalespeople?.map(s => s.assigned_salesperson_phone) || [])
+      ...(salespeople?.map((s) => s.salesperson_phone) || []),
+      ...(rcSalespeople?.map((s) => s.assigned_salesperson_phone) || []),
     ]);
 
     for (const phone of phones) {
@@ -198,8 +215,12 @@ async function checkWeeklyVisits() {
           `📊 *KRA 9 Weekly Visit Update*\n\n` +
           `Visits this week: ${stats.count}/10\n` +
           `Field days: ${stats.days}/3\n\n` +
-          (remaining > 0 ? `⚠️ ${remaining} more visits needed\n` : '✅ Visit target met!\n') +
-          (daysRemaining > 0 ? `⚠️ ${daysRemaining} more field days needed\n` : '✅ Field days target met!\n') +
+          (remaining > 0
+            ? `⚠️ ${remaining} more visits needed\n`
+            : '✅ Visit target met!\n') +
+          (daysRemaining > 0
+            ? `⚠️ ${daysRemaining} more field days needed\n`
+            : '✅ Field days target met!\n') +
           `\n📅 ${daysLeftInWeek} days left this week\n\n` +
           `Log a visit by sending:\n` +
           `"visited [Company] today, met [Person], [outcome]"`;
@@ -208,7 +229,7 @@ async function checkWeeklyVisits() {
         console.log(`KRA 9 reminder sent to ${phone}`);
 
         // Small delay
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
 
@@ -229,7 +250,9 @@ async function handleVisitLog(text, senderPhone) {
 
     // React to Gemini understanding: only proceed if it is a valid, completed visit log
     if (!details.is_valid_visit || !details.customer_name) {
-      console.log('Gemini determined this is not a valid completed visit. Skipping save.');
+      console.log(
+        'Gemini determined this is not a valid completed visit. Skipping save.',
+      );
       return `⚠️ *Visit Not Logged*\n\nYour message does not appear to describe a completed customer visit. Visits can only be logged for completed meetings that have already occurred.`;
     }
 
@@ -251,12 +274,16 @@ async function handleVisitLog(text, senderPhone) {
     if (dupError) throw dupError;
 
     if (existingVisits && existingVisits.length > 0) {
-      console.log(`Duplicate visit detected for ${details.customer_name} today. Skipping database save.`);
+      console.log(
+        `Duplicate visit detected for ${details.customer_name} today. Skipping database save.`,
+      );
       const weekStats = await getWeeklyVisitCount(senderPhone);
-      return `⚠️ *Duplicate Visit Detected*\n\nA visit for *${details.customer_name}* has already been logged by you today!\n\n` +
+      return (
+        `⚠️ *Duplicate Visit Detected*\n\nA visit for *${details.customer_name}* has already been logged by you today!\n\n` +
         `📊 *This Week's Progress*\n` +
         `Visits: ${weekStats.count}/10\n` +
-        `Field days: ${weekStats.days}/3`;
+        `Field days: ${weekStats.days}/3`
+      );
     }
 
     // Save to database
@@ -270,7 +297,7 @@ async function handleVisitLog(text, senderPhone) {
       description: `Visited ${details.customer_name || 'customer'}: ${details.remarks || ''}`,
       customer_name: details.customer_name,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
     });
 
     // Get weekly stats
@@ -288,5 +315,5 @@ module.exports = {
   isVisitLog,
   handleVisitLog,
   checkWeeklyVisits,
-  getWeeklyVisitCount
+  getWeeklyVisitCount,
 };

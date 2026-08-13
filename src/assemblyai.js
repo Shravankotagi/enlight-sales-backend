@@ -14,11 +14,11 @@ async function transcribeAudio(audioBuffer, mimeType) {
         headers: {
           authorization: process.env.ASSEMBLYAI_API_KEY,
           'content-type': 'application/octet-stream',
-          'transfer-encoding': 'chunked'
+          'transfer-encoding': 'chunked',
         },
         maxBodyLength: Infinity,
-        maxContentLength: Infinity
-      }
+        maxContentLength: Infinity,
+      },
     );
 
     const uploadUrl = uploadResponse.data.upload_url;
@@ -31,14 +31,14 @@ async function transcribeAudio(audioBuffer, mimeType) {
         audio_url: uploadUrl,
         language_detection: true,
         punctuate: true,
-        format_text: true
+        format_text: true,
       },
       {
         headers: {
           authorization: process.env.ASSEMBLYAI_API_KEY,
-          'content-type': 'application/json'
-        }
-      }
+          'content-type': 'application/json',
+        },
+      },
     );
 
     const transcriptId = transcriptResponse.data.id;
@@ -50,15 +50,15 @@ async function transcribeAudio(audioBuffer, mimeType) {
     const maxAttempts = 30;
 
     while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       const pollResponse = await axios.get(
         `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
         {
           headers: {
-            authorization: process.env.ASSEMBLYAI_API_KEY
-          }
-        }
+            authorization: process.env.ASSEMBLYAI_API_KEY,
+          },
+        },
       );
 
       const status = pollResponse.data.status;
@@ -69,7 +69,10 @@ async function transcribeAudio(audioBuffer, mimeType) {
         console.log('Transcription completed:', transcript);
         break;
       } else if (status === 'error') {
-        console.error('AssemblyAI transcription error:', pollResponse.data.error);
+        console.error(
+          'AssemblyAI transcription error:',
+          pollResponse.data.error,
+        );
         return null;
       }
 
@@ -77,7 +80,11 @@ async function transcribeAudio(audioBuffer, mimeType) {
     }
 
     if (!transcript) {
-      console.error('Transcription timed out after', maxAttempts * 2, 'seconds');
+      console.error(
+        'Transcription timed out after',
+        maxAttempts * 2,
+        'seconds',
+      );
       return null;
     }
 
@@ -85,7 +92,10 @@ async function transcribeAudio(audioBuffer, mimeType) {
   } catch (error) {
     console.error('transcribeAudio error:', error.message);
     if (error.response) {
-      console.error('AssemblyAI response:', JSON.stringify(error.response.data, null, 2));
+      console.error(
+        'AssemblyAI response:',
+        JSON.stringify(error.response.data, null, 2),
+      );
     }
     return null;
   }

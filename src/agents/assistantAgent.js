@@ -7,19 +7,20 @@ async function handleConversationalQuery(text, senderPhone) {
   try {
     const employee = await getEmployeeByPhone(senderPhone);
     const empName = employee ? employee.name : 'Salesperson';
-    const empRole = employee ? (employee.role || 'salesperson') : 'salesperson';
+    const empRole = employee ? employee.role || 'salesperson' : 'salesperson';
     const isAdmin = empRole === 'admin';
-    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
-    
+    const dashboardUrl =
+      process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+
     // Get live date/time formatted nicely for India Standard Time (Asia/Kolkata)
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('en-IN', {
       timeZone: 'Asia/Kolkata',
       dateStyle: 'full',
-      timeStyle: 'long'
+      timeStyle: 'long',
     });
     const liveDateTime = formatter.format(now);
-    
+
     // Get active rate sheet
     const activeRates = await getLatestActiveRatesText();
 
@@ -61,7 +62,11 @@ GUIDELINES:
       new HumanMessage(text),
     ]);
 
-    let reply = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
+    let reply = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
 
     if (!reply) {
       reply = 'I am here to help you with Enlight Metals sales updates!';

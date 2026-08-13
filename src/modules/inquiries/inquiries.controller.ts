@@ -70,9 +70,9 @@ export class InquiriesController {
   @HttpCode(HttpStatus.OK)
   async updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: string },
+    @Body() body: { status: string; details?: any },
   ) {
-    return this.inquiriesService.updateStatus(id, body.status);
+    return this.inquiriesService.updateStatus(id, body.status, body.details);
   }
 
   @Post()
@@ -80,8 +80,18 @@ export class InquiriesController {
     return this.inquiriesService.createInquiry(body, employee.phone);
   }
 
-  @Post(':id/send-quotation')
+  @Post('send-quotation/:id')
   async sendQuotation(@Param('id') id: string, @Body() body: any) {
     return this.inquiriesService.sendQuotation(id, body);
+  }
+
+  @Post('parse-document')
+  async parseDocument(
+    @Body() body: { file_base64: string; mime_type: string },
+  ) {
+    return this.inquiriesService.parseDocumentWithGemini(
+      body.file_base64,
+      body.mime_type,
+    );
   }
 }

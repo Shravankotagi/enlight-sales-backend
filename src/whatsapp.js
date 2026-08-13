@@ -5,7 +5,7 @@ const https = require('https');
 const httpsAgent = new https.Agent({
   keepAlive: true,
   family: 4,
-  timeout: 15000
+  timeout: 15000,
 });
 
 /**
@@ -18,7 +18,9 @@ async function sendTextMessage(to, message) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
   if (!token || !phoneNumberId) {
-    console.error("Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment variables");
+    console.error(
+      'Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment variables',
+    );
     return null;
   }
 
@@ -30,30 +32,38 @@ async function sendTextMessage(to, message) {
       const response = await axios.post(
         url,
         {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
           to: to,
-          type: "text",
-          text: { body: message }
+          type: 'text',
+          text: { body: message },
         },
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
           },
           timeout: 15000,
-          httpsAgent
-        }
+          httpsAgent,
+        },
       );
 
-      console.log(`Successfully sent WhatsApp message to ${to} (attempt ${attempt}). Message ID: ${response.data.messages[0].id}`);
+      console.log(
+        `Successfully sent WhatsApp message to ${to} (attempt ${attempt}). Message ID: ${response.data.messages[0].id}`,
+      );
       return response.data;
     } catch (error) {
-      console.error(`WhatsApp send error (attempt ${attempt}/3):`, error.message);
+      console.error(
+        `WhatsApp send error (attempt ${attempt}/3):`,
+        error.message,
+      );
       if (attempt === 3) {
-        console.error('FULL SEND ERROR details:', JSON.stringify(error.response?.data || error.message, null, 2));
+        console.error(
+          'FULL SEND ERROR details:',
+          JSON.stringify(error.response?.data || error.message, null, 2),
+        );
       } else {
-        await new Promise(r => setTimeout(r, 1000 * attempt));
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
     }
   }
@@ -68,17 +78,15 @@ async function sendTextMessage(to, message) {
 async function downloadMedia(mediaId) {
   try {
     const token = process.env.WHATSAPP_TOKEN;
-    const baseUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
+    const baseUrl =
+      process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
 
     // Step 1: Get media URL from Meta API
-    const metaResponse = await axios.get(
-      `${baseUrl}/${mediaId}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 15000,
-        httpsAgent
-      }
-    );
+    const metaResponse = await axios.get(`${baseUrl}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+      httpsAgent,
+    });
 
     const mediaUrl = metaResponse.data.url;
     const mimeType = metaResponse.data.mime_type;
@@ -90,7 +98,7 @@ async function downloadMedia(mediaId) {
       headers: { Authorization: `Bearer ${token}` },
       responseType: 'arraybuffer',
       timeout: 20000,
-      httpsAgent
+      httpsAgent,
     });
 
     const buffer = Buffer.from(fileResponse.data);
@@ -105,5 +113,5 @@ async function downloadMedia(mediaId) {
 
 module.exports = {
   sendTextMessage,
-  downloadMedia
+  downloadMedia,
 };

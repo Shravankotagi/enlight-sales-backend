@@ -10,24 +10,43 @@
  */
 
 const { tool } = require('@langchain/core/tools');
-const { z }    = require('zod');
+const { z } = require('zod');
 
 // ─── Lazy-load agents to avoid circular deps ──────────────────────────────
 
-function getVisitAgent()     { return require('../agents/visitAgent');     }
-function getSalesAgent()     { return require('../agents/salesAgent');     }
-function getPaymentAgent()   { return require('../agents/paymentAgent');   }
-function getComplaintAgent() { return require('../agents/complaintAgent'); }
-function getRetentionAgent() { return require('../agents/retentionAgent'); }
-function getCustomerAgent()  { return require('../agents/customerAgent');  }
-function getQueryHandler()   { return require('../queryhandler');          }
-function getSupabase()       { return require('../supabase');              }
+function getVisitAgent() {
+  return require('../agents/visitAgent');
+}
+function getSalesAgent() {
+  return require('../agents/salesAgent');
+}
+function getPaymentAgent() {
+  return require('../agents/paymentAgent');
+}
+function getComplaintAgent() {
+  return require('../agents/complaintAgent');
+}
+function getRetentionAgent() {
+  return require('../agents/retentionAgent');
+}
+function getCustomerAgent() {
+  return require('../agents/customerAgent');
+}
+function getQueryHandler() {
+  return require('../queryhandler');
+}
+function getSupabase() {
+  return require('../supabase');
+}
 
 function createTools(senderPhone, rawUserText = '') {
   const logCustomerVisitTool = tool(
     async ({ text }) => {
       try {
-        return await getVisitAgent().processVisitMessage(rawUserText || text, senderPhone);
+        return await getVisitAgent().processVisitMessage(
+          rawUserText || text,
+          senderPhone,
+        );
       } catch (err) {
         return `Error logging visit: ${err.message}`;
       }
@@ -36,15 +55,20 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'log_customer_visit',
       description: `Use this tool when the salesperson reports visiting a customer site, meeting a customer in person, a field visit or market visit. This logs to KRA 9 and updates the customer profile.`,
       schema: z.object({
-        text: z.string().describe('The full original message from the salesperson'),
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
       }),
-    }
+    },
   );
 
   const updateDealStageTool = tool(
     async ({ text }) => {
       try {
-        return await getSalesAgent().processSalesMessage(rawUserText || text, senderPhone);
+        return await getSalesAgent().processSalesMessage(
+          rawUserText || text,
+          senderPhone,
+        );
       } catch (err) {
         return `Error updating deal: ${err.message}`;
       }
@@ -53,9 +77,11 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'update_deal_stage',
       description: `Use this tool when the salesperson reports any new customer requirement, inquiry, product demand, RFQ, deal won/lost/progressing, PO received, or any sales pipeline stage update.`,
       schema: z.object({
-        text: z.string().describe('The full original message from the salesperson'),
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
       }),
-    }
+    },
   );
 
   const logPaymentTool = tool(
@@ -70,15 +96,20 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'log_payment',
       description: `Use this tool when the salesperson reports receiving a payment, advance, installment, or outstanding balance from a customer.`,
       schema: z.object({
-        text: z.string().describe('The full original message from the salesperson'),
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
       }),
-    }
+    },
   );
 
   const logComplaintTool = tool(
     async ({ text }) => {
       try {
-        return await getComplaintAgent().processComplaintMessage(text, senderPhone);
+        return await getComplaintAgent().processComplaintMessage(
+          text,
+          senderPhone,
+        );
       } catch (err) {
         return `Error logging complaint: ${err.message}`;
       }
@@ -87,15 +118,20 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'log_complaint',
       description: `Use this tool when the salesperson reports a customer complaint about quality, quantity, delivery, or billing, or when a complaint is resolved.`,
       schema: z.object({
-        text: z.string().describe('The full original message from the salesperson'),
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
       }),
-    }
+    },
   );
 
   const logRetentionFollowupTool = tool(
     async ({ text }) => {
       try {
-        return await getRetentionAgent().processRetentionMessage(text, senderPhone);
+        return await getRetentionAgent().processRetentionMessage(
+          text,
+          senderPhone,
+        );
       } catch (err) {
         return `Error logging follow-up: ${err.message}`;
       }
@@ -104,15 +140,20 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'log_retention_followup',
       description: `Use this ONLY for explicit follow-up calls or check-ins with existing customers on past orders. Do NOT use for new requirements — use update_deal_stage instead.`,
       schema: z.object({
-        text: z.string().describe('The full original message from the salesperson'),
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
       }),
-    }
+    },
   );
 
   const onboardNewCustomerTool = tool(
     async ({ text }) => {
       try {
-        return await getCustomerAgent().processCustomerMessage(text, senderPhone);
+        return await getCustomerAgent().processCustomerMessage(
+          text,
+          senderPhone,
+        );
       } catch (err) {
         return `Error onboarding customer: ${err.message}`;
       }
@@ -121,9 +162,13 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'onboard_new_customer',
       description: `Use this tool when adding a new customer or updating an existing customer's profile details (phone, address, GST, contact person, city).`,
       schema: z.object({
-        text: z.string().describe('The message or contextualized query text containing the company name and details'),
+        text: z
+          .string()
+          .describe(
+            'The message or contextualized query text containing the company name and details',
+          ),
       }),
-    }
+    },
   );
 
   const queryMyDataTool = tool(
@@ -140,7 +185,7 @@ function createTools(senderPhone, rawUserText = '') {
       schema: z.object({
         text: z.string().describe('The query question from the salesperson'),
       }),
-    }
+    },
   );
 
   const getContextTool = tool(
@@ -161,14 +206,18 @@ function createTools(senderPhone, rawUserText = '') {
       name: 'get_conversation_context',
       description: `Use this FIRST when the message is ambiguous or references "the customer" without naming them. Returns the active customer from the current session.`,
       schema: z.object({}),
-    }
+    },
   );
 
   const processSalesImageTool = tool(
     async ({ imageBuffer, mimeType }) => {
       try {
         const buf = Buffer.from(imageBuffer, 'base64');
-        return await getSalesAgent().processSalesImage(buf, mimeType, senderPhone);
+        return await getSalesAgent().processSalesImage(
+          buf,
+          mimeType,
+          senderPhone,
+        );
       } catch (err) {
         return `Error processing PO image: ${err.message}`;
       }
@@ -180,14 +229,18 @@ function createTools(senderPhone, rawUserText = '') {
         imageBuffer: z.string().describe('Base64-encoded image buffer'),
         mimeType: z.string().describe('MIME type e.g. image/jpeg'),
       }),
-    }
+    },
   );
 
   const processPaymentImageTool = tool(
     async ({ imageBuffer, mimeType }) => {
       try {
         const buf = Buffer.from(imageBuffer, 'base64');
-        return await getPaymentAgent().processPaymentImage(buf, mimeType, senderPhone);
+        return await getPaymentAgent().processPaymentImage(
+          buf,
+          mimeType,
+          senderPhone,
+        );
       } catch (err) {
         return `Error processing payment receipt: ${err.message}`;
       }
@@ -199,7 +252,7 @@ function createTools(senderPhone, rawUserText = '') {
         imageBuffer: z.string().describe('Base64-encoded image buffer'),
         mimeType: z.string().describe('MIME type e.g. image/jpeg'),
       }),
-    }
+    },
   );
 
   return [

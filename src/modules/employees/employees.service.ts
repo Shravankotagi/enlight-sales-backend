@@ -29,14 +29,21 @@ export class EmployeesService {
 
   async findByPhone(phone: string) {
     try {
+      const clean = phone.replace(/\D/g, '');
+      const last10 = clean.slice(-10);
+      const variants = Array.from(
+        new Set([phone, clean, last10, `91${last10}`, `+91${last10}`]),
+      );
+
       const { data, error } = await this.supabase
         .from('employees')
         .select('*')
-        .eq('phone', phone)
+        .in('phone', variants)
         .eq('is_active', true)
-        .single();
-      if (error) return null;
-      return data;
+        .limit(1);
+
+      if (error || !data || data.length === 0) return null;
+      return data[0];
     } catch (error) {
       this.logger.error(`Error in findByPhone for phone ${phone}:`, error);
       return null;

@@ -8,7 +8,7 @@ const { handleConversationalQuery } = require('./agents/assistantAgent');
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
   );
 }
 
@@ -17,60 +17,147 @@ function isQuery(text) {
   const lowerText = text.toLowerCase();
 
   // If it looks like a steel order/inquiry (e.g. contains quantity and units or pricing request), it is NOT a dashboard query!
-  const hasInquiryPatterns = 
-    /\b\d+\s*(mt|kg|ton|pcs|sheet|coil|bar|flat|plate|mm|mtr)\b/i.test(lowerText) || 
-    lowerText.includes('rate is') || 
+  const hasInquiryPatterns =
+    /\b\d+\s*(mt|kg|ton|pcs|sheet|coil|bar|flat|plate|mm|mtr)\b/i.test(
+      lowerText,
+    ) ||
+    lowerText.includes('rate is') ||
     lowerText.includes('price is') ||
     lowerText.includes('target rate') ||
     /\b\d+\s*x\s*\d+/i.test(lowerText);
-    
+
   if (hasInquiryPatterns) {
     return false;
   }
 
   const queryKeywords = [
     // Sales queries
-    'my sales', 'meri sales', 'kitni sales', 'sales this month',
-    'is mahine', 'this month', 'last month', 'pichle mahine',
-    // Deal queries  
-    'pending deals', 'open deals', 'meri deals',
-    'my deals', 'deals this week', 'is hafte',
-    'active deals', 'current deals', 'won deals', 'won customers',
-    'lost deals', 'rejected deals',
+    'my sales',
+    'meri sales',
+    'kitni sales',
+    'sales this month',
+    'is mahine',
+    'this month',
+    'last month',
+    'pichle mahine',
+    // Deal queries
+    'pending deals',
+    'open deals',
+    'meri deals',
+    'my deals',
+    'deals this week',
+    'is hafte',
+    'active deals',
+    'current deals',
+    'won deals',
+    'won customers',
+    'lost deals',
+    'rejected deals',
     // Customer queries
-    'customer list', 'which customers', 'kaun se customer',
-    'not ordered', 'order nahi', 'inactive customers',
-    'my customers', 'all customers', 'client list', 'client directory',
+    'customer list',
+    'which customers',
+    'kaun se customer',
+    'not ordered',
+    'order nahi',
+    'inactive customers',
+    'my customers',
+    'all customers',
+    'client list',
+    'client directory',
     // Payment queries
-    'outstanding', 'overdue', 'due payment',
-    'pending payment', 'baaki payment', 'baaki list',
-    'who hasn\'t paid', 'payment aging', 'collection due',
+    'outstanding',
+    'overdue',
+    'due payment',
+    'pending payment',
+    'baaki payment',
+    'baaki list',
+    "who hasn't paid",
+    'payment aging',
+    'collection due',
     // Performance & Summary queries
-    'my performance', 'performance report', 'target achievements',
-    'performance', 'performace', 'status report', 'performance status',
-    'target status', 'sales achievement', 'my target', 'my status',
-    'kra status', 'kra report', 'my kra',
+    'my performance',
+    'performance report',
+    'target achievements',
+    'performance',
+    'performace',
+    'status report',
+    'performance status',
+    'target status',
+    'sales achievement',
+    'my target',
+    'my status',
+    'kra status',
+    'kra report',
+    'my kra',
     // Visit queries
-    'my visits', 'visit log', 'who did i visit', 'field visits',
-    'customer visits', 'site visits',
+    'my visits',
+    'visit log',
+    'who did i visit',
+    'field visits',
+    'customer visits',
+    'site visits',
     // Rate / Price queries
-    'rate sheet', 'current rates', 'today\'s rates', 'steel rates',
-    'bhav', 'price list', 'rate list',
+    'rate sheet',
+    'current rates',
+    "today's rates",
+    'steel rates',
+    'bhav',
+    'price list',
+    'rate list',
     // Inquiry queries
-    'my inquiries', 'meri inquiries', 'pending inquiries',
-    'review queue', 'kitni inquiries',
+    'my inquiries',
+    'meri inquiries',
+    'pending inquiries',
+    'review queue',
+    'kitni inquiries',
     // General / Command phrases
-    'monthly report', 'sales report', 'status report', 'show me sales',
-    'my reports', 'my report', 'all reports', 'show reports', 'report card',
-    'report', 'reports', 'dashboard', 'login', 'link', 'website', 'portal', 'url',
-    'new customers', 'onboarded customers', 'kra 2',
+    'monthly report',
+    'sales report',
+    'status report',
+    'show me sales',
+    'my reports',
+    'my report',
+    'all reports',
+    'show reports',
+    'report card',
+    'report',
+    'reports',
+    'dashboard',
+    'login',
+    'link',
+    'website',
+    'portal',
+    'url',
+    'new customers',
+    'onboarded customers',
+    'kra 2',
     // General conversational & date/pricing query triggers
-    'date', 'time', 'today', 'aaj', 'din', 'tarikh', 'time kya',
-    'what is', 'tell me', 'help', 'how to', 'bot', 'give me', 'show me', 'list',
-    'assistant', 'hello', 'hi', 'hey', 'namaste', 'joke', 'who are you', 'kaise ho'
+    'date',
+    'time',
+    'today',
+    'aaj',
+    'din',
+    'tarikh',
+    'time kya',
+    'what is',
+    'tell me',
+    'help',
+    'how to',
+    'bot',
+    'give me',
+    'show me',
+    'list',
+    'assistant',
+    'hello',
+    'hi',
+    'hey',
+    'namaste',
+    'joke',
+    'who are you',
+    'kaise ho',
   ];
 
-  return queryKeywords.some(keyword => lowerText.includes(keyword));
+  return queryKeywords.some((keyword) => lowerText.includes(keyword));
 }
 
 // Get current month date range
@@ -82,7 +169,7 @@ function getMonthRange() {
     start: start.toISOString(),
     end: end.toISOString(),
     monthName: now.toLocaleString('en-IN', { month: 'long' }),
-    year: now.getFullYear()
+    year: now.getFullYear(),
   };
 }
 
@@ -101,7 +188,7 @@ function getMonthRangeFromQuery(text) {
     { name: 'september', aliases: ['september', 'sep', 'sept'] },
     { name: 'october', aliases: ['october', 'oct'] },
     { name: 'november', aliases: ['november', 'nov'] },
-    { name: 'december', aliases: ['december', 'dec'] }
+    { name: 'december', aliases: ['december', 'dec'] },
   ];
 
   const now = new Date();
@@ -110,7 +197,7 @@ function getMonthRangeFromQuery(text) {
 
   for (let idx = 0; idx < months.length; idx++) {
     const m = months[idx];
-    if (m.aliases.some(alias => lower.includes(alias))) {
+    if (m.aliases.some((alias) => lower.includes(alias))) {
       targetMonth = idx;
       break;
     }
@@ -123,7 +210,7 @@ function getMonthRangeFromQuery(text) {
     start: start.toISOString(),
     end: end.toISOString(),
     monthName: start.toLocaleString('en-IN', { month: 'long' }),
-    year: targetYear
+    year: targetYear,
   };
 }
 
@@ -160,16 +247,20 @@ async function getSalesThisMonth(senderPhone, text = '') {
     if (error) throw error;
 
     const totalDeals = deals?.length || 0;
-    const wonDeals = deals?.filter(d => d.stage === 'won').length || 0;
-    const totalAmount = deals?.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0) || 0;
-    const totalItems = deals?.reduce((sum, d) => sum + (d.deal_items?.length || 0), 0) || 0;
+    const wonDeals = deals?.filter((d) => d.stage === 'won').length || 0;
+    const totalAmount =
+      deals?.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0) || 0;
+    const totalItems =
+      deals?.reduce((sum, d) => sum + (d.deal_items?.length || 0), 0) || 0;
 
-    return `📊 *Sales Summary - ${monthName} ${year}*\n\n` +
+    return (
+      `📊 *Sales Summary - ${monthName} ${year}*\n\n` +
       `📋 Total Created Deals: ${totalDeals}\n` +
       `✅ Won: ${wonDeals}\n` +
       `📦 Total Line Items: ${totalItems}\n` +
       `💰 Total Value: ${formatINR(totalAmount)}\n\n` +
-      `_Data from Enlight Sales OS_`;
+      `_Data from Enlight Sales OS_`
+    );
   } catch (error) {
     console.error('getSalesThisMonth error:', error);
     return '❌ Could not fetch sales data. Please try again.';
@@ -193,11 +284,14 @@ async function getPendingDeals(senderPhone) {
       return '✅ No pending deals right now!';
     }
 
-    const dealList = deals.map((d, i) => 
-      `${i + 1}. ${d.customer_name || 'Unknown'}\n` +
-      `   Stage: ${d.stage} | ${d.inquiry_type}\n` +
-      `   ${d.total_amount ? formatINR(d.total_amount) : 'Amount TBD'}`
-    ).join('\n\n');
+    const dealList = deals
+      .map(
+        (d, i) =>
+          `${i + 1}. ${d.customer_name || 'Unknown'}\n` +
+          `   Stage: ${d.stage} | ${d.inquiry_type}\n` +
+          `   ${d.total_amount ? formatINR(d.total_amount) : 'Amount TBD'}`,
+      )
+      .join('\n\n');
 
     return `📋 *Pending Deals (${deals.length})*\n\n${dealList}\n\n_Showing latest 10_`;
   } catch (error) {
@@ -223,11 +317,14 @@ async function getPendingInquiries() {
       return '✅ No inquiries pending review!';
     }
 
-    const list = inquiries.map((inq, i) =>
-      `${i + 1}. ${inq.sender_name || inq.sender_phone}\n` +
-      `   "${inq.raw_text?.substring(0, 50)}..."\n` +
-      `   Confidence: ${Math.round((inq.overall_confidence || 0) * 100)}%`
-    ).join('\n\n');
+    const list = inquiries
+      .map(
+        (inq, i) =>
+          `${i + 1}. ${inq.sender_name || inq.sender_phone}\n` +
+          `   "${inq.raw_text?.substring(0, 50)}..."\n` +
+          `   Confidence: ${Math.round((inq.overall_confidence || 0) * 100)}%`,
+      )
+      .join('\n\n');
 
     return `⚠️ *Inquiries Needing Review (${inquiries.length})*\n\n${list}`;
   } catch (error) {
@@ -254,14 +351,22 @@ async function getDealsThisWeek() {
       return '📋 No deals logged this week yet.';
     }
 
-    const totalAmount = deals.reduce((sum, d) => sum + (d.total_amount || 0), 0);
-    const list = deals.map((d, i) =>
-      `${i + 1}. ${d.customer_name || 'Unknown'} - ${d.inquiry_type}\n` +
-      `   ${d.deal_items?.length || 0} items | ${formatINR(d.total_amount)}`
-    ).join('\n\n');
+    const totalAmount = deals.reduce(
+      (sum, d) => sum + (d.total_amount || 0),
+      0,
+    );
+    const list = deals
+      .map(
+        (d, i) =>
+          `${i + 1}. ${d.customer_name || 'Unknown'} - ${d.inquiry_type}\n` +
+          `   ${d.deal_items?.length || 0} items | ${formatINR(d.total_amount)}`,
+      )
+      .join('\n\n');
 
-    return `📊 *This Week's Deals (${deals.length})*\n\n${list}\n\n` +
-      `💰 *Total: ${formatINR(totalAmount)}*`;
+    return (
+      `📊 *This Week's Deals (${deals.length})*\n\n${list}\n\n` +
+      `💰 *Total: ${formatINR(totalAmount)}*`
+    );
   } catch (error) {
     console.error('getDealsThisWeek error:', error);
     return '❌ Could not fetch this week deals.';
@@ -290,7 +395,7 @@ async function getKRAStatus(senderPhone, text = '') {
       .lte('created_at', end);
 
     const resolvedMonth = new Date(start).getMonth() + 1;
-    const resolvedYear  = new Date(start).getFullYear();
+    const resolvedYear = new Date(start).getFullYear();
 
     // Get KRA logs this month for KRA 2 (New Customers)
     const { data: kra2Logs } = await supabase
@@ -303,18 +408,21 @@ async function getKRAStatus(senderPhone, text = '') {
       .eq('year', resolvedYear);
 
     const totalDeals = deals?.length || 0;
-    const wonDeals = deals?.filter(d => d.stage === 'won') || [];
+    const wonDeals = deals?.filter((d) => d.stage === 'won') || [];
     const wonCount = wonDeals.length;
-    const wonValue = wonDeals.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
+    const wonValue = wonDeals.reduce(
+      (sum, d) => sum + (Number(d.total_amount) || 0),
+      0,
+    );
 
     const totalInquiries = inquiries?.length || 0;
-    const conversionRate = totalInquiries > 0 
-      ? Math.round((wonCount / totalInquiries) * 100) 
-      : 0;
+    const conversionRate =
+      totalInquiries > 0 ? Math.round((wonCount / totalInquiries) * 100) : 0;
 
     const newCustomersCount = kra2Logs?.length || 0;
 
-    return `🎯 *KRA Status - ${monthName} ${year}*\n\n` +
+    return (
+      `🎯 *KRA Status - ${monthName} ${year}*\n\n` +
       `📋 *KRA 1 - Sales Achievement*\n` +
       `   Won Deals: ${wonCount} | Value: ${formatINR(wonValue)} (Total Created: ${totalDeals})\n\n` +
       `👥 *KRA 2 - New Customers*\n` +
@@ -324,7 +432,8 @@ async function getKRAStatus(senderPhone, text = '') {
       `   Rate: ${conversionRate}% (target: 70-80%)\n\n` +
       `📊 *KRA 6 - CRM Compliance*\n` +
       `   Logged today via WhatsApp bot ✅\n\n` +
-      `_Full KRA report available from Sales Lead_`;
+      `_Full KRA report available from Sales Lead_`
+    );
   } catch (error) {
     console.error('getKRAStatus error:', error);
     return '❌ Could not fetch KRA status.';
@@ -356,18 +465,27 @@ async function getWonCustomers(senderPhone, text = '') {
     for (const deal of deals) {
       const items = deal.deal_items || [];
       if (items.length === 0) {
-        lines.push(`${srNo++}. *${deal.customer_name}* — Amount: ${formatINR(deal.total_amount)}`);
+        lines.push(
+          `${srNo++}. *${deal.customer_name}* — Amount: ${formatINR(deal.total_amount)}`,
+        );
       } else {
         for (const item of items) {
-          lines.push(`${srNo++}. *${deal.customer_name}*\n   Product: ${item.sku_text || 'N/A'}\n   Qty: ${item.quantity || 0} ${item.unit || 'MT'} | Rate: ${formatINR(item.rate)} | Amt: ${formatINR(item.amount)}`);
+          lines.push(
+            `${srNo++}. *${deal.customer_name}*\n   Product: ${item.sku_text || 'N/A'}\n   Qty: ${item.quantity || 0} ${item.unit || 'MT'} | Rate: ${formatINR(item.rate)} | Amt: ${formatINR(item.amount)}`,
+          );
         }
       }
     }
 
-    const totalValue = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
-    return `🏆 *Won Customers — ${monthName} ${year}* (${deals.length} deals)\n\n` +
+    const totalValue = deals.reduce(
+      (s, d) => s + (Number(d.total_amount) || 0),
+      0,
+    );
+    return (
+      `🏆 *Won Customers — ${monthName} ${year}* (${deals.length} deals)\n\n` +
       lines.join('\n\n') +
-      `\n\n💰 *Total Won Value: ${formatINR(totalValue)}*`;
+      `\n\n💰 *Total Won Value: ${formatINR(totalValue)}*`
+    );
   } catch (err) {
     console.error('getWonCustomers error:', err.message);
     return '❌ Could not fetch won customers.';
@@ -392,11 +510,17 @@ async function getActiveDealsDetail(senderPhone) {
     }
 
     const lines = deals.map((d, i) => {
-      const items = (d.deal_items || []).map(it => `     • ${it.sku_text || 'Item'}: ${it.quantity} ${it.unit}`).join('\n');
+      const items = (d.deal_items || [])
+        .map(
+          (it) => `     • ${it.sku_text || 'Item'}: ${it.quantity} ${it.unit}`,
+        )
+        .join('\n');
       return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n   💰 ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
     });
 
-    return `📋 *Active Pipeline Deals (${deals.length})*\n\n` + lines.join('\n\n');
+    return (
+      `📋 *Active Pipeline Deals (${deals.length})*\n\n` + lines.join('\n\n')
+    );
   } catch (err) {
     console.error('getActiveDealsDetail error:', err.message);
     return '❌ Could not fetch active deals.';
@@ -410,7 +534,9 @@ async function getCustomerList(senderPhone) {
 
     const { data: customers } = await supabase
       .from('recurring_customers')
-      .select('customer_name, contact_person, customer_address, customer_phone, customer_gst')
+      .select(
+        'customer_name, contact_person, customer_address, customer_phone, customer_gst',
+      )
       .eq('assigned_salesperson_phone', senderPhone)
       .eq('is_active', true)
       .order('customer_name', { ascending: true })
@@ -420,13 +546,16 @@ async function getCustomerList(senderPhone) {
       return '📋 No customers registered under your account yet.';
     }
 
-    const lines = customers.map((c, i) =>
-      `${i + 1}. *${c.customer_name}*\n` +
-      `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.customer_address || 'N/A'} | 📱 ${c.customer_phone || 'N/A'}` +
-      (c.customer_gst ? `\n   🧾 GST: ${c.customer_gst}` : '')
+    const lines = customers.map(
+      (c, i) =>
+        `${i + 1}. *${c.customer_name}*\n` +
+        `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.customer_address || 'N/A'} | 📱 ${c.customer_phone || 'N/A'}` +
+        (c.customer_gst ? `\n   🧾 GST: ${c.customer_gst}` : ''),
     );
 
-    return `👥 *Your Customer List (${customers.length})*\n\n` + lines.join('\n\n');
+    return (
+      `👥 *Your Customer List (${customers.length})*\n\n` + lines.join('\n\n')
+    );
   } catch (err) {
     console.error('getCustomerList error:', err.message);
     return '❌ Could not fetch customer list.';
@@ -438,8 +567,12 @@ async function getRateSheet() {
   try {
     const { getLatestActiveRatesText } = require('./gemini');
     const rates = await getLatestActiveRatesText();
-    if (!rates) return '❌ No active rate sheet found. Please contact your Sales Lead.';
-    const now = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full' });
+    if (!rates)
+      return '❌ No active rate sheet found. Please contact your Sales Lead.';
+    const now = new Date().toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+    });
     return `💹 *Active Metal Rate Sheet*\n📅 ${now}\n\n${rates}\n\n_Rates managed by Admin via Enlight Sales OS_`;
   } catch (err) {
     console.error('getRateSheet error:', err.message);
@@ -465,11 +598,15 @@ async function getVisitList(senderPhone, text = '') {
       return `📍 No visits logged for ${monthName} ${year}.`;
     }
 
-    const lines = visits.map((v, i) =>
-      `${i + 1}. *${v.customer_name}*\n   📅 ${new Date(v.visit_date).toLocaleDateString('en-IN')}\n   📝 ${v.notes || 'No notes'}`
+    const lines = visits.map(
+      (v, i) =>
+        `${i + 1}. *${v.customer_name}*\n   📅 ${new Date(v.visit_date).toLocaleDateString('en-IN')}\n   📝 ${v.notes || 'No notes'}`,
     );
 
-    return `📍 *Customer Visits — ${monthName} ${year}* (${visits.length})\n\n` + lines.join('\n\n');
+    return (
+      `📍 *Customer Visits — ${monthName} ${year}* (${visits.length})\n\n` +
+      lines.join('\n\n')
+    );
   } catch (err) {
     console.error('getVisitList error:', err.message);
     return '❌ Could not fetch visit list.';
@@ -522,16 +659,24 @@ async function getPaymentAging(senderPhone) {
               : ` (${daysLeft}d left)`;
           }
         }
-        const outstanding = Number(p.outstanding) || Number(p.invoice_amount) || 0;
-        return `${i + 1}. *${p.customer_name}*\n` +
+        const outstanding =
+          Number(p.outstanding) || Number(p.invoice_amount) || 0;
+        return (
+          `${i + 1}. *${p.customer_name}*\n` +
           `   Outstanding: ${formatINR(outstanding)}\n` +
-          `   Due: ${dueDisplay}${overdueStr}`;
+          `   Due: ${dueDisplay}${overdueStr}`
+        );
       });
 
-      const totalOutstanding = ptRecords.reduce((s, p) => s + (Number(p.outstanding) || Number(p.invoice_amount) || 0), 0);
-      return `💰 *Outstanding Payments (${ptRecords.length})*\n\n` +
+      const totalOutstanding = ptRecords.reduce(
+        (s, p) => s + (Number(p.outstanding) || Number(p.invoice_amount) || 0),
+        0,
+      );
+      return (
+        `💰 *Outstanding Payments (${ptRecords.length})*\n\n` +
         rows.join('\n\n') +
-        `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`;
+        `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
+      );
     }
 
     // Fallback: derive from won deals
@@ -553,15 +698,22 @@ async function getPaymentAging(senderPhone) {
           ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
           : ` (${daysLeft}d left)`;
       }
-      return `${i + 1}. *${d.customer_name}*\n` +
+      return (
+        `${i + 1}. *${d.customer_name}*\n` +
         `   Amount: ${formatINR(d.total_amount)}\n` +
-        `   Due: ${dueDisplay}${overdueStr}`;
+        `   Due: ${dueDisplay}${overdueStr}`
+      );
     });
 
-    const totalOutstanding = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
-    return `💰 *Outstanding Payments (${deals.length})*\n\n` +
+    const totalOutstanding = deals.reduce(
+      (s, d) => s + (Number(d.total_amount) || 0),
+      0,
+    );
+    return (
+      `💰 *Outstanding Payments (${deals.length})*\n\n` +
       rows.join('\n\n') +
-      `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`;
+      `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
+    );
   } catch (err) {
     console.error('getPaymentAging error:', err.message);
     return '❌ Could not fetch payment aging.';
@@ -587,14 +739,20 @@ async function getLostDeals(senderPhone, text = '') {
       return `✅ No lost deals in ${monthName} ${year}.`;
     }
 
-    const lines = deals.map((d, i) =>
-      `${i + 1}. *${d.customer_name}*\n   Amount: ${formatINR(d.total_amount)}\n   Reason: ${d.lost_reason || 'Not specified'}`
+    const lines = deals.map(
+      (d, i) =>
+        `${i + 1}. *${d.customer_name}*\n   Amount: ${formatINR(d.total_amount)}\n   Reason: ${d.lost_reason || 'Not specified'}`,
     );
 
-    const totalLost = deals.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
-    return `❌ *Lost Deals — ${monthName} ${year}* (${deals.length})\n\n` +
+    const totalLost = deals.reduce(
+      (s, d) => s + (Number(d.total_amount) || 0),
+      0,
+    );
+    return (
+      `❌ *Lost Deals — ${monthName} ${year}* (${deals.length})\n\n` +
       lines.join('\n\n') +
-      `\n\n📉 *Total Lost Value: ${formatINR(totalLost)}*`;
+      `\n\n📉 *Total Lost Value: ${formatINR(totalLost)}*`
+    );
   } catch (err) {
     console.error('getLostDeals error:', err.message);
     return '❌ Could not fetch lost deals.';
@@ -605,7 +763,9 @@ async function getLostDeals(senderPhone, text = '') {
 async function routeToHandler(category, text, phone, isAdmin, supabase) {
   switch (category) {
     case 'dashboard_link': {
-      const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+      const dashboardUrl =
+        process.env.DASHBOARD_URL ||
+        'https://enlight-sales-frontend.vercel.app';
       return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
     }
     case 'sales_summary':
@@ -662,7 +822,9 @@ async function handleQuery(text, senderPhone) {
       .eq('phone', senderPhone)
       .single();
     if (senderEmp) senderRole = senderEmp.role || 'salesperson';
-  } catch (e) { /* default to salesperson */ }
+  } catch (e) {
+    /* default to salesperson */
+  }
 
   const isAdmin = senderRole === 'admin';
 
@@ -679,8 +841,9 @@ async function handleQuery(text, senderPhone) {
           if (emp.name) {
             const empNameLower = emp.name.toLowerCase().trim();
             const parts = empNameLower.split(/\s+/);
-            const isMatch = lower.includes(empNameLower) ||
-              parts.some(part => part.length > 3 && lower.includes(part));
+            const isMatch =
+              lower.includes(empNameLower) ||
+              parts.some((part) => part.length > 3 && lower.includes(part));
             if (isMatch) {
               return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or KRA details of other salespeople. You can only query your own performance reports.`;
             }
@@ -700,13 +863,15 @@ async function handleQuery(text, senderPhone) {
 
       // If admin mentioned a specific salesperson, look up their phone
       if (classification && classification.target_salesperson) {
-        const nameLower = classification.target_salesperson.toLowerCase().trim();
+        const nameLower = classification.target_salesperson
+          .toLowerCase()
+          .trim();
         const { data: allEmps } = await supabase
           .from('employees')
           .select('name, phone');
 
         if (allEmps) {
-          const matched = allEmps.find(e => {
+          const matched = allEmps.find((e) => {
             const n = (e.name || '').toLowerCase();
             return n.includes(nameLower) || nameLower.includes(n.split(' ')[0]);
           });
@@ -715,8 +880,19 @@ async function handleQuery(text, senderPhone) {
       }
 
       // Route using category
-      if (classification && classification.category !== 'general' && classification.category !== 'blocked' && classification.confidence >= 0.65) {
-        return await routeToHandler(classification.category, text, effectivePhone, isAdmin, supabase);
+      if (
+        classification &&
+        classification.category !== 'general' &&
+        classification.category !== 'blocked' &&
+        classification.confidence >= 0.65
+      ) {
+        return await routeToHandler(
+          classification.category,
+          text,
+          effectivePhone,
+          isAdmin,
+          supabase,
+        );
       }
     } catch (err) {
       console.error('Admin semantic router error:', err.message);
@@ -728,19 +904,29 @@ async function handleQuery(text, senderPhone) {
     const { classifyQueryType } = require('./gemini');
     const classification = await classifyQueryType(text);
 
-    if (classification && classification.confidence >= 0.70) {
+    if (classification && classification.confidence >= 0.7) {
       if (classification.category === 'blocked') {
-        const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+        const dashboardUrl =
+          process.env.DASHBOARD_URL ||
+          'https://enlight-sales-frontend.vercel.app';
         if (isAdmin) {
-          return `🔗 *This action requires Dashboard access.*\n\n` +
+          return (
+            `🔗 *This action requires Dashboard access.*\n\n` +
             `Admin operations like rate sheet management, pricing configuration, product analysis, and CRM admin tasks are available directly on the portal:\n\n` +
             `👉 ${dashboardUrl}\n\n` +
-            `Log in with your admin credentials to proceed.`;
+            `Log in with your admin credentials to proceed.`
+          );
         }
         return `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to *your own* deals, customers, payments, visits, KRA performance, and steel rates.`;
       }
       if (classification.category !== 'general') {
-        return await routeToHandler(classification.category, text, effectivePhone, isAdmin, supabase);
+        return await routeToHandler(
+          classification.category,
+          text,
+          effectivePhone,
+          isAdmin,
+          supabase,
+        );
       }
     }
   } catch (err) {
@@ -749,16 +935,28 @@ async function handleQuery(text, senderPhone) {
 
   // ── Keyword fallback (backup for low-confidence semantic router) ─────────
   // KRA / performance
-  if (lower.includes('kra') || lower.includes('target') || lower.includes('performance') ||
-      lower.includes('performace') || lower.includes('achievement')) {
+  if (
+    lower.includes('kra') ||
+    lower.includes('target') ||
+    lower.includes('performance') ||
+    lower.includes('performace') ||
+    lower.includes('achievement')
+  ) {
     return await getKRAStatus(senderPhone, text);
   }
   // Sales summary
-  if (lower.includes('sales') || lower.includes('this month') || lower.includes('is mahine')) {
+  if (
+    lower.includes('sales') ||
+    lower.includes('this month') ||
+    lower.includes('is mahine')
+  ) {
     return await getSalesThisMonth(senderPhone, text);
   }
   // Won customers
-  if (lower.includes('won') && (lower.includes('customer') || lower.includes('deal'))) {
+  if (
+    lower.includes('won') &&
+    (lower.includes('customer') || lower.includes('deal'))
+  ) {
     return await getWonCustomers(senderPhone, text);
   }
   // Lost deals
@@ -766,24 +964,48 @@ async function handleQuery(text, senderPhone) {
     return await getLostDeals(senderPhone, text);
   }
   // Active deals
-  if ((lower.includes('active') || lower.includes('current') || lower.includes('my deals')) && lower.includes('deal')) {
+  if (
+    (lower.includes('active') ||
+      lower.includes('current') ||
+      lower.includes('my deals')) &&
+    lower.includes('deal')
+  ) {
     return await getActiveDealsDetail(senderPhone);
   }
   // Customer list
-  if (lower.includes('customer list') || lower.includes('my customers') || lower.includes('client list')) {
+  if (
+    lower.includes('customer list') ||
+    lower.includes('my customers') ||
+    lower.includes('client list')
+  ) {
     return await getCustomerList(senderPhone);
   }
   // Rate sheet
-  if (lower.includes('rate') || lower.includes('bhav') || lower.includes('price list')) {
+  if (
+    lower.includes('rate') ||
+    lower.includes('bhav') ||
+    lower.includes('price list')
+  ) {
     return await getRateSheet();
   }
   // Visit list
-  if (lower.includes('visit') || lower.includes('visited') || lower.includes('field visit')) {
+  if (
+    lower.includes('visit') ||
+    lower.includes('visited') ||
+    lower.includes('field visit')
+  ) {
     return await getVisitList(senderPhone, text);
   }
   // Outstanding / payment aging (must come before generic 'payment')
-  if (lower.includes('outstanding') || lower.includes('overdue') || lower.includes('baaki') ||
-      lower.includes('due') || lower.includes('aging') || lower.includes('hasn') || lower.includes('nahi diya')) {
+  if (
+    lower.includes('outstanding') ||
+    lower.includes('overdue') ||
+    lower.includes('baaki') ||
+    lower.includes('due') ||
+    lower.includes('aging') ||
+    lower.includes('hasn') ||
+    lower.includes('nahi diya')
+  ) {
     return await getPaymentAging(senderPhone);
   }
   // Payment summary (KRA 5 totals)
@@ -799,8 +1021,13 @@ async function handleQuery(text, senderPhone) {
     return await getNewCustomerSummary(senderPhone);
   }
   // Dashboard link
-  if (lower.includes('link') || lower.includes('login') || lower.includes('portal')) {
-    const dashboardUrl = process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
+  if (
+    lower.includes('link') ||
+    lower.includes('login') ||
+    lower.includes('portal')
+  ) {
+    const dashboardUrl =
+      process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
     return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
   }
 
@@ -825,14 +1052,20 @@ async function getVisitSummary(senderPhone, text = '') {
       return `📊 *KRA 9 - ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
     }
 
-    const visitList = visits.slice(0, 5).map((v, i) =>
-      `${i + 1}. ${v.customer_name || 'Unknown'} - ${new Date(v.visited_at).toLocaleDateString('en-IN')}`
-    ).join('\n');
+    const visitList = visits
+      .slice(0, 5)
+      .map(
+        (v, i) =>
+          `${i + 1}. ${v.customer_name || 'Unknown'} - ${new Date(v.visited_at).toLocaleDateString('en-IN')}`,
+      )
+      .join('\n');
 
-    return `📊 *KRA 9 - ${monthName} ${year}*\n\n` +
+    return (
+      `📊 *KRA 9 - ${monthName} ${year}*\n\n` +
       `Total visits: ${visits.length}\n\n` +
       `Recent visits:\n${visitList}\n\n` +
-      `_Target: 10 visits/week, 3 field days/week_`;
+      `_Target: 10 visits/week, 3 field days/week_`
+    );
   } catch (error) {
     console.error('getVisitSummary error:', error);
     return '❌ Could not fetch visit summary.';

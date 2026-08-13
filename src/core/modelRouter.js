@@ -14,9 +14,7 @@ const GEMINI_KEYS = [
   process.env.GEMINI_API_KEY_3,
 ].filter(Boolean);
 
-const GEMINI_MODELS = [
-  'gemini-3.1-flash-lite',
-];
+const GEMINI_MODELS = ['gemini-3.1-flash-lite'];
 
 let roundRobinIdx = 0;
 
@@ -35,10 +33,10 @@ function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
   if (!key) return null;
 
   const model = new ChatGoogleGenerativeAI({
-    model:       modelName,
-    apiKey:      key,
+    model: modelName,
+    apiKey: key,
     temperature: 0.1,
-    maxRetries:  1,
+    maxRetries: 1,
   });
 
   return tools ? model.bindTools(tools) : model;
@@ -60,25 +58,32 @@ function getModel(tools = null) {
 async function invokeWithFallback(messages, tools = null) {
   let lastError;
 
-  const geminiKeys = GEMINI_KEYS.length > 0 ? GEMINI_KEYS : [process.env.GEMINI_API_KEY];
+  const geminiKeys =
+    GEMINI_KEYS.length > 0 ? GEMINI_KEYS : [process.env.GEMINI_API_KEY];
   for (const modelName of GEMINI_MODELS) {
     for (const key of geminiKeys) {
       if (!key) continue;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const model = new ChatGoogleGenerativeAI({
-            model:       modelName,
-            apiKey:      key,
+            model: modelName,
+            apiKey: key,
             temperature: 0.1,
-            maxRetries:  1,
+            maxRetries: 1,
           });
           const boundModel = tools ? model.bindTools(tools) : model;
           return await boundModel.invoke(messages);
         } catch (err) {
           lastError = err;
-          console.warn(`[ModelRouter] Gemini (${modelName}) key (***${key.slice(-4)}) attempt ${attempt} failed: ${err.message}`);
+          console.warn(
+            `[ModelRouter] Gemini (${modelName}) key (***${key.slice(-4)}) attempt ${attempt} failed: ${err.message}`,
+          );
           const msg = err.message || '';
-          if (msg.includes('429') || msg.includes('Quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+          if (
+            msg.includes('429') ||
+            msg.includes('Quota') ||
+            msg.includes('RESOURCE_EXHAUSTED')
+          ) {
             await new Promise((r) => setTimeout(r, 1500));
           }
           continue;
@@ -87,7 +92,9 @@ async function invokeWithFallback(messages, tools = null) {
     }
   }
 
-  throw lastError || new Error('[ModelRouter] All Gemini API keys/models failed');
+  throw (
+    lastError || new Error('[ModelRouter] All Gemini API keys/models failed')
+  );
 }
 
 module.exports = { getModel, getGeminiModel, invokeWithFallback };

@@ -19,7 +19,7 @@ export default [
     ignores: [
       '**/.eslintrc.js',
       '**/eslint.config.mjs',
-      '**/webpack-hmr.config.js'
+      '**/webpack-hmr.config.js',
     ],
   },
   ...compat.extends(

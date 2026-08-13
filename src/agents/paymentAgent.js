@@ -1,8 +1,8 @@
 /**
  * KRA 5 - Payment Collection Agent
- * 
+ *
  * DESIGN PRINCIPLE: One row per customer in payment_tracking.
- * When a new payment update arrives for an existing customer, we UPDATE that row 
+ * When a new payment update arrives for an existing customer, we UPDATE that row
  * rather than inserting a new one. This prevents double-counting.
  */
 
@@ -97,9 +97,7 @@ async function getActiveDealForCustomer(customerName, senderPhone) {
     const cleanDigits = senderPhone.replace(/\D/g, '');
     const p10 = cleanDigits.slice(-10);
     const p12 = '91' + p10;
-    query = query.or(
-      `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-    );
+    query = query.or(`salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`);
   }
 
   const { data } = await query
@@ -202,9 +200,9 @@ async function getLastCustomerForSalesperson(senderPhone) {
 async function upsertPaymentTracking({
   customerName,
   senderPhone,
-  newAmountPaid,   // amount received THIS time
+  newAmountPaid, // amount received THIS time
   explicitPending, // outstanding as explicitly stated (or 0 if not stated)
-  isFullPayment,   // true if message said "full payment done"
+  isFullPayment, // true if message said "full payment done"
   paymentType,
   paymentMode,
   isModeUpdateOnly,
@@ -221,24 +219,44 @@ async function upsertPaymentTracking({
   if (existing) {
     // --- UPDATE existing row ---
     const priorCollected = Number(existing.collected_amount) || 0;
-    const priorInvoice   = Number(existing.invoice_amount)   || 0;
+    const priorInvoice = Number(existing.invoice_amount) || 0;
 
-    finalInvoiceAmount = dealTotal || priorInvoice || (priorCollected + (Number(existing.outstanding) || 0));
+    finalInvoiceAmount =
+      dealTotal ||
+      priorInvoice ||
+      priorCollected + (Number(existing.outstanding) || 0);
 
-    if (isModeUpdateOnly || (newAmountPaid <= 0 && explicitPending <= 0 && !isFullPayment)) {
+    if (
+      isModeUpdateOnly ||
+      (newAmountPaid <= 0 && explicitPending <= 0 && !isFullPayment)
+    ) {
       // Payment mode update only — preserve existing collected and outstanding amounts!
       finalCollected = priorCollected;
-      finalOutstanding = Number(existing.outstanding) || (finalInvoiceAmount > finalCollected ? finalInvoiceAmount - finalCollected : 0);
+      finalOutstanding =
+        Number(existing.outstanding) ||
+        (finalInvoiceAmount > finalCollected
+          ? finalInvoiceAmount - finalCollected
+          : 0);
       finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
     } else if (isFullPayment) {
       finalOutstanding = 0;
-      finalCollected = finalInvoiceAmount > 0 ? finalInvoiceAmount : priorCollected + newAmountPaid;
+      finalCollected =
+        finalInvoiceAmount > 0
+          ? finalInvoiceAmount
+          : priorCollected + newAmountPaid;
       finalPaymentType = 'full_settlement';
       finalStatus = 'collected';
-    } else if (paymentType === 'advance' && priorCollected >= newAmountPaid && newAmountPaid > 0) {
+    } else if (
+      paymentType === 'advance' &&
+      priorCollected >= newAmountPaid &&
+      newAmountPaid > 0
+    ) {
       // Re-stating or clarifying advance payment — preserve existing collected amount!
       finalCollected = priorCollected;
-      finalOutstanding = finalInvoiceAmount > 0 ? Math.max(0, finalInvoiceAmount - finalCollected) : explicitPending;
+      finalOutstanding =
+        finalInvoiceAmount > 0
+          ? Math.max(0, finalInvoiceAmount - finalCollected)
+          : explicitPending;
       finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
     } else {
       finalCollected = priorCollected + newAmountPaid;
@@ -247,7 +265,10 @@ async function upsertPaymentTracking({
       } else if (finalInvoiceAmount > 0) {
         finalOutstanding = Math.max(0, finalInvoiceAmount - finalCollected);
       } else {
-        finalOutstanding = Math.max(0, Number(existing.outstanding) - newAmountPaid);
+        finalOutstanding = Math.max(
+          0,
+          Number(existing.outstanding) - newAmountPaid,
+        );
       }
       finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
     }
@@ -255,47 +276,54 @@ async function upsertPaymentTracking({
     await supabase
       .from('payment_tracking')
       .update({
-        invoice_amount:   finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
+        invoice_amount: finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
         collected_amount: finalCollected,
-        outstanding:      finalOutstanding,
-        status:           finalStatus,
-        payment_type:     finalPaymentType,
-        paid_date:        finalStatus === 'collected' ? new Date().toISOString().split('T')[0] : null,
-        updated_at:       new Date().toISOString(),
+        outstanding: finalOutstanding,
+        status: finalStatus,
+        payment_type: finalPaymentType,
+        paid_date:
+          finalStatus === 'collected'
+            ? new Date().toISOString().split('T')[0]
+            : null,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', existing.id);
-
   } else {
     // --- INSERT new row ---
-    finalInvoiceAmount = dealTotal || (newAmountPaid + explicitPending) || newAmountPaid;
-    finalCollected     = newAmountPaid;
+    finalInvoiceAmount =
+      dealTotal || newAmountPaid + explicitPending || newAmountPaid;
+    finalCollected = newAmountPaid;
 
     if (isFullPayment) {
-      finalOutstanding   = 0;
-      finalCollected     = finalInvoiceAmount > 0 ? finalInvoiceAmount : newAmountPaid;
-      finalPaymentType   = 'full_settlement';
-      finalStatus        = 'collected';
+      finalOutstanding = 0;
+      finalCollected =
+        finalInvoiceAmount > 0 ? finalInvoiceAmount : newAmountPaid;
+      finalPaymentType = 'full_settlement';
+      finalStatus = 'collected';
     } else if (explicitPending > 0) {
-      finalOutstanding   = explicitPending;
-      finalStatus        = finalOutstanding <= 0 ? 'collected' : 'partial';
+      finalOutstanding = explicitPending;
+      finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
     } else if (dealTotal > 0) {
-      finalOutstanding   = Math.max(0, dealTotal - finalCollected);
-      finalStatus        = finalOutstanding <= 0 ? 'collected' : 'partial';
+      finalOutstanding = Math.max(0, dealTotal - finalCollected);
+      finalStatus = finalOutstanding <= 0 ? 'collected' : 'partial';
     } else {
-      finalOutstanding   = 0;
-      finalStatus        = 'partial';
+      finalOutstanding = 0;
+      finalStatus = 'partial';
     }
 
     await supabase.from('payment_tracking').insert({
-      customer_name:     customerName,
+      customer_name: customerName,
       salesperson_phone: senderPhone,
-      invoice_amount:    finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
-      collected_amount:  finalCollected,
-      outstanding:       finalOutstanding,
-      status:            finalStatus,
-      payment_type:      finalPaymentType,
-      paid_date:         finalStatus === 'collected' ? new Date().toISOString().split('T')[0] : null,
-      created_at:        new Date().toISOString(),
+      invoice_amount: finalInvoiceAmount > 0 ? finalInvoiceAmount : null,
+      collected_amount: finalCollected,
+      outstanding: finalOutstanding,
+      status: finalStatus,
+      payment_type: finalPaymentType,
+      paid_date:
+        finalStatus === 'collected'
+          ? new Date().toISOString().split('T')[0]
+          : null,
+      created_at: new Date().toISOString(),
     });
   }
 
@@ -317,8 +345,12 @@ async function processPaymentMessage(text, senderPhone) {
     const cleanedText = text
       .replace(/(\d+),(\d{3})/g, '$1$2')
       .replace(/(\d+),(\d{3})/g, '$1$2')
-      .replace(/(\d+\.?\d*)\s*[Ll](?:akh)?/g, (_, n) => String(Math.round(parseFloat(n) * 100000)))
-      .replace(/(\d+\.?\d*)\s*[Kk]/g, (_, n) => String(Math.round(parseFloat(n) * 1000)));
+      .replace(/(\d+\.?\d*)\s*[Ll](?:akh)?/g, (_, n) =>
+        String(Math.round(parseFloat(n) * 100000)),
+      )
+      .replace(/(\d+\.?\d*)\s*[Kk]/g, (_, n) =>
+        String(Math.round(parseFloat(n) * 1000)),
+      );
 
     const { invokeWithFallback } = require('../core/modelRouter');
     const historyMessages = getChatHistory(senderPhone);
@@ -328,8 +360,16 @@ async function processPaymentMessage(text, senderPhone) {
       ...historyMessages,
       new HumanMessage('Salesperson message:\n' + cleanedText),
     ]);
-    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(cleaned, null);
 
@@ -346,19 +386,24 @@ async function processPaymentMessage(text, senderPhone) {
       return `⚠️ *Payment Agent — Customer Missing*\n\nPlease specify the *Customer/Company Name* for this payment record.`;
     }
 
-    const amountPaid       = Math.max(0, Number(data.amount_paid    || 0));
-    const amountPending    = Math.max(0, Number(data.amount_pending || 0));
-    const isFullPayment    = !!data.is_full_payment;
-    const isModeUpdateOnly = !!data.is_mode_update_only || (amountPaid <= 0 && amountPending <= 0 && !!data.payment_mode);
-    const paymentMode      = data.payment_mode || null;
+    const amountPaid = Math.max(0, Number(data.amount_paid || 0));
+    const amountPending = Math.max(0, Number(data.amount_pending || 0));
+    const isFullPayment = !!data.is_full_payment;
+    const isModeUpdateOnly =
+      !!data.is_mode_update_only ||
+      (amountPaid <= 0 && amountPending <= 0 && !!data.payment_mode);
+    const paymentMode = data.payment_mode || null;
 
-    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    let officialCustomerName = await verifyAndGetCustomerName(
+      customerName,
+      senderPhone,
+    );
     if (!officialCustomerName) {
       await supabase.from('recurring_customers').insert({
-        customer_name:              customerName,
+        customer_name: customerName,
         assigned_salesperson_phone: senderPhone,
-        is_active:                  true,
-        avg_order_frequency_days:   30,
+        is_active: true,
+        avg_order_frequency_days: 30,
       });
       officialCustomerName = customerName;
     }
@@ -366,12 +411,20 @@ async function processPaymentMessage(text, senderPhone) {
     const finalCustomerName = officialCustomerName;
 
     // ── 1. Deal Stage Check (Open/Non-Won Deal) ────────────────────────────────
-    const activeDeal = await getActiveDealForCustomer(finalCustomerName, senderPhone);
+    const activeDeal = await getActiveDealForCustomer(
+      finalCustomerName,
+      senderPhone,
+    );
 
     if (activeDeal && !isModeUpdateOnly) {
-      const { getFullActiveSession, saveActiveSession } = require('../supabase');
+      const {
+        getFullActiveSession,
+        saveActiveSession,
+      } = require('../supabase');
       const session = await getFullActiveSession(senderPhone);
-      const isPendingPaymentConfirm = session?.last_intent?.startsWith('pending_payment_confirm|');
+      const isPendingPaymentConfirm = session?.last_intent?.startsWith(
+        'pending_payment_confirm|',
+      );
 
       if (!isPendingPaymentConfirm) {
         const stageLabels = {
@@ -406,12 +459,21 @@ async function processPaymentMessage(text, senderPhone) {
 
     // ── 2. Amount Discrepancy Check ─────────────────────────────────────────
     const dealTotal = await getDealTotal(finalCustomerName, senderPhone);
-    const discrepancy = checkAmountDiscrepancy(amountPaid, amountPending, dealTotal);
+    const discrepancy = checkAmountDiscrepancy(
+      amountPaid,
+      amountPending,
+      dealTotal,
+    );
 
     if (discrepancy && !isModeUpdateOnly) {
-      const { getFullActiveSession, saveActiveSession } = require('../supabase');
+      const {
+        getFullActiveSession,
+        saveActiveSession,
+      } = require('../supabase');
       const session = await getFullActiveSession(senderPhone);
-      const isPendingAmountConfirm = session?.last_intent?.startsWith('pending_amount_confirm|');
+      const isPendingAmountConfirm = session?.last_intent?.startsWith(
+        'pending_amount_confirm|',
+      );
 
       if (!isPendingAmountConfirm) {
         await saveActiveSession(
@@ -426,31 +488,34 @@ async function processPaymentMessage(text, senderPhone) {
     // Handle payment mode update only
     if (isModeUpdateOnly) {
       const resultMode = await upsertPaymentTracking({
-        customerName:    finalCustomerName,
+        customerName: finalCustomerName,
         senderPhone,
-        newAmountPaid:   0,
+        newAmountPaid: 0,
         explicitPending: 0,
-        isFullPayment:   false,
-        paymentType:     'mode_update',
-        paymentMode:     paymentMode || 'RTGS',
+        isFullPayment: false,
+        paymentType: 'mode_update',
+        paymentMode: paymentMode || 'RTGS',
         isModeUpdateOnly: true,
       });
 
-      return `Perfect, I've updated the payment mode for *${finalCustomerName}* to *${paymentMode || 'RTGS'}*.\n\n` +
+      return (
+        `Perfect, I've updated the payment mode for *${finalCustomerName}* to *${paymentMode || 'RTGS'}*.\n\n` +
         `Current Status: *₹${resultMode.finalCollected.toLocaleString('en-IN')}* collected | *₹${resultMode.finalOutstanding.toLocaleString('en-IN')}* remaining balance.\n\n` +
-        `Updated KRA 5 Payment Collection Dashboard! ✅`;
+        `Updated KRA 5 Payment Collection Dashboard! ✅`
+      );
     }
 
     if (amountPaid <= 0 && amountPending <= 0 && !isFullPayment) {
       return `⚠️ *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${finalCustomerName}*.`;
     }
 
-    const paymentType = data.payment_type || (amountPaid > 0 ? 'advance' : 'outstanding_update');
+    const paymentType =
+      data.payment_type || (amountPaid > 0 ? 'advance' : 'outstanding_update');
 
     const result2 = await upsertPaymentTracking({
-      customerName:    finalCustomerName,
+      customerName: finalCustomerName,
       senderPhone,
-      newAmountPaid:   amountPaid,
+      newAmountPaid: amountPaid,
       explicitPending: amountPending,
       isFullPayment,
       paymentType,
@@ -461,15 +526,20 @@ async function processPaymentMessage(text, senderPhone) {
     const isFullyPaid = result2.finalStatus === 'collected';
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
-      kra_number:        5,
-      kra_type:          isFullyPaid ? 'payment_collected' : 'payment_advance',
-      value:             amountPaid > 0 ? amountPaid : 0,
-      customer_name:     finalCustomerName,
-      description:       `Payment Update: ${finalCustomerName}` +
-        (amountPaid > 0 ? ` | Received: ₹${amountPaid.toLocaleString('en-IN')}` : '') +
-        (result2.finalOutstanding > 0 ? ` | Outstanding: ₹${result2.finalOutstanding.toLocaleString('en-IN')}` : ' | Fully Settled 🎉'),
+      kra_number: 5,
+      kra_type: isFullyPaid ? 'payment_collected' : 'payment_advance',
+      value: amountPaid > 0 ? amountPaid : 0,
+      customer_name: finalCustomerName,
+      description:
+        `Payment Update: ${finalCustomerName}` +
+        (amountPaid > 0
+          ? ` | Received: ₹${amountPaid.toLocaleString('en-IN')}`
+          : '') +
+        (result2.finalOutstanding > 0
+          ? ` | Outstanding: ₹${result2.finalOutstanding.toLocaleString('en-IN')}`
+          : ' | Fully Settled 🎉'),
       month: new Date().getMonth() + 1,
-      year:  new Date().getFullYear(),
+      year: new Date().getFullYear(),
     });
 
     try {
@@ -486,9 +556,13 @@ async function processPaymentMessage(text, senderPhone) {
       `💰 *KRA 5 - Payment ${result2.existing ? 'Updated' : 'Logged'}!*`,
       ``,
       `Customer: *${finalCustomerName}*`,
-      amountPaid > 0 ? `Amount Received: *₹${amountPaid.toLocaleString('en-IN')}*` : null,
+      amountPaid > 0
+        ? `Amount Received: *₹${amountPaid.toLocaleString('en-IN')}*`
+        : null,
       paymentMode ? `Payment Mode: *${paymentMode}*` : null,
-      result2.dealTotal > 0 ? `Total Deal Invoice: *₹${result2.dealTotal.toLocaleString('en-IN')}*` : null,
+      result2.dealTotal > 0
+        ? `Total Deal Invoice: *₹${result2.dealTotal.toLocaleString('en-IN')}*`
+        : null,
       `Total Collected: *₹${result2.finalCollected.toLocaleString('en-IN')}*`,
       `Remaining Outstanding: *${result2.finalOutstanding > 0 ? '₹' + result2.finalOutstanding.toLocaleString('en-IN') : '₹0 (Fully Settled 🎉)'}*`,
       `Status: *${result2.finalStatus.toUpperCase()}*`,

@@ -1,5 +1,6 @@
 /**
  * KRA 1 - Sales Achievement & Pipeline Agent
+ * Version: 2026.08.13-v2 (Production Build Fix)
  *
  * DESIGN PRINCIPLES:
  * - One deal per customer inquiry. Stage updates modify THAT deal, never create a new one.
@@ -11,7 +12,11 @@
  */
 
 const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
-const { supabase, verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
+const {
+  supabase,
+  verifyAndGetCustomerName,
+  saveActiveSession,
+} = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 
 const SALES_AGENT_PROMPT = `
@@ -208,6 +213,55 @@ function detectInvalidUnitInMessage(text) {
         'pune',
         'mumbai',
         'delhi',
+        'requirement',
+        'requirements',
+        'req',
+        'reqs',
+        'inquiry',
+        'inquiries',
+        'quotation',
+        'quotations',
+        'quote',
+        'quotes',
+        'order',
+        'orders',
+        'po',
+        'ref',
+        'no',
+        'num',
+        'number',
+        'item',
+        'items',
+        'spec',
+        'specs',
+        'specification',
+        'specifications',
+        'delivery',
+        'location',
+        'address',
+        'date',
+        'dated',
+        'vendor',
+        'code',
+        'page',
+        'id',
+        'val',
+        'value',
+        'total',
+        'subtotal',
+        'amount',
+        'tax',
+        'gst',
+        'target',
+        'thickness',
+        'width',
+        'length',
+        'dia',
+        'diameter',
+        'grade',
+        'size',
+        'weight',
+        'warehouse',
       ];
       if (SKIP_WORDS.includes(unit)) continue;
 
@@ -287,7 +341,9 @@ async function getDealAmountFromItems(dealId) {
   if (!items || items.length === 0) return 0;
 
   return items.reduce((total, item) => {
-    const itemAmount = Number(item.amount) || (Number(item.quantity || 0) * Number(item.rate || 0));
+    const itemAmount =
+      Number(item.amount) ||
+      Number(item.quantity || 0) * Number(item.rate || 0);
     return total + itemAmount;
   }, 0);
 }
@@ -312,9 +368,18 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
  */
 function extractDimensions(str) {
   if (!str) return [];
-  const matches = str.toLowerCase().match(/\b(\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|x\d+)?)\b/g);
+  const matches = str
+    .toLowerCase()
+    .match(/\b(\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|x\d+)?)\b/g);
   if (!matches) return [];
-  return matches.filter((m) => /\d+/.test(m) && (m.includes('mm') || m.includes('x') || m.includes('cm') || m.includes('inch')));
+  return matches.filter(
+    (m) =>
+      /\d+/.test(m) &&
+      (m.includes('mm') ||
+        m.includes('x') ||
+        m.includes('cm') ||
+        m.includes('inch')),
+  );
 }
 
 function isDimensionCompatible(requestedText, skuText) {
@@ -415,10 +480,12 @@ async function processSalesMessage(text, senderPhone) {
     // 1. Immediately reject invalid/nonsense units (e.g. "15 apple") before processing
     const invalidUnitCheck = detectInvalidUnitInMessage(text);
     if (invalidUnitCheck) {
-      return `❌ *Invalid Quantity Unit*\n\n` +
+      return (
+        `❌ *Invalid Quantity Unit*\n\n` +
         `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
         `Metal products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
-        `Please specify the quantity using a valid unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`;
+        `Please specify the quantity using a valid unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`
+      );
     }
 
     const { invokeWithFallback } = require('../core/modelRouter');
@@ -426,7 +493,10 @@ async function processSalesMessage(text, senderPhone) {
       new SystemMessage(SALES_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content || '');
+    const rawText =
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content || '');
     const { safeParseJSON } = require('../utils/jsonUtils');
     const data = safeParseJSON(rawText, null);
 
@@ -436,11 +506,17 @@ async function processSalesMessage(text, senderPhone) {
 
     let customerName = data.customer_name;
     const textLower = (text || '').toLowerCase();
-    const isNewReqMessage = /\b(need|requires|required|want|order|inquiry|rfq|new deal)\b/i.test(textLower);
+    const isNewReqMessage =
+      /\b(need|requires|required|want|order|inquiry|rfq|new deal)\b/i.test(
+        textLower,
+      );
 
     if (customerName && isNewReqMessage) {
       // Check if user actually wrote the company name in the text
-      const nameWords = customerName.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      const nameWords = customerName
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 2);
       const nameInText = nameWords.some((w) => textLower.includes(w));
       if (!nameInText) {
         customerName = null; // Ignore LLM history hallucination for new inquiries
@@ -459,7 +535,11 @@ async function processSalesMessage(text, senderPhone) {
 
     if (!customerName || customerName.length < 2) {
       const { saveActiveSession } = require('../supabase');
-      await saveActiveSession(senderPhone, 'Unknown', 'pending_customer_for_deal');
+      await saveActiveSession(
+        senderPhone,
+        'Unknown',
+        'pending_customer_for_deal',
+      );
       return `❓ Which customer is this deal update for? Please reply with the customer/company name.`;
     }
 
@@ -486,11 +566,13 @@ async function processSalesMessage(text, senderPhone) {
     if (Array.isArray(data.line_items) && data.line_items.length > 0) {
       rawItems = data.line_items;
     } else if (data.product_requirement || data.quantity_mt) {
-      rawItems = [{
-        product_requirement: data.product_requirement,
-        quantity_mt: data.quantity_mt,
-        rate_per_mt: data.rate_per_mt,
-      }];
+      rawItems = [
+        {
+          product_requirement: data.product_requirement,
+          quantity_mt: data.quantity_mt,
+          rate_per_mt: data.rate_per_mt,
+        },
+      ];
     }
 
     let processedItems = [];
@@ -498,10 +580,13 @@ async function processSalesMessage(text, senderPhone) {
     let hasUnlistedMaterial = false;
     let unlistedMaterialName = '';
 
-    const GENERIC_PRODUCT_REGEX = /^(steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined)$/i;
+    const GENERIC_PRODUCT_REGEX =
+      /^(steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined)$/i;
 
     for (const item of rawItems) {
-      let pName = item.product_requirement ? item.product_requirement.trim() : null;
+      let pName = item.product_requirement
+        ? item.product_requirement.trim()
+        : null;
       if (pName && GENERIC_PRODUCT_REGEX.test(pName)) {
         pName = null;
       }
@@ -524,10 +609,16 @@ async function processSalesMessage(text, senderPhone) {
       } else if (qty > 0) {
         // Quantity specified but NO specific metal product name was mentioned!
         const { saveActiveSession } = require('../supabase');
-        await saveActiveSession(senderPhone, finalCustomerName, `pending_product_for_deal|${finalCustomerName}|${qty}|MT`);
-        return `❓ *Which metal product is ${finalCustomerName} asking for?*\n\n` +
+        await saveActiveSession(
+          senderPhone,
+          finalCustomerName,
+          `pending_product_for_deal|${finalCustomerName}|${qty}|MT`,
+        );
+        return (
+          `❓ *Which metal product is ${finalCustomerName} asking for?*\n\n` +
           `You specified a quantity of *${qty} MT*, but no specific metal product was mentioned.\n\n` +
-          `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can check our active rate sheet and calculate the quotation for KRA 1 & Sales Pipeline! 📈`;
+          `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can check our active rate sheet and calculate the quotation for KRA 1 & Sales Pipeline! 📈`
+        );
       }
 
       const itemAmount = qty > 0 && rate > 0 ? qty * rate : 0;
@@ -543,10 +634,16 @@ async function processSalesMessage(text, senderPhone) {
 
     if (hasUnlistedMaterial && calculatedTotal === 0) {
       const { saveActiveSession } = require('../supabase');
-      await saveActiveSession(senderPhone, finalCustomerName, `pending_custom_rate|${finalCustomerName}|${unlistedMaterialName}`);
-      return `⚠️ *Product Price Confirmation Required*\n\n` +
+      await saveActiveSession(
+        senderPhone,
+        finalCustomerName,
+        `pending_custom_rate|${finalCustomerName}|${unlistedMaterialName}`,
+      );
+      return (
+        `⚠️ *Product Price Confirmation Required*\n\n` +
         `The material *"${unlistedMaterialName}"* is not listed in our active rate sheet.\n\n` +
-        `Please confirm the per MT rate for *${unlistedMaterialName}* (e.g. reply _"${unlistedMaterialName} rate is 54000"_) so I can calculate the deal total and update KRA 1 & Sales Pipeline! 📈`;
+        `Please confirm the per MT rate for *${unlistedMaterialName}* (e.g. reply _"${unlistedMaterialName} rate is 54000"_) so I can calculate the deal total and update KRA 1 & Sales Pipeline! 📈`
+      );
     }
 
     let dealAmount = 0;
@@ -578,7 +675,10 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     // MULTI-DEAL RESOLUTION: Fetch all active open deals for this client
-    const openDeals = await getAllOpenDealsForCustomer(finalCustomerName, senderPhone);
+    const openDeals = await getAllOpenDealsForCustomer(
+      finalCustomerName,
+      senderPhone,
+    );
     let existingDeal = null;
     let dealId = null;
 
@@ -588,15 +688,23 @@ async function processSalesMessage(text, senderPhone) {
 
     if (dealIdMatch && openDeals.length > 0) {
       const targetCode = dealIdMatch[1].toUpperCase().replace('DEAL-', '');
-      existingDeal = openDeals.find(d => (d.id || '').toUpperCase().includes(targetCode) || (d.deal_number && d.deal_number.toUpperCase().includes(targetCode)));
+      existingDeal = openDeals.find(
+        (d) =>
+          (d.id || '').toUpperCase().includes(targetCode) ||
+          (d.deal_number && d.deal_number.toUpperCase().includes(targetCode)),
+      );
       if (existingDeal) {
-        console.log(`[SalesAgent] Explicitly targeted deal ${getDealCode(existingDeal)} for ${finalCustomerName}`);
+        console.log(
+          `[SalesAgent] Explicitly targeted deal ${getDealCode(existingDeal)} for ${finalCustomerName}`,
+        );
       }
     } else if (numChoiceMatch && openDeals.length > 0) {
       const idx = parseInt(numChoiceMatch[1], 10) - 1;
       if (openDeals[idx]) {
         existingDeal = openDeals[idx];
-        console.log(`[SalesAgent] Selected deal #${idx + 1} (${getDealCode(existingDeal)}) for ${finalCustomerName}`);
+        console.log(
+          `[SalesAgent] Selected deal #${idx + 1} (${getDealCode(existingDeal)}) for ${finalCustomerName}`,
+        );
       }
     }
 
@@ -604,31 +712,49 @@ async function processSalesMessage(text, senderPhone) {
       existingDeal = openDeals[0];
     } else if (!existingDeal && openDeals.length > 1) {
       // Multiple active open deals exist for this client and no specific Deal ID was mentioned!
-      const isStageUpdateOrInquiry = data.action === 'stage_update' || !data.product_requirement;
+      const isStageUpdateOrInquiry =
+        data.action === 'stage_update' || !data.product_requirement;
       if (isStageUpdateOrInquiry) {
-        const dealsListStr = openDeals.map((d, idx) => {
-          const code = getDealCode(d);
-          const itemsStr = (d.deal_items || []).map(i => `${i.quantity || ''} ${i.unit || 'MT'} ${i.sku_text || 'Product'}`).join(', ') || d.inquiry_type || 'Product Requirement';
-          const valStr = d.total_amount > 0 ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})` : '';
-          const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
-          return `${idx + 1}️⃣ *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
-        }).join('\n');
+        const dealsListStr = openDeals
+          .map((d, idx) => {
+            const code = getDealCode(d);
+            const itemsStr =
+              (d.deal_items || [])
+                .map(
+                  (i) =>
+                    `${i.quantity || ''} ${i.unit || 'MT'} ${i.sku_text || 'Product'}`,
+                )
+                .join(', ') ||
+              d.inquiry_type ||
+              'Product Requirement';
+            const valStr =
+              d.total_amount > 0
+                ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})`
+                : '';
+            const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
+            return `${idx + 1}️⃣ *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
+          })
+          .join('\n');
 
         const { saveActiveSession } = require('../supabase');
-        await saveActiveSession(senderPhone, finalCustomerName, `pending_deal_choice|${finalCustomerName}|${dbStage}|${text}`);
+        await saveActiveSession(
+          senderPhone,
+          finalCustomerName,
+          `pending_deal_choice|${finalCustomerName}|${dbStage}|${text}`,
+        );
 
-        return `❓ *Multiple Active Deals Found for ${finalCustomerName}*\n\n` +
+        return (
+          `❓ *Multiple Active Deals Found for ${finalCustomerName}*\n\n` +
           `${finalCustomerName} has *${openDeals.length} active deals* in your sales pipeline:\n\n` +
           `${dealsListStr}\n\n` +
-          `Please reply with the **Deal ID** (e.g. _"${getDealCode(openDeals[0])}"_) or option number to specify which deal to update! 📈`;
+          `Please reply with the **Deal ID** (e.g. _"${getDealCode(openDeals[0])}"_) or option number to specify which deal to update! 📈`
+        );
       }
     }
 
     if (existingDeal) {
       const isStageUpdateOnly =
-        !data.product_requirement &&
-        !data.quantity_mt &&
-        rawItems.length === 0;
+        !data.product_requirement && !data.quantity_mt && rawItems.length === 0;
       const productMatchesExisting = await isProductMatchForExistingDeal(
         existingDeal.id,
         data.product_requirement ||
@@ -650,7 +776,8 @@ async function processSalesMessage(text, senderPhone) {
 
     if (dealAmount === 0 && dealId) {
       const itemsTotal = await getDealAmountFromItems(dealId);
-      dealAmount = itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
+      dealAmount =
+        itemsTotal > 0 ? itemsTotal : Number(existingDeal.total_amount || 0);
     }
 
     const poDate = data.po_date || new Date().toISOString().split('T')[0];
@@ -659,10 +786,18 @@ async function processSalesMessage(text, senderPhone) {
     // PO is created ONLY after the deal is WON!
     if (dbStage === 'won') {
       const explicitPo = data.po_number || data.poNumber;
-      if (explicitPo && explicitPo !== 'null' && explicitPo !== 'None' && String(explicitPo).trim().length > 2) {
+      if (
+        explicitPo &&
+        explicitPo !== 'null' &&
+        explicitPo !== 'None' &&
+        String(explicitPo).trim().length > 2
+      ) {
         poNumber = String(explicitPo).trim();
       } else if (!poNumber) {
-        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const todayStr = new Date()
+          .toISOString()
+          .slice(0, 10)
+          .replace(/-/g, '');
         const randomNum = Math.floor(1000 + Math.random() * 9000);
         poNumber = `PO-${todayStr}-${randomNum}`;
       }
@@ -678,20 +813,31 @@ async function processSalesMessage(text, senderPhone) {
         po_number: poNumber,
       };
 
-      if (actualCustomerPhone) updatePayload.customer_phone = actualCustomerPhone;
-      if (data.delivery_location) updatePayload.delivery_location = data.delivery_location;
+      if (actualCustomerPhone)
+        updatePayload.customer_phone = actualCustomerPhone;
+      if (data.delivery_location)
+        updatePayload.delivery_location = data.delivery_location;
       if (data.delivery_date) updatePayload.delivery_date = data.delivery_date;
       if (dealAmount > 0) updatePayload.total_amount = dealAmount;
 
       if (dbStage === 'won') updatePayload.won_at = new Date().toISOString();
 
       if (dbStage === 'lost') {
-        if (data.loss_reason && data.loss_reason !== 'Not specified' && data.loss_reason.length > 2) {
+        if (
+          data.loss_reason &&
+          data.loss_reason !== 'Not specified' &&
+          data.loss_reason.length > 2
+        ) {
           updatePayload.lost_reason = data.loss_reason;
         } else {
           const { saveActiveSession } = require('../supabase');
-          await saveActiveSession(senderPhone, finalCustomerName, `pending_loss_reason|${dealId}|${finalCustomerName}`);
-          return `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
+          await saveActiveSession(
+            senderPhone,
+            finalCustomerName,
+            `pending_loss_reason|${dealId}|${finalCustomerName}`,
+          );
+          return (
+            `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
             `Please reply with the reason for rejection (reply with a number or type your own reason):\n\n` +
             `1️⃣ Price too high\n` +
             `2️⃣ Credit terms / Payment terms mismatch\n` +
@@ -700,7 +846,8 @@ async function processSalesMessage(text, senderPhone) {
             `5️⃣ Spec mismatch\n` +
             `6️⃣ Competitor relationship\n` +
             `7️⃣ Customer silent / No response\n` +
-            `8️⃣ Cancelled by customer`;
+            `8️⃣ Cancelled by customer`
+          );
         }
       }
 
@@ -723,26 +870,34 @@ async function processSalesMessage(text, senderPhone) {
       }
     } else {
       // ---- CREATE new deal ----
-      if (dbStage === 'lost' && (!data.loss_reason || data.loss_reason === 'Not specified')) {
+      if (
+        dbStage === 'lost' &&
+        (!data.loss_reason || data.loss_reason === 'Not specified')
+      ) {
         const { data: tempDeal } = await supabase
           .from('deals')
           .insert({
-            customer_name:     finalCustomerName,
+            customer_name: finalCustomerName,
             salesperson_phone: senderPhone,
-            customer_phone:    actualCustomerPhone,
-            stage:             'negotiation',
-            total_amount:      dealAmount || 0,
-            inquiry_type:      'inquiry',
-            po_date:           poDate,
-            po_number:         poNumber,
+            customer_phone: actualCustomerPhone,
+            stage: 'negotiation',
+            total_amount: dealAmount || 0,
+            inquiry_type: 'inquiry',
+            po_date: poDate,
+            po_number: poNumber,
           })
           .select()
           .single();
 
         if (tempDeal) {
           const { saveActiveSession } = require('../supabase');
-          await saveActiveSession(senderPhone, finalCustomerName, `pending_loss_reason|${tempDeal.id}|${finalCustomerName}`);
-          return `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
+          await saveActiveSession(
+            senderPhone,
+            finalCustomerName,
+            `pending_loss_reason|${tempDeal.id}|${finalCustomerName}`,
+          );
+          return (
+            `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
             `Please reply with the reason for rejection (reply with a number or type your own reason):\n\n` +
             `1️⃣ Price too high\n` +
             `2️⃣ Credit terms / Payment terms mismatch\n` +
@@ -751,25 +906,26 @@ async function processSalesMessage(text, senderPhone) {
             `5️⃣ Spec mismatch\n` +
             `6️⃣ Competitor relationship\n` +
             `7️⃣ Customer silent / No response\n` +
-            `8️⃣ Cancelled by customer`;
+            `8️⃣ Cancelled by customer`
+          );
         }
       }
 
       const { data: newDeal, error: dealInsertErr } = await supabase
         .from('deals')
         .insert({
-          customer_name:     finalCustomerName,
+          customer_name: finalCustomerName,
           salesperson_phone: senderPhone,
-          customer_phone:    actualCustomerPhone,
-          stage:             dbStage,
-          total_amount:      dealAmount || 0,
-          inquiry_type:      'inquiry',
+          customer_phone: actualCustomerPhone,
+          stage: dbStage,
+          total_amount: dealAmount || 0,
+          inquiry_type: 'inquiry',
           delivery_location: data.delivery_location || null,
-          delivery_date:     data.delivery_date || null,
-          po_date:           poDate,
-          po_number:         poNumber,
-          won_at:            dbStage === 'won' ? new Date().toISOString() : null,
-          lost_reason:       dbStage === 'lost' ? data.loss_reason : null,
+          delivery_date: data.delivery_date || null,
+          po_date: poDate,
+          po_number: poNumber,
+          won_at: dbStage === 'won' ? new Date().toISOString() : null,
+          lost_reason: dbStage === 'lost' ? data.loss_reason : null,
         })
         .select()
         .single();
@@ -802,7 +958,10 @@ async function processSalesMessage(text, senderPhone) {
           .update({ last_order_date: new Date().toISOString() })
           .ilike('customer_name', `%${finalCustomerName}%`);
       } catch (err) {
-        console.error('[SalesAgent] Failed to update last_order_date:', err.message);
+        console.error(
+          '[SalesAgent] Failed to update last_order_date:',
+          err.message,
+        );
       }
     }
 
@@ -823,13 +982,20 @@ async function processSalesMessage(text, senderPhone) {
           notes: `Won deal for ${finalCustomerName}: ₹${dealAmount.toLocaleString('en-IN')}`,
           created_at: new Date().toISOString(),
         });
-        console.log(`[SalesAgent] Logged KRA 1 for won deal: ${finalCustomerName} = ₹${dealAmount}`);
+        console.log(
+          `[SalesAgent] Logged KRA 1 for won deal: ${finalCustomerName} = ₹${dealAmount}`,
+        );
       }
     }
 
     // Trigger Zoho Bigin Sync
     try {
-      const syncType = dbStage === 'won' ? 'deal_won' : dbStage === 'lost' ? 'deal_lost' : 'deal_stage';
+      const syncType =
+        dbStage === 'won'
+          ? 'deal_won'
+          : dbStage === 'lost'
+            ? 'deal_lost'
+            : 'deal_stage';
       syncActivity(syncType, {
         customerName: finalCustomerName,
         dealId,
@@ -844,15 +1010,24 @@ async function processSalesMessage(text, senderPhone) {
     }
 
     const { getCustomerMissingInfoPrompt } = require('../supabase');
-    const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+    const missingPrompt = await getCustomerMissingInfoPrompt(
+      finalCustomerName,
+      senderPhone,
+    );
 
-    const formattedAmount = dealAmount > 0 ? `₹${dealAmount.toLocaleString('en-IN')}` : 'To be calculated';
+    const formattedAmount =
+      dealAmount > 0
+        ? `₹${dealAmount.toLocaleString('en-IN')}`
+        : 'To be calculated';
     const totalQty = processedItems.reduce((s, i) => s + i.qty, 0);
 
     let itemsBreakdownStr = '';
     if (processedItems.length > 0) {
       itemsBreakdownStr = processedItems
-        .map((pi) => `  • *${pi.pName}*: ${pi.qty > 0 ? pi.qty + ' MT' : ''} ${pi.rate > 0 ? '@ ₹' + pi.rate.toLocaleString('en-IN') + '/MT = ₹' + pi.itemAmount.toLocaleString('en-IN') : ''}`)
+        .map(
+          (pi) =>
+            `  • *${pi.pName}*: ${pi.qty > 0 ? pi.qty + ' MT' : ''} ${pi.rate > 0 ? '@ ₹' + pi.rate.toLocaleString('en-IN') + '/MT = ₹' + pi.itemAmount.toLocaleString('en-IN') : ''}`,
+        )
         .join('\n');
     }
 
@@ -897,8 +1072,160 @@ async function processSalesMessage(text, senderPhone) {
   }
 }
 
+/**
+ * Process incoming PO / Sales document image via Gemini Vision (KRA 1 & Inquiries Tab)
+ */
+async function processSalesImage(imageBuffer, mimeType, senderPhone) {
+  try {
+    const { extractFromImage } = require('../gemini');
+    const { saveInquiry, verifyAndGetCustomerName } = require('../supabase');
+    const extraction = await extractFromImage(imageBuffer, mimeType);
+
+    if (!extraction || extraction.error || !extraction.customer) {
+      return `⚠️ Could not clearly extract inquiry details from the document image. Please send a clearer picture or type the details (e.g. "Delta Structural Steel 50 MT HR Coil @ 55,000 Delivery Mumbai").`;
+    }
+
+    const custName = extraction.customer.name || 'Customer Inquiry';
+    const officialCustomerName = await verifyAndGetCustomerName(
+      custName,
+      senderPhone,
+    );
+    const finalCustomerName = officialCustomerName || custName;
+    const customerPhone = extraction.customer.phone || '9123456789';
+
+    // Construct raw text representation for inquiries tab
+    const itemsText = (extraction.line_items || [])
+      .map((i) => {
+        const dimStr = i.dimensions ? ` (${i.dimensions})` : '';
+        return `${i.sku_text || 'Steel'}${dimStr} ${i.quantity || 0} MT ${i.rate ? '@ Rs ' + i.rate + '/MT' : ''}`;
+      })
+      .join(', ');
+    const rawSummary = `${itemsText}. Delivery Location: ${extraction.delivery_location || 'Warehouse'}`;
+
+    // Convert image buffer to base64 Data URL so web dashboard can render/view it!
+    const base64Data = `data:${mimeType || 'image/jpeg'};base64,${imageBuffer.toString('base64')}`;
+
+    // 1. Save Inquiry to Supabase (so it appears in web dashboard Inquiries tab with image attached!)
+    const savedInq = await saveInquiry({
+      source_channel: 'whatsapp',
+      raw_text: extraction.po_number
+        ? `[Inquiry Attachment: ${extraction.po_number}.jpg] ${rawSummary}`
+        : `[Inquiry Attachment: steel_inquiry_po.jpg] ${rawSummary}`,
+      media_urls: [base64Data],
+      sender_phone: senderPhone,
+      sender_name: finalCustomerName,
+      customer_name: finalCustomerName,
+      customer_phone: customerPhone,
+      salesperson_phone: senderPhone,
+      status: 'review',
+      overall_confidence: extraction.overall_confidence || 0.95,
+      ai_extraction_json: extraction,
+    });
+
+    // 2. Process deal update - Generate Deal ID (Ref No) for new inquiry; PO Number is ONLY added when client finalizes deal!
+    const dealRefCode = extraction.po_number
+      ? `#DEAL-${extraction.po_number.replace(/^PO-?/i, '')}`
+      : `#DEAL-${Math.floor(1000 + Math.random() * 9000)}`;
+    const stage = 'review';
+
+    let totalVal = extraction.total_amount || 0;
+    if (
+      totalVal <= 0 &&
+      extraction.line_items &&
+      extraction.line_items.length > 0
+    ) {
+      totalVal = extraction.line_items.reduce(
+        (s, i) => s + (i.quantity || 0) * (i.rate || 0),
+        0,
+      );
+    }
+
+    // 3. Save Deal to Supabase deals table (PO number left null until deal is won by client)
+    const { data: newDeal, error: dealErr } = await supabase
+      .from('deals')
+      .insert({
+        inquiry_id: savedInq?.id || null,
+        customer_name: finalCustomerName,
+        salesperson_phone: senderPhone,
+        customer_phone: customerPhone,
+        stage: stage,
+        total_amount: totalVal || 0,
+        inquiry_type: 'inquiry',
+        delivery_location: extraction.delivery_location || null,
+        delivery_date: extraction.delivery_date || null,
+        payment_terms: extraction.payment_terms || null,
+        po_date: extraction.po_date || new Date().toISOString().split('T')[0],
+        po_number: null, // PO number is null for inquiries
+        status: 'needs_review',
+      })
+      .select()
+      .single();
+
+    if (dealErr) {
+      console.error(
+        '[SalesAgent] Error inserting deal from image vision:',
+        dealErr.message || dealErr,
+      );
+    }
+
+    // 4. Save Deal Items
+    if (newDeal && extraction.line_items && extraction.line_items.length > 0) {
+      for (const item of extraction.line_items) {
+        await supabase.from('deal_items').insert({
+          deal_id: newDeal.id,
+          sku_text: item.sku_text || 'Hot Rolled Steel Coil',
+          dimensions: item.dimensions || null,
+          quantity: item.quantity || 50,
+          unit: item.unit || 'MT',
+          rate: item.rate || 55000,
+          amount: (item.quantity || 50) * (item.rate || 55000),
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    let itemsBreakdown = '';
+    if (extraction.line_items && extraction.line_items.length > 0) {
+      itemsBreakdown = extraction.line_items
+        .map((i) => {
+          const dimStr = i.dimensions ? ` (${i.dimensions})` : '';
+          return `  • *${i.sku_text || 'Material'}*${dimStr}: ${i.quantity || 0} MT ${i.rate ? '@ ₹' + Number(i.rate).toLocaleString('en-IN') + '/MT' : ''}`;
+        })
+        .join('\n');
+    }
+
+    const frontendUrl =
+      process.env.FRONTEND_URL || 'https://enlight-sales-frontend.vercel.app';
+    const inquiryEditLink = savedInq?.id
+      ? `${frontendUrl}/inquiries?id=${savedInq.id}`
+      : `${frontendUrl}/inquiries`;
+
+    let replyMsg =
+      `📄 *INQUIRY / SALES DEAL LOGGED!* 🏗️\n\n` +
+      `Customer: *${finalCustomerName}*\n` +
+      `Deal ID: *${dealRefCode}*\n` +
+      `Stage: *REVIEW 📄*\n` +
+      (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
+      (totalVal > 0
+        ? `Estimated Deal Total: *₹${Number(totalVal).toLocaleString('en-IN')}* + GST\n`
+        : '') +
+      `Delivery Location: *${extraction.delivery_location || 'Mumbai Warehouse'}*\n\n` +
+      `✏️ *Review & Finalize Quotation:* \n` +
+      `${inquiryEditLink}\n\n` +
+      `✅ Logged live to Inquiries tab & Sales Pipeline!`;
+
+    return replyMsg;
+
+    return replyMsg;
+  } catch (error) {
+    console.error('[SalesAgent] Error processing sales image:', error);
+    return `⚠️ Error processing document image: ${error.message}`;
+  }
+}
+
 module.exports = {
   processSalesMessage,
+  processSalesImage,
   findBestDeal,
   lookupRateSheetPrice,
   detectInvalidUnitInMessage,

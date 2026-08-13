@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "moduleResolution": "node",
-    "types": [
-      "node",
-      "jest",
-      "fastify"
-    ],
+    "types": ["node", "jest", "fastify"],
     "module": "commonjs",
     "declaration": true,
     "removeComments": true,
@@ -24,12 +20,6 @@
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["src/**/*.ts", "test/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

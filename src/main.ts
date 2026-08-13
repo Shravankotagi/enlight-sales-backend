@@ -3,33 +3,38 @@ import { AppModule } from './app.module';
 import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './config/swagger.config';
 import { ValidationPipe } from '@nestjs/common';
-import {
-  FastifyAdapter,
-  NestFastifyApplication,
-} from '@nestjs/platform-fastify';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { CustomLoggerService } from './common/services/logger.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import fastifySwagger from '@fastify/swagger';
-import { OpenAPIV3 } from 'openapi-types';
+import { json, urlencoded } from 'express';
 
-declare const module: any;
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]:', reason);
+});
 
 async function bootstrap() {
-  // Create Fastify instance
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter(),
-    {
-      logger: ['error', 'warn', 'log', 'debug', 'verbose'],
-    },
-  );
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+  });
+
+  // Enable large body size (50mb) for base64 document upload support
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ limit: '50mb', extended: true }));
 
   const logger = app.get(CustomLoggerService);
 
-  // Enable CORS
-  app.enableCors();
+  // Enable CORS for all browsers and environments
+  app.enableCors({
+    origin: true,
+    credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Accept, Authorization',
+  });
 
   // Apply global interceptors
   app.useGlobalInterceptors(
@@ -45,23 +50,18 @@ async function bootstrap() {
     }),
   );
 
-  // Setup Swagger
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  await app.register(fastifySwagger as any, {
-    mode: 'static',
-    specification: {
-      document: document as OpenAPIV3.Document,
-    },
-  });
-  SwaggerModule.setup('api/docs', app, document);
+  // Setup Swagger safely
+  try {
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  } catch (err: any) {
+    console.warn('Swagger init notice:', err?.message || err);
+  }
 
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  await app.listen(4000, '0.0.0.0');
-
-  if (module.hot) {
-    module.hot.accept();
-    module.hot.dispose(() => app.close());
-  }
+  const port = parseInt(process.env.PORT || '4000', 10);
+  await app.listen(port, '0.0.0.0');
+  console.log(`[Express Server] Running on port ${port}`);
 }
 bootstrap();

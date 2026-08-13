@@ -6,9 +6,11 @@ const { extractFromImage } = require('./src/gemini');
 async function test() {
   // Read a local image file for testing
   const imagePath = path.join(__dirname, 'test-po.jpg');
-  
+
   if (!fs.existsSync(imagePath)) {
-    console.log('No test-po.jpg found. Creating test with sample text instead...');
+    console.log(
+      'No test-po.jpg found. Creating test with sample text instead...',
+    );
     // Fallback: test with text that simulates a PO
     const { extractFromText } = require('./src/gemini');
     const poText = `
@@ -36,7 +38,7 @@ async function test() {
   const buffer = fs.readFileSync(imagePath);
   console.log('Testing image extraction with:', imagePath);
   console.log('File size:', buffer.length, 'bytes');
-  
+
   const result = await extractFromImage(buffer, 'image/jpeg');
   console.log('Image Extraction Result:', JSON.stringify(result, null, 2));
 }
