@@ -258,13 +258,51 @@ export class InquiriesService {
         try {
           const qRefNum = `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
-          const totalAmt = Number(details.totalAmount || 1860000);
-          const totalAmtStr = totalAmt.toLocaleString('en-IN');
+
+          // Pull actual inquiry data — payload.details first, then inquiry's ai_extraction_json
+          const aiJson = (inquiry.ai_extraction_json as any) || {};
+          const productType = details.productType || aiJson.productType || '';
+          const productForm = details.productForm || aiJson.productForm || '';
+          const thickness = details.thickness || aiJson.thickness || '';
+          const width = details.width || aiJson.width || '';
+          const length = details.length || aiJson.length || '';
+          const quantityTons = Number(
+            details.quantityTons ||
+              aiJson.quantityTons ||
+              aiJson.totalQuantity ||
+              0,
+          );
+          const paymentTerms =
+            details.paymentTerms ||
+            aiJson.paymentTerms ||
+            inquiry.payment_terms ||
+            '';
+          const deliveryLoc =
+            details.deliveryLocation ||
+            aiJson.deliveryLocation ||
+            inquiry.delivery_location ||
+            '';
+
+          // totalAmount from frontend = pre-GST base amount
+          const baseAmt = Number(
+            details.totalAmount || aiJson.totalAmount || 0,
+          );
+          const gstAmt = Math.round(baseAmt * 0.18);
+          const grandTotal = baseAmt + gstAmt;
 
           const specText =
-            `${details.productType || 'Steel Material'} (${details.productForm || 'Coil'}) ${details.thickness || ''} ${details.width ? 'x ' + details.width : ''} ${details.length ? 'x ' + details.length : ''}`.trim();
+            [
+              productType,
+              productForm ? `(${productForm})` : '',
+              thickness,
+              width ? `x ${width}` : '',
+              length ? `x ${length}` : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .trim() || 'Steel Material';
 
-          // Professional Plain Text Email Body (Zero HTML)
+          // Professional Plain Text Email Body — all real inquiry data, no hardcoded values
           const textContent = `Dear ${customerName},
 
 Thank you for contacting Enlight Metals Private Limited regarding your recent metal product requirement.
@@ -275,12 +313,11 @@ Quotation Summary:
 - Reference Number: ${qRefNum}
 - Issue Date: ${todayDateStr}
 - Item / Specification: ${specText}
-- Total Quantity: ${details.quantityTons || 30} MT (${details.quantityUnits || 350} units)
-- Total Amount: ₹${totalAmtStr} (+ 18% GST)
-- Payment Terms: ${details.paymentTerms || '30 Days Credit'}
-- Delivery Location: ${details.deliveryLocation || 'Warehouse'}
-
-The attached PDF document contains our official pricing structure and complete commercial terms. Should you have any questions or wish to proceed with order confirmation, please reply directly to this email or contact your Enlight Metals account representative.
+${quantityTons > 0 ? `- Total Quantity: ${quantityTons} MT\n` : ''}- Product Amount (Base): Rs. ${baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As per inquiry'}
+- GST (18%): Rs. ${baseAmt > 0 ? gstAmt.toLocaleString('en-IN') : 'As applicable'}
+- Grand Total (incl. GST): Rs. ${baseAmt > 0 ? grandTotal.toLocaleString('en-IN') : 'To be confirmed'}
+${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}
+${deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''}The attached PDF document contains our official pricing structure and complete commercial terms. Should you have any questions or wish to proceed with order confirmation, please reply directly to this email or contact your Enlight Metals account representative.
 
 Warm regards,
 
@@ -288,13 +325,27 @@ Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`;
 
+          // Pass enriched details to PDF generator
+          const pdfDetails = {
+            ...details,
+            productType,
+            productForm,
+            thickness,
+            width,
+            length,
+            quantityTons,
+            paymentTerms,
+            deliveryLocation: deliveryLoc,
+            totalAmount: baseAmt,
+          };
+
           const pdfBuffer = payload.pdf_base64
             ? Buffer.from(payload.pdf_base64, 'base64')
             : await this.generatePdfKitBuffer(
                 qRefNum,
                 customerName,
                 customerEmail,
-                details,
+                pdfDetails,
               );
           const pdfBase64 = pdfBuffer.toString('base64');
 
@@ -460,19 +511,18 @@ MIDC Industrial Zone, Mumbai - 400001`;
           }
         }
 
-        const totalAmt = Number(details.totalAmount || 1860000);
-        const subtotal = Math.round(totalAmt / 1.18);
-        const gstAmt = totalAmt - subtotal;
-        const unitRate = Number(details.unitPrice || 62000);
-        const qtyTons = Number(details.quantityTons || 30);
-        const qtyUnits = Number(details.quantityUnits || 350);
-        const productType = details.productType || 'HR Steel';
-        const productForm = details.productForm || 'Coil';
-        const thickness = details.thickness || '2.0 mm';
+        // totalAmount from frontend = pre-GST base; calculate GST on top (NOT divide by 1.18)
+        const totalAmt = Number(details.totalAmount || 0);
+        const gstAmt = Math.round(totalAmt * 0.18);
+        const grandTotal = totalAmt + gstAmt;
+        const unitRate = Number(details.unitPrice || 0);
+        const qtyTons = Number(details.quantityTons || 0);
+        const productType = details.productType || '';
+        const thickness = details.thickness || '';
         const width = details.width ? `x ${details.width}` : '';
         const length = details.length ? `x ${details.length}` : '';
-        const deliveryLocation = details.deliveryLocation || 'Mumbai Warehouse';
-        const paymentTerms = details.paymentTerms || '30 Days Credit';
+        const deliveryLocation = details.deliveryLocation || '';
+        const paymentTerms = details.paymentTerms || '';
         const todayDateStr = new Date().toLocaleDateString('en-IN');
 
         // Set default document font
@@ -573,16 +623,23 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .font(fontBold)
           .fontSize(12)
           .text(customerName, 48, 126, { width: 230 });
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(9)
-          .text(`Phone: ${details.customerPhone || 'N/A'}`, 48, 144);
+        // Show phone only if extracted
+        if (details.customerPhone) {
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(9)
+            .text(`Phone: ${details.customerPhone}`, 48, 144);
+        }
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(8)
-          .text(`Customer Email: ${customerEmail}`, 48, 158);
+          .text(
+            `Customer Email: ${customerEmail}`,
+            48,
+            details.customerPhone ? 158 : 144,
+          );
 
         // Right Column
         doc
@@ -599,91 +656,130 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fillColor('#6B21A8')
           .font(fontBold)
           .fontSize(9)
-          .text(`Payment Terms: ${paymentTerms}`, 300, 142);
-        doc
-          .fillColor('#334155')
-          .font(fontRegular)
-          .fontSize(8)
-          .text(`Form Specification: ${productForm}`, 300, 156);
+          .text(`Payment Terms: ${paymentTerms || 'As agreed'}`, 300, 142);
 
-        // 3. Line Items Table Grid (4 Columns - Unit Rate Removed)
+        // 3. Line Items Table (dynamic — supports multiple items)
+        const lineItems: Array<{
+          sku_text: string;
+          dimensions?: string;
+          quantity: number;
+          unit?: string;
+          rate: number;
+          amount: number;
+        }> =
+          Array.isArray(details.lineItems) && details.lineItems.length > 0
+            ? details.lineItems
+            : [
+                {
+                  sku_text: productType || 'Material',
+                  dimensions:
+                    [thickness, width, length]
+                      .filter(Boolean)
+                      .join(' x ')
+                      .trim() || undefined,
+                  quantity: qtyTons,
+                  unit: 'MT',
+                  rate: unitRate,
+                  amount: totalAmt,
+                },
+              ];
+
         const tableY = 192;
         const headerHeight = 24;
-        const rowHeight = 44;
-        const totalTableHeight = headerHeight + rowHeight;
+        const rowH = 40; // per-row height
+        const totalTableHeight = headerHeight + rowH * lineItems.length;
 
-        // Header Background
+        // Header background
         doc.rect(36, tableY, 523, headerHeight).fill('#0F172A');
-
-        // Header Text (4 COLUMNS ONLY - NO UNIT RATE)
         doc.fillColor('#FFFFFF').font(fontBold).fontSize(7.5);
         doc.text('#', 36, tableY + 8, { width: 30, align: 'center' });
         doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 68, tableY + 8, {
-          width: 270,
+          width: 240,
         });
-        doc.text('QUANTITY (MT)', 345, tableY + 8, {
-          width: 93,
+        doc.text('QTY (MT)', 313, tableY + 8, { width: 60, align: 'right' });
+        doc.text(`RATE (${rupeeSymbol}/MT)`, 378, tableY + 8, {
+          width: 80,
           align: 'right',
         });
-        doc.text(`AMOUNT (${rupeeSymbol})`, 443, tableY + 8, {
-          width: 106,
+        doc.text(`AMOUNT (${rupeeSymbol})`, 463, tableY + 8, {
+          width: 96,
           align: 'right',
         });
 
-        // Row Background & Line
-        const rowY = tableY + headerHeight;
-        doc.rect(36, rowY, 523, rowHeight).fill('#FFFFFF');
+        // Rows
+        lineItems.forEach((item, idx) => {
+          const rowY = tableY + headerHeight + rowH * idx;
+          doc
+            .rect(36, rowY, 523, rowH)
+            .fill(idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC');
 
-        // Row Cell Values
-        doc
-          .fillColor('#64748B')
-          .font(fontRegular)
-          .fontSize(9)
-          .text('1', 36, rowY + 14, { width: 30, align: 'center' });
+          // Row number
+          doc
+            .fillColor('#94A3B8')
+            .font(fontRegular)
+            .fontSize(8)
+            .text(String(idx + 1), 36, rowY + 14, {
+              width: 30,
+              align: 'center',
+            });
 
-        doc
-          .fillColor('#0F172A')
-          .font(fontBold)
-          .fontSize(9.5)
-          .text(`${productType} (${productForm})`, 68, rowY + 8, {
-            width: 270,
-          });
-        doc
-          .fillColor('#64748B')
-          .font(fontRegular)
-          .fontSize(8)
-          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 68, rowY + 24, {
-            width: 270,
-          });
+          // Description & dimensions
+          doc
+            .fillColor('#0F172A')
+            .font(fontBold)
+            .fontSize(9)
+            .text(item.sku_text || 'Material', 68, rowY + 7, { width: 240 });
+          if (item.dimensions) {
+            doc
+              .fillColor('#64748B')
+              .font(fontRegular)
+              .fontSize(7.5)
+              .text(`Spec: ${item.dimensions}`, 68, rowY + 22, { width: 240 });
+          }
 
-        doc
-          .fillColor('#312E81')
-          .font(fontBold)
-          .fontSize(9)
-          .text(`${qtyTons} MT`, 345, rowY + 8, { align: 'right', width: 93 });
-        doc
-          .fillColor('#94A3B8')
-          .font(fontRegular)
-          .fontSize(7)
-          .text(`(${qtyUnits} units)`, 345, rowY + 23, {
-            align: 'right',
-            width: 93,
-          });
+          // Quantity
+          doc
+            .fillColor('#312E81')
+            .font(fontBold)
+            .fontSize(9)
+            .text(`${item.quantity} ${item.unit || 'MT'}`, 313, rowY + 14, {
+              width: 60,
+              align: 'right',
+            });
 
-        doc
-          .fillColor('#0F172A')
-          .font(fontBold)
-          .fontSize(9.5)
-          .text(
-            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
-            443,
-            rowY + 14,
-            { align: 'right', width: 106 },
-          );
+          // Rate
+          const rateStr =
+            item.rate > 0
+              ? `${rupeeSymbol}${item.rate.toLocaleString('en-IN')}`
+              : '-';
+          doc
+            .fillColor('#334155')
+            .font(fontRegular)
+            .fontSize(8)
+            .text(rateStr, 378, rowY + 14, { width: 80, align: 'right' });
 
-        // Vertical Separator Grid Lines & Outer Border
-        const gridXCoords = [66, 343, 443];
-        gridXCoords.forEach((x) => {
+          // Amount
+          const amtStr =
+            item.amount > 0
+              ? `${rupeeSymbol}${item.amount.toLocaleString('en-IN')}`
+              : '-';
+          doc
+            .fillColor('#0F172A')
+            .font(fontBold)
+            .fontSize(9)
+            .text(amtStr, 463, rowY + 14, { width: 96, align: 'right' });
+
+          // Row divider
+          doc
+            .moveTo(36, rowY + rowH)
+            .lineTo(559, rowY + rowH)
+            .strokeColor('#E2E8F0')
+            .lineWidth(0.5)
+            .stroke();
+        });
+
+        // Vertical separator lines & outer table border
+        [66, 311, 376, 461].forEach((x) => {
           doc
             .moveTo(x, tableY)
             .lineTo(x, tableY + totalTableHeight)
@@ -691,22 +787,17 @@ MIDC Industrial Zone, Mumbai - 400001`;
             .lineWidth(0.75)
             .stroke();
         });
-
-        // Horizontal Header-Row Divider & Table Outer Box
-        doc
-          .moveTo(36, rowY)
-          .lineTo(559, rowY)
-          .strokeColor('#CBD5E1')
-          .lineWidth(1)
-          .stroke();
         doc
           .rect(36, tableY, 523, totalTableHeight)
           .strokeColor('#475569')
           .lineWidth(1)
           .stroke();
 
-        // 4. Financial Summary Box
-        const summaryY = rowY + 52;
+        // Compute last row Y for summary positioning
+        const lastRowBottom = tableY + totalTableHeight;
+
+        // 4. Financial Summary Box (positioned below the last dynamic row)
+        const summaryY = lastRowBottom + 12;
         doc
           .fillColor('#334155')
           .font(fontBold)
@@ -743,7 +834,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .font(fontBold)
           .fontSize(8)
           .text(
-            `${rupeeSymbol}${subtotal.toLocaleString('en-IN')}`,
+            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
             440,
             summaryY + 4,
             { align: 'right', width: 110 },
@@ -782,7 +873,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .font(fontBold)
           .fontSize(11)
           .text(
-            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
+            `${rupeeSymbol}${grandTotal.toLocaleString('en-IN')}`,
             440,
             summaryY + 43,
             { align: 'right', width: 110 },
