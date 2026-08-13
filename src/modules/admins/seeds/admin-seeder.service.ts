@@ -11,7 +11,6 @@ export class AdminSeederService {
     private readonly supabaseService: SupabaseService,
     private readonly logger: CustomLoggerService,
   ) {
-    // Run seeding in background after server start
     setTimeout(() => {
       this.seedSuperAdmin().catch((err: any) => {
         this.logger.error('Admin seeder notice (non-fatal):', err?.message || err);

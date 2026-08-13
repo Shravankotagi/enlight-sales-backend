@@ -8,11 +8,10 @@ export class PrismaService
 {
   constructor() {
     super();
-    // Connect asynchronously in background without blocking server boot
     this.$connect()
       .then(() => console.log('[PrismaService] Connected to PostgreSQL'))
       .catch((err: any) =>
-        console.warn('[PrismaService] Notice (non-fatal):', err?.message || err),
+        console.warn('[PrismaService] Connection notice (non-fatal):', err?.message || err),
       );
   }
 
