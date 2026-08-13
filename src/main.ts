@@ -24,10 +24,12 @@ async function bootstrap() {
 
   const logger = app.get(CustomLoggerService);
 
-  // Enable CORS for all origins
+  // Enable CORS for all origins dynamically
   app.enableCors({
-    origin: '*',
+    origin: true,
     credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Accept, Authorization',
   });
 
   // Apply global interceptors
