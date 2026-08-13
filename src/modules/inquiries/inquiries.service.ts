@@ -220,9 +220,9 @@ export class InquiriesService {
 
           const specText =
             `${details.productType || 'Steel Material'} (${details.productForm || 'Coil'}) ${details.thickness || ''} ${details.width ? 'x ' + details.width : ''} ${details.length ? 'x ' + details.length : ''}`.trim();
-          const unitRateStr = Number(details.unitPrice || 62000).toLocaleString(
-            'en-IN',
-          );
+          // const unitRateStr = Number(details.unitPrice || 62000).toLocaleString(
+          //   'en-IN',
+          // );
 
           // Professional Plain Text Email Body (Zero HTML)
           const textContent = `Dear ${customerName},
@@ -236,7 +236,6 @@ Quotation Summary:
 - Issue Date: ${todayDateStr}
 - Item / Specification: ${specText}
 - Total Quantity: ${details.quantityTons || 30} MT (${details.quantityUnits || 350} units)
-- Unit Rate: ₹${unitRateStr} / MT
 - Total Amount: ₹${totalAmtStr} (+ 18% GST)
 - Payment Terms: ${details.paymentTerms || '30 Days Credit'}
 - Delivery Location: ${details.deliveryLocation || 'Warehouse'}
@@ -507,7 +506,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fontSize(8)
           .text(`Form Specification: ${productForm}`, 300, 156);
 
-        // 3. Line Items Table Grid (Structured Rows & Equal Column Widths)
+        // 3. Line Items Table Grid (Structured Rows & Ample Cell Padding)
         const tableY = 192;
         const headerHeight = 24;
         const rowHeight = 44;
@@ -517,21 +516,21 @@ MIDC Industrial Zone, Mumbai - 400001`;
         doc.rect(36, tableY, 523, headerHeight).fill('#0F172A');
 
         // Header Text
-        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
-        doc.text('#', 36, tableY + 7, { width: 30, align: 'center' });
-        doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 72, tableY + 7, {
-          width: 221,
+        doc.fillColor('#FFFFFF').font(fontBold).fontSize(7.5);
+        doc.text('#', 36, tableY + 8, { width: 26, align: 'center' });
+        doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 68, tableY + 8, {
+          width: 205,
         });
-        doc.text('QUANTITY (MT)', 299, tableY + 7, {
-          width: 79,
+        doc.text('QUANTITY (MT)', 283, tableY + 8, {
+          width: 78,
           align: 'right',
         });
-        doc.text(`UNIT RATE (${rupeeSymbol}/MT)`, 384, tableY + 7, {
-          width: 79,
+        doc.text(`UNIT RATE (${rupeeSymbol}/MT)`, 373, tableY + 8, {
+          width: 83,
           align: 'right',
         });
-        doc.text(`AMOUNT (${rupeeSymbol})`, 469, tableY + 7, {
-          width: 84,
+        doc.text(`AMOUNT (${rupeeSymbol})`, 468, tableY + 8, {
+          width: 83,
           align: 'right',
         });
 
@@ -544,35 +543,35 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(9)
-          .text('1', 36, rowY + 14, { width: 30, align: 'center' });
+          .text('1', 36, rowY + 14, { width: 26, align: 'center' });
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
-          .text(`${productType} (${productForm})`, 72, rowY + 8, {
-            width: 221,
+          .fontSize(9.5)
+          .text(`${productType} (${productForm})`, 68, rowY + 8, {
+            width: 205,
           });
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(8)
-          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 72, rowY + 24, {
-            width: 221,
+          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 68, rowY + 24, {
+            width: 205,
           });
 
         doc
           .fillColor('#312E81')
           .font(fontBold)
           .fontSize(9)
-          .text(`${qtyTons} MT`, 299, rowY + 8, { align: 'right', width: 79 });
+          .text(`${qtyTons} MT`, 283, rowY + 8, { align: 'right', width: 78 });
         doc
           .fillColor('#94A3B8')
           .font(fontRegular)
           .fontSize(7)
-          .text(`(${qtyUnits} units)`, 299, rowY + 23, {
+          .text(`(${qtyUnits} units)`, 283, rowY + 23, {
             align: 'right',
-            width: 79,
+            width: 78,
           });
 
         doc
@@ -581,24 +580,24 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fontSize(9)
           .text(
             `${rupeeSymbol}${unitRate.toLocaleString('en-IN')}`,
-            384,
+            373,
             rowY + 14,
-            { align: 'right', width: 79 },
+            { align: 'right', width: 83 },
           );
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
+          .fontSize(9.5)
           .text(
             `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
-            469,
+            468,
             rowY + 14,
-            { align: 'right', width: 84 },
+            { align: 'right', width: 83 },
           );
 
         // Vertical Separator Grid Lines & Outer Border
-        const gridXCoords = [66, 299, 384, 469];
+        const gridXCoords = [62, 279, 369, 464];
         gridXCoords.forEach((x) => {
           doc
             .moveTo(x, tableY)
