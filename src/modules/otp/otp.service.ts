@@ -66,8 +66,7 @@ export class OtpService {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            timeout: 15000,
-            httpsAgent,
+            timeout: 10000,
           },
         );
 
@@ -114,15 +113,21 @@ export class OtpService {
         .eq('verified', false);
 
       // Save new OTP
-      await this.supabase.from('otp_sessions').insert({
+      const { error: insertErr } = await this.supabase.from('otp_sessions').insert({
         phone,
         otp,
         expires_at: expiresAt.toISOString(),
         verified: false,
       });
 
-      // Send via WhatsApp
-      await this.sendOtpWhatsApp(phone, otp);
+      if (insertErr) {
+        this.logger.error('Failed to insert OTP session:', insertErr);
+      }
+
+      // Send via WhatsApp asynchronously in background (non-blocking)
+      this.sendOtpWhatsApp(phone, otp).catch((err) =>
+        this.logger.error('Background WhatsApp dispatch error:', err?.message || err),
+      );
 
       return {
         message: 'OTP sent to your WhatsApp number',
