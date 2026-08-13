@@ -1,12 +1,16 @@
 require('dotenv').config({ path: '../.env' });
-const { isVisitLog, handleVisitLog, getWeeklyVisitCount } = require('./src/kra9');
+const {
+  isVisitLog,
+  handleVisitLog,
+  getWeeklyVisitCount,
+} = require('./src/kra9');
 
 const testMessages = [
   'visited ABC Fabricators today, met Rahul Singh, discussed HR coil pricing, positive meeting',
   'Dynamic Industries gaya tha, Shubham se mila, order expected next week',
   'site visit at SB Scafform, met procurement manager, they need MS flat urgently',
-  'need 10 MT HR coil 2mm',  // should NOT be visit
-  'my sales this month'       // should NOT be visit
+  'need 10 MT HR coil 2mm', // should NOT be visit
+  'my sales this month', // should NOT be visit
 ];
 
 async function test() {
@@ -19,7 +23,8 @@ async function test() {
 
   console.log('\n=== KRA 9 SAVE TEST ===\n');
 
-  const visitMsg = 'visited ABC Fabricators today, met Rahul Singh, discussed HR coil 2mm pricing, very positive meeting, they will send PO by Friday';
+  const visitMsg =
+    'visited ABC Fabricators today, met Rahul Singh, discussed HR coil 2mm pricing, very positive meeting, they will send PO by Friday';
   console.log('Logging visit:', visitMsg);
 
   const reply = await handleVisitLog(visitMsg, '919187305823');

@@ -8,13 +8,13 @@ const testMessages = [
   'my kra status',
   'deals this week',
   'pending inquiries',
-  'need 10 MT HR coil 2mm',  // should NOT be detected as query
-  'Dynamic Industries ka PO aaya'  // should NOT be detected as query
+  'need 10 MT HR coil 2mm', // should NOT be detected as query
+  'Dynamic Industries ka PO aaya', // should NOT be detected as query
 ];
 
 async function test() {
   console.log('=== QUERY DETECTION TEST ===\n');
-  
+
   for (const msg of testMessages) {
     const query = isQuery(msg);
     console.log(`"${msg}"`);
@@ -25,9 +25,9 @@ async function test() {
 
   const queries = [
     'my sales this month',
-    'pending deals', 
+    'pending deals',
     'my kra status',
-    'deals this week'
+    'deals this week',
   ];
 
   for (const q of queries) {

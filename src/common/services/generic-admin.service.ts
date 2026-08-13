@@ -9,8 +9,7 @@ export abstract class BaseAdminService<
   T,
   CreateDto = Partial<T>,
   UpdateDto = Partial<T>,
-> implements IGenericPaginationService<T, CreateDto, UpdateDto>
-{
+> implements IGenericPaginationService<T, CreateDto, UpdateDto> {
   protected abstract readonly tableName: string;
   protected readonly logger: Logger;
 

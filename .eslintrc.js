@@ -26,8 +26,8 @@ module.exports = {
     {
       files: ['test/**/*.ts'],
       parserOptions: {
-        project: ['test/tsconfig.e2e.json']
-      }
-    }
-  ]
+        project: ['test/tsconfig.e2e.json'],
+      },
+    },
+  ],
 };

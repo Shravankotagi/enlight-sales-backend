@@ -1572,7 +1572,10 @@ export class KraService {
         created_at: reported_at,
       });
     } catch (kraErr: any) {
-      this.logger.warn('Non-blocking kra_logs complaint insert notice:', kraErr?.message);
+      this.logger.warn(
+        'Non-blocking kra_logs complaint insert notice:',
+        kraErr?.message,
+      );
     }
 
     return created;
@@ -1704,7 +1707,10 @@ export class KraService {
         created_at: visited_at,
       });
     } catch (kraErr: any) {
-      this.logger.warn('Non-blocking kra_logs visit insert notice:', kraErr?.message);
+      this.logger.warn(
+        'Non-blocking kra_logs visit insert notice:',
+        kraErr?.message,
+      );
     }
 
     return created;

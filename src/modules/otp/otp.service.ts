@@ -9,14 +9,6 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { EmployeesService } from '../employees/employees.service';
 import axios from 'axios';
 
-import * as https from 'https';
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  family: 4,
-  timeout: 15000,
-});
-
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
@@ -113,12 +105,14 @@ export class OtpService {
         .eq('verified', false);
 
       // Save new OTP
-      const { error: insertErr } = await this.supabase.from('otp_sessions').insert({
-        phone,
-        otp,
-        expires_at: expiresAt.toISOString(),
-        verified: false,
-      });
+      const { error: insertErr } = await this.supabase
+        .from('otp_sessions')
+        .insert({
+          phone,
+          otp,
+          expires_at: expiresAt.toISOString(),
+          verified: false,
+        });
 
       if (insertErr) {
         this.logger.error('Failed to insert OTP session:', insertErr);
@@ -126,7 +120,10 @@ export class OtpService {
 
       // Send via WhatsApp asynchronously in background (non-blocking)
       this.sendOtpWhatsApp(phone, otp).catch((err) =>
-        this.logger.error('Background WhatsApp dispatch error:', err?.message || err),
+        this.logger.error(
+          'Background WhatsApp dispatch error:',
+          err?.message || err,
+        ),
       );
 
       return {

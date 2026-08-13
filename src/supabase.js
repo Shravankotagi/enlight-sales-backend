@@ -4,11 +4,16 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
-  console.warn("WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing in environment variables.");
+  console.warn(
+    'WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing in environment variables.',
+  );
 }
 
 // Initialize Supabase client
-const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceRoleKey || 'placeholder');
+const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseServiceRoleKey || 'placeholder',
+);
 
 /**
  * Safely parses any value (string, number, formatting) into a numeric float or null.
@@ -56,22 +61,25 @@ async function getEmployeeByPhone(phone) {
 async function saveInquiry(data) {
   try {
     const payload = {
-      source_channel: data.source_channel || "whatsapp",
+      source_channel: data.source_channel || 'whatsapp',
       raw_text: data.raw_text,
       media_urls: data.media_urls || [],
       voice_url: data.voice_url || null,
       sender_phone: data.sender_phone || data.salesperson_phone,
       sender_name: data.sender_name || null,
       whatsapp_message_id: data.message_id || null,
-      status: data.status || "processed",
+      status: data.status || 'processed',
       created_at: new Date().toISOString(),
       salesperson_phone: data.salesperson_phone || data.sender_phone || null,
       employee_id: data.employee_id || null,
       inquiry_type: data.inquiry_type || null,
       ai_extraction_json: data.ai_extraction_json || null,
-      overall_confidence: data.overall_confidence != null
-        ? Number(data.overall_confidence)
-        : (data.confidence != null ? Number(data.confidence) : 0.92),
+      overall_confidence:
+        data.overall_confidence != null
+          ? Number(data.overall_confidence)
+          : data.confidence != null
+            ? Number(data.confidence)
+            : 0.92,
     };
 
     const { data: savedRow, error } = await supabase
@@ -87,7 +95,7 @@ async function saveInquiry(data) {
     console.log('Successfully saved inquiry to Supabase:', savedRow.id);
     return savedRow;
   } catch (error) {
-    console.error("Error in saveInquiry:", error.message || error);
+    console.error('Error in saveInquiry:', error.message || error);
     return null;
   }
 }
@@ -107,7 +115,7 @@ async function getInquiries() {
 
     return inquiries;
   } catch (error) {
-    console.error("Error in getInquiries:", error.message || error);
+    console.error('Error in getInquiries:', error.message || error);
     throw error;
   }
 }
@@ -116,7 +124,11 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
   try {
     const poDate = extraction.po_date || new Date().toISOString().split('T')[0];
     let poNumber = extraction.po_number || null;
-    if (!poNumber && (extraction.inquiry_type === 'purchase_order' || extraction.stage === 'won')) {
+    if (
+      !poNumber &&
+      (extraction.inquiry_type === 'purchase_order' ||
+        extraction.stage === 'won')
+    ) {
       const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       const randomNum = Math.floor(1000 + Math.random() * 9000);
       poNumber = `PO-${todayStr}-${randomNum}`;
@@ -140,7 +152,10 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
         total_amount: sanitizeNumber(extraction.total_amount),
         inquiry_type: extraction.inquiry_type || 'unknown',
         overall_confidence: extraction.overall_confidence || 0,
-        status: extraction.overall_confidence >= 0.85 ? 'auto_created' : 'needs_review',
+        status:
+          extraction.overall_confidence >= 0.85
+            ? 'auto_created'
+            : 'needs_review',
         created_at: new Date().toISOString(),
         salesperson_phone: senderPhone || null,
         employee_id: employeeId || null,
@@ -155,9 +170,12 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
 
     // Save line items
     if (extraction.line_items && extraction.line_items.length > 0) {
-      console.log('DEBUG line_items:', JSON.stringify(extraction.line_items, null, 2));
+      console.log(
+        'DEBUG line_items:',
+        JSON.stringify(extraction.line_items, null, 2),
+      );
       console.log('DEBUG deal_id:', deal.id);
-      const lineItems = extraction.line_items.map(item => ({
+      const lineItems = extraction.line_items.map((item) => ({
         deal_id: deal.id,
         sku_text: item.sku_text || null,
         grade: item.grade || null,
@@ -167,7 +185,7 @@ async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
         rate: sanitizeNumber(item.rate),
         amount: sanitizeNumber(item.amount),
         confidence: item.confidence || 0,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
       }));
 
       const { error: itemsError } = await supabase
@@ -202,10 +220,14 @@ async function ensureCustomerRecord(customerName, senderPhone, extraData = {}) {
   if (existing && existing.length > 0) {
     const rec = existing[0];
     const updatePayload = {};
-    if (extraData.customer_phone && !rec.customer_phone) updatePayload.customer_phone = extraData.customer_phone;
-    if (extraData.customer_gst && !rec.customer_gst) updatePayload.customer_gst = extraData.customer_gst;
-    if (extraData.city && !rec.customer_address) updatePayload.customer_address = extraData.city;
-    if (extraData.contact_person && !rec.contact_person) updatePayload.contact_person = extraData.contact_person;
+    if (extraData.customer_phone && !rec.customer_phone)
+      updatePayload.customer_phone = extraData.customer_phone;
+    if (extraData.customer_gst && !rec.customer_gst)
+      updatePayload.customer_gst = extraData.customer_gst;
+    if (extraData.city && !rec.customer_address)
+      updatePayload.customer_address = extraData.city;
+    if (extraData.contact_person && !rec.contact_person)
+      updatePayload.contact_person = extraData.contact_person;
 
     if (Object.keys(updatePayload).length > 0) {
       await supabase
@@ -276,7 +298,7 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
  */
 async function fuzzyMatchCustomer(text, customerList) {
   if (!customerList || customerList.length === 0) return null;
-  
+
   try {
     const { invokeWithFallback } = require('./core/modelRouter');
     const { HumanMessage } = require('@langchain/core/messages');
@@ -297,10 +319,18 @@ Rules:
 `;
 
     const response = await invokeWithFallback([new HumanMessage(prompt)]);
-    const textRes = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
+    const textRes = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
     const matchIndex = parseInt(textRes);
-    
-    if (!isNaN(matchIndex) && matchIndex > 0 && matchIndex <= customerList.length) {
+
+    if (
+      !isNaN(matchIndex) &&
+      matchIndex > 0 &&
+      matchIndex <= customerList.length
+    ) {
       return customerList[matchIndex - 1];
     }
   } catch (err) {
@@ -316,7 +346,7 @@ Rules:
  */
 async function verifyAndGetCustomerName(customerName, senderPhone) {
   if (!customerName || !senderPhone) return null;
-  
+
   try {
     const { data: customerRows } = await supabase
       .from('recurring_customers')
@@ -326,17 +356,18 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
 
     if (!customerRows || customerRows.length === 0) return null;
 
-    const customerList = customerRows.map(c => c.customer_name);
+    const customerList = customerRows.map((c) => c.customer_name);
 
     // 1. Exact match (case insensitive, trimmed)
     const cleanInput = customerName.toLowerCase().trim();
-    const exactMatch = customerList.find(c => c.toLowerCase().trim() === cleanInput);
+    const exactMatch = customerList.find(
+      (c) => c.toLowerCase().trim() === cleanInput,
+    );
     if (exactMatch) return exactMatch;
 
     // 2. Fuzzy match using Gemini
     const fuzzyMatch = await fuzzyMatchCustomer(customerName, customerList);
     if (fuzzyMatch) return fuzzyMatch;
-
   } catch (err) {
     console.error('verifyAndGetCustomerName error:', err.message);
   }
@@ -359,15 +390,17 @@ async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
 
     const customer = data[0];
     const missing = [];
-    if (!customer.customer_phone)   missing.push('• 📱 *Mobile Number*');
-    if (!customer.contact_person)   missing.push('• 👤 *Contact Person / Owner*');
-    if (!customer.customer_address)  missing.push('• 📍 *City / Location*');
-    if (!customer.customer_gst)      missing.push('• 🧾 *GSTIN* (optional)');
+    if (!customer.customer_phone) missing.push('• 📱 *Mobile Number*');
+    if (!customer.contact_person) missing.push('• 👤 *Contact Person / Owner*');
+    if (!customer.customer_address) missing.push('• 📍 *City / Location*');
+    if (!customer.customer_gst) missing.push('• 🧾 *GSTIN* (optional)');
 
     if (missing.length > 0) {
-      return `\n\n📌 *Missing profile details for ${customerName}:*\n` +
+      return (
+        `\n\n📌 *Missing profile details for ${customerName}:*\n` +
         missing.join('\n') +
-        `\n\n_(You can update these details anytime by simply replying in your own words, e.g. "Supreme Steel phone is 9876543210 owner Mr. Kapoor" or "Supreme location is Nashik")_`;
+        `\n\n_(You can update these details anytime by simply replying in your own words, e.g. "Supreme Steel phone is 9876543210 owner Mr. Kapoor" or "Supreme location is Nashik")_`
+      );
     }
   } catch (err) {
     console.error('getCustomerMissingInfoPrompt error:', err.message);
@@ -378,17 +411,19 @@ async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
 /**
  * Saves or updates the active customer context session for a salesperson.
  */
-async function saveActiveSession(salespersonPhone, customerName, intent = 'general') {
+async function saveActiveSession(
+  salespersonPhone,
+  customerName,
+  intent = 'general',
+) {
   if (!salespersonPhone || !customerName) return;
   try {
-    const { error } = await supabase
-      .from('conversation_sessions')
-      .upsert({
-        salesperson_phone: salespersonPhone,
-        active_customer_name: customerName,
-        last_intent: intent,
-        updated_at: new Date().toISOString()
-      });
+    const { error } = await supabase.from('conversation_sessions').upsert({
+      salesperson_phone: salespersonPhone,
+      active_customer_name: customerName,
+      last_intent: intent,
+      updated_at: new Date().toISOString(),
+    });
     if (error) console.error('saveActiveSession error:', error.message);
   } catch (err) {
     console.error('saveActiveSession catch:', err.message);
@@ -397,7 +432,15 @@ async function saveActiveSession(salespersonPhone, customerName, intent = 'gener
 
 function getStartOfTodayISO() {
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
   return startOfToday.toISOString();
 }
 
@@ -456,12 +499,12 @@ async function getFullActiveSession(salespersonPhone) {
 }
 
 // Export default and named exports
-module.exports = { 
-  supabase, 
-  saveInquiry, 
-  getInquiries, 
-  saveDeal, 
-  getEmployeeByPhone, 
+module.exports = {
+  supabase,
+  saveInquiry,
+  getInquiries,
+  saveDeal,
+  getEmployeeByPhone,
   ensureCustomerRecord,
   checkAndLogNewCustomer,
   fuzzyMatchCustomer,
@@ -469,5 +512,5 @@ module.exports = {
   getCustomerMissingInfoPrompt,
   saveActiveSession,
   getActiveSession,
-  getFullActiveSession
+  getFullActiveSession,
 };

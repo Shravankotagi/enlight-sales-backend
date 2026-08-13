@@ -4,7 +4,7 @@ const { sendTextMessage } = require('./whatsapp');
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
   );
 }
 
@@ -16,7 +16,7 @@ function getMonthRange() {
     start: start.toISOString(),
     end: end.toISOString(),
     monthName: now.toLocaleString('en-IN', { month: 'long' }),
-    year: now.getFullYear()
+    year: now.getFullYear(),
   };
 }
 
@@ -72,7 +72,7 @@ async function logNewCustomer(deal, senderPhone) {
       customer_name: deal.customer_name,
       value: deal.total_amount || 0,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
     });
 
     console.log('KRA 2 logged for new customer:', deal.customer_name);
@@ -130,7 +130,8 @@ async function getNewCustomerSummary(senderPhone) {
     const count = logs?.length || 0;
     const remaining = Math.max(0, 3 - count);
 
-    let msg = `👥 *KRA 2 - New Customers*\n` +
+    let msg =
+      `👥 *KRA 2 - New Customers*\n` +
       `${monthName} ${year}\n\n` +
       `Acquired: ${count}/3\n` +
       (remaining > 0
@@ -151,7 +152,12 @@ async function getNewCustomerSummary(senderPhone) {
   }
 }
 
-module.exports = { isNewCustomer, logNewCustomer, getNewCustomerSummary, handleNewCustomerAnnouncement };
+module.exports = {
+  isNewCustomer,
+  logNewCustomer,
+  getNewCustomerSummary,
+  handleNewCustomerAnnouncement,
+};
 
 // Handle when salesperson directly announces a new customer (via Gemini intent routing)
 async function handleNewCustomerAnnouncement(customerName, senderPhone) {
@@ -183,7 +189,7 @@ async function handleNewCustomerAnnouncement(customerName, senderPhone) {
       customer_name: customerName,
       value: 0,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
     });
 
     // Get updated count
@@ -199,17 +205,18 @@ async function handleNewCustomerAnnouncement(customerName, senderPhone) {
     const count = allLogs?.length || 1;
     const remaining = Math.max(0, 3 - count);
 
-    return `🆕 *KRA 2 - New Customer Logged!*\n\n` +
+    return (
+      `🆕 *KRA 2 - New Customer Logged!*\n\n` +
       `🏢 Customer: *${customerName}*\n` +
       `✅ Recorded as new customer acquisition\n\n` +
       `📊 *${monthName} ${year} Progress*\n` +
       `New customers: ${count}/3\n` +
       (remaining > 0
         ? `⚠️ ${remaining} more needed to meet target`
-        : `✅ Monthly target achieved!`);
+        : `✅ Monthly target achieved!`)
+    );
   } catch (error) {
     console.error('handleNewCustomerAnnouncement error:', error.message);
     return '❌ Could not log new customer. Please try again.';
   }
 }
-

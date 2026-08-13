@@ -6,7 +6,11 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const webhookRouter = require('./src/webhook');
-const { syncAllDatabaseToBigin, clearAllBiginData, pullBiginToDatabase } = require('./src/agents/biginSyncAgent');
+const {
+  syncAllDatabaseToBigin,
+  clearAllBiginData,
+  pullBiginToDatabase,
+} = require('./src/agents/biginSyncAgent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -81,12 +85,17 @@ const importRouteHandler = async (req, res) => {
   try {
     const results = await pullBiginToDatabase();
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "📥 Bigin Data Imported to Database!", "Customer contacts and active deals have been pulled from Zoho Bigin into your database.", results);
+      return renderSyncResult(
+        res,
+        '📥 Bigin Data Imported to Database!',
+        'Customer contacts and active deals have been pulled from Zoho Bigin into your database.',
+        results,
+      );
     }
     return res.json({ success: true, imported: results });
   } catch (err) {
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "", "", null, err.message);
+      return renderSyncResult(res, '', '', null, err.message);
     }
     return res.status(500).json({ error: err.message });
   }
@@ -97,12 +106,17 @@ const syncRouteHandler = async (req, res) => {
   try {
     const results = await syncAllDatabaseToBigin();
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "✅ Database Synced to Zoho Bigin!", "All customer profiles and active pipeline deals have been synced to Zoho Bigin CRM.", results);
+      return renderSyncResult(
+        res,
+        '✅ Database Synced to Zoho Bigin!',
+        'All customer profiles and active pipeline deals have been synced to Zoho Bigin CRM.',
+        results,
+      );
     }
     return res.json({ success: true, synced: results });
   } catch (err) {
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "", "", null, err.message);
+      return renderSyncResult(res, '', '', null, err.message);
     }
     return res.status(500).json({ error: err.message });
   }
@@ -114,29 +128,53 @@ const cleanupRouteHandler = async (req, res) => {
     const deleteResults = await clearAllBiginData();
     const syncResults = await syncAllDatabaseToBigin();
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "✅ Cleaned & Re-synced to Zoho Bigin!", "Old records cleared and database customers/deals re-synced clean.", syncResults);
+      return renderSyncResult(
+        res,
+        '✅ Cleaned & Re-synced to Zoho Bigin!',
+        'Old records cleared and database customers/deals re-synced clean.',
+        syncResults,
+      );
     }
-    return res.json({ success: true, deleted: deleteResults.deleted, synced: syncResults });
+    return res.json({
+      success: true,
+      deleted: deleteResults.deleted,
+      synced: syncResults,
+    });
   } catch (err) {
     if (req.method === 'GET' || req.headers.accept?.includes('html')) {
-      return renderSyncResult(res, "", "", null, err.message);
+      return renderSyncResult(res, '', '', null, err.message);
     }
     return res.status(500).json({ error: err.message });
   }
 };
 
 // Register all route aliases
-['/bigin-import', '/admin/bigin-import', '/webhook/bigin-import', '/webhook/admin/bigin-import'].forEach(p => {
+[
+  '/bigin-import',
+  '/admin/bigin-import',
+  '/webhook/bigin-import',
+  '/webhook/admin/bigin-import',
+].forEach((p) => {
   app.get(p, importRouteHandler);
   app.post(p, importRouteHandler);
 });
 
-['/bigin-sync', '/admin/bigin-sync', '/webhook/bigin-sync', '/webhook/admin/bigin-sync'].forEach(p => {
+[
+  '/bigin-sync',
+  '/admin/bigin-sync',
+  '/webhook/bigin-sync',
+  '/webhook/admin/bigin-sync',
+].forEach((p) => {
   app.get(p, syncRouteHandler);
   app.post(p, syncRouteHandler);
 });
 
-['/bigin-cleanup', '/admin/bigin-cleanup', '/webhook/bigin-cleanup', '/webhook/admin/bigin-cleanup'].forEach(p => {
+[
+  '/bigin-cleanup',
+  '/admin/bigin-cleanup',
+  '/webhook/bigin-cleanup',
+  '/webhook/admin/bigin-cleanup',
+].forEach((p) => {
   app.get(p, cleanupRouteHandler);
   app.post(p, cleanupRouteHandler);
 });

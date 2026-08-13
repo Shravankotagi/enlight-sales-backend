@@ -94,7 +94,11 @@ async function processVisitMessage(text, senderPhone) {
       new SystemMessage(VISIT_AGENT_PROMPT),
       new HumanMessage('Salesperson message:\n' + text),
     ]);
-    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
     const cleaned = rawText
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
@@ -112,8 +116,14 @@ async function processVisitMessage(text, senderPhone) {
     const customerName = data.customer_name.trim();
 
     // Try to match existing registered customer first
-    const { verifyAndGetCustomerName, saveActiveSession } = require('../supabase');
-    let officialCustomerName = await verifyAndGetCustomerName(customerName, senderPhone);
+    const {
+      verifyAndGetCustomerName,
+      saveActiveSession,
+    } = require('../supabase');
+    let officialCustomerName = await verifyAndGetCustomerName(
+      customerName,
+      senderPhone,
+    );
 
     let isNewProspect = false;
 
@@ -121,7 +131,11 @@ async function processVisitMessage(text, senderPhone) {
       // ── NEW PROSPECT FLOW ─────────────────────────────────────────────────
       // Auto-onboard instead of rejecting the visit
       isNewProspect = true;
-      officialCustomerName = await autoOnboardProspect(customerName, senderPhone, data);
+      officialCustomerName = await autoOnboardProspect(
+        customerName,
+        senderPhone,
+        data,
+      );
     }
 
     const finalCustomerName = officialCustomerName;
@@ -136,94 +150,118 @@ async function processVisitMessage(text, senderPhone) {
       .gte('visited_at', tenMinutesAgo)
       .limit(1);
 
-    const isBareNameMsg = text.trim().length <= 40 &&
+    const isBareNameMsg =
+      text.trim().length <= 40 &&
       !text.toLowerCase().includes('visited') &&
       !text.toLowerCase().includes('met') &&
       !text.toLowerCase().includes('introduced');
 
     if (recentVisits && recentVisits.length > 0 && isBareNameMsg) {
-      console.log(`[VisitAgent] Suppressing duplicate visit for "${finalCustomerName}" (visit already logged ${recentVisits[0].visited_at})`);
+      console.log(
+        `[VisitAgent] Suppressing duplicate visit for "${finalCustomerName}" (visit already logged ${recentVisits[0].visited_at})`,
+      );
 
       // Refresh active session
-      await saveActiveSession(senderPhone, finalCustomerName, 'profile_updated');
+      await saveActiveSession(
+        senderPhone,
+        finalCustomerName,
+        'profile_updated',
+      );
 
-      return `ℹ️ *Visit Already Logged for ${finalCustomerName}*\n\n` +
+      return (
+        `ℹ️ *Visit Already Logged for ${finalCustomerName}*\n\n` +
         `Your visit with *${finalCustomerName}* is already recorded on your KRA 9 dashboard!\n\n` +
         `If you meant to update their contact info, say: _"${finalCustomerName} phone 9876543210 owner Mr. Kapoor"_\n` +
         `Or to log a new inquiry, say: _"${finalCustomerName} needs 10 MT HR Coil"_\n\n` +
-        `Updated KRA 9 Customer Visit Dashboard! ✅`;
+        `Updated KRA 9 Customer Visit Dashboard! ✅`
+      );
     }
 
     // Extract all fields — NEVER use placeholder values
-    const remarks             = data.remarks            || 'On-site meeting';
-    const personMet           = data.person_met         || null;
-    const contactNo           = data.contact_no         || null;
-    const visitOutcome        = data.visit_outcome       || 'neutral';
+    const remarks = data.remarks || 'On-site meeting';
+    const personMet = data.person_met || null;
+    const contactNo = data.contact_no || null;
+    const visitOutcome = data.visit_outcome || 'neutral';
     const materialRequirement = data.material_requirement || null;
-    const followUpAction      = data.follow_up_action    || null;
-    const productInterests    = data.product_interests   || null;
+    const followUpAction = data.follow_up_action || null;
+    const productInterests = data.product_interests || null;
 
     // Format metadata into structured tags inside remarks for clean storage & dashboard parsing
     const metaTags = [];
-    if (visitOutcome)        metaTags.push(`[Outcome: ${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}]`);
-    if (materialRequirement) metaTags.push(`[Requirement: ${materialRequirement}]`);
-    if (followUpAction)      metaTags.push(`[FollowUp: ${followUpAction}]`);
-    if (productInterests)    metaTags.push(`[Interests: ${productInterests}]`);
+    if (visitOutcome)
+      metaTags.push(
+        `[Outcome: ${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}]`,
+      );
+    if (materialRequirement)
+      metaTags.push(`[Requirement: ${materialRequirement}]`);
+    if (followUpAction) metaTags.push(`[FollowUp: ${followUpAction}]`);
+    if (productInterests) metaTags.push(`[Interests: ${productInterests}]`);
 
-    const fullRemarks = metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
+    const fullRemarks =
+      metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
 
     // Insert visit record with valid table columns
     const { error: visitErr } = await supabase.from('customer_visits').insert({
-      customer_name:        finalCustomerName,
-      salesperson_phone:    senderPhone,
-      person_met:           personMet,
-      contact_no:           contactNo,
-      remarks:              fullRemarks,
-      visited_at:           new Date().toISOString(),
+      customer_name: finalCustomerName,
+      salesperson_phone: senderPhone,
+      person_met: personMet,
+      contact_no: contactNo,
+      remarks: fullRemarks,
+      visited_at: new Date().toISOString(),
     });
 
     if (visitErr) {
-      console.error('[VisitAgent] customer_visits insert error:', visitErr.message);
+      console.error(
+        '[VisitAgent] customer_visits insert error:',
+        visitErr.message,
+      );
     }
 
     // Log KRA 9 with full business context
     const kraDescription = [
       `Visit: ${finalCustomerName}`,
-      isNewProspect           ? 'NEW PROSPECT'            : null,
-      personMet               ? `Met: ${personMet}`       : null,
-      visitOutcome            ? `Outcome: ${visitOutcome}` : null,
-      productInterests        ? `Interests: ${productInterests}` : null,
-      materialRequirement     ? `Requirement: ${materialRequirement}` : null,
-      followUpAction          ? `Follow-up: ${followUpAction}` : null,
+      isNewProspect ? 'NEW PROSPECT' : null,
+      personMet ? `Met: ${personMet}` : null,
+      visitOutcome ? `Outcome: ${visitOutcome}` : null,
+      productInterests ? `Interests: ${productInterests}` : null,
+      materialRequirement ? `Requirement: ${materialRequirement}` : null,
+      followUpAction ? `Follow-up: ${followUpAction}` : null,
       `Notes: ${remarks}`,
-    ].filter(Boolean).join(' | ');
+    ]
+      .filter(Boolean)
+      .join(' | ');
 
     await supabase.from('kra_logs').insert({
       salesperson_phone: senderPhone,
-      kra_number:        9,
-      kra_type:          'customer_visit',
-      customer_name:     finalCustomerName,
-      description:       kraDescription,
+      kra_number: 9,
+      kra_type: 'customer_visit',
+      customer_name: finalCustomerName,
+      description: kraDescription,
       month: new Date().getMonth() + 1,
-      year:  new Date().getFullYear(),
+      year: new Date().getFullYear(),
     });
 
     // Also log KRA 2 for new prospect acquisition if not already logged
     if (isNewProspect) {
       try {
         const { isKRA2AlreadyLogged } = require('./customerAgent');
-        const alreadyLoggedKRA2 = await isKRA2AlreadyLogged(senderPhone, finalCustomerName);
+        const alreadyLoggedKRA2 = await isKRA2AlreadyLogged(
+          senderPhone,
+          finalCustomerName,
+        );
         if (!alreadyLoggedKRA2) {
           await supabase.from('kra_logs').insert({
             salesperson_phone: senderPhone,
-            kra_number:        2,
-            kra_type:          'new_customer',
-            customer_name:     finalCustomerName,
-            description:       `New Customer Onboarded via Visit: ${finalCustomerName}`,
-            month:             new Date().getMonth() + 1,
-            year:              new Date().getFullYear(),
+            kra_number: 2,
+            kra_type: 'new_customer',
+            customer_name: finalCustomerName,
+            description: `New Customer Onboarded via Visit: ${finalCustomerName}`,
+            month: new Date().getMonth() + 1,
+            year: new Date().getFullYear(),
           });
-          console.log(`[VisitAgent] Logged KRA 2 for new prospect: ${finalCustomerName}`);
+          console.log(
+            `[VisitAgent] Logged KRA 2 for new prospect: ${finalCustomerName}`,
+          );
         }
       } catch (e) {
         console.error('[VisitAgent] KRA 2 auto-logging error:', e.message);
@@ -250,7 +288,8 @@ async function processVisitMessage(text, senderPhone) {
       .update({ updated_at: new Date().toISOString() })
       .ilike('customer_name', `%${finalCustomerName}%`);
 
-    const outcomeEmoji = { positive: '🟢', neutral: '🟡', negative: '🔴' }[visitOutcome] || '🟡';
+    const outcomeEmoji =
+      { positive: '🟢', neutral: '🟡', negative: '🔴' }[visitOutcome] || '🟡';
 
     // Async Zoho Bigin Smart Sync
     syncActivity('visit', {
@@ -270,37 +309,42 @@ async function processVisitMessage(text, senderPhone) {
       : `🚗 *KRA 9 - Customer Visit Logged!*\n\n`;
 
     reply += `Customer: *${finalCustomerName}*\n`;
-    if (data.city)         reply += `Location: *${data.city}*\n`;
-    if (personMet)         reply += `Person Met: *${personMet}*\n`;
-    if (contactNo)         reply += `Contact: *${contactNo}*\n`;
+    if (data.city) reply += `Location: *${data.city}*\n`;
+    if (personMet) reply += `Person Met: *${personMet}*\n`;
+    if (contactNo) reply += `Contact: *${contactNo}*\n`;
     reply += `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n`;
     reply += `Notes: ${remarks}\n`;
-    if (productInterests)    reply += `🛒 Product Interests: *${productInterests}*\n`;
-    if (materialRequirement) reply += `📦 Requirement: *${materialRequirement}*\n`;
-    if (followUpAction)      reply += `📌 Follow-up: *${followUpAction}*\n`;
+    if (productInterests)
+      reply += `🛒 Product Interests: *${productInterests}*\n`;
+    if (materialRequirement)
+      reply += `📦 Requirement: *${materialRequirement}*\n`;
+    if (followUpAction) reply += `📌 Follow-up: *${followUpAction}*\n`;
     reply += `\nTotal Visits This Month: *${totalVisits}*\n`;
     reply += `\nUpdated KRA 9 Customer Visit Dashboard! ✅`;
 
     // For new prospects, ask for missing mandatory details
     if (isNewProspect) {
       const missingFields = [];
-      if (!contactNo)         missingFields.push('• 📱 *Mobile Number*');
-      if (!personMet)         missingFields.push('• 👤 *Owner / Contact Person Name*');
-      if (!data.city)         missingFields.push('• 📍 *City / Location*');
+      if (!contactNo) missingFields.push('• 📱 *Mobile Number*');
+      if (!personMet) missingFields.push('• 👤 *Owner / Contact Person Name*');
+      if (!data.city) missingFields.push('• 📍 *City / Location*');
       missingFields.push('• 🧾 *GSTIN* (optional)');
 
-      reply += `\n\n📌 *${finalCustomerName} has been added as a new prospect.*\n` +
+      reply +=
+        `\n\n📌 *${finalCustomerName} has been added as a new prospect.*\n` +
         `To complete their profile, please share:\n${missingFields.join('\n')}\n\n` +
         `_(Simply reply: "${finalCustomerName} phone 9876543210 owner Mr. Kapoor")_`;
     } else {
       // For existing customers, check if profile is complete
       const { getCustomerMissingInfoPrompt } = require('../supabase');
-      const missingPrompt = await getCustomerMissingInfoPrompt(finalCustomerName, senderPhone);
+      const missingPrompt = await getCustomerMissingInfoPrompt(
+        finalCustomerName,
+        senderPhone,
+      );
       if (missingPrompt) reply += missingPrompt;
     }
 
     return reply;
-
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
     return `⚠️ Could not process site visit update: ${error.message}`;

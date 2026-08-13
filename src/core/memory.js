@@ -67,7 +67,9 @@ async function getActiveContextPrompt(senderPhone) {
     // Fetch customer profile from recurring_customers
     const { data: custData } = await supabase
       .from('recurring_customers')
-      .select('customer_name, customer_phone, customer_gst, customer_address, contact_person')
+      .select(
+        'customer_name, customer_phone, customer_gst, customer_address, contact_person',
+      )
       .ilike('customer_name', `%${activeCustomer}%`)
       .limit(1);
 
@@ -76,10 +78,10 @@ async function getActiveContextPrompt(senderPhone) {
     let profileSummary = '';
     if (cust) {
       const missing = [];
-      if (!cust.customer_phone)   missing.push('Mobile Number');
-      if (!cust.contact_person)   missing.push('Owner/Contact Person');
-      if (!cust.customer_address)  missing.push('City/Location');
-      if (!cust.customer_gst)      missing.push('GSTIN');
+      if (!cust.customer_phone) missing.push('Mobile Number');
+      if (!cust.contact_person) missing.push('Owner/Contact Person');
+      if (!cust.customer_address) missing.push('City/Location');
+      if (!cust.customer_gst) missing.push('GSTIN');
 
       profileSummary = `\nActive Customer Profile ("${cust.customer_name}"):
 - Phone: ${cust.customer_phone || 'MISSING'}

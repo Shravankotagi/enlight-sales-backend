@@ -14,6 +14,4 @@ export interface SearchParams {
 
 // pagination sort search params
 export interface ListQueryParams
-  extends PaginationParams,
-    SortParams,
-    SearchParams {}
+  extends PaginationParams, SortParams, SearchParams {}

@@ -10,7 +10,9 @@ const { invokeWithFallback } = require('./core/modelRouter');
 
 async function callLightweightModel(prompt) {
   const response = await invokeWithFallback([new HumanMessage(prompt)]);
-  return typeof response.content === 'string' ? response.content.trim() : JSON.stringify(response.content);
+  return typeof response.content === 'string'
+    ? response.content.trim()
+    : JSON.stringify(response.content);
 }
 
 const EXTRACTION_PROMPT = `
@@ -128,7 +130,10 @@ function postProcessExtraction(parsed) {
     });
   }
 
-  if (totalCalculatedAmount > 0 && (!parsed.total_amount || parsed.total_amount === 0)) {
+  if (
+    totalCalculatedAmount > 0 &&
+    (!parsed.total_amount || parsed.total_amount === 0)
+  ) {
     parsed.total_amount = totalCalculatedAmount;
   }
 
@@ -143,26 +148,34 @@ function postProcessExtraction(parsed) {
 async function extractFromText(text) {
   try {
     const rateSheetInfo = await getLatestActiveRatesText();
-    const prompt = EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
+    const prompt =
+      EXTRACTION_PROMPT + rateSheetInfo + '\n\nInput text:\n' + text;
     const rawText = await callLightweightModel(prompt);
     const parsed = safeParseJSON(rawText, null);
-    if (!parsed) throw new Error('Could not parse JSON extraction from Gemini response');
+    if (!parsed)
+      throw new Error('Could not parse JSON extraction from Gemini response');
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Gemini text extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log(
+      'Gemini text extraction successful:',
+      JSON.stringify(postProcessed, null, 2),
+    );
     return postProcessed;
   } catch (error) {
     console.error('Gemini text extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
-      error: error.message
+      error: error.message,
     };
   }
 }
 
 async function extractFromImage(imageBuffer, mimeType) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2;
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.GEMINI_API_KEY_1 ||
+      process.env.GEMINI_API_KEY_2;
     const model = new ChatGoogleGenerativeAI({
       model: 'gemini-2.5-flash',
       apiKey: apiKey,
@@ -170,28 +183,38 @@ async function extractFromImage(imageBuffer, mimeType) {
     });
     const base64Img = imageBuffer.toString('base64');
     const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
-    
+
     const message = new HumanMessage({
       content: [
         { type: 'text', text: EXTRACTION_PROMPT },
-        { type: 'image_url', image_url: { url: imageUrl } }
-      ]
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
     });
-    
+
     const response = await model.invoke([message]);
-    const rawText = (typeof response.content === 'string' ? response.content : JSON.stringify(response.content)).trim();
-    
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
+
     const parsed = safeParseJSON(rawText, null);
-    if (!parsed) throw new Error('Could not parse image extraction from Gemini vision response');
+    if (!parsed)
+      throw new Error(
+        'Could not parse image extraction from Gemini vision response',
+      );
     const postProcessed = postProcessExtraction(parsed);
-    console.log('Gemini image extraction successful:', JSON.stringify(postProcessed, null, 2));
+    console.log(
+      'Gemini image extraction successful:',
+      JSON.stringify(postProcessed, null, 2),
+    );
     return postProcessed;
   } catch (error) {
     console.error('Gemini image extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
-      error: error.message
+      error: error.message,
     };
   }
 }
@@ -284,19 +307,31 @@ Return ONLY the JSON object.
 
 async function classifyIntent(text) {
   try {
-    const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'long' });
+    const nowStr = new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+      timeStyle: 'long',
+    });
     const contextPrompt = `Context:\n- Today's date and time in India: ${nowStr}\n\n`;
-    const prompt = contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
+    const prompt =
+      contextPrompt + INTENT_PROMPT + '\n\nSalesperson message:\n' + text;
     const rawText = await callLightweightModel(prompt);
     const parsed = safeParseJSON(rawText, null);
     if (parsed && parsed.intent) {
-      console.log(`Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`);
+      console.log(
+        `Intent: ${parsed.intent} | Confidence: ${parsed.confidence} | Reason: ${parsed.reasoning || parsed.intent}`,
+      );
       return parsed;
     }
     throw new Error('Could not parse intent JSON');
   } catch (error) {
     console.error('Gemini intent classification error:', error.message);
-    return { intent: 'unknown', customer_name: null, confidence: 0, reasoning: 'Error during classification' };
+    return {
+      intent: 'unknown',
+      customer_name: null,
+      confidence: 0,
+      reasoning: 'Error during classification',
+    };
   }
 }
 
@@ -324,7 +359,9 @@ async function classifyQueryType(text) {
     const rawText = await callLightweightModel(prompt);
     const parsed = safeParseJSON(rawText, null);
     if (parsed && parsed.category) {
-      console.log(`Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`);
+      console.log(
+        `Query Category: ${parsed.category} | Confidence: ${parsed.confidence}`,
+      );
       return parsed;
     }
     throw new Error('Could not parse query category JSON');
@@ -334,4 +371,10 @@ async function classifyQueryType(text) {
   }
 }
 
-module.exports = { extractFromText, extractFromImage, classifyIntent, getLatestActiveRatesText, classifyQueryType };
+module.exports = {
+  extractFromText,
+  extractFromImage,
+  classifyIntent,
+  getLatestActiveRatesText,
+  classifyQueryType,
+};

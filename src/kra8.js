@@ -4,39 +4,61 @@ const { sendTextMessage } = require('./whatsapp');
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
   );
 }
 
 // Detect if message is a complaint report
 function isComplaintReport(text) {
   const complaintKeywords = [
-    'complaint', 'complain', 'issue', 'problem',
-    'quality issue', 'wrong material', 'wrong quantity',
-    'delivery problem', 'billing issue', 'reject', 'rejection',
-    'customer unhappy', 'customer angry', 'not satisfied',
-    'shikayat', 'problem aaya', 'issue aaya', 'galat material',
-    'galat quantity', 'delivery late', 'damage', 'damaged',
-    'short delivery', 'excess billing', 'rate issue',
-    'size wrong', 'grade wrong', 'material reject'
+    'complaint',
+    'complain',
+    'issue',
+    'problem',
+    'quality issue',
+    'wrong material',
+    'wrong quantity',
+    'delivery problem',
+    'billing issue',
+    'reject',
+    'rejection',
+    'customer unhappy',
+    'customer angry',
+    'not satisfied',
+    'shikayat',
+    'problem aaya',
+    'issue aaya',
+    'galat material',
+    'galat quantity',
+    'delivery late',
+    'damage',
+    'damaged',
+    'short delivery',
+    'excess billing',
+    'rate issue',
+    'size wrong',
+    'grade wrong',
+    'material reject',
   ];
   const lower = text.toLowerCase();
-  return complaintKeywords.some(k => lower.includes(k));
+  return complaintKeywords.some((k) => lower.includes(k));
 }
 
 // Detect if message is complaint resolution
 function isComplaintResolution(text) {
   const upper = text.toUpperCase().trim();
-  return upper.startsWith('RESOLVED ') ||
-         upper.startsWith('RESOLVE ') ||
-         upper.startsWith('CLOSED ') ||
-         upper.startsWith('CLOSE ') ||
-         upper.startsWith('FIXED ') ||
-         upper.startsWith('FIX ') ||
-         upper === 'RESOLVED' ||
-         upper === 'RESOLVE' ||
-         upper === 'CLOSED' ||
-         upper === 'CLOSE';
+  return (
+    upper.startsWith('RESOLVED ') ||
+    upper.startsWith('RESOLVE ') ||
+    upper.startsWith('CLOSED ') ||
+    upper.startsWith('CLOSE ') ||
+    upper.startsWith('FIXED ') ||
+    upper.startsWith('FIX ') ||
+    upper === 'RESOLVED' ||
+    upper === 'RESOLVE' ||
+    upper === 'CLOSED' ||
+    upper === 'CLOSE'
+  );
 }
 
 // Extract complaint details using Google Gemini
@@ -81,7 +103,7 @@ Message: "${text}"
       customer_name: null,
       complaint_type: 'other',
       description: text,
-      severity: 'medium'
+      severity: 'medium',
     };
   }
 }
@@ -99,7 +121,7 @@ async function saveComplaint(details, senderPhone) {
         reported_by: senderPhone,
         reported_at: new Date().toISOString(),
         status: 'pending',
-        escalated: false
+        escalated: false,
       })
       .select()
       .single();
@@ -116,25 +138,28 @@ async function saveComplaint(details, senderPhone) {
 // Build complaint confirmation message
 function buildComplaintConfirmation(details, complaint) {
   const shortId = complaint?.id?.substring(0, 8) || 'N/A';
-  const severityEmoji = {
-    'low': '🟡',
-    'medium': '🟠', 
-    'high': '🔴',
-    'critical': '🚨'
-  }[details.severity] || '🟠';
+  const severityEmoji =
+    {
+      low: '🟡',
+      medium: '🟠',
+      high: '🔴',
+      critical: '🚨',
+    }[details.severity] || '🟠';
 
-  const typeEmoji = {
-    'quality': '🔍',
-    'quantity': '📦',
-    'billing': '💰',
-    'delivery': '🚚',
-    'size': '📏',
-    'grade': '⚗️',
-    'damage': '💔',
-    'other': '❓'
-  }[details.complaint_type] || '❓';
+  const typeEmoji =
+    {
+      quality: '🔍',
+      quantity: '📦',
+      billing: '💰',
+      delivery: '🚚',
+      size: '📏',
+      grade: '⚗️',
+      damage: '💔',
+      other: '❓',
+    }[details.complaint_type] || '❓';
 
-  return `${severityEmoji} *Complaint Logged - KRA 8*\n\n` +
+  return (
+    `${severityEmoji} *Complaint Logged - KRA 8*\n\n` +
     `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
     `${typeEmoji} Type: ${details.complaint_type}\n` +
     `📝 Description: ${details.description}\n` +
@@ -144,7 +169,8 @@ function buildComplaintConfirmation(details, complaint) {
     `You will receive reminders at:\n` +
     `• 24 hours - if still open\n` +
     `• 48 hours - escalation to Sales Lead\n\n` +
-    `To close: Reply *RESOLVED ${details.customer_name?.split(' ')[0]?.toUpperCase() || 'COMPLAINT'} [resolution details]*`;
+    `To close: Reply *RESOLVED ${details.customer_name?.split(' ')[0]?.toUpperCase() || 'COMPLAINT'} [resolution details]*`
+  );
 }
 
 // Check pending complaints and send reminders/escalations
@@ -212,7 +238,7 @@ async function checkComplaints() {
 
         console.log(`Complaint ${complaint.id} escalated`);
 
-      // 24 hours - send reminder
+        // 24 hours - send reminder
       } else if (hoursElapsed >= 24 && hoursElapsed < 48) {
         const reminderMsg =
           `⚠️ *KRA 8 - Complaint Reminder*\n\n` +
@@ -228,7 +254,7 @@ async function checkComplaints() {
         console.log(`24h reminder sent for complaint ${complaint.id}`);
       }
 
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
     console.log('KRA 8 check complete');
@@ -256,13 +282,16 @@ async function handleComplaintLog(text, senderPhone) {
       description: `${details.complaint_type} complaint: ${details.description}`,
       customer_name: details.customer_name,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
     });
 
     // If it's a product rejection, ALSO log to KRA 7 (Zero Rejection)
     const lowerText = text.toLowerCase();
     if (lowerText.includes('reject') || lowerText.includes('rejection')) {
-      console.log('Logging rejection to KRA 7 for customer:', details.customer_name);
+      console.log(
+        'Logging rejection to KRA 7 for customer:',
+        details.customer_name,
+      );
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
         kra_number: 7,
@@ -270,7 +299,7 @@ async function handleComplaintLog(text, senderPhone) {
         description: `Product rejection: ${details.description}`,
         customer_name: details.customer_name,
         month: new Date().getMonth() + 1,
-        year: new Date().getFullYear()
+        year: new Date().getFullYear(),
       });
     }
 
@@ -286,8 +315,16 @@ async function handleComplaintResolution(text, senderPhone) {
   const supabase = getSupabase();
   try {
     const upper = text.toUpperCase().trim();
-    const resolutionActions = ['RESOLVED', 'RESOLVE', 'CLOSED', 'CLOSE', 'FIXED', 'FIX'];
-    const matchedAction = resolutionActions.find(a => upper.startsWith(a)) || 'RESOLVED';
+    const resolutionActions = [
+      'RESOLVED',
+      'RESOLVE',
+      'CLOSED',
+      'CLOSE',
+      'FIXED',
+      'FIX',
+    ];
+    const matchedAction =
+      resolutionActions.find((a) => upper.startsWith(a)) || 'RESOLVED';
 
     // 1. Fetch all pending complaints for this salesperson to match customer name dynamically
     const { data: openComplaints } = await supabase
@@ -302,25 +339,33 @@ async function handleComplaintResolution(text, senderPhone) {
 
     if (openComplaints && openComplaints.length > 0) {
       // Find a complaint whose customer name is mentioned in the text (case-insensitive)
-      complaint = openComplaints.find(c => {
+      complaint = openComplaints.find((c) => {
         if (!c.customer_name) return false;
         const nameLower = c.customer_name.toLowerCase();
         // Check if full customer name is in the message
         if (text.toLowerCase().includes(nameLower)) return true;
         // Check if any word of length > 3 of the customer name is in the message (e.g. "Balaji")
         const words = nameLower.split(/\s+/);
-        return words.some(word => word.length > 3 && text.toLowerCase().includes(word));
+        return words.some(
+          (word) => word.length > 3 && text.toLowerCase().includes(word),
+        );
       });
 
       // Fuzzy match fallback using Gemini if no literal match is found
       if (!complaint) {
-        console.log('No literal complaint customer match, trying fuzzy matching...');
+        console.log(
+          'No literal complaint customer match, trying fuzzy matching...',
+        );
         const { fuzzyMatchCustomer } = require('./supabase');
-        const customerList = openComplaints.map(c => c.customer_name).filter(Boolean);
+        const customerList = openComplaints
+          .map((c) => c.customer_name)
+          .filter(Boolean);
         const matchedName = await fuzzyMatchCustomer(text, customerList);
         if (matchedName) {
           console.log(`Fuzzy matched complaint customer: ${matchedName}`);
-          complaint = openComplaints.find(c => c.customer_name === matchedName);
+          complaint = openComplaints.find(
+            (c) => c.customer_name === matchedName,
+          );
         }
       }
     }
@@ -329,28 +374,47 @@ async function handleComplaintResolution(text, senderPhone) {
       customerKeyword = complaint.customer_name;
       // Clean resolution text (remove action, customer name, and fillers)
       let tempResolution = text;
-      const regexAction = new RegExp(`^${matchedAction}\\s*(complaint|issue|problem|ticket)*\\s*(for|about|of|on)*\\s*`, 'i');
+      const regexAction = new RegExp(
+        `^${matchedAction}\\s*(complaint|issue|problem|ticket)*\\s*(for|about|of|on)*\\s*`,
+        'i',
+      );
       tempResolution = tempResolution.replace(regexAction, '');
-      
-      if (tempResolution.toLowerCase().includes(complaint.customer_name.toLowerCase())) {
-        tempResolution = tempResolution.replace(new RegExp(complaint.customer_name, 'gi'), '');
+
+      if (
+        tempResolution
+          .toLowerCase()
+          .includes(complaint.customer_name.toLowerCase())
+      ) {
+        tempResolution = tempResolution.replace(
+          new RegExp(complaint.customer_name, 'gi'),
+          '',
+        );
       } else {
         const firstWord = complaint.customer_name.split(' ')[0];
         if (firstWord.length > 3) {
-          tempResolution = tempResolution.replace(new RegExp(firstWord, 'gi'), '');
+          tempResolution = tempResolution.replace(
+            new RegExp(firstWord, 'gi'),
+            '',
+          );
         }
       }
-      resolution = tempResolution.replace(/^[\s:,\-]+/, '').trim() || 'Resolved';
+      resolution =
+        tempResolution.replace(/^[\s:,\-]+/, '').trim() || 'Resolved';
     } else {
       // FALLBACK: Clean action and filler words to extract customer keyword and resolution
       let cleanText = text;
-      const regexPrefix = /^(resolved complaint for|resolve complaint for|resolved complaint|resolve complaint|resolved for|resolve for|resolved|resolve|closed|close|fixed|fix)\s+/i;
+      const regexPrefix =
+        /^(resolved complaint for|resolve complaint for|resolved complaint|resolve complaint|resolved for|resolve for|resolved|resolve|closed|close|fixed|fix)\s+/i;
       cleanText = cleanText.replace(regexPrefix, '');
       cleanText = cleanText.replace(/^(customer|client|company)\s+/i, '');
 
       const parts = cleanText.split(/[\s:,\-]+/);
       customerKeyword = parts[0] || '';
-      resolution = cleanText.replace(new RegExp(`^${customerKeyword}`, 'i'), '').replace(/^[\s:,\-]+/, '').trim() || 'Resolved';
+      resolution =
+        cleanText
+          .replace(new RegExp(`^${customerKeyword}`, 'i'), '')
+          .replace(/^[\s:,\-]+/, '')
+          .trim() || 'Resolved';
 
       // Fallback DB query using keyword
       if (customerKeyword) {
@@ -367,14 +431,16 @@ async function handleComplaintResolution(text, senderPhone) {
     }
 
     if (!complaint) {
-      console.log(`No active pending complaint found for customer keyword: ${customerKeyword}`);
+      console.log(
+        `No active pending complaint found for customer keyword: ${customerKeyword}`,
+      );
       return `⚠️ *Resolution Update Declined*\n\nCould not find an active pending complaint matching *"${customerKeyword || 'this customer'}"*.\n\nPlease check the dashboard to verify the customer name or if the complaint was already marked as resolved.`;
     }
 
     const reportedAt = new Date(complaint.reported_at);
     const resolvedAt = new Date();
     const resolutionHrs = Math.round(
-      (resolvedAt - reportedAt) / (1000 * 60 * 60)
+      (resolvedAt - reportedAt) / (1000 * 60 * 60),
     );
 
     await supabase
@@ -382,7 +448,7 @@ async function handleComplaintResolution(text, senderPhone) {
       .update({
         status: 'resolved',
         resolved_at: resolvedAt.toISOString(),
-        resolution_time_hrs: resolutionHrs
+        resolution_time_hrs: resolutionHrs,
       })
       .eq('id', complaint.id);
 
@@ -394,16 +460,18 @@ async function handleComplaintResolution(text, senderPhone) {
       description: `Resolved in ${resolutionHrs}h: ${resolution}`,
       customer_name: complaint.customer_name,
       month: new Date().getMonth() + 1,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
     });
 
     const withinTarget = resolutionHrs <= 48;
-    return `✅ *KRA 8 - Complaint Resolved*\n\n` +
+    return (
+      `✅ *KRA 8 - Complaint Resolved*\n\n` +
       `Customer: ${complaint.customer_name}\n` +
       `Resolution: ${resolution}\n` +
       `Time taken: ${resolutionHrs} hours\n` +
       `${withinTarget ? '✅ Within 48-hour target!' : '⚠️ Exceeded 48-hour target'}\n\n` +
-      `Logged to KRA 8 ✅`;
+      `Logged to KRA 8 ✅`
+    );
   } catch (error) {
     console.error('handleComplaintResolution error:', error.message);
     return '❌ Could not log resolution. Please try again.';
@@ -416,7 +484,9 @@ async function getComplaintSummary(senderPhone) {
   try {
     const now = new Date();
     const monthStart = new Date(
-      now.getFullYear(), now.getMonth(), 1
+      now.getFullYear(),
+      now.getMonth(),
+      1,
     ).toISOString();
 
     const { data: complaints } = await supabase
@@ -429,18 +499,20 @@ async function getComplaintSummary(senderPhone) {
       return '✅ No complaints logged this month!';
     }
 
-    const pending = complaints.filter(c => c.status === 'pending');
-    const resolved = complaints.filter(c => c.status === 'resolved');
-    const escalated = complaints.filter(c => c.escalated);
+    const pending = complaints.filter((c) => c.status === 'pending');
+    const resolved = complaints.filter((c) => c.status === 'resolved');
+    const escalated = complaints.filter((c) => c.escalated);
 
-    const avgResolutionTime = resolved.length > 0
-      ? Math.round(
-          resolved.reduce((sum, c) => sum + (c.resolution_time_hrs || 0), 0) 
-          / resolved.length
-        )
-      : null;
+    const avgResolutionTime =
+      resolved.length > 0
+        ? Math.round(
+            resolved.reduce((sum, c) => sum + (c.resolution_time_hrs || 0), 0) /
+              resolved.length,
+          )
+        : null;
 
-    let msg = `📊 *KRA 8 - Complaint Summary*\n\n` +
+    let msg =
+      `📊 *KRA 8 - Complaint Summary*\n\n` +
       `Total this month: ${complaints.length}\n` +
       `✅ Resolved: ${resolved.length}\n` +
       `⏳ Pending: ${pending.length}\n` +
@@ -453,9 +525,9 @@ async function getComplaintSummary(senderPhone) {
 
     if (pending.length > 0) {
       msg += `\n*Open complaints:*\n`;
-      pending.slice(0, 3).forEach(c => {
+      pending.slice(0, 3).forEach((c) => {
         const hrs = Math.round(
-          (now - new Date(c.reported_at)) / (1000 * 60 * 60)
+          (now - new Date(c.reported_at)) / (1000 * 60 * 60),
         );
         msg += `• ${c.customer_name || 'Unknown'} - ${c.complaint_type} (${hrs}h open)\n`;
       });
@@ -474,5 +546,5 @@ module.exports = {
   handleComplaintLog,
   handleComplaintResolution,
   checkComplaints,
-  getComplaintSummary
+  getComplaintSummary,
 };

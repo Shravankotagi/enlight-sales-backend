@@ -1,6 +1,6 @@
 # Prisma Commands Reference
 
-## Installation 
+## Installation
 
 ### Install Prisma CLI
 
@@ -9,6 +9,7 @@ npm install -g prisma
 ```
 
 ### Create Migration
+
 ```bash
 npx prisma migrate dev --name init
 ```
@@ -47,8 +48,8 @@ npx prisma migrate reset
 npx prisma studio
 ```
 
-
 ## Tips
+
 - Always run `prisma generate` after schema changes
 - Use `prisma migrate dev` in development
 - Use `prisma migrate deploy` in production

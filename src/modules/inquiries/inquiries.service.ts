@@ -1,6 +1,25 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import axios from 'axios';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+
+function getCompanyLogoPath(): string | null {
+  const possiblePaths = [
+    path.join(process.cwd(), 'assets', 'logo.png'),
+    path.join(process.cwd(), 'assets', 'logo.jpg'),
+    path.join(process.cwd(), 'assets', 'logo.jpeg'),
+    path.join(__dirname, '../../../assets/logo.png'),
+    path.join(__dirname, '../../../assets/logo.jpg'),
+    path.join(__dirname, '../../../assets/logo.jpeg'),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 @Injectable()
 export class InquiriesService {
@@ -85,8 +104,10 @@ export class InquiriesService {
     try {
       const updatePayload: any = { status };
       if (details) {
-        if (details.companyName) updatePayload.sender_name = details.companyName;
-        if (details.customerPhone) updatePayload.sender_phone = details.customerPhone;
+        if (details.companyName)
+          updatePayload.sender_name = details.companyName;
+        if (details.customerPhone)
+          updatePayload.sender_phone = details.customerPhone;
         if (details.requirement) updatePayload.raw_text = details.requirement;
         if (details.media_urls) updatePayload.media_urls = details.media_urls;
         updatePayload.ai_extraction_json = details;
@@ -230,155 +251,49 @@ export class InquiriesService {
           const qRefNum = `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
           const totalAmt = Number(details.totalAmount || 1860000);
-          const gstAmt = Math.round(totalAmt * 0.18);
-          const grandTotalAmt = Math.round(totalAmt * 1.18);
-          const unitRateStr = Number(details.unitPrice || 62000).toLocaleString(
-            'en-IN',
-          );
           const totalAmtStr = totalAmt.toLocaleString('en-IN');
 
-          const htmlContent = `
-            <div style="font-family: Arial, Helvetica, sans-serif; max-width: 680px; margin: 0 auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-              <div style="background: #0f172a; position: relative;">
-                <img src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=1200&auto=format&fit=crop" alt="Enlight Metals Steel Processing Plant" style="width: 100%; height: 150px; object-fit: cover; opacity: 0.88; display: block; border-bottom: 3px solid #2563eb;" />
-                <div style="padding: 20px 24px; background: linear-gradient(180deg, #0f172a 0%, #1e3a8a 100%); text-align: center; color: #ffffff;">
-                  <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px; color: #ffffff;">ENLIGHT METALS PRIVATE LIMITED</h1>
-                  <p style="margin: 4px 0 0 0; font-size: 11px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Authorized B2B Metal Distributor &amp; Steel Processor</p>
-                  <div style="margin-top: 12px; display: inline-block; background: #2563eb; color: #ffffff; padding: 5px 16px; border-radius: 20px; font-size: 11px; font-weight: bold; box-shadow: 0 2px 6px rgba(37,99,235,0.4);">
-                    OFFICIAL COMMERCIAL PRICE QUOTATION
-                  </div>
-                </div>
-              </div>
+          const specText =
+            `${details.productType || 'Steel Material'} (${details.productForm || 'Coil'}) ${details.thickness || ''} ${details.width ? 'x ' + details.width : ''} ${details.length ? 'x ' + details.length : ''}`.trim();
 
-              <div style="padding: 24px;">
-                <table style="width: 100%; font-size: 12px; color: #334155; margin-bottom: 20px; border-bottom: 2px dashed #e2e8f0; padding-bottom: 16px;">
-                  <tr>
-                    <td style="width: 50%; vertical-align: top;">
-                      <p style="margin: 0 0 4px 0; color: #64748b; font-size: 10px; font-weight: bold; text-transform: uppercase;">QUOTATION TO (CUSTOMER)</p>
-                      <p style="margin: 0; font-size: 15px; font-weight: bold; color: #0f172a;">${customerName}</p>
-                      <p style="margin: 2px 0 0 0; color: #475569;">Email: ${customerEmail}</p>
-                      <p style="margin: 2px 0 0 0; color: #475569;">Phone: ${details.customerPhone || 'As registered'}</p>
-                    </td>
-                    <td style="width: 50%; text-align: right; vertical-align: top;">
-                      <p style="margin: 0 0 4px 0; color: #64748b; font-size: 10px; font-weight: bold; text-transform: uppercase;">QUOTATION DETAILS</p>
-                      <p style="margin: 0; font-size: 13px; font-weight: bold; color: #2563eb;">Ref #: ${qRefNum}</p>
-                      <p style="margin: 2px 0 0 0; color: #475569;">Date: ${todayDateStr}</p>
-                      <p style="margin: 2px 0 0 0; color: #059669; font-weight: bold;">Validity: 7 Days</p>
-                    </td>
-                  </tr>
-                </table>
+          // Professional Plain Text Email Body (Zero HTML)
+          const textContent = `Dear ${customerName},
 
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; border: 1px solid #cbd5e1;">
-                  <thead>
-                    <tr style="background: #0f172a; color: #ffffff; font-size: 11px; text-transform: uppercase;">
-                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: left; width: 18%;">Quantity</th>
-                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: left; width: 42%;">Material Description</th>
-                      <th style="padding: 10px; border-right: 1px solid #334155; text-align: right; width: 20%;">Unit Rate</th>
-                      <th style="padding: 10px; text-align: right; width: 20%;">Amount (₹)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style="background: #ffffff; border-bottom: 1px solid #e2e8f0;">
-                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0; font-weight: bold; color: #1e40af;">
-                        ${details.quantityTons || 30} MT
-                        <span style="display: block; font-size: 10px; color: #64748b; font-weight: normal;">(${details.quantityUnits || 350} nos)</span>
-                      </td>
-                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0;">
-                        <div style="font-weight: bold; color: #0f172a; font-size: 13px;">${details.productType || 'Steel Material'}</div>
-                        <div style="font-size: 11px; color: #475569; margin-top: 4px;">
-                          Form: <strong style="color: #6b21a8;">${details.productForm || 'Coil'}</strong> | Spec: ${details.thickness || '2.0 mm'} ${details.width ? `x ${details.width}` : ''} ${details.length ? `x ${details.length}` : ''}
-                        </div>
-                      </td>
-                      <td style="padding: 12px 10px; border-right: 1px solid #e2e8f0; text-align: right; font-weight: bold; color: #334155;">
-                        ₹${unitRateStr}/MT
-                      </td>
-                      <td style="padding: 12px 10px; text-align: right; font-weight: 900; color: #047857; font-size: 14px;">
-                        ₹${totalAmtStr}
-                      </td>
-                    </tr>
-                  </tbody>
-                  <tfoot>
-                    <tr style="background: #f8fafc; font-weight: bold;">
-                      <td style="padding: 10px; border-right: 1px solid #e2e8f0; border-top: 2px solid #cbd5e1;">Total: ${details.quantityTons || 30} MT</td>
-                      <td colSpan="2" style="padding: 10px; border-right: 1px solid #e2e8f0; border-top: 2px solid #cbd5e1; text-align: right; text-transform: uppercase; color: #475569;">Subtotal Amount:</td>
-                      <td style="padding: 10px; border-top: 2px solid #cbd5e1; text-align: right; color: #047857; font-size: 14px;">₹${totalAmtStr}</td>
-                    </tr>
-                    <tr style="background: #f1f5f9; font-weight: bold;">
-                      <td colSpan="3" style="padding: 10px; border-right: 1px solid #e2e8f0; text-align: right; text-transform: uppercase; color: #475569;">GST @ 18%:</td>
-                      <td style="padding: 10px; text-align: right; color: #334155;">₹${gstAmt.toLocaleString('en-IN')}</td>
-                    </tr>
-                    <tr style="background: #e0f2fe; font-weight: 900;">
-                      <td colSpan="3" style="padding: 12px 10px; border-right: 1px solid #bae6fd; text-align: right; text-transform: uppercase; color: #0369a1; font-size: 12px;">Grand Total (Incl. GST):</td>
-                      <td style="padding: 12px 10px; text-align: right; color: #0369a1; font-size: 15px;">₹${grandTotalAmt.toLocaleString('en-IN')}</td>
-                    </tr>
-                  </tfoot>
-                </table>
+Thank you for contacting Enlight Metals Private Limited regarding your recent metal product requirement.
 
-                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; font-size: 11px; color: #334155;">
-                  <p style="margin: 0 0 4px 0;"><strong>Payment Terms:</strong> ${details.paymentTerms || '30 Days Credit'}</p>
-                  <p style="margin: 0;"><strong>Delivery Address:</strong> ${details.deliveryLocation || 'Warehouse'}</p>
-                </div>
+Please find attached our official Commercial Price Quotation (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms for your inquiry.
 
-                </div>
-              </div>
-            </div>
-          `;
+Quotation Summary:
+- Reference Number: ${qRefNum}
+- Issue Date: ${todayDateStr}
+- Item / Specification: ${specText}
+- Total Quantity: ${details.quantityTons || 30} MT (${details.quantityUnits || 350} units)
+- Total Amount: ₹${totalAmtStr} (+ 18% GST)
+- Payment Terms: ${details.paymentTerms || '30 Days Credit'}
+- Delivery Location: ${details.deliveryLocation || 'Warehouse'}
 
-          const pdfStream = `%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj
-5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-6 0 obj << /Length 1200 >> stream
-BT /F1 18 Tf 50 740 Td (ENLIGHT METALS PRIVATE LIMITED) Tj ET
-BT /F2 10 Tf 50 722 Td (Authorized B2B Metal Distributor & Steel Processor) Tj ET
-BT /F1 12 Tf 50 690 Td (OFFICIAL COMMERCIAL PRICE QUOTATION) Tj ET
-BT /F2 10 Tf 50 670 Td (Ref #: ${qRefNum}) Tj ET
-BT /F2 10 Tf 380 670 Td (Date: ${todayDateStr}) Tj ET
-BT /F1 11 Tf 50 640 Td (QUOTATION TO: ${customerName}) Tj ET
-BT /F2 10 Tf 50 625 Td (Email: ${customerEmail}) Tj ET
+The attached PDF document contains our official pricing structure and complete commercial terms. Should you have any questions or wish to proceed with order confirmation, please reply directly to this email or contact your Enlight Metals account representative.
 
-BT /F1 10 Tf 50 585 Td (QTY) Tj ET
-BT /F1 10 Tf 120 585 Td (MATERIAL DESCRIPTION) Tj ET
-BT /F1 10 Tf 340 585 Td (UNIT RATE) Tj ET
-BT /F1 10 Tf 460 585 Td (AMOUNT (RS)) Tj ET
+Warm regards,
 
-BT /F2 10 Tf 50 565 Td (${details.quantityTons || 30} MT) Tj ET
-BT /F1 10 Tf 120 565 Td (${details.productType || 'Steel Material'}) Tj ET
-BT /F2 9 Tf 120 550 Td (Form: ${details.productForm || 'Coil'} | Spec: ${details.thickness || '2.0 mm'} ${details.width ? 'x ' + details.width : ''}) Tj ET
-BT /F2 10 Tf 340 565 Td (Rs. ${unitRateStr} / MT) Tj ET
-BT /F1 10 Tf 460 565 Td (Rs. ${totalAmtStr}) Tj ET
+Sales Operations Team
+Enlight Metals Private Limited
+MIDC Industrial Zone, Mumbai - 400001`;
 
-BT /F2 10 Tf 300 510 Td (Subtotal Amount:) Tj ET
-BT /F2 10 Tf 460 510 Td (Rs. ${totalAmtStr}) Tj ET
-BT /F2 10 Tf 300 490 Td (GST @ 18%:) Tj ET
-BT /F2 10 Tf 460 490 Td (Rs. ${gstAmt.toLocaleString('en-IN')}) Tj ET
-BT /F1 11 Tf 300 465 Td (Grand Total:) Tj ET
-BT /F1 11 Tf 460 465 Td (Rs. ${grandTotalAmt.toLocaleString('en-IN')}) Tj ET
+          const pdfBuffer = payload.pdf_base64
+            ? Buffer.from(payload.pdf_base64, 'base64')
+            : await this.generatePdfKitBuffer(
+                qRefNum,
+                customerName,
+                customerEmail,
+                details,
+              );
+          const pdfBase64 = pdfBuffer.toString('base64');
 
-BT /F1 10 Tf 50 420 Td (COMMERCIAL TERMS & CONDITIONS) Tj ET
-BT /F2 10 Tf 50 400 Td (Payment Terms: ${details.paymentTerms || '30 Days Credit'}) Tj ET
-BT /F2 10 Tf 50 380 Td (Delivery Location: ${details.deliveryLocation || 'Warehouse'}) Tj ET
-BT /F2 10 Tf 50 360 Td (Validity: 7 Days from date of issuance) Tj ET
-
-BT /F2 9 Tf 150 300 Td (This is an officially generated commercial price quotation document.) Tj ET
-endstream endobj
-xref
-0 7
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000252 00000 n 
-0000000319 00000 n 
-0000000381 00000 n 
-trailer << /Size 7 /Root 1 0 R >>
-startxref
-1650
-%%EOF`;
-
-          const pdfBase64 = Buffer.from(pdfStream).toString('base64');
+          const fromAddress =
+            fromEmail === 'onboarding@resend.dev'
+              ? 'onboarding@resend.dev'
+              : `Enlight Metals <${fromEmail}>`;
 
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -387,10 +302,10 @@ startxref
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              from: `Enlight Metals <${fromEmail}>`,
+              from: fromAddress,
               to: [customerEmail],
               subject: `Official Commercial Quotation ${qRefNum} - ${customerName}`,
-              html: htmlContent,
+              text: textContent,
               attachments: [
                 {
                   filename: `Official_Quotation_${qRefNum}.pdf`,
@@ -493,5 +408,438 @@ startxref
         error: err.message,
       };
     }
+  }
+
+  private generatePdfKitBuffer(
+    qRefNum: string,
+    customerName: string,
+    customerEmail: string,
+    details: any,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ size: 'A4', margin: 36 });
+        const buffers: Buffer[] = [];
+        doc.on('data', (chunk: Buffer) => buffers.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(buffers)));
+        doc.on('error', (err: Error) => reject(err));
+
+        const notoSansPath = path.join(
+          process.cwd(),
+          'assets',
+          'fonts',
+          'NotoSans-Regular.ttf',
+        );
+        const notoSansBoldPath = path.join(
+          process.cwd(),
+          'assets',
+          'fonts',
+          'NotoSans-Bold.ttf',
+        );
+        let fontRegular = 'Helvetica';
+        let fontBold = 'Helvetica-Bold';
+        let rupeeSymbol = 'Rs. ';
+
+        if (fs.existsSync(notoSansPath) && fs.existsSync(notoSansBoldPath)) {
+          try {
+            doc.registerFont('NotoSans', notoSansPath);
+            doc.registerFont('NotoSans-Bold', notoSansBoldPath);
+            fontRegular = 'NotoSans';
+            fontBold = 'NotoSans-Bold';
+            rupeeSymbol = 'Rs. ';
+          } catch (fErr) {
+            this.logger.warn('Error registering NotoSans fonts:', fErr);
+          }
+        }
+
+        const totalAmt = Number(details.totalAmount || 1860000);
+        const subtotal = Math.round(totalAmt / 1.18);
+        const gstAmt = totalAmt - subtotal;
+        const unitRate = Number(details.unitPrice || 62000);
+        const qtyTons = Number(details.quantityTons || 30);
+        const qtyUnits = Number(details.quantityUnits || 350);
+        const productType = details.productType || 'HR Steel';
+        const productForm = details.productForm || 'Coil';
+        const thickness = details.thickness || '2.0 mm';
+        const width = details.width ? `x ${details.width}` : '';
+        const length = details.length ? `x ${details.length}` : '';
+        const deliveryLocation = details.deliveryLocation || 'Mumbai Warehouse';
+        const paymentTerms = details.paymentTerms || '30 Days Credit';
+        const todayDateStr = new Date().toLocaleDateString('en-IN');
+
+        // Set default document font
+        doc.font(fontRegular);
+
+        // 1. Top Header (Enlight Metals Branding with Logo support)
+        const logoPath = getCompanyLogoPath();
+        let logoDrawn = false;
+        if (logoPath) {
+          try {
+            doc.image(logoPath, 36, 32, { fit: [140, 30] });
+            logoDrawn = true;
+          } catch {
+            logoDrawn = false;
+          }
+        }
+
+        if (!logoDrawn) {
+          doc.rect(36, 36, 95, 24).fill('#0F172A');
+          doc
+            .fillColor('#FFFFFF')
+            .font(fontBold)
+            .fontSize(14)
+            .text('ENLIGHT', 43, 41);
+          doc
+            .fillColor('#0F172A')
+            .font(fontBold)
+            .fontSize(14)
+            .text('METALS', 138, 41);
+        }
+
+        doc
+          .fillColor('#4338CA')
+          .font(fontBold)
+          .fontSize(9)
+          .text(
+            'ENLIGHT METALS PRIVATE LIMITED • INDUSTRIAL METAL SOLUTIONS',
+            36,
+            66,
+          );
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(8)
+          .text(
+            'MIDC Industrial Zone, Mumbai - 400001 • GSTIN: 27AAACE1234F1Z9',
+            36,
+            78,
+          );
+
+        // Right side badge
+        doc.rect(380, 36, 179, 20).fill('#EEF2FF').stroke('#C7D2FE');
+        doc
+          .fillColor('#4338CA')
+          .font(fontBold)
+          .fontSize(8)
+          .text('OFFICIAL SALES QUOTATION', 390, 42, {
+            align: 'center',
+            width: 159,
+          });
+
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(9)
+          .text('Inquiry Ref: ', 380, 64, { continued: true })
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .text(qRefNum);
+
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(9)
+          .text('Date: ', 380, 78, { continued: true })
+          .fillColor('#334155')
+          .font(fontBold)
+          .text(todayDateStr);
+
+        doc
+          .moveTo(36, 95)
+          .lineTo(559, 95)
+          .strokeColor('#E2E8F0')
+          .lineWidth(1)
+          .stroke();
+
+        // 2. Customer & Delivery Info Box
+        doc.roundedRect(36, 105, 523, 75, 8).fill('#F8FAFC').stroke('#E2E8F0');
+
+        // Left Column
+        doc
+          .fillColor('#94A3B8')
+          .font(fontBold)
+          .fontSize(7)
+          .text('CUSTOMER / COMPANY DETAILS', 48, 115);
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(12)
+          .text(customerName, 48, 126, { width: 230 });
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(9)
+          .text(`Phone: ${details.customerPhone || 'N/A'}`, 48, 144);
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(8)
+          .text(`Customer Email: ${customerEmail}`, 48, 158);
+
+        // Right Column
+        doc
+          .fillColor('#94A3B8')
+          .font(fontBold)
+          .fontSize(7)
+          .text('DELIVERY & COMMERCIAL TERMS', 300, 115);
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(10)
+          .text(deliveryLocation, 300, 126, { width: 240 });
+        doc
+          .fillColor('#6B21A8')
+          .font(fontBold)
+          .fontSize(9)
+          .text(`Payment Terms: ${paymentTerms}`, 300, 142);
+        doc
+          .fillColor('#334155')
+          .font(fontRegular)
+          .fontSize(8)
+          .text(`Form Specification: ${productForm}`, 300, 156);
+
+        // 3. Line Items Table Grid (Structured Rows & Ample Cell Padding)
+        const tableY = 192;
+        const headerHeight = 24;
+        const rowHeight = 44;
+        const totalTableHeight = headerHeight + rowHeight;
+
+        // Header Background
+        doc.rect(36, tableY, 523, headerHeight).fill('#0F172A');
+
+        // Header Text
+        doc.fillColor('#FFFFFF').font(fontBold).fontSize(7.5);
+        doc.text('#', 36, tableY + 8, { width: 26, align: 'center' });
+        doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 68, tableY + 8, {
+          width: 205,
+        });
+        doc.text('QUANTITY (MT)', 283, tableY + 8, {
+          width: 78,
+          align: 'right',
+        });
+        doc.text(`UNIT RATE (${rupeeSymbol}/MT)`, 373, tableY + 8, {
+          width: 83,
+          align: 'right',
+        });
+        doc.text(`AMOUNT (${rupeeSymbol})`, 468, tableY + 8, {
+          width: 83,
+          align: 'right',
+        });
+
+        // Row Background & Line
+        const rowY = tableY + headerHeight;
+        doc.rect(36, rowY, 523, rowHeight).fill('#FFFFFF');
+
+        // Row Cell Values
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(9)
+          .text('1', 36, rowY + 14, { width: 26, align: 'center' });
+
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(9.5)
+          .text(`${productType} (${productForm})`, 68, rowY + 8, {
+            width: 205,
+          });
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(8)
+          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 68, rowY + 24, {
+            width: 205,
+          });
+
+        doc
+          .fillColor('#312E81')
+          .font(fontBold)
+          .fontSize(9)
+          .text(`${qtyTons} MT`, 283, rowY + 8, { align: 'right', width: 78 });
+        doc
+          .fillColor('#94A3B8')
+          .font(fontRegular)
+          .fontSize(7)
+          .text(`(${qtyUnits} units)`, 283, rowY + 23, {
+            align: 'right',
+            width: 78,
+          });
+
+        doc
+          .fillColor('#334155')
+          .font(fontRegular)
+          .fontSize(9)
+          .text(
+            `${rupeeSymbol}${unitRate.toLocaleString('en-IN')}`,
+            373,
+            rowY + 14,
+            { align: 'right', width: 83 },
+          );
+
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(9.5)
+          .text(
+            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
+            468,
+            rowY + 14,
+            { align: 'right', width: 83 },
+          );
+
+        // Vertical Separator Grid Lines & Outer Border
+        const gridXCoords = [62, 279, 369, 464];
+        gridXCoords.forEach((x) => {
+          doc
+            .moveTo(x, tableY)
+            .lineTo(x, tableY + totalTableHeight)
+            .strokeColor('#CBD5E1')
+            .lineWidth(0.75)
+            .stroke();
+        });
+
+        // Horizontal Header-Row Divider & Table Outer Box
+        doc
+          .moveTo(36, rowY)
+          .lineTo(559, rowY)
+          .strokeColor('#CBD5E1')
+          .lineWidth(1)
+          .stroke();
+        doc
+          .rect(36, tableY, 523, totalTableHeight)
+          .strokeColor('#475569')
+          .lineWidth(1)
+          .stroke();
+
+        // 4. Financial Summary Box
+        const summaryY = rowY + 52;
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(8)
+          .text('Commercial Terms & Notes:', 36, summaryY);
+        doc.fillColor('#64748B').font(fontRegular).fontSize(8);
+        doc.text(
+          '1. Material meets IS 2062 / IS 1786 prime metal standards.',
+          36,
+          summaryY + 12,
+        );
+        doc.text(
+          '2. Prices valid for 7 days from issue date.',
+          36,
+          summaryY + 24,
+        );
+        doc.text(
+          '3. System generated official PDF quotation from Enlight Metals OS.',
+          36,
+          summaryY + 36,
+        );
+
+        doc
+          .roundedRect(320, summaryY - 4, 239, 68, 6)
+          .fill('#F8FAFC')
+          .stroke('#CBD5E1');
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(8)
+          .text('Subtotal (Base Value):', 330, summaryY + 4);
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(8)
+          .text(
+            `${rupeeSymbol}${subtotal.toLocaleString('en-IN')}`,
+            440,
+            summaryY + 4,
+            { align: 'right', width: 110 },
+          );
+
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(8)
+          .text('GST (18% Estimated):', 330, summaryY + 20);
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(8)
+          .text(
+            `${rupeeSymbol}${gstAmt.toLocaleString('en-IN')}`,
+            440,
+            summaryY + 20,
+            { align: 'right', width: 110 },
+          );
+
+        doc
+          .moveTo(330, summaryY + 36)
+          .lineTo(549, summaryY + 36)
+          .strokeColor('#CBD5E1')
+          .lineWidth(1)
+          .stroke();
+
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(9)
+          .text('Total Quotation Amount:', 330, summaryY + 44);
+        doc
+          .fillColor('#047857')
+          .font(fontBold)
+          .fontSize(11)
+          .text(
+            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
+            440,
+            summaryY + 43,
+            { align: 'right', width: 110 },
+          );
+
+        // 5. Signature Footer
+        const footerY = summaryY + 85;
+        doc
+          .moveTo(36, footerY)
+          .lineTo(559, footerY)
+          .strokeColor('#E2E8F0')
+          .lineWidth(1)
+          .stroke();
+
+        doc
+          .fillColor('#1E293B')
+          .font(fontBold)
+          .fontSize(8)
+          .text('Enlight Metals Sales Ops Team', 36, footerY + 10);
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(7)
+          .text(
+            'System Generated Inquiry Quotation PDF Document',
+            36,
+            footerY + 22,
+          );
+
+        doc
+          .moveTo(420, footerY + 25)
+          .lineTo(559, footerY + 25)
+          .dash(3, { space: 3 })
+          .strokeColor('#94A3B8')
+          .lineWidth(1)
+          .stroke();
+        doc.undash();
+        doc
+          .fillColor('#1E293B')
+          .font(fontBold)
+          .fontSize(8)
+          .text('Authorized Signatory', 420, footerY + 30, {
+            align: 'right',
+            width: 139,
+          });
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 }

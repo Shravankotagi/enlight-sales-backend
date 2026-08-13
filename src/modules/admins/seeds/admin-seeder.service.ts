@@ -13,7 +13,10 @@ export class AdminSeederService {
   ) {
     setTimeout(() => {
       this.seedSuperAdmin().catch((err: any) => {
-        this.logger.error('Admin seeder notice (non-fatal):', err?.message || err);
+        this.logger.error(
+          'Admin seeder notice (non-fatal):',
+          err?.message || err,
+        );
       });
     }, 2000);
   }
