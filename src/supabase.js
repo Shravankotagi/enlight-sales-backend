@@ -67,6 +67,8 @@ async function saveInquiry(data) {
       created_at: new Date().toISOString(),
       salesperson_phone: data.salesperson_phone || data.sender_phone || null,
       employee_id: data.employee_id || null,
+      inquiry_type: data.inquiry_type || null,
+      ai_extraction_json: data.ai_extraction_json || null,
       overall_confidence: data.overall_confidence != null
         ? Number(data.overall_confidence)
         : (data.confidence != null ? Number(data.confidence) : 0.92),
