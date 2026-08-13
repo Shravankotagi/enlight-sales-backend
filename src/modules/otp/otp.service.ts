@@ -9,14 +9,6 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { EmployeesService } from '../employees/employees.service';
 import axios from 'axios';
 
-import * as https from 'https';
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  family: 4,
-  timeout: 15000,
-});
-
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
@@ -36,7 +28,7 @@ export class OtpService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  // Send OTP via WhatsApp
+  // Send OTP via WhatsApp (non-blocking)
   private async sendOtpWhatsApp(phone: string, otp: string): Promise<void> {
     const token = process.env.WHATSAPP_TOKEN;
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -45,47 +37,38 @@ export class OtpService {
       this.logger.error(
         'Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in env',
       );
+      this.logger.log(`[DEV / FALLBACK] OTP for ${phone}: ${otp}`);
       return;
     }
 
     const message = `🔐 *Enlight Sales OS*\n\nYour OTP is: *${otp}*\n\nValid for 10 minutes. Do not share with anyone.`;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await axios.post(
-          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: phone,
-            type: 'text',
-            text: { body: message },
+    try {
+      await axios.post(
+        `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: phone,
+          type: 'text',
+          text: { body: message },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
           },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: 15000,
-            httpsAgent,
-          },
-        );
+          timeout: 5000,
+        },
+      );
 
-        this.logger.log(
-          `OTP successfully sent to ${phone} on WhatsApp (attempt ${attempt})`,
-        );
-        return;
-      } catch (error: any) {
-        const metaError = error.response?.data || error.message;
-        this.logger.error(
-          `Failed to send OTP to ${phone} (attempt ${attempt}/3): ${JSON.stringify(metaError)}`,
-        );
-        if (attempt === 3) {
-          this.logger.log(`[DEV / FALLBACK] OTP for ${phone}: ${otp}`);
-        } else {
-          await new Promise((r) => setTimeout(r, 1000 * attempt));
-        }
-      }
+      this.logger.log(`OTP successfully sent to ${phone} on WhatsApp`);
+    } catch (error: any) {
+      const metaError = error.response?.data || error.message;
+      this.logger.error(
+        `Failed to send WhatsApp OTP to ${phone}: ${JSON.stringify(metaError)}`,
+      );
+      this.logger.log(`[DEV / FALLBACK] OTP for ${phone}: ${otp}`);
     }
   }
 
@@ -121,8 +104,10 @@ export class OtpService {
         verified: false,
       });
 
-      // Send via WhatsApp
-      await this.sendOtpWhatsApp(phone, otp);
+      // Trigger WhatsApp API in background (non-blocking)
+      this.sendOtpWhatsApp(phone, otp).catch((err) => {
+        this.logger.error('Background WhatsApp OTP error:', err?.message || err);
+      });
 
       return {
         message: 'OTP sent to your WhatsApp number',
