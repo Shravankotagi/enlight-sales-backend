@@ -507,58 +507,72 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fontSize(8)
           .text(`Form Specification: ${productForm}`, 300, 156);
 
-        // 3. Line Items Table Grid
+        // 3. Line Items Table Grid (Structured Rows & Equal Column Widths)
         const tableY = 192;
-        doc.rect(36, tableY, 523, 24).fill('#0F172A');
+        const headerHeight = 24;
+        const rowHeight = 44;
+        const totalTableHeight = headerHeight + rowHeight;
+
+        // Header Background
+        doc.rect(36, tableY, 523, headerHeight).fill('#0F172A');
+
+        // Header Text
         doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
-        doc.text('#', 44, tableY + 7, { width: 20 });
-        doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 70, tableY + 7, {
-          width: 240,
+        doc.text('#', 36, tableY + 7, { width: 30, align: 'center' });
+        doc.text('MATERIAL DESCRIPTION & SPECIFICATIONS', 72, tableY + 7, {
+          width: 221,
         });
-        doc.text('QUANTITY (MT)', 310, tableY + 7, {
-          width: 80,
+        doc.text('QUANTITY (MT)', 299, tableY + 7, {
+          width: 79,
           align: 'right',
         });
-        doc.text(`UNIT RATE (${rupeeSymbol}/MT)`, 395, tableY + 7, {
-          width: 80,
+        doc.text(`UNIT RATE (${rupeeSymbol}/MT)`, 384, tableY + 7, {
+          width: 79,
           align: 'right',
         });
-        doc.text(`AMOUNT (${rupeeSymbol})`, 480, tableY + 7, {
-          width: 71,
+        doc.text(`AMOUNT (${rupeeSymbol})`, 469, tableY + 7, {
+          width: 84,
           align: 'right',
         });
 
-        const rowY = tableY + 24;
-        doc.rect(36, rowY, 523, 42).fill('#FFFFFF').stroke('#E2E8F0');
+        // Row Background & Line
+        const rowY = tableY + headerHeight;
+        doc.rect(36, rowY, 523, rowHeight).fill('#FFFFFF');
 
+        // Row Cell Values
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(9)
-          .text('1', 44, rowY + 10);
+          .text('1', 36, rowY + 14, { width: 30, align: 'center' });
+
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text(`${productType} (${productForm})`, 70, rowY + 8);
+          .text(`${productType} (${productForm})`, 72, rowY + 8, {
+            width: 221,
+          });
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(8)
-          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 70, rowY + 23);
+          .text(`Spec: ${thickness} ${width} ${length}`.trim(), 72, rowY + 24, {
+            width: 221,
+          });
 
         doc
           .fillColor('#312E81')
           .font(fontBold)
           .fontSize(9)
-          .text(`${qtyTons} MT`, 310, rowY + 8, { align: 'right', width: 80 });
+          .text(`${qtyTons} MT`, 299, rowY + 8, { align: 'right', width: 79 });
         doc
           .fillColor('#94A3B8')
           .font(fontRegular)
           .fontSize(7)
-          .text(`(${qtyUnits} units)`, 310, rowY + 22, {
+          .text(`(${qtyUnits} units)`, 299, rowY + 23, {
             align: 'right',
-            width: 80,
+            width: 79,
           });
 
         doc
@@ -567,20 +581,45 @@ MIDC Industrial Zone, Mumbai - 400001`;
           .fontSize(9)
           .text(
             `${rupeeSymbol}${unitRate.toLocaleString('en-IN')}`,
-            395,
-            rowY + 12,
-            { align: 'right', width: 80 },
+            384,
+            rowY + 14,
+            { align: 'right', width: 79 },
           );
+
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
           .text(
             `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
-            480,
-            rowY + 12,
-            { align: 'right', width: 71 },
+            469,
+            rowY + 14,
+            { align: 'right', width: 84 },
           );
+
+        // Vertical Separator Grid Lines & Outer Border
+        const gridXCoords = [66, 299, 384, 469];
+        gridXCoords.forEach((x) => {
+          doc
+            .moveTo(x, tableY)
+            .lineTo(x, tableY + totalTableHeight)
+            .strokeColor('#CBD5E1')
+            .lineWidth(0.75)
+            .stroke();
+        });
+
+        // Horizontal Header-Row Divider & Table Outer Box
+        doc
+          .moveTo(36, rowY)
+          .lineTo(559, rowY)
+          .strokeColor('#CBD5E1')
+          .lineWidth(1)
+          .stroke();
+        doc
+          .rect(36, tableY, 523, totalTableHeight)
+          .strokeColor('#475569')
+          .lineWidth(1)
+          .stroke();
 
         // 4. Financial Summary Box
         const summaryY = rowY + 52;
