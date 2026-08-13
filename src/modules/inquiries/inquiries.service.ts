@@ -88,6 +88,7 @@ export class InquiriesService {
         if (details.companyName) updatePayload.sender_name = details.companyName;
         if (details.customerPhone) updatePayload.sender_phone = details.customerPhone;
         if (details.requirement) updatePayload.raw_text = details.requirement;
+        if (details.media_urls) updatePayload.media_urls = details.media_urls;
         updatePayload.ai_extraction_json = details;
       }
 
@@ -160,6 +161,7 @@ export class InquiriesService {
       status: data.status || 'review',
       overall_confidence: Number(data.overall_confidence) || 0.95,
       source_channel: 'web_dashboard',
+      media_urls: data.media_urls || [],
       ai_extraction_json: {
         inquiry_type: data.inquiry_type || 'Product Requirement',
         customer: {
