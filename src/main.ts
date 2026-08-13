@@ -45,15 +45,19 @@ async function bootstrap() {
     }),
   );
 
-  // Setup Swagger
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  await app.register(fastifySwagger as any, {
-    mode: 'static',
-    specification: {
-      document: document as OpenAPIV3.Document,
-    },
-  });
-  SwaggerModule.setup('api/docs', app, document);
+  // Setup Swagger safely
+  try {
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    await app.register(fastifySwagger as any, {
+      mode: 'static',
+      specification: {
+        document: document as OpenAPIV3.Document,
+      },
+    });
+    SwaggerModule.setup('api/docs', app, document);
+  } catch (swgErr: any) {
+    console.warn('[Swagger] Setup notice (non-fatal):', swgErr?.message || swgErr);
+  }
 
   app.useGlobalFilters(new HttpExceptionFilter());
 

@@ -11,7 +11,12 @@ export class PrismaService
   }
 
   async onModuleInit() {
-    await this.$connect();
+    try {
+      await this.$connect();
+      console.log('[PrismaService] Connected to PostgreSQL database');
+    } catch (err: any) {
+      console.warn('[PrismaService] Database connect notice (non-fatal):', err?.message || err);
+    }
   }
 
   async onModuleDestroy() {
