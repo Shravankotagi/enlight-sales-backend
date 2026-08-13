@@ -8,6 +8,14 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { CustomLoggerService } from './common/services/logger.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]:', reason);
+});
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
