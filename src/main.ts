@@ -7,6 +7,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { CustomLoggerService } from './common/services/logger.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { json, urlencoded } from 'express';
 
 process.on('uncaughtException', (err) => {
   console.error('[UNCAUGHT EXCEPTION]:', err);
@@ -20,6 +21,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });
+
+  // Enable large body size (50mb) for base64 document upload support
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ limit: '50mb', extended: true }));
 
   const logger = app.get(CustomLoggerService);
 
