@@ -15,9 +15,8 @@ export class AdminSeederService implements OnModuleInit {
   async onModuleInit() {
     try {
       await this.seedSuperAdmin();
-    } catch (error) {
-      this.logger.error('Failed to initialize database:', error);
-      throw error;
+    } catch (error: any) {
+      this.logger.error('Admin seeder notice (non-fatal):', error?.message || error);
     }
   }
 
