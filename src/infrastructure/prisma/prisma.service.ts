@@ -1,22 +1,19 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService
   extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
+  implements OnModuleDestroy
 {
   constructor() {
     super();
-  }
-
-  async onModuleInit() {
-    try {
-      await this.$connect();
-      console.log('[PrismaService] Connected to PostgreSQL database');
-    } catch (err: any) {
-      console.warn('[PrismaService] Database connect notice (non-fatal):', err?.message || err);
-    }
+    // Connect asynchronously in background without blocking server boot
+    this.$connect()
+      .then(() => console.log('[PrismaService] Connected to PostgreSQL'))
+      .catch((err: any) =>
+        console.warn('[PrismaService] Notice (non-fatal):', err?.message || err),
+      );
   }
 
   async onModuleDestroy() {

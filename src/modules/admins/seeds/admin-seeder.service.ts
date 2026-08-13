@@ -1,23 +1,22 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from 'src/config/config.service';
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
 import { CustomLoggerService } from '../../../common/services/logger.service';
 import { AdminSeedConfig, superAdminSeed } from './admin.seed';
 
 @Injectable()
-export class AdminSeederService implements OnModuleInit {
+export class AdminSeederService {
   constructor(
     private readonly configService: ConfigService,
     private readonly supabaseService: SupabaseService,
     private readonly logger: CustomLoggerService,
-  ) {}
-
-  async onModuleInit() {
-    try {
-      await this.seedSuperAdmin();
-    } catch (error: any) {
-      this.logger.error('Admin seeder notice (non-fatal):', error?.message || error);
-    }
+  ) {
+    // Run seeding in background after server start
+    setTimeout(() => {
+      this.seedSuperAdmin().catch((err: any) => {
+        this.logger.error('Admin seeder notice (non-fatal):', err?.message || err);
+      });
+    }, 2000);
   }
 
   async seedSuperAdmin() {
