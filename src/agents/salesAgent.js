@@ -208,6 +208,55 @@ function detectInvalidUnitInMessage(text) {
         'pune',
         'mumbai',
         'delhi',
+        'requirement',
+        'requirements',
+        'req',
+        'reqs',
+        'inquiry',
+        'inquiries',
+        'quotation',
+        'quotations',
+        'quote',
+        'quotes',
+        'order',
+        'orders',
+        'po',
+        'ref',
+        'no',
+        'num',
+        'number',
+        'item',
+        'items',
+        'spec',
+        'specs',
+        'specification',
+        'specifications',
+        'delivery',
+        'location',
+        'address',
+        'date',
+        'dated',
+        'vendor',
+        'code',
+        'page',
+        'id',
+        'val',
+        'value',
+        'total',
+        'subtotal',
+        'amount',
+        'tax',
+        'gst',
+        'target',
+        'thickness',
+        'width',
+        'length',
+        'dia',
+        'diameter',
+        'grade',
+        'size',
+        'weight',
+        'warehouse',
       ];
       if (SKIP_WORDS.includes(unit)) continue;
 
@@ -897,8 +946,84 @@ async function processSalesMessage(text, senderPhone) {
   }
 }
 
+/**
+ * Process incoming PO / Sales document image via Gemini Vision (KRA 1 & Inquiries Tab)
+ */
+async function processSalesImage(imageBuffer, mimeType, senderPhone) {
+  try {
+    const { extractFromImage } = require('../gemini');
+    const { saveInquiry } = require('../supabase');
+    const extraction = await extractFromImage(imageBuffer, mimeType);
+
+    if (!extraction || extraction.error || !extraction.customer) {
+      return `⚠️ Could not clearly extract inquiry details from the document image. Please send a clearer picture or type the details (e.g. "Delta Structural Steel 50 MT HR Coil @ 55,000 Delivery Mumbai").`;
+    }
+
+    const custName = extraction.customer.name || 'Customer Inquiry';
+    const officialCustomerName = await verifyAndGetCustomerName(custName, senderPhone);
+    const finalCustomerName = officialCustomerName || custName;
+
+    // Construct raw text representation for inquiries tab
+    const itemsText = (extraction.line_items || [])
+      .map(i => `${i.sku_text || 'Steel'} ${i.quantity || 0} MT ${i.rate ? '@ Rs ' + i.rate + '/MT' : ''}`)
+      .join(', ');
+    const rawSummary = `${itemsText}. Delivery Location: ${extraction.delivery_location || 'Warehouse'}`;
+
+    // Convert image buffer to base64 Data URL so web dashboard can render/view it!
+    const base64Data = `data:${mimeType || 'image/jpeg'};base64,${imageBuffer.toString('base64')}`;
+
+    // 1. Save Inquiry to Supabase (so it appears in web dashboard Inquiries tab with image attached!)
+    await saveInquiry({
+      source_channel: 'whatsapp',
+      raw_text: extraction.po_number
+        ? `[Inquiry Attachment: ${extraction.po_number}.jpg] ${rawSummary}`
+        : `[Inquiry Attachment: steel_inquiry_po.jpg] ${rawSummary}`,
+      media_urls: [base64Data],
+      sender_phone: senderPhone,
+      sender_name: finalCustomerName,
+      salesperson_phone: senderPhone,
+      status: 'review',
+      overall_confidence: extraction.overall_confidence || 0.95,
+      ai_extraction_json: extraction,
+    });
+
+    // 2. Process deal update
+    const poNum = extraction.po_number || `PO-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const isPO = extraction.inquiry_type === 'purchase_order' || !!extraction.po_number;
+    const stage = isPO ? 'won' : 'review';
+
+    let totalVal = extraction.total_amount || 0;
+    if (totalVal <= 0 && extraction.line_items) {
+      totalVal = extraction.line_items.reduce((s, i) => s + ((i.quantity || 0) * (i.rate || 0)), 0);
+    }
+
+    let itemsBreakdown = '';
+    if (extraction.line_items && extraction.line_items.length > 0) {
+      itemsBreakdown = extraction.line_items
+        .map(i => `  • *${i.sku_text || 'Material'}*: ${i.quantity || 0} MT ${i.rate ? '@ ₹' + Number(i.rate).toLocaleString('en-IN') + '/MT' : ''}`)
+        .join('\n');
+    }
+
+    let replyMsg =
+      `📄 *INQUIRY / PO DOCUMENT EXTRACTED & LOGGED!* 🏆\n\n` +
+      `Customer: *${finalCustomerName}*\n` +
+      (extraction.po_number ? `PO Number: *${extraction.po_number}*\n` : '') +
+      `Stage: *${stage.toUpperCase()}*\n` +
+      (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
+      (totalVal > 0 ? `Calculated Deal Total: *₹${Number(totalVal).toLocaleString('en-IN')}* + GST\n` : '') +
+      `Delivery Location: *${extraction.delivery_location || 'Mumbai Warehouse'}*\n\n` +
+      `✅ Logged live to Inquiries tab & Sales Pipeline!`;
+
+    return replyMsg;
+  } catch (error) {
+    console.error('[SalesAgent] Error processing sales image:', error);
+    return `⚠️ Error processing document image: ${error.message}`;
+  }
+}
+
 module.exports = {
   processSalesMessage,
+  processSalesImage,
   findBestDeal,
   lookupRateSheetPrice,
   detectInvalidUnitInMessage,
