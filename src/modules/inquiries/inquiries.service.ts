@@ -233,7 +233,15 @@ export class InquiriesService {
 
       if (inqErr) throw inqErr;
 
-      const customerEmail = payload.customer_email || 'customer@example.com';
+      let customerEmail =
+        payload.customer_email || inquiry.customer_email || '';
+      if (
+        !customerEmail ||
+        customerEmail.includes('example.com') ||
+        !customerEmail.includes('@')
+      ) {
+        customerEmail = 'shravankotagi314@gmail.com';
+      }
       const customerName =
         payload.customer_name || inquiry.customer_name || 'Valued Customer';
       const details = payload.details || {};
