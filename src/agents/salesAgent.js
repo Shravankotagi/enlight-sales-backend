@@ -1,5 +1,6 @@
 /**
  * KRA 1 - Sales Achievement & Pipeline Agent
+ * Version: 2026.08.13-v2 (Production Build Fix)
  *
  * DESIGN PRINCIPLES:
  * - One deal per customer inquiry. Stage updates modify THAT deal, never create a new one.
