@@ -419,7 +419,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
     }
     const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     try {
       const response = await axios.post(url, {
@@ -427,12 +427,29 @@ MIDC Industrial Zone, Mumbai - 400001`;
           {
             parts: [
               {
-                text: `You are an expert OCR document parser for steel inquiry purchase orders. Extract fields from this document image and return ONLY a valid JSON object with no markdown formatting or codeblocks:
+                text: `You are an expert OCR parser for steel purchase inquiry documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": "company or customer name",
-  "contact_phone": "10-digit phone number if present",
-  "requirement": "detailed material specification, quantity in MT, rate if present, and delivery location"
-}`,
+  "customer_name": "company name from document header",
+  "customer_phone": "phone number if present else null",
+  "customer_gst": "GST number if present else null",
+  "customer_address": "company address if present else null",
+  "delivery_location": "delivery location",
+  "payment_terms": "payment terms",
+  "po_number": "PO/Inquiry Ref number if present else null",
+  "line_items": [
+    {
+      "sku_text": "full material description e.g. HR Coil (IS 2062 E250)",
+      "dimensions": "specs e.g. 2.50 mm x 1250 mm",
+      "quantity": numeric_quantity_in_MT,
+      "unit": "MT",
+      "rate": numeric_rate_per_MT_or_0,
+      "amount": numeric_amount_or_0
+    }
+  ],
+  "total_amount": numeric_total_or_0,
+  "overall_confidence": 0.95
+}
+Extract EVERY line item. Do not merge or skip any rows. Return ONLY the JSON.`,
               },
               {
                 inline_data: {
