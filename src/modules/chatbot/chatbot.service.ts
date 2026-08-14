@@ -338,7 +338,7 @@ Strict Operational Security & Guardrail Rules:
         config.tools = [{ functionDeclarations: toolDeclarations }];
       }
 
-      const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+      const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
       const response = await ai.models.generateContent({
         model: modelName,
         contents,
