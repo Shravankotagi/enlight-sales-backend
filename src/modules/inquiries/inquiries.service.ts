@@ -46,8 +46,6 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select('*')
-        .not('inquiry_type', 'eq', 'purchase_order')
-        .not('raw_text', 'ilike', '[PO Document Attached%')
         .order('created_at', { ascending: false });
 
       if (filters?.from) {
@@ -86,8 +84,6 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select('*')
-        .not('inquiry_type', 'eq', 'purchase_order')
-        .not('raw_text', 'ilike', '[PO Document Attached%')
         .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
 
