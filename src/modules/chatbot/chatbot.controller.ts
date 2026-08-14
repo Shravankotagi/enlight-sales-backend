@@ -15,13 +15,13 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { SupabaseGuard } from '../../common/guards/supabase.guard';
+import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { ChatbotService } from './chatbot.service';
 import { SendChatMessageDto } from './dto/chat.dto';
 
 @ApiTags('chat')
 @Controller('chat')
-@UseGuards(SupabaseGuard)
+@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class ChatbotController {
   constructor(private readonly chatbotService: ChatbotService) {}
@@ -41,7 +41,9 @@ export class ChatbotController {
   })
   async sendMessage(@Request() req: any, @Body() dto: SendChatMessageDto) {
     // 1. Resolve identity & role (fail closed)
-    const caller = await this.chatbotService.resolveCallerContext(req.user);
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
 
     // 2. Process message & generate response
     const result = await this.chatbotService.processChatMessage(
@@ -68,7 +70,9 @@ export class ChatbotController {
     description: 'List of chat sessions',
   })
   async getSessions(@Request() req: any) {
-    const caller = await this.chatbotService.resolveCallerContext(req.user);
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
     const sessions = await this.chatbotService.getUserSessions(caller.userId);
     return {
       success: true,
@@ -90,7 +94,9 @@ export class ChatbotController {
     @Request() req: any,
     @Param('sessionId') sessionId: string,
   ) {
-    const caller = await this.chatbotService.resolveCallerContext(req.user);
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
     const messages = await this.chatbotService.getSessionMessages(
       sessionId,
       caller.userId,

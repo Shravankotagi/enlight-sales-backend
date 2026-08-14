@@ -9,12 +9,12 @@ import {
   Req,
   ForbiddenException,
 } from '@nestjs/common';
-import { SupabaseGuard } from '../../../common/guards/supabase.guard';
+import { JwtAuthGuard } from '../../../common/guards/jwt.guard';
 import { KbService, IngestDocumentDto } from './kb.service';
 import { ChatbotService } from '../chatbot.service';
 
 @Controller('chat/kb')
-@UseGuards(SupabaseGuard)
+@UseGuards(JwtAuthGuard)
 export class KbController {
   constructor(
     private readonly kbService: KbService,
@@ -27,7 +27,9 @@ export class KbController {
    */
   @Post('upload')
   async uploadDocument(@Req() req: any, @Body() body: any) {
-    const caller = await this.chatbotService.resolveCallerContext(req.user);
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
     if (caller.role !== 'admin') {
       throw new ForbiddenException(
         'Only system administrators can upload Knowledge Base documents.',
@@ -50,7 +52,7 @@ export class KbController {
    */
   @Get('documents')
   async listDocuments(@Req() req: any) {
-    await this.chatbotService.resolveCallerContext(req.user);
+    await this.chatbotService.resolveCallerContext(req.employee || req.user);
     return this.kbService.listDocuments();
   }
 
@@ -60,7 +62,9 @@ export class KbController {
    */
   @Delete('documents/:id')
   async deleteDocument(@Req() req: any, @Param('id') id: string) {
-    const caller = await this.chatbotService.resolveCallerContext(req.user);
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
     if (caller.role !== 'admin') {
       throw new ForbiddenException(
         'Only system administrators can delete Knowledge Base documents.',

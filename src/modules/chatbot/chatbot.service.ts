@@ -29,34 +29,37 @@ export class ChatbotService {
    * Resolves caller identity and role from authenticated Supabase user session.
    * Fail-closed: If identity cannot be resolved, throws UnauthorizedException.
    */
-  async resolveCallerContext(user: any): Promise<CallerContext> {
-    if (!user || !user.id) {
+  async resolveCallerContext(userOrEmployee: any): Promise<CallerContext> {
+    const user = userOrEmployee;
+    if (!user || (!user.id && !user.employee_id && !user.phone)) {
       throw new UnauthorizedException(
         'Invalid or missing authentication session',
       );
     }
 
-    const userId = user.id;
+    const userId = user.id || user.employee_id || user.phone;
     const email = user.email || '';
     const userPhone = user.phone || user.user_metadata?.phone;
 
     try {
-      // 1. Check employees table by email, phone, or id
+      // 1. Check employees table by email, phone, employee_id or id
       const { data: employee } = await this.supabaseAdmin
         .from('employees')
         .select('*')
         .or(
-          `email.eq.${email},id.eq.${userId}${userPhone ? `,phone.eq.${userPhone}` : ''}`,
+          `id.eq.${userId}${email ? `,email.eq.${email}` : ''}${userPhone ? `,phone.eq.${userPhone}` : ''}${user.employee_id ? `,employee_id.eq.${user.employee_id}` : ''}`,
         )
         .eq('is_active', true)
         .limit(1);
 
       let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
-      let employeeId: string | undefined;
+      let employeeId: string | undefined = user.employee_id;
       let reportsToId: string | undefined;
       let phone: string | undefined = userPhone;
       let name: string | undefined =
-        user.user_metadata?.full_name || email.split('@')[0];
+        user.name ||
+        user.user_metadata?.full_name ||
+        (email ? email.split('@')[0] : undefined);
 
       if (employee && employee.length > 0) {
         const emp = employee[0];
