@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ConfigService } from 'src/config/config.service';
+import WebSocket from 'ws';
+
+if (typeof (globalThis as any).WebSocket === 'undefined') {
+  (globalThis as any).WebSocket = WebSocket;
+}
 
 /**
  * @description This service is used to create and manage Supabase clients.
@@ -16,20 +21,26 @@ export class SupabaseService {
     try {
       this.logger.log('Initializing Supabase clients');
 
+      const clientOptions = {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+        realtime: {
+          transport: WebSocket as any,
+        },
+      };
+
       this.supabase = createClient(
         this.configService.supabaseUrl,
         this.configService.supabaseKey,
+        clientOptions,
       );
 
       this.adminClient = createClient(
         this.configService.supabaseUrl,
         this.configService.supabaseServiceKey,
-        {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false,
-          },
-        },
+        clientOptions,
       );
 
       this.logger.log('Supabase clients initialized successfully');
