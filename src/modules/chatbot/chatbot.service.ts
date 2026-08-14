@@ -7,7 +7,6 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
-import { ConfigService } from '../../config/config.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { CallerContext } from './tools/chatbot-tool.interface';
 import { GuardrailsService } from './guardrails/guardrails.service';
@@ -18,7 +17,6 @@ export class ChatbotService {
 
   constructor(
     private readonly supabaseService: SupabaseService,
-    private readonly configService: ConfigService,
     private readonly toolRegistry: ToolRegistryService,
     private readonly guardrailsService: GuardrailsService,
   ) {}

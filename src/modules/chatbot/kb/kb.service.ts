@@ -1,6 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
-import { ConfigService } from '../../../config/config.service';
 
 export interface IngestDocumentDto {
   title: string;
@@ -15,10 +14,7 @@ export interface IngestDocumentDto {
 export class KbService {
   private readonly logger = new Logger(KbService.name);
 
-  constructor(
-    private readonly supabaseService: SupabaseService,
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(private readonly supabaseService: SupabaseService) {}
 
   private get supabaseAdmin() {
     return this.supabaseService.getAdminClient();

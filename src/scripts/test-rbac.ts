@@ -40,14 +40,10 @@ async function runRbacTestSuite() {
   const configService = new ConfigService(new NestConfigService());
   const supabaseService = new SupabaseService(configService);
   const toolRegistry = new ToolRegistryService(supabaseService);
-  const kbService = new KbService(supabaseService, configService);
-  const guardrailsService = new GuardrailsService(
-    supabaseService,
-    configService,
-  );
+  const kbService = new KbService(supabaseService);
+  const guardrailsService = new GuardrailsService(supabaseService);
   const chatbotService = new ChatbotService(
     supabaseService,
-    configService,
     toolRegistry,
     guardrailsService,
   );

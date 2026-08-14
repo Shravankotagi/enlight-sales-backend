@@ -5,6 +5,6 @@ import { ConfigService } from '../../config/config.service';
 @Global()
 @Module({
   providers: [SupabaseService, ConfigService],
-  exports: [SupabaseService],
+  exports: [SupabaseService, ConfigService],
 })
 export class SupabaseModule {}

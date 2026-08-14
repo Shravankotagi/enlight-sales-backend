@@ -1,6 +1,5 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
-import { ConfigService } from '../../../config/config.service';
 
 export interface UsageRecord {
   promptTokens: number;
@@ -15,10 +14,7 @@ export class GuardrailsService {
   // In-memory sliding window rate limiter: Map<userId, timestamp[]>
   private readonly requestWindows = new Map<string, number[]>();
 
-  constructor(
-    private readonly supabaseService: SupabaseService,
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(private readonly supabaseService: SupabaseService) {}
 
   private get supabaseAdmin() {
     return this.supabaseService.getAdminClient();
