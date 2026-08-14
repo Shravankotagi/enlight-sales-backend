@@ -145,4 +145,9 @@ export class DealsController {
   async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.dealsService.createOrder(body, employee.phone);
   }
+
+  @Post('process-po')
+  async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.dealsService.processPo(body, employee.phone);
+  }
 }

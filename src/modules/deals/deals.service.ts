@@ -242,59 +242,236 @@ export class DealsService {
     }
   }
 
-  async createOrder(data: any, salespersonPhone?: string) {
-    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const poNumber = data.po_number || `PO-${todayStr}-${randomNum}`;
-    const now = new Date().toISOString();
+  async processPo(data: any, salespersonPhone?: string) {
+    try {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const todayStr = nowIso.slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      const poNumber = data.po_number?.trim() || `PO-${todayStr}-${randomNum}`;
+      const poDate = data.po_date || nowIso.split('T')[0];
 
-    const dealPayload = {
-      customer_name: data.customer_name,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_phone: data.customer_phone || '',
-      stage: 'won',
-      won_at: now,
-      po_number: poNumber,
-      po_date: data.po_date || now.split('T')[0],
-      total_amount: Number(data.total_amount) || 0,
-      delivery_location: data.delivery_location || '',
-      delivery_date: data.delivery_date || null,
-      inquiry_type: 'inquiry',
-      created_at: now,
-    };
+      const customerName = data.customer_name?.trim() || 'Valued Customer';
+      const customerPhone = data.customer_phone || '';
+      const phone = salespersonPhone || data.salesperson_phone || '910000000000';
 
-    const { data: deal, error } = await this.supabase
-      .from('deals')
-      .insert(dealPayload)
-      .select()
-      .single();
+      const lineItems = data.line_items || data.items || [];
+      let totalAmount = Number(data.total_amount) || 0;
+      if (totalAmount <= 0 && Array.isArray(lineItems) && lineItems.length > 0) {
+        totalAmount = lineItems.reduce(
+          (sum: number, item: any) =>
+            sum +
+            (Number(item.amount) ||
+              Math.round(Number(item.quantity || 0) * Number(item.rate || 0))),
+          0,
+        );
+      }
 
-    if (error) throw error;
+      const deliveryLocation = data.delivery_location || '';
+      const paymentTerms = data.payment_terms || '';
 
-    if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-      for (const item of data.items) {
-        await this.supabase.from('deal_items').insert({
-          deal_id: deal.id,
-          sku_text: item.sku_text || item.product_name || 'Metal Material',
+      // 1. Try to find existing deal to update
+      let dealId = data.deal_id || null;
+      let existingDeal: any = null;
+
+      if (dealId) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('id', dealId)
+          .single();
+        if (d) existingDeal = d;
+      } else if (data.inquiry_id) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('inquiry_id', data.inquiry_id)
+          .limit(1);
+        if (d && d.length > 0) {
+          existingDeal = d[0];
+          dealId = existingDeal.id;
+        }
+      } else if (customerName) {
+        // Find most recent active deal in pipeline for this customer
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .ilike('customer_name', customerName)
+          .not('stage', 'in', '("won","lost")')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (d && d.length > 0) {
+          existingDeal = d[0];
+          dealId = existingDeal.id;
+        }
+      }
+
+      let savedDeal: any;
+
+      if (existingDeal) {
+        // Update existing deal with new negotiated PO figures & mark WON
+        const { data: updated, error: updErr } = await this.supabase
+          .from('deals')
+          .update({
+            stage: 'won',
+            won_at: nowIso,
+            po_number: poNumber,
+            po_date: poDate,
+            total_amount: totalAmount,
+            delivery_location: deliveryLocation || existingDeal.delivery_location,
+            payment_terms: paymentTerms || existingDeal.payment_terms,
+            inquiry_type: 'purchase_order',
+            status: 'auto_created',
+            updated_at: nowIso,
+          })
+          .eq('id', dealId)
+          .select()
+          .single();
+
+        if (updErr) throw updErr;
+        savedDeal = updated;
+      } else {
+        // Create brand new Won Deal
+        const { data: created, error: createErr } = await this.supabase
+          .from('deals')
+          .insert({
+            inquiry_id: data.inquiry_id || null,
+            customer_name: customerName,
+            salesperson_phone: phone,
+            customer_phone: customerPhone,
+            stage: 'won',
+            won_at: nowIso,
+            po_number: poNumber,
+            po_date: poDate,
+            total_amount: totalAmount,
+            delivery_location: deliveryLocation,
+            payment_terms: paymentTerms,
+            inquiry_type: 'purchase_order',
+            status: 'auto_created',
+            overall_confidence: Number(data.overall_confidence) || 0.98,
+            created_at: nowIso,
+          })
+          .select()
+          .single();
+
+        if (createErr) throw createErr;
+        savedDeal = created;
+        dealId = savedDeal.id;
+      }
+
+      // 2. Replace / Update line items with exact PO values
+      if (Array.isArray(lineItems) && lineItems.length > 0) {
+        await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
+
+        const dealItemsToInsert = lineItems.map((item: any) => ({
+          deal_id: dealId,
+          sku_text: item.sku_text || item.product_name || 'Material',
+          dimensions: item.dimensions || null,
           quantity: Number(item.quantity) || null,
           unit: item.unit || 'MT',
           rate: Number(item.rate) || null,
-          amount: Number(item.amount) || null,
-          created_at: now,
-        });
+          amount:
+            Number(item.amount) ||
+            (Number(item.quantity) && Number(item.rate)
+              ? Number(item.quantity) * Number(item.rate)
+              : null),
+          confidence: Number(item.confidence) || 0.98,
+          created_at: nowIso,
+        }));
+
+        await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }
+
+      // 3. If linked to an inquiry, update the inquiry status
+      if (savedDeal.inquiry_id) {
+        await this.supabase
+          .from('inquiries')
+          .update({ status: 'confirmed' })
+          .eq('id', savedDeal.inquiry_id);
+      }
+
+      // 4. Automatically create / update Payment Tracking record
+      try {
+        let creditDays = 30;
+        const termsStr = String(paymentTerms).toLowerCase();
+        const daysMatch = termsStr.match(/(\d+)\s*(?:days|day)/);
+        if (daysMatch) {
+          creditDays = parseInt(daysMatch[1], 10);
+        } else if (
+          termsStr.includes('advance') ||
+          termsStr.includes('immediate') ||
+          termsStr.includes('cash')
+        ) {
+          creditDays = 0;
+        }
+
+        const poDateTime = new Date(poDate).getTime() || now.getTime();
+        const dueDate = new Date(poDateTime + creditDays * 24 * 60 * 60 * 1000);
+        const dueDateStr = dueDate.toISOString().split('T')[0];
+
+        const { data: existingPay } = await this.supabase
+          .from('payment_tracking')
+          .select('id')
+          .eq('deal_id', dealId)
+          .limit(1);
+
+        if (existingPay && existingPay.length > 0) {
+          await this.supabase
+            .from('payment_tracking')
+            .update({
+              invoice_amount: totalAmount,
+              outstanding: totalAmount,
+              due_date: dueDateStr,
+              credit_period_days: creditDays,
+              customer_name: customerName,
+              salesperson_phone: phone,
+              updated_at: nowIso,
+            })
+            .eq('id', existingPay[0].id);
+        } else {
+          await this.supabase.from('payment_tracking').insert({
+            deal_id: dealId,
+            salesperson_phone: phone,
+            customer_name: customerName,
+            invoice_amount: totalAmount,
+            outstanding: totalAmount,
+            status: 'pending',
+            due_date: dueDateStr,
+            credit_period_days: creditDays,
+            created_at: nowIso,
+          });
+        }
+      } catch (payErr: any) {
+        this.logger.warn(
+          'Non-blocking payment tracking notice:',
+          payErr?.message,
+        );
+      }
+
+      // 5. Log to kra_logs for KRA 1 (Final Sales Achievement with exact PO Value)
+      try {
+        await this.supabase.from('kra_logs').insert({
+          kra_number: 1,
+          kra_type: 'order_created',
+          description: `PO Received: ${poNumber} - ${customerName} (₹${totalAmount.toLocaleString('en-IN')}) - Deal Won 🎉`,
+          salesperson_phone: phone,
+          customer_name: customerName,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+          created_at: nowIso,
+        });
+      } catch (kraErr: any) {
+        this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
+      }
+
+      return savedDeal;
+    } catch (error) {
+      this.logger.error('Error in processPo:', error);
+      throw error;
     }
+  }
 
-    // Log KRA 1 achievement
-    await this.supabase.from('kra_logs').insert({
-      kra_number: 1,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_name: data.customer_name,
-      action: 'order_created',
-      details: `Created order ${poNumber} for ${data.customer_name} (₹${data.total_amount})`,
-      created_at: now,
-    });
-
-    return deal;
+  async createOrder(data: any, salespersonPhone?: string) {
+    return this.processPo(data, salespersonPhone);
   }
 }
