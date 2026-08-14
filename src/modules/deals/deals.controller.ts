@@ -154,4 +154,10 @@ export class DealsController {
   async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.dealsService.processPo(body, employee.phone);
   }
+
+  @Post('process-po-internal')
+  async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
+    const phone = body.salesperson_phone || employee?.phone || '910000000000';
+    return this.dealsService.processPo(body, phone);
+  }
 }
