@@ -59,6 +59,33 @@ export class DealsService {
 
       const { data, error } = await query;
       if (error) throw error;
+
+      // Enrich deals with media_urls from inquiries table if available
+      if (Array.isArray(data) && data.length > 0) {
+        const inqIds = data
+          .map((d: any) => d.inquiry_id)
+          .filter((id: any) => Boolean(id));
+
+        if (inqIds.length > 0) {
+          const { data: inqs } = await this.supabase
+            .from('inquiries')
+            .select('id, media_urls, raw_text')
+            .in('id', inqIds);
+
+          if (Array.isArray(inqs) && inqs.length > 0) {
+            const inqMap = new Map(inqs.map((i: any) => [i.id, i]));
+            for (const deal of data) {
+              if (deal.inquiry_id && inqMap.has(deal.inquiry_id)) {
+                const inq = inqMap.get(deal.inquiry_id);
+                if (!deal.media_urls || deal.media_urls.length === 0) {
+                  deal.media_urls = inq.media_urls || [];
+                }
+              }
+            }
+          }
+        }
+      }
+
       return data;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
@@ -74,6 +101,19 @@ export class DealsService {
         .eq('id', id)
         .single();
       if (error) throw error;
+
+      // Enrich with media_urls from inquiries if available
+      if (data && data.inquiry_id) {
+        const { data: inq } = await this.supabase
+          .from('inquiries')
+          .select('media_urls')
+          .eq('id', data.inquiry_id)
+          .limit(1)
+          .single();
+        if (inq && inq.media_urls) {
+          data.media_urls = inq.media_urls;
+        }
+      }
 
       // Enrich with actual customer phone from recurring_customers
       // (deals.customer_phone stores salesperson phone, not customer phone)
