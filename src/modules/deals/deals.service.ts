@@ -18,6 +18,9 @@ export class DealsService {
     to?: string;
   }) {
     try {
+      // For won deals (Orders tab), sort by won_at; for others, sort by created_at
+      const isWonQuery = filters?.stage === 'won';
+
       let query = this.supabase
         .from('deals')
         .select(
@@ -27,7 +30,7 @@ export class DealsService {
         `,
         )
         .neq('inquiry_type', 'unknown')
-        .order('created_at', { ascending: false });
+        .order(isWonQuery ? 'won_at' : 'created_at', { ascending: false });
 
       if (filters?.stage) {
         query = query.eq('stage', filters.stage);
@@ -41,13 +44,17 @@ export class DealsService {
         );
       }
       if (filters?.from) {
-        query = query.gte('created_at', filters.from);
+        // For won deals: filter by won_at (when deal was actually won/received by bot)
+        // For other deals: filter by created_at
+        const dateField = isWonQuery ? 'won_at' : 'created_at';
+        query = query.gte(dateField, filters.from);
       }
       if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
-        query = query.lte('created_at', toEnd);
+        const dateField = isWonQuery ? 'won_at' : 'created_at';
+        query = query.lte(dateField, toEnd);
       }
 
       const { data, error } = await query;
@@ -253,11 +260,16 @@ export class DealsService {
 
       const customerName = data.customer_name?.trim() || 'Valued Customer';
       const customerPhone = data.customer_phone || '';
-      const phone = salespersonPhone || data.salesperson_phone || '910000000000';
+      const phone =
+        salespersonPhone || data.salesperson_phone || '910000000000';
 
       const lineItems = data.line_items || data.items || [];
       let totalAmount = Number(data.total_amount) || 0;
-      if (totalAmount <= 0 && Array.isArray(lineItems) && lineItems.length > 0) {
+      if (
+        totalAmount <= 0 &&
+        Array.isArray(lineItems) &&
+        lineItems.length > 0
+      ) {
         totalAmount = lineItems.reduce(
           (sum: number, item: any) =>
             sum +
@@ -318,7 +330,8 @@ export class DealsService {
             po_number: poNumber,
             po_date: poDate,
             total_amount: totalAmount,
-            delivery_location: deliveryLocation || existingDeal.delivery_location,
+            delivery_location:
+              deliveryLocation || existingDeal.delivery_location,
             payment_terms: paymentTerms || existingDeal.payment_terms,
             inquiry_type: 'purchase_order',
             status: 'auto_created',
