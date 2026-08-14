@@ -21,11 +21,16 @@ function getCompanyLogoPath(): string | null {
   return null;
 }
 
+import { DealsService } from '../deals/deals.service';
+
 @Injectable()
 export class InquiriesService {
   private readonly logger = new Logger(InquiriesService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private dealsService: DealsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -217,11 +222,78 @@ export class InquiriesService {
       throw error;
     }
 
-    // Automatically sync new inquiry to Deals / Pipeline under 'new_inquiry'
-    try {
-      await this.syncInquiryToDeal(created.id, 'new_inquiry', aiExtractionJson);
-    } catch (dealErr: any) {
-      this.logger.warn('Non-blocking deal sync notice:', dealErr?.message);
+    // DETECT if this is a PO document (has a real po_number in data or ai_extraction_json)
+    const poNumber =
+      data.po_number ||
+      aiExtractionJson?.po_number ||
+      aiExtractionJson?.poNumber;
+
+    const isPoDocument = Boolean(
+      poNumber &&
+      poNumber !== 'null' &&
+      poNumber !== 'None' &&
+      String(poNumber).trim().length > 2,
+    );
+
+    if (isPoDocument) {
+      // Route to processPo so it appears in Orders tab with stage 'won'
+      try {
+        await this.dealsService.processPo(
+          {
+            inquiry_id: created.id,
+            customer_name:
+              aiExtractionJson?.customer_name ||
+              aiExtractionJson?.customer?.name ||
+              aiExtractionJson?.companyName ||
+              customerName,
+            customer_phone:
+              aiExtractionJson?.customer_phone ||
+              aiExtractionJson?.customer?.phone ||
+              customerPhone ||
+              '',
+            po_number: String(poNumber).trim(),
+            po_date:
+              aiExtractionJson?.po_date ||
+              aiExtractionJson?.poDate ||
+              nowIso.split('T')[0],
+            total_amount:
+              aiExtractionJson?.total_amount ||
+              aiExtractionJson?.totalAmount ||
+              0,
+            delivery_location:
+              aiExtractionJson?.delivery_location ||
+              aiExtractionJson?.deliveryLocation ||
+              '',
+            payment_terms:
+              aiExtractionJson?.payment_terms ||
+              aiExtractionJson?.paymentTerms ||
+              '',
+            line_items:
+              aiExtractionJson?.line_items || aiExtractionJson?.lineItems || [],
+            overall_confidence: 0.98,
+          },
+          salespersonPhone,
+        );
+
+        // Also update the inquiry status to confirmed
+        await this.supabase
+          .from('inquiries')
+          .update({ status: 'confirmed' })
+          .eq('id', created.id);
+      } catch (poErr: any) {
+        this.logger.warn('Non-blocking PO processing notice:', poErr?.message);
+      }
+    } else {
+      // Automatically sync new inquiry to Deals / Pipeline under 'new_inquiry'
+      try {
+        await this.syncInquiryToDeal(
+          created.id,
+          'new_inquiry',
+          aiExtractionJson,
+        );
+      } catch (dealErr: any) {
+        this.logger.warn('Non-blocking deal sync notice:', dealErr?.message);
+      }
     }
 
     // Log to kra_logs (KRA 4) safely without blocking inquiry creation
