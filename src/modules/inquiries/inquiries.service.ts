@@ -169,38 +169,34 @@ export class InquiriesService {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    if (data && typeof data === 'object') {
-      delete data.inquiry_type;
-    }
-
     const customerName =
-      data.customer_name || data.sender_name || 'Customer Inquiry';
+      data.sender_name || data.customer_name || 'Customer Inquiry';
     const customerPhone = data.customer_phone || data.sender_phone || '';
 
-    const payload: any = {
-      sender_name: customerName,
+    // Ensure structured ai_extraction_json contains all multi-line items and customer info
+    const aiExtractionJson = data.ai_extraction_json || {
       customer_name: customerName,
-      sender_phone: customerPhone || salespersonPhone || '',
       customer_phone: customerPhone,
-      salesperson_phone: salespersonPhone || '910000000000',
-      raw_text: data.raw_text || data.requirement || '',
-      status: data.status || 'review',
-      overall_confidence: Number(data.overall_confidence) || 0.95,
-      source_channel: 'web_dashboard',
-      media_urls: data.media_urls || [],
-      ai_extraction_json: data.ai_extraction_json || {
-        customer_name: customerName,
-        customer_phone: customerPhone,
-        customer: {
-          name: customerName,
-          phone: customerPhone,
-        },
-        line_items: [],
+      companyName: customerName,
+      customer: {
+        name: customerName,
+        phone: customerPhone,
       },
-      created_at: nowIso,
+      line_items: [],
     };
 
-    delete payload.inquiry_type;
+    const payload: any = {
+      source_channel: 'web_dashboard',
+      raw_text: data.raw_text || data.requirement || '',
+      media_urls: data.media_urls || [],
+      sender_phone: customerPhone || salespersonPhone || '',
+      sender_name: customerName,
+      status: data.status || 'review',
+      salesperson_phone: salespersonPhone || '910000000000',
+      ai_extraction_json: aiExtractionJson,
+      overall_confidence: Number(data.overall_confidence) || 0.95,
+      created_at: nowIso,
+    };
 
     const { data: created, error } = await this.supabase
       .from('inquiries')
@@ -208,7 +204,10 @@ export class InquiriesService {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      this.logger.error('Error inserting inquiry into Supabase:', error);
+      throw error;
+    }
 
     // Log to kra_logs (KRA 4) safely without blocking inquiry creation
     try {
