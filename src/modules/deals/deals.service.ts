@@ -386,7 +386,41 @@ export class DealsService {
       const deliveryLocation = data.delivery_location || '';
       const paymentTerms = data.payment_terms || '';
 
-      // 1. Try to find existing deal to update
+      // 1. If media_urls are provided without inquiry_id, save attachment in inquiries table so it's permanently stored & viewable
+      let inquiryId = data.inquiry_id || null;
+      if (
+        !inquiryId &&
+        Array.isArray(data.media_urls) &&
+        data.media_urls.length > 0
+      ) {
+        try {
+          const { data: newInq } = await this.supabase
+            .from('inquiries')
+            .insert({
+              source_channel: 'purchase_order',
+              raw_text: `[PO Document Attached: ${poNumber}] ${customerName} - Original PO Document`,
+              media_urls: data.media_urls,
+              customer_name: customerName,
+              customer_phone: customerPhone,
+              salesperson_phone: phone,
+              status: 'confirmed',
+              inquiry_type: 'purchase_order',
+              created_at: nowIso,
+            })
+            .select()
+            .single();
+          if (newInq) {
+            inquiryId = newInq.id;
+          }
+        } catch (inqErr: any) {
+          this.logger.warn(
+            'Non-blocking inquiry media save notice:',
+            inqErr?.message,
+          );
+        }
+      }
+
+      // 2. Try to find existing deal to update
       let dealId = data.deal_id || null;
       let existingDeal: any = null;
 
@@ -397,11 +431,11 @@ export class DealsService {
           .eq('id', dealId)
           .single();
         if (d) existingDeal = d;
-      } else if (data.inquiry_id) {
+      } else if (inquiryId) {
         const { data: d } = await this.supabase
           .from('deals')
           .select('*')
-          .eq('inquiry_id', data.inquiry_id)
+          .eq('inquiry_id', inquiryId)
           .limit(1);
         if (d && d.length > 0) {
           existingDeal = d[0];
@@ -429,6 +463,7 @@ export class DealsService {
         const { data: updated, error: updErr } = await this.supabase
           .from('deals')
           .update({
+            inquiry_id: inquiryId || existingDeal.inquiry_id,
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
@@ -452,7 +487,7 @@ export class DealsService {
         const { data: created, error: createErr } = await this.supabase
           .from('deals')
           .insert({
-            inquiry_id: data.inquiry_id || null,
+            inquiry_id: inquiryId || null,
             customer_name: customerName,
             salesperson_phone: phone,
             customer_phone: customerPhone,
