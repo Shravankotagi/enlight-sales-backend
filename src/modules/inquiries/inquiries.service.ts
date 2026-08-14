@@ -120,6 +120,14 @@ export class InquiriesService {
         .select()
         .single();
       if (error) throw error;
+
+      // Automatically sync to pipeline / deals
+      if (status === 'quoted') {
+        await this.syncInquiryToDeal(id, 'quoted', details);
+      } else if (status === 'confirmed' || status === 'processed') {
+        await this.syncInquiryToDeal(id, 'qualified', details);
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStatus for id ${id}:`, error);
@@ -209,6 +217,13 @@ export class InquiriesService {
       throw error;
     }
 
+    // Automatically sync new inquiry to Deals / Pipeline under 'new_inquiry'
+    try {
+      await this.syncInquiryToDeal(created.id, 'new_inquiry', aiExtractionJson);
+    } catch (dealErr: any) {
+      this.logger.warn('Non-blocking deal sync notice:', dealErr?.message);
+    }
+
     // Log to kra_logs (KRA 4) safely without blocking inquiry creation
     try {
       await this.supabase.from('kra_logs').insert({
@@ -226,6 +241,176 @@ export class InquiriesService {
     }
 
     return created;
+  }
+
+  async syncInquiryToDeal(
+    inquiryId: string,
+    stage: string,
+    overrideDetails?: any,
+  ) {
+    try {
+      // 1. Fetch latest inquiry data
+      const { data: inquiry, error: inqErr } = await this.supabase
+        .from('inquiries')
+        .select('*')
+        .eq('id', inquiryId)
+        .single();
+
+      if (inqErr || !inquiry) {
+        this.logger.warn(
+          `syncInquiryToDeal: could not find inquiry ${inquiryId}`,
+        );
+        return null;
+      }
+
+      const aiJson = (inquiry.ai_extraction_json as any) || {};
+      const details = overrideDetails || {};
+      const customerName =
+        details.companyName ||
+        details.customer_name ||
+        aiJson.companyName ||
+        aiJson.customer_name ||
+        aiJson.customer?.name ||
+        inquiry.sender_name ||
+        'Customer Inquiry';
+      const customerPhone =
+        details.customerPhone ||
+        details.customer_phone ||
+        aiJson.customerPhone ||
+        aiJson.customer_phone ||
+        aiJson.customer?.phone ||
+        inquiry.sender_phone ||
+        '';
+      const salespersonPhone =
+        inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';
+      const deliveryLocation =
+        details.deliveryLocation ||
+        details.delivery_location ||
+        aiJson.deliveryLocation ||
+        aiJson.delivery_location ||
+        inquiry.delivery_location ||
+        '';
+      const paymentTerms =
+        details.paymentTerms ||
+        details.payment_terms ||
+        aiJson.paymentTerms ||
+        aiJson.payment_terms ||
+        inquiry.payment_terms ||
+        '';
+
+      const lineItemsSrc =
+        details.lineItems ||
+        details.line_items ||
+        aiJson.lineItems ||
+        aiJson.line_items ||
+        [];
+
+      let totalAmount = Number(
+        details.totalAmount ||
+          details.total_amount ||
+          aiJson.totalAmount ||
+          aiJson.total_amount ||
+          0,
+      );
+
+      if (
+        totalAmount <= 0 &&
+        Array.isArray(lineItemsSrc) &&
+        lineItemsSrc.length > 0
+      ) {
+        totalAmount = lineItemsSrc.reduce(
+          (s: number, i: any) =>
+            s +
+            (Number(i.amount) ||
+              Math.round(Number(i.quantity || 0) * Number(i.rate || 0))),
+          0,
+        );
+      }
+
+      // Check if a deal already exists for this inquiry
+      const { data: existingDeals } = await this.supabase
+        .from('deals')
+        .select('id, stage')
+        .eq('inquiry_id', inquiryId)
+        .limit(1);
+
+      let dealId: string;
+      if (existingDeals && existingDeals.length > 0) {
+        dealId = existingDeals[0].id;
+        await this.supabase
+          .from('deals')
+          .update({
+            stage,
+            customer_name: customerName,
+            customer_phone: customerPhone || undefined,
+            salesperson_phone: salespersonPhone,
+            delivery_location: deliveryLocation || undefined,
+            payment_terms: paymentTerms || undefined,
+            total_amount: totalAmount > 0 ? totalAmount : undefined,
+            status: 'auto_created',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', dealId);
+      } else {
+        const { data: newDeal, error: dealError } = await this.supabase
+          .from('deals')
+          .insert({
+            inquiry_id: inquiryId,
+            stage,
+            customer_name: customerName,
+            customer_phone: customerPhone || null,
+            salesperson_phone: salespersonPhone,
+            delivery_location: deliveryLocation || null,
+            payment_terms: paymentTerms || null,
+            total_amount: totalAmount > 0 ? totalAmount : null,
+            inquiry_type: inquiry.inquiry_type || 'Product Requirement',
+            status: 'auto_created',
+            overall_confidence: Number(inquiry.overall_confidence) || 0.95,
+            created_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (dealError) {
+          this.logger.error('Error inserting deal for inquiry:', dealError);
+          return null;
+        }
+        dealId = newDeal.id;
+      }
+
+      // Save / update line items in deal_items
+      if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) {
+        // Delete old items if any to avoid duplication
+        await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
+
+        const dealItemsToInsert = lineItemsSrc.map((item: any) => ({
+          deal_id: dealId,
+          sku_text: item.sku_text || item.description || 'Material',
+          dimensions: item.dimensions || null,
+          quantity: Number(item.quantity) || 0,
+          unit: item.unit || 'MT',
+          rate: Number(item.rate) || 0,
+          amount:
+            Number(item.amount) ||
+            Math.round(Number(item.quantity || 0) * Number(item.rate || 0)),
+          confidence: Number(item.confidence) || 0.95,
+          created_at: new Date().toISOString(),
+        }));
+
+        await this.supabase.from('deal_items').insert(dealItemsToInsert);
+      }
+
+      this.logger.log(
+        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${stage}' in pipeline`,
+      );
+      return dealId;
+    } catch (err: any) {
+      this.logger.error(
+        'Error syncing inquiry to deal in pipeline:',
+        err?.message || err,
+      );
+      return null;
+    }
   }
 
   async sendQuotation(id: string, payload: any) {
@@ -402,6 +587,33 @@ MIDC Industrial Zone, Mumbai - 400001`;
         .from('inquiries')
         .update({ status: 'quoted' })
         .eq('id', id);
+
+      // Automatically sync to pipeline / deals table with stage 'quoted'
+      try {
+        await this.syncInquiryToDeal(id, 'quoted', payload.details);
+      } catch (syncErr: any) {
+        this.logger.warn(
+          'Non-blocking pipeline sync notice:',
+          syncErr?.message,
+        );
+      }
+
+      // Log to kra_logs (KRA 1 - Quotation Generated & Sent)
+      try {
+        const now = new Date();
+        await this.supabase.from('kra_logs').insert({
+          kra_number: 1,
+          kra_type: 'quotation_sent',
+          description: `Quotation sent to ${customerName} (${customerEmail})`,
+          salesperson_phone: inquiry.salesperson_phone || '910000000000',
+          customer_name: customerName,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+          created_at: now.toISOString(),
+        });
+      } catch (kraErr: any) {
+        this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
+      }
 
       return {
         success: true,
