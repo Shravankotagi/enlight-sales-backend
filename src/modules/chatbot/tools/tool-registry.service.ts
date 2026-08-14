@@ -10,6 +10,9 @@ import { getMyOpenDealsTool } from './get_my_open_deals.tool';
 import { getCustomer360Tool } from './get_customer_360.tool';
 import { getReorderQueueTool } from './get_reorder_queue.tool';
 import { searchKnowledgeBaseTool } from './search_knowledge_base.tool';
+import { getTeamPipelineTool } from './get_team_pipeline.tool';
+import { getChurnRadarTool } from './get_churn_radar.tool';
+import { getLossAnalyticsTool } from './get_loss_analytics.tool';
 
 @Injectable()
 export class ToolRegistryService {
@@ -21,6 +24,9 @@ export class ToolRegistryService {
     this.registerTool(getCustomer360Tool);
     this.registerTool(getReorderQueueTool);
     this.registerTool(searchKnowledgeBaseTool);
+    this.registerTool(getTeamPipelineTool);
+    this.registerTool(getChurnRadarTool);
+    this.registerTool(getLossAnalyticsTool);
   }
 
   registerTool(tool: ChatbotTool) {
@@ -97,7 +103,7 @@ export class ToolRegistryService {
       );
     }
 
-    // Explicit "Untrusted Content" wrapping for tool output data (Rule 2)
+    // Explicit "Untrusted Content" wrapping for tool output data
     const rawDataStr =
       typeof result.data === 'string'
         ? result.data
