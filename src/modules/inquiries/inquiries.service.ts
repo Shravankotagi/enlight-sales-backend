@@ -464,11 +464,24 @@ Extract EVERY line item. Do not merge or skip any rows. Return ONLY the JSON.`,
 
       const text =
         response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      const cleanJsonStr = text
-        .replace(/```json/g, '')
-        .replace(/```/g, '')
-        .trim();
-      const parsed = JSON.parse(cleanJsonStr);
+      let parsed: any = null;
+      try {
+        const cleanJsonStr = text
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        parsed = JSON.parse(cleanJsonStr);
+      } catch {
+        const firstOpen = text.indexOf('{');
+        const lastClose = text.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose > firstOpen) {
+          parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+        }
+      }
+
+      if (!parsed) {
+        throw new Error('Failed to parse structured JSON from Gemini response');
+      }
 
       return {
         success: true,
