@@ -645,29 +645,32 @@ MIDC Industrial Zone, Mumbai - 400001`;
           {
             parts: [
               {
-                text: `You are an expert OCR parser for steel purchase inquiry documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
   "customer_name": "company name from document header",
   "customer_phone": "phone number if present else null",
   "customer_gst": "GST number if present else null",
   "customer_address": "company address if present else null",
-  "delivery_location": "delivery location",
-  "payment_terms": "payment terms",
-  "po_number": "PO/Inquiry Ref number if present else null",
+  "delivery_location": "delivery location if present else null",
+  "payment_terms": "payment terms e.g. 45 Days or 30 Days Credit",
+  "po_number": "PO Number / Ref number if present e.g. 26-27/MPO/471",
+  "po_date": "PO Date in YYYY-MM-DD or present date format",
   "line_items": [
     {
-      "sku_text": "full material description e.g. HR Coil (IS 2062 E250)",
-      "dimensions": "specs e.g. 2.50 mm x 1250 mm",
+      "sku_text": "full material description e.g. SHEET 8 MM THK MS-E250",
+      "dimensions": "specs e.g. 8X6000X1500",
       "quantity": numeric_quantity_in_MT,
       "unit": "MT",
       "rate": numeric_rate_per_MT_or_0,
       "amount": numeric_amount_or_0
     }
   ],
-  "total_amount": numeric_total_or_0,
-  "overall_confidence": 0.95
+  "basic_amount": numeric_po_basic_value_before_tax_or_0,
+  "gst_amount": numeric_total_gst_amount_or_0,
+  "total_amount": numeric_total_po_value_including_gst_or_0,
+  "overall_confidence": 0.98
 }
-Extract EVERY line item. Do not merge or skip any rows. Return ONLY the JSON.`,
+Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Total PO Value). Return ONLY the JSON.`,
               },
               {
                 inline_data: {
