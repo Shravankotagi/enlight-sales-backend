@@ -32,7 +32,6 @@ export class ToolRegistryService {
 
   /**
    * Returns Gemini FunctionDeclarations filtered by caller role.
-   * Format matches Gemini FunctionDeclaration specification.
    */
   getToolDeclarations(role: 'salesperson' | 'manager' | 'admin'): any[] {
     const declarations: any[] = [];
@@ -45,7 +44,7 @@ export class ToolRegistryService {
   }
 
   /**
-   * Executes a tool with server-injected callerContext and logs the invocation to audit_log.
+   * Executes a tool with server-injected callerContext, wraps output in untrusted content tags, and logs to audit_log.
    */
   async executeTool(
     name: string,
@@ -77,7 +76,7 @@ export class ToolRegistryService {
     // Execute tool with server-injected callerContext
     const result = await tool.execute(args, callerContext, supabaseAdmin);
 
-    // Audit Logging (Rule 7: Every tool call logs to audit_log)
+    // Audit Logging
     try {
       await supabaseAdmin.from('audit_log').insert({
         user_id: callerContext.userId,
@@ -98,6 +97,11 @@ export class ToolRegistryService {
       );
     }
 
-    return result.data;
+    // Explicit "Untrusted Content" wrapping for tool output data (Rule 2)
+    const rawDataStr =
+      typeof result.data === 'string'
+        ? result.data
+        : JSON.stringify(result.data, null, 2);
+    return `<untrusted_content source="tool:${name}">\n${rawDataStr}\n</untrusted_content>`;
   }
 }

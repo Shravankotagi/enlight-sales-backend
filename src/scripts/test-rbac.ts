@@ -5,6 +5,22 @@ import { CallerContext } from '../modules/chatbot/tools/chatbot-tool.interface';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
+function parseToolOutput(output: any): any {
+  if (typeof output === 'string' && output.includes('<untrusted_content')) {
+    const jsonMatch = output.match(
+      /<untrusted_content[^>]*>\s*([\s\S]*?)\s*<\/untrusted_content>/,
+    );
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        return JSON.parse(jsonMatch[1]);
+      } catch {
+        return jsonMatch[1];
+      }
+    }
+  }
+  return output;
+}
+
 async function runRbacTestSuite() {
   console.log(
     '=== Phase 2 & 3 RBAC, Tool Layer & Knowledge Base Verification Suite ===\n',
@@ -18,15 +34,22 @@ async function runRbacTestSuite() {
   const { ToolRegistryService } =
     await import('../modules/chatbot/tools/tool-registry.service');
   const { KbService } = await import('../modules/chatbot/kb/kb.service');
+  const { GuardrailsService } =
+    await import('../modules/chatbot/guardrails/guardrails.service');
 
   const configService = new ConfigService(new NestConfigService());
   const supabaseService = new SupabaseService(configService);
   const toolRegistry = new ToolRegistryService(supabaseService);
   const kbService = new KbService(supabaseService, configService);
+  const guardrailsService = new GuardrailsService(
+    supabaseService,
+    configService,
+  );
   const chatbotService = new ChatbotService(
     supabaseService,
     configService,
     toolRegistry,
+    guardrailsService,
   );
   const supabaseAdmin = supabaseService.getAdminClient();
 
@@ -58,11 +81,12 @@ async function runRbacTestSuite() {
     name: 'Sales Rep A',
   };
 
-  const repDeals = await toolRegistry.executeTool(
+  const repDealsRaw = await toolRegistry.executeTool(
     'get_my_open_deals',
     {},
     repContext,
   );
+  const repDeals = parseToolOutput(repDealsRaw);
   console.log(`  Rep A retrieved ${repDeals.length} deals.`);
   const invalidRepDeals = repDeals.filter(
     (d: any) =>
@@ -114,11 +138,12 @@ async function runRbacTestSuite() {
     '\n--- 4. KB Role Visibility & Isolation Test (search_knowledge_base) ---',
   );
   // Test A: Sales Executive searches for public SOP
-  const repKbResult = await toolRegistry.executeTool(
+  const repKbResultRaw = await toolRegistry.executeTool(
     'search_knowledge_base',
     { query: 'volume discount on TMT steel orders' },
     repContext,
   );
+  const repKbResult = parseToolOutput(repKbResultRaw);
   console.log(`  Rep A search returned ${repKbResult.results_found} chunks.`);
   if (repKbResult.results_found > 0) {
     console.log(
@@ -133,7 +158,7 @@ async function runRbacTestSuite() {
   }
 
   // Test B: Sales Executive searches for admin_only document
-  const repAdminKbResult = await toolRegistry.executeTool(
+  const repAdminKbResultRaw = await toolRegistry.executeTool(
     'search_knowledge_base',
     {
       query:
@@ -141,6 +166,7 @@ async function runRbacTestSuite() {
     },
     repContext,
   );
+  const repAdminKbResult = parseToolOutput(repAdminKbResultRaw);
   console.log(
     `  Rep A search for admin_only doc returned ${repAdminKbResult.results_found} chunks.`,
   );
@@ -165,11 +191,12 @@ async function runRbacTestSuite() {
     role: 'admin',
     name: 'System Admin',
   };
-  const adminKbResult = await toolRegistry.executeTool(
+  const adminKbResultRaw = await toolRegistry.executeTool(
     'search_knowledge_base',
     { query: 'CONFIDENTIAL ADMIN STRATEGY gross margin threshold' },
     adminContext,
   );
+  const adminKbResult = parseToolOutput(adminKbResultRaw);
   console.log(`  Admin search returned ${adminKbResult.results_found} chunks.`);
   if (adminKbResult.results_found > 0) {
     console.log(

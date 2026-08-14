@@ -5,11 +5,17 @@ import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { KbService } from './kb/kb.service';
 import { KbController } from './kb/kb.controller';
+import { GuardrailsService } from './guardrails/guardrails.service';
 
 @Module({
   imports: [SupabaseModule],
   controllers: [ChatbotController, KbController],
-  providers: [ChatbotService, ToolRegistryService, KbService],
-  exports: [ChatbotService, ToolRegistryService, KbService],
+  providers: [
+    ChatbotService,
+    ToolRegistryService,
+    KbService,
+    GuardrailsService,
+  ],
+  exports: [ChatbotService, ToolRegistryService, KbService, GuardrailsService],
 })
 export class ChatbotModule {}

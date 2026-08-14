@@ -27,7 +27,12 @@ async function runPhase1Tests() {
       }),
     };
 
-    const service = new ChatbotService(mockSupabase, {} as any, {} as any);
+    const service = new ChatbotService(
+      mockSupabase,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
 
     try {
       await service.resolveCallerContext(null);
@@ -63,13 +68,21 @@ async function runPhase1Tests() {
     const { ToolRegistryService } =
       await import('../modules/chatbot/tools/tool-registry.service');
 
+    const { GuardrailsService } =
+      await import('../modules/chatbot/guardrails/guardrails.service');
+
     const configService = new ConfigService(new NestConfigService());
     const supabaseService = new SupabaseService(configService);
     const toolRegistry = new ToolRegistryService(supabaseService);
+    const guardrailsService = new GuardrailsService(
+      supabaseService,
+      configService,
+    );
     const chatbotService = new ChatbotService(
       supabaseService,
       configService,
       toolRegistry,
+      guardrailsService,
     );
 
     // Mock caller context for testing
