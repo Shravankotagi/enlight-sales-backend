@@ -66,21 +66,66 @@ export class DealsService {
           .map((d: any) => d.inquiry_id)
           .filter((id: any) => Boolean(id));
 
+        const inqMap = new Map();
         if (inqIds.length > 0) {
           const { data: inqs } = await this.supabase
             .from('inquiries')
-            .select('id, media_urls, raw_text')
+            .select('id, customer_name, sender_name, media_urls, raw_text')
             .in('id', inqIds);
 
-          if (Array.isArray(inqs) && inqs.length > 0) {
-            const inqMap = new Map(inqs.map((i: any) => [i.id, i]));
-            for (const deal of data) {
-              if (deal.inquiry_id && inqMap.has(deal.inquiry_id)) {
-                const inq = inqMap.get(deal.inquiry_id);
-                if (!deal.media_urls || deal.media_urls.length === 0) {
-                  deal.media_urls = inq.media_urls || [];
-                }
-              }
+          if (Array.isArray(inqs)) {
+            inqs.forEach((i: any) => inqMap.set(i.id, i));
+          }
+        }
+
+        // Also fetch inquiries with media_urls for customer_name / raw_text matching fallback
+        const { data: allMediaInqs } = await this.supabase
+          .from('inquiries')
+          .select(
+            'id, customer_name, sender_name, media_urls, raw_text, created_at',
+          )
+          .not('media_urls', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        const mediaInqList = Array.isArray(allMediaInqs) ? allMediaInqs : [];
+
+        for (const deal of data) {
+          if (deal.inquiry_id && inqMap.has(deal.inquiry_id)) {
+            const inq = inqMap.get(deal.inquiry_id);
+            if (!deal.media_urls || deal.media_urls.length === 0) {
+              deal.media_urls = inq.media_urls || [];
+            }
+          }
+
+          // Fallback: match by customer name or PO number in raw_text
+          if (!deal.media_urls || deal.media_urls.length === 0) {
+            const dName = (deal.customer_name || '').toLowerCase().trim();
+            const dPo = (deal.po_number || '').toLowerCase().trim();
+
+            const matched = mediaInqList.find((mi: any) => {
+              if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
+                return false;
+              const cName = (mi.customer_name || mi.sender_name || '')
+                .toLowerCase()
+                .trim();
+              const rawTxt = (mi.raw_text || '').toLowerCase();
+
+              const nameMatches =
+                dName.length > 3 &&
+                (cName.includes(dName) ||
+                  dName.includes(cName) ||
+                  rawTxt.includes(dName));
+              const poMatches =
+                dPo.length > 3 &&
+                (rawTxt.includes(dPo) ||
+                  (mi.po_number && mi.po_number.toLowerCase().includes(dPo)));
+
+              return nameMatches || poMatches;
+            });
+
+            if (matched && matched.media_urls) {
+              deal.media_urls = matched.media_urls;
             }
           }
         }
@@ -103,15 +148,34 @@ export class DealsService {
       if (error) throw error;
 
       // Enrich with media_urls from inquiries if available
-      if (data && data.inquiry_id) {
-        const { data: inq } = await this.supabase
-          .from('inquiries')
-          .select('media_urls')
-          .eq('id', data.inquiry_id)
-          .limit(1)
-          .single();
-        if (inq && inq.media_urls) {
-          data.media_urls = inq.media_urls;
+      if (data) {
+        if (data.inquiry_id) {
+          const { data: inq } = await this.supabase
+            .from('inquiries')
+            .select('media_urls')
+            .eq('id', data.inquiry_id)
+            .limit(1)
+            .single();
+          if (inq && inq.media_urls) {
+            data.media_urls = inq.media_urls;
+          }
+        }
+
+        if (
+          (!data.media_urls || data.media_urls.length === 0) &&
+          data.customer_name
+        ) {
+          const { data: matchedInq } = await this.supabase
+            .from('inquiries')
+            .select('media_urls')
+            .ilike('customer_name', `%${data.customer_name}%`)
+            .not('media_urls', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          if (matchedInq && matchedInq.media_urls) {
+            data.media_urls = matchedInq.media_urls;
+          }
         }
       }
 
