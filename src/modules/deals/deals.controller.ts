@@ -120,7 +120,11 @@ export class DealsController {
 
     return stages.reduce(
       (acc, stage) => {
-        acc[stage] = filtered.filter((d: any) => d.stage === stage);
+        acc[stage] = filtered.filter((d: any) =>
+          stage === 'new_inquiry'
+            ? d.stage === 'new_inquiry' || d.stage === 'review'
+            : d.stage === stage,
+        );
         return acc;
       },
       {} as Record<string, any[]>,

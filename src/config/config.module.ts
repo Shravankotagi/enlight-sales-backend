@@ -13,6 +13,6 @@ import configuration from './configuration';
     }),
   ],
   providers: [ConfigService],
-  exports: [NestConfigModule],
+  exports: [NestConfigModule, ConfigService],
 })
 export class ConfigModule {}

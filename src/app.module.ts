@@ -23,6 +23,7 @@ import { ZohoModule } from './modules/zoho/zoho.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { PricingModule } from './modules/pricing/pricing.module';
+import { ChatbotModule } from './modules/chatbot/chatbot.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { PricingModule } from './modules/pricing/pricing.module';
     EmployeesModule,
     OtpModule,
     PricingModule,
+    ChatbotModule,
   ],
   controllers: [AppController],
   providers: [AppService],
