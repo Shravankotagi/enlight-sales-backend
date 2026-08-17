@@ -78,8 +78,9 @@ export class ReportsService {
         .from('deals')
         .select('*')
         .neq('inquiry_type', 'unknown')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        .or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+        );
       let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
@@ -116,11 +117,15 @@ export class ReportsService {
         (d) => !['won', 'lost'].includes(d.stage),
       );
 
-      const totalValue = wonDeals.reduce(
+      const pipelineValue = pendingDeals.reduce(
         (sum, d) => sum + (d.total_amount || 0),
         0,
       );
-      const wonValue = totalValue; // wonValue matches totalValue now
+      const wonValue = wonDeals.reduce(
+        (sum, d) => sum + (d.total_amount || 0),
+        0,
+      );
+      const totalValue = wonValue; // wonValue matches totalValue now
 
       // Group deals by customer (only count won deals for sales revenue value)
       const byCustomer = wonDeals.reduce(
@@ -168,6 +173,10 @@ export class ReportsService {
         summary: {
           total_revenue: totalValue,
           won_revenue: wonValue,
+          pipeline_value: pipelineValue,
+          total_value: pipelineValue > 0 ? pipelineValue : totalValue,
+          won_value: wonValue,
+          won: wonDeals.length,
           deals_won: wonDeals.length,
           deals_lost: lostDeals.length,
           deals_pending: pendingDeals.length,
