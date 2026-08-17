@@ -129,7 +129,6 @@ export class ChatbotService {
     const allowedIds = isCallerObj
       ? caller.allUserIds || [caller.userId]
       : [caller];
-    const isAdmin = isCallerObj && caller.role === 'admin';
 
     if (sessionId) {
       const { data: existingSession } = await this.supabaseAdmin
@@ -139,7 +138,7 @@ export class ChatbotService {
         .single();
 
       if (existingSession) {
-        if (!isAdmin && !allowedIds.includes(existingSession.user_id)) {
+        if (!allowedIds.includes(existingSession.user_id)) {
           throw new ForbiddenException('Access denied to this chat session');
         }
         return existingSession;
@@ -236,7 +235,6 @@ export class ChatbotService {
    */
   async getUserSessions(caller: CallerContext | string): Promise<any[]> {
     const isCallerObj = typeof caller !== 'string';
-    const isAdmin = isCallerObj && caller.role === 'admin';
     const allowedIds = isCallerObj
       ? caller.allUserIds || [caller.userId]
       : [caller];
@@ -246,12 +244,10 @@ export class ChatbotService {
       .select('*')
       .order('last_active_at', { ascending: false });
 
-    if (!isAdmin) {
-      if (allowedIds.length === 1) {
-        query = query.eq('user_id', allowedIds[0]);
-      } else {
-        query = query.in('user_id', allowedIds);
-      }
+    if (allowedIds.length === 1) {
+      query = query.eq('user_id', allowedIds[0]);
+    } else {
+      query = query.in('user_id', allowedIds);
     }
 
     const { data: sessions, error } = await query;
