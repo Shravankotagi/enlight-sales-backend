@@ -223,13 +223,16 @@ export class KbService {
   async listDocuments(): Promise<any[]> {
     const { data, error } = await this.supabaseAdmin
       .from('kb_documents')
-      .select('*')
+      .select('*, kb_chunks(count)')
       .order('updated_at', { ascending: false });
 
     if (error) {
       throw new Error(`Failed to list documents: ${error.message}`);
     }
-    return data || [];
+    return (data || []).map((doc: any) => ({
+      ...doc,
+      chunk_count: doc.kb_chunks?.[0]?.count || 0,
+    }));
   }
 
   /**
