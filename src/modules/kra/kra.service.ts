@@ -63,6 +63,77 @@ export class KraService {
         end = range.end;
       }
 
+      // If salespersonPhone is empty array (e.g. Sales Manager with 0 assigned reps), return clean zero metrics
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          month: start,
+          kra1: {
+            label: 'Sales Achievement',
+            deals_count: 0,
+            won_count: 0,
+            lost_count: 0,
+            total_value: 0,
+            won_value: 0,
+            status: 'at_risk',
+          },
+          kra2: {
+            label: 'New Customer Acquisition',
+            count: 0,
+            target: 3,
+            status: 'in_progress',
+          },
+          kra3: {
+            label: 'Customer Retention',
+            recurring_total: 0,
+            followups_sent: 0,
+            followups_resolved: 0,
+            status: 'tracked',
+          },
+          kra4: {
+            label: 'Enquiry Conversion',
+            total_inquiries: 0,
+            won_deals: 0,
+            conversion_rate: 0,
+            target_rate: 70,
+            status: 'in_progress',
+          },
+          kra5: {
+            label: 'Payment Collection',
+            pending_count: 0,
+            collected_count: 0,
+            collected_amount: 0,
+            total_outstanding: 0,
+            status: 'achieved',
+          },
+          kra6: {
+            label: 'CRM Compliance',
+            active_days: 0,
+            logged_via_bot: 0,
+            status: 'tracked',
+          },
+          kra7: {
+            label: 'Zero Rejection',
+            rejections: 0,
+            status: 'achieved',
+          },
+          kra8: {
+            label: 'Complaint Resolution',
+            total: 0,
+            resolved: 0,
+            within_48h: 0,
+            avg_resolution_hrs: 0,
+            status: 'achieved',
+          },
+          kra9: {
+            label: 'Customer Visits',
+            total_visits: 0,
+            target_monthly: 40,
+            unique_days: 0,
+            status: 'in_progress',
+          },
+        };
+      }
+
       let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
         .from('inquiries')
@@ -98,13 +169,11 @@ export class KraService {
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'customer_phone',
         ]);
         if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
 
@@ -380,6 +449,10 @@ export class KraService {
 
   async getLogs(kraNumber?: number, salespersonPhone?: string[] | string) {
     try {
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return [];
+      }
+
       let query = this.supabase
         .from('kra_logs')
         .select('*')
@@ -412,6 +485,14 @@ export class KraService {
     const supabase = this.supabase;
     const now = new Date();
 
+    if (
+      !isAdmin &&
+      Array.isArray(salespersonPhone) &&
+      salespersonPhone.length === 0
+    ) {
+      return { actions: [], generated_at: now.toISOString() };
+    }
+
     const targetYear = year !== undefined ? year : now.getFullYear();
     const targetMonth = month !== undefined ? month : now.getMonth();
 
@@ -439,7 +520,6 @@ export class KraService {
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'sender_phone',
         ]);
         if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }
@@ -479,7 +559,6 @@ export class KraService {
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'customer_phone',
         ]);
         if (orFilter) staleQuery = staleQuery.or(orFilter);
       }
@@ -674,6 +753,184 @@ export class KraService {
         end = range.end;
       }
 
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          kra1: {
+            number: 1,
+            title: 'Sales Achievement',
+            target: 'Assigned Monthly Tonnage',
+            achieved: '0 MT',
+            meaning:
+              "This metric measures overall sales performance against the monthly tonnage assigned by management for the salesperson's territory or product line, including flat metal, structural metal, TMT Bars, and Value added products.",
+            headers: [
+              'Sr. No.',
+              'Customer Name',
+              'Product Supplied',
+              'Quantity (MT)',
+              'Status',
+              'Won Amount (₹)',
+              'Loss Reason / Notes',
+            ],
+            rows: [],
+          },
+          kra2: {
+            number: 2,
+            title: 'New Customer Acquisition',
+            target: 'Minimum 3 new customers per month',
+            achieved: '0/3',
+            meaning:
+              "Measures the salesperson's ability to expand Enlight Metals' customer base by identifying, approaching, and converting new prospects into active customers. A new customer is defined as a company that has not previously placed a billed order with Enlight Metals.",
+            headers: [
+              'Sr. No.',
+              'Company Name',
+              'Industry / Segment',
+              'Contact Person',
+              'Product Ordered',
+              'First Order Quantity',
+              'Billing Date',
+            ],
+            rows: [],
+          },
+          kra3: {
+            number: 3,
+            title: 'Customer Retention & Recurring Business',
+            target:
+              'Ensure at least one bill per month from every active recurring customer, wherever business potential exists.',
+            achieved: '0 Follow-ups',
+            meaning:
+              "This metric measures the salesperson's ability to maintain strong relationships with existing customers and generate repeat business. It focuses on customer retention by encouraging recurring orders, increasing customer loyalty, and ensuring continuous business growth through repeat billing rather than one-time transactions.",
+            headers: [
+              'Sr. No.',
+              'Existing Customer Name',
+              'Follow-up Notes',
+              'Quantity (MT)',
+              'Next Follow-up Date',
+              'Status / Remarks',
+            ],
+            rows: [],
+          },
+          kra4: {
+            number: 4,
+            title: 'Enquiry & Pipeline Conversion',
+            target:
+              'Achieve a minimum 70-80% enquiry-to-order conversion ratio',
+            achieved: '0%',
+            meaning:
+              "This metric measures the salesperson's ability to convert customer enquiries into confirmed sales orders. It evaluates the effectiveness of follow-ups, quotation management, customer engagement, and negotiation skills across enquiries received through calls, emails, walk-ins, website leads, Zoho CRM, referrals, exhibitions, and other sales channels.",
+            headers: [
+              'Sr. No.',
+              'Enquiry Date',
+              'Company Name',
+              'Product Enquired',
+              'Order Status (Won/Lost/Pending)',
+              'Order Value',
+              'Reason for Loss / Pending',
+            ],
+            rows: [],
+          },
+          kra5: {
+            number: 5,
+            title: 'Payment Collection & Outstanding Management',
+            target:
+              'Ensure 100% payment collection within the agreed credit period',
+            achieved: '0 Pending',
+            meaning:
+              "This metric measures the salesperson's performance in collecting customer payments on or before the due date. It focuses on disciplined outstanding follow-ups, minimizing payment delays, preventing overdue balances, and maintaining healthy working capital cash flow from sales accounts.",
+            headers: [
+              'Sr. No.',
+              'Customer Name',
+              'Invoice Amount (₹)',
+              'Credit Period (Days)',
+              'Payment Due Date',
+              'Advance Received (₹)',
+              'Full Payment Date',
+              'Outstanding (₹)',
+              'Status / Remarks',
+            ],
+            rows: [],
+          },
+          kra6: {
+            number: 6,
+            title: 'CRM Compliance & Process Adherence',
+            target:
+              'Daily update of all leads, visits, quotations, and collection status in CRM',
+            achieved: '0 Days Active',
+            meaning:
+              "Measures the salesperson's consistency in recording all customer interactions, leads, quotations, visits, and follow-ups in the system on a daily basis.",
+            headers: [
+              'Sr. No.',
+              'Date',
+              'Customer Name',
+              'Action Type',
+              'Channel (WhatsApp Bot/CRM)',
+              'Logged Status',
+              'Remarks',
+            ],
+            rows: [],
+          },
+          kra7: {
+            number: 7,
+            title: 'Order Accuracy & Zero Rejection',
+            target: 'Ensure zero order rejections due to sales-related errors.',
+            achieved: '0 Rejections',
+            meaning:
+              "This metric measures the salesperson's accuracy in understanding customer requirements and processing orders correctly. It evaluates whether orders are placed with the correct material specifications, dimensions, quantities, pricing, delivery instructions, and commercial terms, thereby minimizing order cancellations, customer rejections, and internal rework caused by sales-related errors.",
+            headers: [
+              'Sr. No.',
+              'Customer Name',
+              'Product',
+              'Order Date',
+              'Reason for Rejection',
+              'Corrective Action Taken',
+              'Remarks',
+            ],
+            rows: [],
+          },
+          kra8: {
+            number: 8,
+            title: 'Customer Complaint Resolution',
+            target: 'Close customer complaints within 48 hours',
+            achieved: '0/0 Closed',
+            meaning:
+              "This metric measures the salesperson's responsiveness and effectiveness in resolving customer complaints related to product quality, quantity, pricing, billing, dispatch, delivery, or other service issues within the defined 48-hour resolution timeline. It evaluates timely communication, coordination with internal departments, and customer satisfaction after resolution.",
+            headers: [
+              'Sr. No.',
+              'Complaint Date',
+              'Customer Name',
+              'Complaint Type (Quality / Quantity / Billing / Delivery / Others)',
+              'Affected Product',
+              'Complaint Description',
+              'SLA Due Date (48h)',
+              'Resolution Date',
+              'Resolution Time (Hrs)',
+              'Status (Closed / Pending)',
+            ],
+            rows: [],
+          },
+          kra9: {
+            number: 9,
+            title: 'Field Customer Visits',
+            target:
+              'Conduct a minimum of 10 customer visits per week, with field visits on at least 3 days per week',
+            achieved: '0/40 Visits',
+            meaning:
+              "Measures the salesperson's proactive market presence through a defined minimum frequency of customer visits and field days each week.",
+            headers: [
+              'Sr. No.',
+              'Company Name',
+              'Person Met',
+              'Contact No.',
+              'Outcome',
+              'Requirement',
+              'Follow-up Action',
+              'Remarks',
+              'Visit Date',
+            ],
+            rows: [],
+          },
+        };
+      }
+
       let dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
@@ -716,12 +973,10 @@ export class KraService {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
         ]);
-        if (dealsOr)
-          dealsQuery = dealsQuery.or(`${dealsOr},salesperson_phone.is.null`);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
 
@@ -1571,6 +1826,10 @@ export class KraService {
   }
 
   async getComplaints(salespersonPhone?: string[] | string) {
+    if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+      return [];
+    }
+
     let query = this.supabase
       .from('complaints')
       .select('*')
@@ -1661,6 +1920,10 @@ export class KraService {
   }
 
   async getVisits(salespersonPhone?: string[] | string) {
+    if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+      return [];
+    }
+
     let query = this.supabase
       .from('customer_visits')
       .select('*')
