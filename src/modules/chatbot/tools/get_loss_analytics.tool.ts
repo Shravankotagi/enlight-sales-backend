@@ -3,12 +3,12 @@ import { ChatbotTool } from './chatbot-tool.interface';
 export const getLossAnalyticsTool: ChatbotTool = {
   name: 'get_loss_analytics',
   description:
-    'Analyzes lost deals, common loss reasons, total lost revenue, and lost deal trends. Available ONLY to sales managers and admins.',
-  roles: ['manager', 'admin'],
+    'Analyzes lost deals, common loss reasons, total lost revenue, and lost deal trends scoped to caller permissions.',
+  roles: ['salesperson', 'manager', 'admin'],
   declaration: {
     name: 'get_loss_analytics',
     description:
-      'Analyzes lost deals, common loss reasons, total lost revenue, and lost deal trends. Available ONLY to sales managers and admins.',
+      'Analyzes lost deals, common loss reasons, total lost revenue, and lost deal trends.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -22,8 +22,8 @@ export const getLossAnalyticsTool: ChatbotTool = {
     },
   },
   async execute(args, callerContext, supabaseAdmin) {
-    // Layer 1 Application-level role check
-    if (!['manager', 'admin'].includes(callerContext.role)) {
+    // Application-level role check
+    if (!['salesperson', 'manager', 'admin'].includes(callerContext.role)) {
       throw new Error(
         `Role '${callerContext.role}' is not authorized to use tool 'get_loss_analytics'`,
       );
@@ -37,41 +37,53 @@ export const getLossAnalyticsTool: ChatbotTool = {
       .eq('stage', 'lost');
 
     // Scoping Layer
-    if (callerContext.role === 'manager') {
-      if (!callerContext.employeeId) {
-        return {
-          data: [],
-          rowCount: 0,
-          message: 'Manager employee ID not found',
-        };
+    if (callerContext.role === 'salesperson') {
+      const rawPhone = callerContext.phone || '';
+      const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+      const empId = callerContext.employeeId;
+
+      if (cleanPhone && empId) {
+        query = query.or(
+          `salesperson_phone.ilike.%${cleanPhone}%,employee_id.eq.${empId}`,
+        );
+      } else if (cleanPhone) {
+        query = query.ilike('salesperson_phone', `%${cleanPhone}%`);
+      } else if (empId) {
+        query = query.eq('employee_id', empId);
       }
+    } else if (callerContext.role === 'manager') {
+      const empId = callerContext.employeeId;
+      const rawPhone = callerContext.phone || '';
+      const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
 
-      const { data: subEmps } = await supabaseAdmin
-        .from('employees')
-        .select('id, employee_id, phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
+      const allowedPhoneSuffixes: string[] = cleanPhone ? [cleanPhone] : [];
+      const allowedEmpIds: string[] = empId ? [empId] : [];
 
-      const subPhones = (subEmps || []).map((e) => e.phone).filter(Boolean);
-      const subEmpIds = (subEmps || [])
-        .map((e) => e.employee_id || e.id)
-        .filter(Boolean);
+      if (empId) {
+        const { data: subEmps } = await supabaseAdmin
+          .from('employees')
+          .select('id, employee_id, phone')
+          .eq('reports_to_employee_id', empId);
 
-      const allowedPhones = [...subPhones, callerContext.phone].filter(Boolean);
-      const allowedEmpIds = [...subEmpIds, callerContext.employeeId].filter(
-        Boolean,
-      );
+        if (subEmps && subEmps.length > 0) {
+          subEmps.forEach((e: any) => {
+            if (e.phone) {
+              const pClean = e.phone.replace(/\D/g, '').slice(-10);
+              if (pClean) allowedPhoneSuffixes.push(pClean);
+            }
+            if (e.employee_id) allowedEmpIds.push(e.employee_id);
+            if (e.id) allowedEmpIds.push(e.id);
+          });
+        }
+      }
 
       const orClauses: string[] = [];
-      if (allowedPhones.length > 0) {
-        orClauses.push(
-          `salesperson_phone.in.(${allowedPhones.map((p) => `"${p}"`).join(',')})`,
-        );
-      }
-      if (allowedEmpIds.length > 0) {
-        orClauses.push(
-          `employee_id.in.(${allowedEmpIds.map((id) => `"${id}"`).join(',')})`,
-        );
-      }
+      allowedPhoneSuffixes.forEach((p) => {
+        orClauses.push(`salesperson_phone.ilike.%${p}%`);
+      });
+      allowedEmpIds.forEach((id) => {
+        orClauses.push(`employee_id.eq.${id}`);
+      });
 
       if (orClauses.length > 0) {
         query = query.or(orClauses.join(','));
