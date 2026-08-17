@@ -301,15 +301,19 @@ export class EmployeesService {
     try {
       const { data } = await this.supabase
         .from('employees')
-        .select('employee_id')
-        .order('employee_id', { ascending: false })
-        .limit(1);
+        .select('employee_id');
 
       if (!data || data.length === 0) return 'EMP001';
 
-      const last = data[0].employee_id;
-      const num = parseInt(last.replace('EMP', '')) + 1;
-      return `EMP${String(num).padStart(3, '0')}`;
+      const nums = data
+        .map((d: any) => {
+          const match = d.employee_id?.match(/EMP(\d+)/i);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter((n: number) => !isNaN(n) && n > 0);
+
+      const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
+      return `EMP${String(maxNum + 1).padStart(3, '0')}`;
     } catch (error) {
       this.logger.error('Error in generateNextEmployeeId:', error);
       return 'EMP001';
