@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -159,5 +160,11 @@ export class DealsController {
   async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
     const phone = body.salesperson_phone || employee?.phone || '910000000000';
     return this.dealsService.processPo(body, phone);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async deleteDeal(@Param('id') id: string) {
+    return this.dealsService.deleteDeal(id);
   }
 }

@@ -632,4 +632,55 @@ export class DealsService {
   async createOrder(data: any, salespersonPhone?: string) {
     return this.processPo(data, salespersonPhone);
   }
+
+  async deleteDeal(id: string) {
+    try {
+      this.logger.log(`Deleting deal ${id} and all associated records...`);
+
+      // 1. Fetch deal to inspect details
+      const { data: deal } = await this.supabase
+        .from('deals')
+        .select('id, inquiry_id, po_number, customer_name')
+        .eq('id', id)
+        .single();
+
+      // 2. Delete deal_items
+      await this.supabase.from('deal_items').delete().eq('deal_id', id);
+
+      // 3. Delete payment_tracking records for this deal
+      await this.supabase.from('payment_tracking').delete().eq('deal_id', id);
+
+      // 4. Delete followup_tasks for this deal if any
+      try {
+        await this.supabase.from('followup_tasks').delete().eq('deal_id', id);
+      } catch (err: any) {
+        this.logger.warn(
+          `Non-blocking followup_tasks cleanup: ${err?.message}`,
+        );
+      }
+
+      // 5. Delete corresponding kra_logs if PO/deal specific
+      if (deal?.po_number) {
+        try {
+          await this.supabase
+            .from('kra_logs')
+            .delete()
+            .ilike('description', `%${deal.po_number}%`);
+        } catch (err: any) {
+          this.logger.warn(`Non-blocking kra_logs cleanup: ${err?.message}`);
+        }
+      }
+
+      // 6. Delete the deal itself
+      const { error } = await this.supabase.from('deals').delete().eq('id', id);
+
+      if (error) throw error;
+
+      this.logger.log(`Deal ${id} successfully deleted.`);
+      return { success: true, message: 'Deal deleted successfully', id };
+    } catch (error) {
+      this.logger.error(`Error deleting deal ${id}:`, error);
+      throw error;
+    }
+  }
 }
