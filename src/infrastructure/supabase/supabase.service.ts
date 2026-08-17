@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { ConfigService } from 'src/config/config.service';
+import { ConfigService } from '../../config/config.service';
 
 /**
  * @description This service is used to create and manage Supabase clients.

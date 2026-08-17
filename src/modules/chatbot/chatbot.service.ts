@@ -82,6 +82,21 @@ export class ChatbotService {
         else if (metaRole.includes('manager')) role = 'manager';
       }
 
+      const empRecord = employee && employee.length > 0 ? employee[0] : null;
+      const allIds = Array.from(
+        new Set([
+          userId,
+          employeeId,
+          phone,
+          user.id,
+          user.employee_id,
+          user.phone,
+          empRecord?.id,
+          empRecord?.employee_id,
+          empRecord?.phone,
+        ]),
+      ).filter(Boolean) as string[];
+
       return {
         userId,
         email,
@@ -90,6 +105,7 @@ export class ChatbotService {
         phone,
         reportsToId,
         name,
+        allUserIds: allIds,
       };
     } catch (err: any) {
       this.logger.error(
@@ -104,10 +120,17 @@ export class ChatbotService {
    * Retrieves an existing chat session or creates a new one for the user.
    */
   async getOrCreateSession(
-    userId: string,
+    caller: CallerContext | string,
     channel: string = 'web',
     sessionId?: string,
   ): Promise<any> {
+    const isCallerObj = typeof caller !== 'string';
+    const userId = isCallerObj ? caller.userId : caller;
+    const allowedIds = isCallerObj
+      ? caller.allUserIds || [caller.userId]
+      : [caller];
+    const isAdmin = isCallerObj && caller.role === 'admin';
+
     if (sessionId) {
       const { data: existingSession } = await this.supabaseAdmin
         .from('chat_sessions')
@@ -116,7 +139,7 @@ export class ChatbotService {
         .single();
 
       if (existingSession) {
-        if (existingSession.user_id !== userId) {
+        if (!isAdmin && !allowedIds.includes(existingSession.user_id)) {
           throw new ForbiddenException('Access denied to this chat session');
         }
         return existingSession;
@@ -211,25 +234,69 @@ export class ChatbotService {
   /**
    * Lists all chat sessions belonging to a specific user.
    */
-  async getUserSessions(userId: string): Promise<any[]> {
-    const { data: sessions, error } = await this.supabaseAdmin
+  async getUserSessions(caller: CallerContext | string): Promise<any[]> {
+    const isCallerObj = typeof caller !== 'string';
+    const isAdmin = isCallerObj && caller.role === 'admin';
+    const allowedIds = isCallerObj
+      ? caller.allUserIds || [caller.userId]
+      : [caller];
+
+    let query = this.supabaseAdmin
       .from('chat_sessions')
       .select('*')
-      .eq('user_id', userId)
       .order('last_active_at', { ascending: false });
 
+    if (!isAdmin) {
+      if (allowedIds.length === 1) {
+        query = query.eq('user_id', allowedIds[0]);
+      } else {
+        query = query.in('user_id', allowedIds);
+      }
+    }
+
+    const { data: sessions, error } = await query;
+
     if (error) {
-      this.logger.error(`Error fetching user sessions for ${userId}:`, error);
+      this.logger.error('Error fetching user sessions:', error);
       throw new Error('Failed to fetch user sessions');
     }
-    return sessions || [];
+
+    if (!sessions || sessions.length === 0) return [];
+
+    const sessionIds = sessions.map((s) => s.id);
+    const { data: firstMsgs } = await this.supabaseAdmin
+      .from('chat_messages')
+      .select('session_id, content')
+      .in('session_id', sessionIds)
+      .eq('role', 'user')
+      .order('created_at', { ascending: true });
+
+    const titleMap: Record<string, string> = {};
+    if (firstMsgs && firstMsgs.length > 0) {
+      firstMsgs.forEach((m) => {
+        if (!titleMap[m.session_id] && m.content) {
+          titleMap[m.session_id] =
+            m.content.length > 35
+              ? m.content.slice(0, 35).trim() + '...'
+              : m.content.trim();
+        }
+      });
+    }
+
+    return sessions.map((s) => ({
+      ...s,
+      title: titleMap[s.id] || 'New Conversation',
+    }));
   }
 
   /**
    * Retrieves messages for a user's specific session (for reload persistence).
    */
-  async getSessionMessages(sessionId: string, userId: string): Promise<any[]> {
-    const session = await this.getOrCreateSession(userId, 'web', sessionId);
+  async getSessionMessages(
+    sessionId: string,
+    caller: CallerContext | string,
+  ): Promise<any[]> {
+    const session = await this.getOrCreateSession(caller, 'web', sessionId);
     if (!session) {
       throw new NotFoundException('Session not found');
     }

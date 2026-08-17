@@ -6,6 +6,7 @@ export interface CallerContext {
   phone?: string;
   reportsToId?: string;
   name?: string;
+  allUserIds?: string[];
 }
 
 export interface ChatbotTool<TArgs = any, TResult = any> {
