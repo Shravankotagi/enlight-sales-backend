@@ -178,10 +178,7 @@ export class EmployeesService {
         employee.phone,
       );
       const teamPhones = Array.from(
-        new Set([
-          employee.phone,
-          ...assigned.map((a: any) => a.phone).filter(Boolean),
-        ]),
+        new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
       );
 
       if (requestedPhoneOverride) {

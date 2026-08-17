@@ -30,18 +30,14 @@ function buildInquiryPhoneOrFilter(
   const list = Array.isArray(salespersonPhones)
     ? salespersonPhones
     : [salespersonPhones];
+  if (list.length === 0) return null;
   const parts: string[] = [];
   for (const phone of list) {
     if (!phone) continue;
     const clean = phone.replace(/\D/g, '');
     const p10 = clean.slice(-10);
     const p12 = '91' + p10;
-    parts.push(
-      `salesperson_phone.eq.${p10}`,
-      `salesperson_phone.eq.${p12}`,
-      `sender_phone.eq.${p10}`,
-      `sender_phone.eq.${p12}`,
-    );
+    parts.push(`salesperson_phone.eq.${p10}`, `salesperson_phone.eq.${p12}`);
   }
   return parts.length > 0 ? parts.join(',') : null;
 }
@@ -67,6 +63,14 @@ export class InquiriesService {
     salespersonPhones?: string[] | string;
   }) {
     try {
+      if (
+        filters?.salespersonPhones &&
+        Array.isArray(filters.salespersonPhones) &&
+        filters.salespersonPhones.length === 0
+      ) {
+        return [];
+      }
+
       let query = this.supabase
         .from('inquiries')
         .select(
@@ -136,6 +140,14 @@ export class InquiriesService {
 
   async findReviewQueue(salespersonPhones?: string[] | string) {
     try {
+      if (
+        salespersonPhones &&
+        Array.isArray(salespersonPhones) &&
+        salespersonPhones.length === 0
+      ) {
+        return [];
+      }
+
       let query = this.supabase
         .from('inquiries')
         .select(
@@ -210,6 +222,22 @@ export class InquiriesService {
 
   async getStats(salespersonPhones?: string[] | string) {
     try {
+      if (
+        salespersonPhones &&
+        Array.isArray(salespersonPhones) &&
+        salespersonPhones.length === 0
+      ) {
+        return {
+          total: 0,
+          pending: 0,
+          processed: 0,
+          review: 0,
+          by_channel: {
+            whatsapp: 0,
+          },
+        };
+      }
+
       let query = this.supabase
         .from('inquiries')
         .select(

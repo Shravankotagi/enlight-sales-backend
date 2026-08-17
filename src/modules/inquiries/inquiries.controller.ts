@@ -37,6 +37,10 @@ export class InquiriesController {
         salespersonPhoneOverride,
       );
 
+    if (Array.isArray(phones) && phones.length === 0) {
+      return [];
+    }
+
     return this.inquiriesService.findAll({
       status,
       from,
@@ -56,6 +60,10 @@ export class InquiriesController {
         salespersonPhoneOverride,
       );
 
+    if (Array.isArray(phones) && phones.length === 0) {
+      return [];
+    }
+
     return this.inquiriesService.findReviewQueue(phones || undefined);
   }
 
@@ -69,6 +77,18 @@ export class InquiriesController {
         employee,
         salespersonPhoneOverride,
       );
+
+    if (Array.isArray(phones) && phones.length === 0) {
+      return {
+        total: 0,
+        new: 0,
+        processing: 0,
+        quotation_sent: 0,
+        order_won: 0,
+        lost: 0,
+        review_needed: 0,
+      };
+    }
 
     return this.inquiriesService.getStats(phones || undefined);
   }
