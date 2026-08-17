@@ -70,7 +70,7 @@ export class DealsService {
         if (inqIds.length > 0) {
           const { data: inqs } = await this.supabase
             .from('inquiries')
-            .select('id, customer_name, sender_name, media_urls, raw_text')
+            .select('id, sender_name, media_urls, raw_text, ai_extraction_json')
             .in('id', inqIds);
 
           if (Array.isArray(inqs)) {
@@ -82,7 +82,7 @@ export class DealsService {
         const { data: allMediaInqs } = await this.supabase
           .from('inquiries')
           .select(
-            'id, customer_name, sender_name, media_urls, raw_text, created_at',
+            'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
           )
           .not('media_urls', 'is', null)
           .order('created_at', { ascending: false })
@@ -98,7 +98,7 @@ export class DealsService {
             }
           }
 
-          // Fallback: match by customer name or PO number in raw_text
+          // Fallback: match by customer name or PO number in raw_text / ai_extraction_json
           if (!deal.media_urls || deal.media_urls.length === 0) {
             const dName = (deal.customer_name || '').toLowerCase().trim();
             const dPo = (deal.po_number || '').toLowerCase().trim();
@@ -106,20 +106,23 @@ export class DealsService {
             const matched = mediaInqList.find((mi: any) => {
               if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
                 return false;
-              const cName = (mi.customer_name || mi.sender_name || '')
+              const sName = (mi.sender_name || '').toLowerCase().trim();
+              const custJsonName = (mi.ai_extraction_json?.customer?.name || '')
                 .toLowerCase()
                 .trim();
               const rawTxt = (mi.raw_text || '').toLowerCase();
+              const poJson = (
+                mi.ai_extraction_json?.po_number || ''
+              ).toLowerCase();
 
               const nameMatches =
                 dName.length > 3 &&
-                (cName.includes(dName) ||
-                  dName.includes(cName) ||
+                (sName.includes(dName) ||
+                  custJsonName.includes(dName) ||
                   rawTxt.includes(dName));
               const poMatches =
                 dPo.length > 3 &&
-                (rawTxt.includes(dPo) ||
-                  (mi.po_number && mi.po_number.toLowerCase().includes(dPo)));
+                (rawTxt.includes(dPo) || poJson.includes(dPo));
 
               return nameMatches || poMatches;
             });
@@ -168,7 +171,7 @@ export class DealsService {
           const { data: matchedInq } = await this.supabase
             .from('inquiries')
             .select('media_urls')
-            .ilike('customer_name', `%${data.customer_name}%`)
+            .ilike('raw_text', `%${data.customer_name}%`)
             .not('media_urls', 'is', null)
             .order('created_at', { ascending: false })
             .limit(1)
