@@ -45,7 +45,9 @@ export class InquiriesService {
     try {
       let query = this.supabase
         .from('inquiries')
-        .select('*')
+        .select(
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
+        )
         .order('created_at', { ascending: false });
 
       if (filters?.from) {
@@ -73,24 +75,18 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Sanitize heavy base64 strings in list view so list payload is < 60KB
+      // Clean lightweight list with instant metadata
       const lightweightData = (data || []).map((item: any) => {
-        if (Array.isArray(item.media_urls) && item.media_urls.length > 0) {
-          const sanitizedUrls = item.media_urls.map((url: string) => {
-            if (typeof url === 'string' && url.startsWith('data:')) {
-              return 'attached_document';
-            }
-            return url;
-          });
-          return {
-            ...item,
-            media_urls: sanitizedUrls,
-            has_media: true,
-          };
-        }
+        const hasAttachment =
+          item.raw_text?.includes('[Inquiry Attachment:') ||
+          Boolean(item.ai_extraction_json) ||
+          item.source_channel === 'whatsapp';
         return {
           ...item,
-          has_media: false,
+          customer_name: item.sender_name,
+          customer_phone: item.sender_phone,
+          has_media: hasAttachment,
+          media_urls: hasAttachment ? ['attached_document'] : [],
         };
       });
 
@@ -120,7 +116,9 @@ export class InquiriesService {
     try {
       let query = this.supabase
         .from('inquiries')
-        .select('*')
+        .select(
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
+        )
         .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
 
@@ -137,22 +135,16 @@ export class InquiriesService {
       if (error) throw error;
 
       const lightweightData = (data || []).map((item: any) => {
-        if (Array.isArray(item.media_urls) && item.media_urls.length > 0) {
-          const sanitizedUrls = item.media_urls.map((url: string) => {
-            if (typeof url === 'string' && url.startsWith('data:')) {
-              return 'attached_document';
-            }
-            return url;
-          });
-          return {
-            ...item,
-            media_urls: sanitizedUrls,
-            has_media: true,
-          };
-        }
+        const hasAttachment =
+          item.raw_text?.includes('[Inquiry Attachment:') ||
+          Boolean(item.ai_extraction_json) ||
+          item.source_channel === 'whatsapp';
         return {
           ...item,
-          has_media: false,
+          customer_name: item.sender_name,
+          customer_phone: item.sender_phone,
+          has_media: hasAttachment,
+          media_urls: hasAttachment ? ['attached_document'] : [],
         };
       });
 

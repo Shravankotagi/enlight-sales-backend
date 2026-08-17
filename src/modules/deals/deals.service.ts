@@ -60,93 +60,17 @@ export class DealsService {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Enrich deals with media_urls from inquiries table if available
-      if (Array.isArray(data) && data.length > 0) {
-        const inqIds = data
-          .map((d: any) => d.inquiry_id)
-          .filter((id: any) => Boolean(id));
-
-        const inqMap = new Map();
-        if (inqIds.length > 0) {
-          const { data: inqs } = await this.supabase
-            .from('inquiries')
-            .select('id, sender_name, media_urls, raw_text, ai_extraction_json')
-            .in('id', inqIds);
-
-          if (Array.isArray(inqs)) {
-            inqs.forEach((i: any) => inqMap.set(i.id, i));
-          }
-        }
-
-        // Also fetch inquiries with media_urls for customer_name / raw_text matching fallback
-        const { data: allMediaInqs } = await this.supabase
-          .from('inquiries')
-          .select(
-            'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
-          )
-          .not('media_urls', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(100);
-
-        const mediaInqList = Array.isArray(allMediaInqs) ? allMediaInqs : [];
-
-        for (const deal of data) {
-          if (deal.inquiry_id && inqMap.has(deal.inquiry_id)) {
-            const inq = inqMap.get(deal.inquiry_id);
-            if (!deal.media_urls || deal.media_urls.length === 0) {
-              deal.media_urls = inq.media_urls || [];
-            }
-          }
-
-          // Fallback: match by customer name or PO number in raw_text / ai_extraction_json
-          if (!deal.media_urls || deal.media_urls.length === 0) {
-            const dName = (deal.customer_name || '').toLowerCase().trim();
-            const dPo = (deal.po_number || '').toLowerCase().trim();
-
-            const matched = mediaInqList.find((mi: any) => {
-              if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
-                return false;
-              const sName = (mi.sender_name || '').toLowerCase().trim();
-              const custJsonName = (mi.ai_extraction_json?.customer?.name || '')
-                .toLowerCase()
-                .trim();
-              const rawTxt = (mi.raw_text || '').toLowerCase();
-              const poJson = (
-                mi.ai_extraction_json?.po_number || ''
-              ).toLowerCase();
-
-              const nameMatches =
-                dName.length > 3 &&
-                (sName.includes(dName) ||
-                  custJsonName.includes(dName) ||
-                  rawTxt.includes(dName));
-              const poMatches =
-                dPo.length > 3 &&
-                (rawTxt.includes(dPo) || poJson.includes(dPo));
-
-              return nameMatches || poMatches;
-            });
-
-            if (matched && matched.media_urls) {
-              deal.media_urls = matched.media_urls;
-            }
-          }
-        }
-      }
-
-      // Sanitize heavy base64 strings in list view so list payload is < 60KB
+      // Clean lightweight list with instant metadata (0ms load)
       const lightweightDeals = (data || []).map((d: any) => {
-        const hasMedia = Array.isArray(d.media_urls) && d.media_urls.length > 0;
+        const hasMedia = Boolean(
+          d.inquiry_id ||
+          d.po_number ||
+          (Array.isArray(d.media_urls) && d.media_urls.length > 0),
+        );
         return {
           ...d,
           has_media: hasMedia,
-          media_urls: hasMedia
-            ? d.media_urls.map((u: string) =>
-                typeof u === 'string' && u.startsWith('data:')
-                  ? 'attached_document'
-                  : u,
-              )
-            : [],
+          media_urls: hasMedia ? ['attached_document'] : [],
         };
       });
 

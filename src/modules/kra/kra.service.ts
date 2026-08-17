@@ -45,7 +45,7 @@ export class KraService {
       let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('*')
+        .select('id, status, created_at, salesperson_phone, sender_phone')
         .gte('created_at', start)
         .lte('created_at', end);
       let kraLogsQuery = this.supabase
