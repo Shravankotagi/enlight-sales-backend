@@ -1,6 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
+function buildMultiFieldOrFilter(
+  salespersonPhones?: string[] | string,
+  fieldNames: string[] = ['salesperson_phone'],
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    for (const field of fieldNames) {
+      parts.push(`${field}.eq.${p10}`, `${field}.eq.${p12}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 @Injectable()
 export class KraService {
   private readonly logger = new Logger(KraService.name);
@@ -21,7 +42,7 @@ export class KraService {
   }
 
   async getDashboard(
-    salespersonPhone?: string,
+    salespersonPhone?: string[] | string,
     month?: number,
     year?: number,
     from?: string,
@@ -45,7 +66,7 @@ export class KraService {
       let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('*')
+        .select('id, status, created_at, salesperson_phone, sender_phone')
         .gte('created_at', start)
         .lte('created_at', end);
       let kraLogsQuery = this.supabase
@@ -75,34 +96,47 @@ export class KraService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'customer_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
 
-        dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
-        );
-        inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
-        kraLogsQuery = kraLogsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        visitsQuery = visitsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        complaintsQuery = complaintsQuery.or(
-          `reported_by.eq.${p10},reported_by.eq.${p12}`,
-        );
-        paymentsQuery = paymentsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        followupsQuery = followupsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        recurringQuery = recurringQuery.or(
-          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12}`,
-        );
+        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'sender_phone',
+        ]);
+        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
+
+        const kraOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (kraOr) kraLogsQuery = kraLogsQuery.or(kraOr);
+
+        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
+
+        const complaintsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (complaintsOr) complaintsQuery = complaintsQuery.or(complaintsOr);
+
+        const paymentsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (paymentsOr) paymentsQuery = paymentsQuery.or(paymentsOr);
+
+        const followupsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (followupsOr) followupsQuery = followupsQuery.or(followupsOr);
+
+        const recurringOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'assigned_salesperson_phone',
+        ]);
+        if (recurringOr) recurringQuery = recurringQuery.or(recurringOr);
       }
 
       dealsQuery = dealsQuery.or(
@@ -344,7 +378,7 @@ export class KraService {
     }
   }
 
-  async getLogs(kraNumber?: number, salespersonPhone?: string) {
+  async getLogs(kraNumber?: number, salespersonPhone?: string[] | string) {
     try {
       let query = this.supabase
         .from('kra_logs')
@@ -354,11 +388,10 @@ export class KraService {
 
       if (kraNumber) query = query.eq('kra_number', kraNumber);
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const last10 = cleanDigits.slice(-10);
-        query = query.or(
-          `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
-        );
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -371,7 +404,7 @@ export class KraService {
   }
 
   async getActionQueue(
-    salespersonPhone: string,
+    salespersonPhone: string[] | string,
     isAdmin: boolean,
     month?: number,
     year?: number,
@@ -403,10 +436,12 @@ export class KraService {
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
-      if (!isAdmin) {
-        inquiryQuery = inquiryQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},sender_phone.eq.${salespersonPhone}`,
-        );
+      if (!isAdmin && salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'sender_phone',
+        ]);
+        if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }
 
       const { data: reviewInquiries } = await inquiryQuery
@@ -442,12 +477,11 @@ export class KraService {
         .limit(10);
 
       if (!isAdmin && salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        staleQuery = staleQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12}`,
-        );
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'customer_phone',
+        ]);
+        if (orFilter) staleQuery = staleQuery.or(orFilter);
       }
 
       const { data: staleDeals } = await staleQuery;
@@ -475,11 +509,11 @@ export class KraService {
         .gte('due_date', monthStart)
         .lte('due_date', monthEnd);
 
-      if (!isAdmin) {
-        followupsQuery = followupsQuery.eq(
+      if (!isAdmin && salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          salespersonPhone,
-        );
+        ]);
+        if (orFilter) followupsQuery = followupsQuery.or(orFilter);
       }
 
       const { data: followups } = await followupsQuery
@@ -511,8 +545,11 @@ export class KraService {
           .select('id')
           .gte('visited_at', weekStart.toISOString());
 
-        if (!isAdmin) {
-          visitQuery = visitQuery.eq('salesperson_phone', salespersonPhone);
+        if (!isAdmin && salespersonPhone) {
+          const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+            'salesperson_phone',
+          ]);
+          if (orFilter) visitQuery = visitQuery.or(orFilter);
         }
 
         const { data: weekVisits } = await visitQuery;
@@ -543,8 +580,11 @@ export class KraService {
         .gte('reported_at', monthStart)
         .lte('reported_at', monthEnd);
 
-      if (!isAdmin) {
-        complaintsQuery = complaintsQuery.eq('reported_by', salespersonPhone);
+      if (!isAdmin && salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (orFilter) complaintsQuery = complaintsQuery.or(orFilter);
       }
 
       const { data: oldComplaints } = await complaintsQuery.limit(5);
@@ -573,8 +613,11 @@ export class KraService {
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
-      if (!isAdmin) {
-        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+      if (!isAdmin && salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) dealsQuery = dealsQuery.or(orFilter);
       }
 
       const { data: monthDeals } = await dealsQuery;
@@ -610,7 +653,7 @@ export class KraService {
   }
 
   async getSheets(
-    salespersonPhone?: string,
+    salespersonPhone?: string[] | string,
     month?: number,
     year?: number,
     from?: string,
@@ -670,31 +713,42 @@ export class KraService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr)
+          dealsQuery = dealsQuery.or(`${dealsOr},salesperson_phone.is.null`);
 
-        dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},salesperson_phone.is.null`,
-        );
-        inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
-        kraLogsQuery = kraLogsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        paymentsQuery = paymentsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        visitsQuery = visitsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        complaintsQuery = complaintsQuery.or(
-          `reported_by.eq.${p10},reported_by.eq.${p12}`,
-        );
-        followupsQuery = followupsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
+        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'sender_phone',
+        ]);
+        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
+
+        const kraOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (kraOr) kraLogsQuery = kraLogsQuery.or(kraOr);
+
+        const paymentsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (paymentsOr) paymentsQuery = paymentsQuery.or(paymentsOr);
+
+        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
+
+        const complaintsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (complaintsOr) complaintsQuery = complaintsQuery.or(complaintsOr);
+
+        const followupsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (followupsOr) followupsQuery = followupsQuery.or(followupsOr);
       }
 
       // Also fetch recurring_customers to get real contact_person/industry for KRA 2
@@ -704,12 +758,13 @@ export class KraService {
           'customer_name, contact_person, industry, notes, customer_address, customer_phone, created_at',
         );
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        customersQuery = customersQuery.or(
-          `assigned_salesperson_phone.eq.${p10},assigned_salesperson_phone.eq.${p12},assigned_salesperson_phone.is.null`,
-        );
+        const recurringOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'assigned_salesperson_phone',
+        ]);
+        if (recurringOr)
+          customersQuery = customersQuery.or(
+            `${recurringOr},assigned_salesperson_phone.is.null`,
+          );
       }
 
       const [
@@ -1128,12 +1183,10 @@ export class KraService {
           .order('synced_at', { ascending: false });
 
         if (salespersonPhone) {
-          const cleanDigits = salespersonPhone.replace(/\D/g, '');
-          const p10 = cleanDigits.slice(-10);
-          const p12 = '91' + p10;
-          syncLogQuery = syncLogQuery.or(
-            `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-          );
+          const syncOr = buildMultiFieldOrFilter(salespersonPhone, [
+            'salesperson_phone',
+          ]);
+          if (syncOr) syncLogQuery = syncLogQuery.or(syncOr);
         }
         const { data: syncData } = await syncLogQuery;
         if (syncData && syncData.length > 0) {
@@ -1517,15 +1570,17 @@ export class KraService {
     }
   }
 
-  async getComplaints(salespersonPhone?: string) {
+  async getComplaints(salespersonPhone?: string[] | string) {
     let query = this.supabase
       .from('complaints')
       .select('*')
       .order('reported_at', { ascending: false });
 
     if (salespersonPhone) {
-      const clean = salespersonPhone.replace(/\D/g, '').slice(-10);
-      query = query.or(`reported_by.eq.${clean},reported_by.eq.91${clean}`);
+      const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+        'reported_by',
+      ]);
+      if (orFilter) query = query.or(orFilter);
     }
 
     const { data, error } = await query;
@@ -1605,17 +1660,17 @@ export class KraService {
     return data;
   }
 
-  async getVisits(salespersonPhone?: string) {
+  async getVisits(salespersonPhone?: string[] | string) {
     let query = this.supabase
       .from('customer_visits')
       .select('*')
       .order('visited_at', { ascending: false });
 
     if (salespersonPhone) {
-      const clean = salespersonPhone.replace(/\D/g, '').slice(-10);
-      query = query.or(
-        `salesperson_phone.eq.${clean},salesperson_phone.eq.91${clean}`,
-      );
+      const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+        'salesperson_phone',
+      ]);
+      if (orFilter) query = query.or(orFilter);
     }
 
     const [{ data: visits }, { data: customers }] = await Promise.all([

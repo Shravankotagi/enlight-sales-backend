@@ -11,13 +11,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InquiriesService } from './inquiries.service';
+import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('inquiries')
 @UseGuards(JwtAuthGuard)
 export class InquiriesController {
-  constructor(private readonly inquiriesService: InquiriesService) {}
+  constructor(
+    private readonly inquiriesService: InquiriesService,
+    private readonly employeesService: EmployeesService,
+  ) {}
 
   @Get()
   async findAll(
@@ -27,16 +31,21 @@ export class InquiriesController {
     @Query('to') to?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salespersonPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    if (Array.isArray(phones) && phones.length === 0) {
+      return [];
+    }
 
     return this.inquiriesService.findAll({
       status,
       from,
       to,
-      salespersonPhone,
+      salespersonPhones: phones || undefined,
     });
   }
 
@@ -45,12 +54,17 @@ export class InquiriesController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salespersonPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
-    return this.inquiriesService.findReviewQueue(salespersonPhone);
+    if (Array.isArray(phones) && phones.length === 0) {
+      return [];
+    }
+
+    return this.inquiriesService.findReviewQueue(phones || undefined);
   }
 
   @Get('stats')
@@ -58,12 +72,30 @@ export class InquiriesController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salespersonPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
-    return this.inquiriesService.getStats(salespersonPhone);
+    if (Array.isArray(phones) && phones.length === 0) {
+      return {
+        total: 0,
+        new: 0,
+        processing: 0,
+        quotation_sent: 0,
+        order_won: 0,
+        lost: 0,
+        review_needed: 0,
+      };
+    }
+
+    return this.inquiriesService.getStats(phones || undefined);
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    return this.inquiriesService.findOne(id);
   }
 
   @Patch(':id/status')

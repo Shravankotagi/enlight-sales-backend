@@ -9,13 +9,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { KraService } from './kra.service';
+import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('kra')
 @UseGuards(JwtAuthGuard)
 export class KraController {
-  constructor(private readonly kraService: KraService) {}
+  constructor(
+    private readonly kraService: KraService,
+    private readonly employeesService: EmployeesService,
+  ) {}
 
   @Get('dashboard')
   async getDashboard(
@@ -26,13 +30,14 @@ export class KraController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const salesperson_phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     return this.kraService.getDashboard(
-      salesperson_phone,
+      phones || undefined,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
       from,
@@ -49,13 +54,14 @@ export class KraController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const salesperson_phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     return this.kraService.getSheets(
-      salesperson_phone,
+      phones || undefined,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
       from,
@@ -69,14 +75,15 @@ export class KraController {
     @Query('kra_number') kraNumber?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salesperson_phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     return this.kraService.getLogs(
       kraNumber ? parseInt(kraNumber) : undefined,
-      salesperson_phone,
+      phones || undefined,
     );
   }
 
@@ -91,19 +98,15 @@ export class KraController {
     const parsedMonth = month ? parseInt(month) : undefined;
     const parsedYear = year ? parseInt(year) : undefined;
 
-    // If admin is impersonating, use the override phone and treat them as a salesperson
-    if (isAdmin && salespersonPhoneOverride) {
-      return this.kraService.getActionQueue(
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
         salespersonPhoneOverride,
-        false,
-        parsedMonth,
-        parsedYear,
       );
-    }
 
     return this.kraService.getActionQueue(
-      employee.phone,
-      isAdmin,
+      phones || employee.phone,
+      isAdmin && !salespersonPhoneOverride,
       parsedMonth,
       parsedYear,
     );
@@ -114,11 +117,13 @@ export class KraController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const targetPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
-    return this.kraService.getComplaints(targetPhone);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.kraService.getComplaints(phones || undefined);
   }
 
   @Post('complaints')
@@ -143,11 +148,13 @@ export class KraController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const targetPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
-    return this.kraService.getVisits(targetPhone);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.kraService.getVisits(phones || undefined);
   }
 
   @Post('visits')

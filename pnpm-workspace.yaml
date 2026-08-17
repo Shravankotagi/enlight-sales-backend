@@ -1,7 +1,0 @@
-packages:
-  - '.'
-
-allowBuilds:
-  '@compodoc/compodoc': false
-  '@swc/core': set this to true or false
-  bcrypt: true

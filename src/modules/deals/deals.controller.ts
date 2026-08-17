@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -11,20 +12,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { DealsService } from './deals.service';
+import { EmployeesService, phoneInList } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
-
-function phoneMatches(phone1?: string, phone2?: string): boolean {
-  if (!phone1 || !phone2) return false;
-  const digits1 = phone1.replace(/\D/g, '').slice(-10);
-  const digits2 = phone2.replace(/\D/g, '').slice(-10);
-  return digits1.length === 10 && digits1 === digits2;
-}
 
 @Controller('deals')
 @UseGuards(JwtAuthGuard)
 export class DealsController {
-  constructor(private readonly dealsService: DealsService) {}
+  constructor(
+    private readonly dealsService: DealsService,
+    private readonly employeesService: EmployeesService,
+  ) {}
 
   @Get()
   async findAll(
@@ -34,18 +32,19 @@ export class DealsController {
     @Query('to') to?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const targetPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     const data = await this.dealsService.findAll({ stage, from, to });
 
-    if (targetPhone) {
+    if (phones) {
       return data.filter(
         (d: any) =>
-          phoneMatches(d.salesperson_phone, targetPhone) ||
-          phoneMatches(d.customer_phone, targetPhone),
+          phoneInList(d.salesperson_phone, phones) ||
+          phoneInList(d.customer_phone, phones),
       );
     }
     return data;
@@ -58,17 +57,18 @@ export class DealsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const targetPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     const deals = await this.dealsService.findAll({ from, to });
-    const filtered = targetPhone
+    const filtered = phones
       ? deals.filter(
           (d: any) =>
-            phoneMatches(d.salesperson_phone, targetPhone) ||
-            phoneMatches(d.customer_phone, targetPhone),
+            phoneInList(d.salesperson_phone, phones) ||
+            phoneInList(d.customer_phone, phones),
         )
       : deals;
 
@@ -98,21 +98,22 @@ export class DealsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const targetPhone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     const deals = await this.dealsService.findAll({ from, to });
     const activeDeals = deals.filter(
       (d: any) => !['won', 'lost'].includes(d.stage),
     );
 
-    const filtered = targetPhone
+    const filtered = phones
       ? activeDeals.filter(
           (d: any) =>
-            phoneMatches(d.salesperson_phone, targetPhone) ||
-            phoneMatches(d.customer_phone, targetPhone),
+            phoneInList(d.salesperson_phone, phones) ||
+            phoneInList(d.customer_phone, phones),
         )
       : activeDeals;
 
@@ -148,5 +149,22 @@ export class DealsController {
   @Post('order')
   async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.dealsService.createOrder(body, employee.phone);
+  }
+
+  @Post('process-po')
+  async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
+    return this.dealsService.processPo(body, employee.phone);
+  }
+
+  @Post('process-po-internal')
+  async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
+    const phone = body.salesperson_phone || employee?.phone || '910000000000';
+    return this.dealsService.processPo(body, phone);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async deleteDeal(@Param('id') id: string) {
+    return this.dealsService.deleteDeal(id);
   }
 }

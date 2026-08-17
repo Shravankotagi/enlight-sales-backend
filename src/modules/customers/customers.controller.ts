@@ -8,13 +8,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
+import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
 export class CustomersController {
-  constructor(private readonly customersService: CustomersService) {}
+  constructor(
+    private readonly customersService: CustomersService,
+    private readonly employeesService: EmployeesService,
+  ) {}
 
   @Post('import')
   async importClients(
@@ -44,12 +48,13 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salesperson_phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
-    return this.customersService.findAll(salesperson_phone);
+    return this.customersService.findAll(phones || undefined);
   }
 
   @Get('churn-risk')
@@ -57,12 +62,13 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const salesperson_phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
-    return this.customersService.getChurnRisk(salesperson_phone);
+    return this.customersService.getChurnRisk(phones || undefined);
   }
 
   @Get('reorder-queue')
@@ -70,11 +76,13 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
-    return this.customersService.getReorderQueue(phone);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.customersService.getReorderQueue(phones || undefined);
   }
 
   @Get('loss-analytics')
@@ -82,16 +90,20 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    const phone =
-      employee.role === 'admin'
-        ? salespersonPhoneOverride || undefined
-        : employee.phone;
-    return this.customersService.getLossAnalytics(phone);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.customersService.getLossAnalytics(phones || undefined);
   }
 
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
-    const sp = employee.role === 'admin' ? undefined : employee.phone;
-    return this.customersService.findOne(id, sp);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+
+    return this.customersService.findOne(id, phones || undefined);
   }
 }

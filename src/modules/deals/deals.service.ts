@@ -18,6 +18,9 @@ export class DealsService {
     to?: string;
   }) {
     try {
+      // For won deals (Orders tab), sort by won_at; for others, sort by created_at
+      const isWonQuery = filters?.stage === 'won';
+
       let query = this.supabase
         .from('deals')
         .select(
@@ -27,7 +30,7 @@ export class DealsService {
         `,
         )
         .neq('inquiry_type', 'unknown')
-        .order('created_at', { ascending: false });
+        .order(isWonQuery ? 'won_at' : 'created_at', { ascending: false });
 
       if (filters?.stage) {
         query = query.eq('stage', filters.stage);
@@ -41,18 +44,37 @@ export class DealsService {
         );
       }
       if (filters?.from) {
-        query = query.gte('created_at', filters.from);
+        // For won deals: filter by won_at (when deal was actually won/received by bot)
+        // For other deals: filter by created_at
+        const dateField = isWonQuery ? 'won_at' : 'created_at';
+        query = query.gte(dateField, filters.from);
       }
       if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
-        query = query.lte('created_at', toEnd);
+        const dateField = isWonQuery ? 'won_at' : 'created_at';
+        query = query.lte(dateField, toEnd);
       }
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+
+      // Clean lightweight list with instant metadata (0ms load)
+      const lightweightDeals = (data || []).map((d: any) => {
+        const hasMedia = Boolean(
+          d.inquiry_id ||
+          d.po_number ||
+          (Array.isArray(d.media_urls) && d.media_urls.length > 0),
+        );
+        return {
+          ...d,
+          has_media: hasMedia,
+          media_urls: hasMedia ? ['attached_document'] : [],
+        };
+      });
+
+      return lightweightDeals;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -67,6 +89,101 @@ export class DealsService {
         .eq('id', id)
         .single();
       if (error) throw error;
+
+      // Enrich with media_urls from inquiries if available
+      if (data) {
+        if (data.inquiry_id) {
+          const { data: inq } = await this.supabase
+            .from('inquiries')
+            .select('media_urls')
+            .eq('id', data.inquiry_id)
+            .limit(1)
+            .single();
+          if (inq && inq.media_urls) {
+            data.media_urls = inq.media_urls;
+          }
+        }
+
+        const hasValidMedia =
+          Array.isArray(data.media_urls) &&
+          data.media_urls.length > 0 &&
+          data.media_urls.some(
+            (u: any) =>
+              typeof u === 'string' &&
+              (u.startsWith('data:') || u.startsWith('http')),
+          );
+
+        if (!hasValidMedia) {
+          const { data: allMediaInqs } = await this.supabase
+            .from('inquiries')
+            .select(
+              'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
+            )
+            .not('media_urls', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+          const dName = (data.customer_name || '').toLowerCase().trim();
+          const dPo = (data.po_number || '').toLowerCase().trim();
+          const dClean = dName.replace(/[^a-z0-9]/g, ' ');
+          const dWords = dClean
+            .split(/\s+/)
+            .filter(
+              (w) =>
+                w.length >= 3 &&
+                ![
+                  'pvt',
+                  'ltd',
+                  'private',
+                  'limited',
+                  'enterprises',
+                  'steels',
+                  'steel',
+                ].includes(w),
+            );
+
+          const matched = (allMediaInqs || []).find((mi: any) => {
+            if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
+              return false;
+            const sName = (mi.sender_name || '').toLowerCase().trim();
+            const custJsonName = (
+              mi.ai_extraction_json?.customer?.name ||
+              mi.ai_extraction_json?.companyName ||
+              ''
+            )
+              .toLowerCase()
+              .trim();
+            const rawTxt = (mi.raw_text || '').toLowerCase();
+            const poJson = (
+              mi.ai_extraction_json?.po_number || ''
+            ).toLowerCase();
+
+            const combinedText = `${sName} ${custJsonName} ${rawTxt}`;
+
+            const directNameMatch =
+              dName.length > 3 &&
+              (sName.includes(dName) ||
+                custJsonName.includes(dName) ||
+                rawTxt.includes(dName));
+
+            const wordMatch =
+              dWords.length > 0 && dWords.some((w) => combinedText.includes(w));
+
+            const poMatches =
+              dPo.length > 3 && (rawTxt.includes(dPo) || poJson.includes(dPo));
+
+            return directNameMatch || wordMatch || poMatches;
+          });
+
+          if (
+            matched &&
+            Array.isArray(matched.media_urls) &&
+            matched.media_urls.length > 0
+          ) {
+            data.media_urls = matched.media_urls;
+          }
+        }
+      }
 
       // Enrich with actual customer phone from recurring_customers
       // (deals.customer_phone stores salesperson phone, not customer phone)
@@ -242,59 +359,328 @@ export class DealsService {
     }
   }
 
-  async createOrder(data: any, salespersonPhone?: string) {
-    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const poNumber = data.po_number || `PO-${todayStr}-${randomNum}`;
-    const now = new Date().toISOString();
+  async processPo(data: any, salespersonPhone?: string) {
+    try {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const todayStr = nowIso.slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      const poNumber = data.po_number?.trim() || `PO-${todayStr}-${randomNum}`;
+      const poDate = data.po_date || nowIso.split('T')[0];
 
-    const dealPayload = {
-      customer_name: data.customer_name,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_phone: data.customer_phone || '',
-      stage: 'won',
-      won_at: now,
-      po_number: poNumber,
-      po_date: data.po_date || now.split('T')[0],
-      total_amount: Number(data.total_amount) || 0,
-      delivery_location: data.delivery_location || '',
-      delivery_date: data.delivery_date || null,
-      inquiry_type: 'inquiry',
-      created_at: now,
-    };
+      const customerName = data.customer_name?.trim() || 'Valued Customer';
+      const customerPhone = data.customer_phone || '';
+      const phone =
+        salespersonPhone || data.salesperson_phone || '910000000000';
 
-    const { data: deal, error } = await this.supabase
-      .from('deals')
-      .insert(dealPayload)
-      .select()
-      .single();
+      const lineItems = data.line_items || data.items || [];
+      let totalAmount = Number(data.total_amount) || 0;
+      if (
+        totalAmount <= 0 &&
+        Array.isArray(lineItems) &&
+        lineItems.length > 0
+      ) {
+        totalAmount = lineItems.reduce(
+          (sum: number, item: any) =>
+            sum +
+            (Number(item.amount) ||
+              Math.round(Number(item.quantity || 0) * Number(item.rate || 0))),
+          0,
+        );
+      }
 
-    if (error) throw error;
+      const deliveryLocation = data.delivery_location || '';
+      const paymentTerms = data.payment_terms || '';
 
-    if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-      for (const item of data.items) {
-        await this.supabase.from('deal_items').insert({
-          deal_id: deal.id,
-          sku_text: item.sku_text || item.product_name || 'Metal Material',
+      // 1. If media_urls are provided without inquiry_id, save attachment in inquiries table so it's permanently stored & viewable
+      let inquiryId = data.inquiry_id || null;
+      if (
+        !inquiryId &&
+        Array.isArray(data.media_urls) &&
+        data.media_urls.length > 0
+      ) {
+        try {
+          const { data: newInq } = await this.supabase
+            .from('inquiries')
+            .insert({
+              source_channel: 'purchase_order',
+              raw_text: `[PO Document Attached: ${poNumber}] ${customerName} - Original PO Document`,
+              media_urls: data.media_urls,
+              customer_name: customerName,
+              customer_phone: customerPhone,
+              salesperson_phone: phone,
+              status: 'confirmed',
+              inquiry_type: 'purchase_order',
+              created_at: nowIso,
+            })
+            .select()
+            .single();
+          if (newInq) {
+            inquiryId = newInq.id;
+          }
+        } catch (inqErr: any) {
+          this.logger.warn(
+            'Non-blocking inquiry media save notice:',
+            inqErr?.message,
+          );
+        }
+      }
+
+      // 2. Try to find existing deal to update
+      let dealId = data.deal_id || null;
+      let existingDeal: any = null;
+
+      if (dealId) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('id', dealId)
+          .single();
+        if (d) existingDeal = d;
+      } else if (inquiryId) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('inquiry_id', inquiryId)
+          .limit(1);
+        if (d && d.length > 0) {
+          existingDeal = d[0];
+          dealId = existingDeal.id;
+        }
+      } else if (customerName) {
+        // Find most recent active deal in pipeline for this customer
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .ilike('customer_name', customerName)
+          .not('stage', 'in', '("won","lost")')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (d && d.length > 0) {
+          existingDeal = d[0];
+          dealId = existingDeal.id;
+        }
+      }
+
+      let savedDeal: any;
+
+      if (existingDeal) {
+        // Update existing deal with new negotiated PO figures & mark WON
+        const { data: updated, error: updErr } = await this.supabase
+          .from('deals')
+          .update({
+            inquiry_id: inquiryId || existingDeal.inquiry_id,
+            stage: 'won',
+            won_at: nowIso,
+            po_number: poNumber,
+            po_date: poDate,
+            total_amount: totalAmount,
+            delivery_location:
+              deliveryLocation || existingDeal.delivery_location,
+            payment_terms: paymentTerms || existingDeal.payment_terms,
+            inquiry_type: 'purchase_order',
+            status: 'auto_created',
+            updated_at: nowIso,
+          })
+          .eq('id', dealId)
+          .select()
+          .single();
+
+        if (updErr) throw updErr;
+        savedDeal = updated;
+      } else {
+        // Create brand new Won Deal
+        const { data: created, error: createErr } = await this.supabase
+          .from('deals')
+          .insert({
+            inquiry_id: inquiryId || null,
+            customer_name: customerName,
+            salesperson_phone: phone,
+            customer_phone: customerPhone,
+            stage: 'won',
+            won_at: nowIso,
+            po_number: poNumber,
+            po_date: poDate,
+            total_amount: totalAmount,
+            delivery_location: deliveryLocation,
+            payment_terms: paymentTerms,
+            inquiry_type: 'purchase_order',
+            status: 'auto_created',
+            overall_confidence: Number(data.overall_confidence) || 0.98,
+            created_at: nowIso,
+          })
+          .select()
+          .single();
+
+        if (createErr) throw createErr;
+        savedDeal = created;
+        dealId = savedDeal.id;
+      }
+
+      // 2. Replace / Update line items with exact PO values
+      if (Array.isArray(lineItems) && lineItems.length > 0) {
+        await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
+
+        const dealItemsToInsert = lineItems.map((item: any) => ({
+          deal_id: dealId,
+          sku_text: item.sku_text || item.product_name || 'Material',
+          dimensions: item.dimensions || null,
           quantity: Number(item.quantity) || null,
           unit: item.unit || 'MT',
           rate: Number(item.rate) || null,
-          amount: Number(item.amount) || null,
-          created_at: now,
-        });
+          amount:
+            Number(item.amount) ||
+            (Number(item.quantity) && Number(item.rate)
+              ? Number(item.quantity) * Number(item.rate)
+              : null),
+          confidence: Number(item.confidence) || 0.98,
+          created_at: nowIso,
+        }));
+
+        await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }
+
+      // 3. If linked to an inquiry, update the inquiry status
+      if (savedDeal.inquiry_id) {
+        await this.supabase
+          .from('inquiries')
+          .update({ status: 'confirmed' })
+          .eq('id', savedDeal.inquiry_id);
+      }
+
+      // 4. Automatically create / update Payment Tracking record
+      try {
+        let creditDays = 30;
+        const termsStr = String(paymentTerms).toLowerCase();
+        const daysMatch = termsStr.match(/(\d+)\s*(?:days|day)/);
+        if (daysMatch) {
+          creditDays = parseInt(daysMatch[1], 10);
+        } else if (
+          termsStr.includes('advance') ||
+          termsStr.includes('immediate') ||
+          termsStr.includes('cash')
+        ) {
+          creditDays = 0;
+        }
+
+        const poDateTime = new Date(poDate).getTime() || now.getTime();
+        const dueDate = new Date(poDateTime + creditDays * 24 * 60 * 60 * 1000);
+        const dueDateStr = dueDate.toISOString().split('T')[0];
+
+        const { data: existingPay } = await this.supabase
+          .from('payment_tracking')
+          .select('id')
+          .eq('deal_id', dealId)
+          .limit(1);
+
+        if (existingPay && existingPay.length > 0) {
+          await this.supabase
+            .from('payment_tracking')
+            .update({
+              invoice_amount: totalAmount,
+              outstanding: totalAmount,
+              due_date: dueDateStr,
+              credit_period_days: creditDays,
+              customer_name: customerName,
+              salesperson_phone: phone,
+              updated_at: nowIso,
+            })
+            .eq('id', existingPay[0].id);
+        } else {
+          await this.supabase.from('payment_tracking').insert({
+            deal_id: dealId,
+            salesperson_phone: phone,
+            customer_name: customerName,
+            invoice_amount: totalAmount,
+            outstanding: totalAmount,
+            status: 'pending',
+            due_date: dueDateStr,
+            credit_period_days: creditDays,
+            created_at: nowIso,
+          });
+        }
+      } catch (payErr: any) {
+        this.logger.warn(
+          'Non-blocking payment tracking notice:',
+          payErr?.message,
+        );
+      }
+
+      // 5. Log to kra_logs for KRA 1 (Final Sales Achievement with exact PO Value)
+      try {
+        await this.supabase.from('kra_logs').insert({
+          kra_number: 1,
+          kra_type: 'order_created',
+          description: `PO Received: ${poNumber} - ${customerName} (₹${totalAmount.toLocaleString('en-IN')}) - Deal Won 🎉`,
+          salesperson_phone: phone,
+          customer_name: customerName,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+          created_at: nowIso,
+        });
+      } catch (kraErr: any) {
+        this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
+      }
+
+      return savedDeal;
+    } catch (error) {
+      this.logger.error('Error in processPo:', error);
+      throw error;
     }
+  }
 
-    // Log KRA 1 achievement
-    await this.supabase.from('kra_logs').insert({
-      kra_number: 1,
-      salesperson_phone: salespersonPhone || '910000000000',
-      customer_name: data.customer_name,
-      action: 'order_created',
-      details: `Created order ${poNumber} for ${data.customer_name} (₹${data.total_amount})`,
-      created_at: now,
-    });
+  async createOrder(data: any, salespersonPhone?: string) {
+    return this.processPo(data, salespersonPhone);
+  }
 
-    return deal;
+  async deleteDeal(id: string) {
+    try {
+      this.logger.log(`Deleting deal ${id} and all associated records...`);
+
+      // 1. Fetch deal to inspect details
+      const { data: deal } = await this.supabase
+        .from('deals')
+        .select('id, inquiry_id, po_number, customer_name')
+        .eq('id', id)
+        .single();
+
+      // 2. Delete deal_items
+      await this.supabase.from('deal_items').delete().eq('deal_id', id);
+
+      // 3. Delete payment_tracking records for this deal
+      await this.supabase.from('payment_tracking').delete().eq('deal_id', id);
+
+      // 4. Delete followup_tasks for this deal if any
+      try {
+        await this.supabase.from('followup_tasks').delete().eq('deal_id', id);
+      } catch (err: any) {
+        this.logger.warn(
+          `Non-blocking followup_tasks cleanup: ${err?.message}`,
+        );
+      }
+
+      // 5. Delete corresponding kra_logs if PO/deal specific
+      if (deal?.po_number) {
+        try {
+          await this.supabase
+            .from('kra_logs')
+            .delete()
+            .ilike('description', `%${deal.po_number}%`);
+        } catch (err: any) {
+          this.logger.warn(`Non-blocking kra_logs cleanup: ${err?.message}`);
+        }
+      }
+
+      // 6. Delete the deal itself
+      const { error } = await this.supabase.from('deals').delete().eq('id', id);
+
+      if (error) throw error;
+
+      this.logger.log(`Deal ${id} successfully deleted.`);
+      return { success: true, message: 'Deal deleted successfully', id };
+    } catch (error) {
+      this.logger.error(`Error deleting deal ${id}:`, error);
+      throw error;
+    }
   }
 }

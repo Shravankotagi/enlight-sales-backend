@@ -1,5 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { phoneInList } from '../employees/employees.service';
+
+function buildMultiFieldOrFilter(
+  salespersonPhones?: string[] | string,
+  fieldNames: string[] = ['salesperson_phone'],
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    for (const field of fieldNames) {
+      parts.push(`${field}.eq.${p10}`, `${field}.eq.${p12}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
 
 @Injectable()
 export class ReportsService {
@@ -28,7 +50,7 @@ export class ReportsService {
   async getMonthlySalesReport(
     month?: number,
     year?: number,
-    salespersonPhone?: string,
+    salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
   ) {
@@ -56,8 +78,9 @@ export class ReportsService {
         .from('deals')
         .select('*')
         .neq('inquiry_type', 'unknown')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        .or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+        );
       let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
@@ -65,15 +88,16 @@ export class ReportsService {
         .lte('created_at', end);
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
-        inquiriesQuery = inquiriesQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
+
+        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'sender_phone',
+        ]);
+        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
       }
 
       const [dealsResult, inquiriesResult] = await Promise.all([
@@ -93,11 +117,15 @@ export class ReportsService {
         (d) => !['won', 'lost'].includes(d.stage),
       );
 
-      const totalValue = wonDeals.reduce(
+      const pipelineValue = pendingDeals.reduce(
         (sum, d) => sum + (d.total_amount || 0),
         0,
       );
-      const wonValue = totalValue; // wonValue matches totalValue now
+      const wonValue = wonDeals.reduce(
+        (sum, d) => sum + (d.total_amount || 0),
+        0,
+      );
+      const totalValue = wonValue; // wonValue matches totalValue now
 
       // Group deals by customer (only count won deals for sales revenue value)
       const byCustomer = wonDeals.reduce(
@@ -113,11 +141,13 @@ export class ReportsService {
         {} as Record<string, any>,
       );
 
-      // Group by inquiry type (only count won deals for product type revenue breakdown)
+      // Group by inquiry type (only count won deals for sales revenue value)
       const byType = wonDeals.reduce(
         (acc, deal) => {
-          const type = deal.inquiry_type || 'unknown';
-          if (!acc[type]) acc[type] = { type, count: 0, value: 0 };
+          const type = deal.inquiry_type || 'other';
+          if (!acc[type]) {
+            acc[type] = { type, count: 0, value: 0 };
+          }
           acc[type].count++;
           acc[type].value += deal.total_amount || 0;
           return acc;
@@ -125,25 +155,32 @@ export class ReportsService {
         {} as Record<string, any>,
       );
 
-      // Lost reason analysis
+      // Lost reasons
       const lostReasons = lostDeals.reduce(
         (acc, deal) => {
-          const reason = deal.lost_reason || 'unknown';
-          acc[reason] = (acc[reason] || 0) + 1;
+          const reason = deal.lost_reason || 'Not Specified';
+          if (!acc[reason]) {
+            acc[reason] = 0;
+          }
+          acc[reason]++;
           return acc;
         },
         {} as Record<string, number>,
       );
 
       return {
-        period: { month: monthName, year: y, start, end },
+        period: { month: monthName, year: y },
         summary: {
-          total_deals: deals.length,
-          won: wonDeals.length,
-          lost: lostDeals.length,
-          pending: pendingDeals.length,
-          total_value: totalValue,
+          total_revenue: totalValue,
+          won_revenue: wonValue,
+          pipeline_value: pipelineValue,
+          total_value: pipelineValue > 0 ? pipelineValue : totalValue,
           won_value: wonValue,
+          won: wonDeals.length,
+          deals_won: wonDeals.length,
+          deals_lost: lostDeals.length,
+          deals_pending: pendingDeals.length,
+          total_deals: deals.length,
           conversion_rate:
             deals.length > 0
               ? Math.round((wonDeals.length / deals.length) * 100)
@@ -170,6 +207,7 @@ export class ReportsService {
     year?: number,
     from?: string,
     to?: string,
+    allowedPhones?: string[],
   ) {
     try {
       let start: string;
@@ -257,7 +295,7 @@ export class ReportsService {
         (emp) => emp.phone && emp.role === 'salesperson',
       );
 
-      const phones = new Set<string>(
+      let phones = new Set<string>(
         [
           ...salespersonEmployees.map((e) => e.phone),
           ...visits.map((v) => v.salesperson_phone),
@@ -265,6 +303,13 @@ export class ReportsService {
           ...deals.map((d) => d.salesperson_phone),
         ].filter(Boolean),
       );
+
+      // If allowedPhones is specified (e.g. for Sales Manager), scope strictly
+      if (allowedPhones && allowedPhones.length > 0) {
+        phones = new Set(
+          Array.from(phones).filter((p) => phoneInList(p, allowedPhones)),
+        );
+      }
 
       const salespersonReports = Array.from(phones).map((phone) => {
         const spDeals = deals.filter((d) => d.salesperson_phone === phone);
@@ -318,16 +363,13 @@ export class ReportsService {
             resolved: spComplaints.filter((c) => c.status === 'resolved')
               .length,
           },
-          kra_score: Math.round(
-            Math.min(spDeals.length / 5, 1) * 20 +
-              Math.min(spVisits.length / 40, 1) * 20 +
-              Math.min(newCustomers / 3, 1) * 20 +
-              Math.min(collectedPayments.length / 5, 1) * 20 +
-              (spComplaints.length === 0
-                ? 1
-                : spComplaints.filter((c) => c.status === 'resolved').length /
-                  spComplaints.length) *
-                20,
+          kra_score: Math.min(
+            100,
+            (wonDeals.length > 0 ? 30 : 0) +
+              Math.min(30, Math.round((spVisits.length / 40) * 30)) +
+              Math.min(20, (newCustomers / 3) * 20) +
+              (collectedPayments.length > 0 ? 20 : 0) -
+              spComplaints.filter((c) => c.status !== 'resolved').length * 20,
           ),
         };
       });
@@ -347,7 +389,7 @@ export class ReportsService {
   async getFunnelReport(
     month?: number,
     year?: number,
-    salespersonPhone?: string,
+    salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
   ) {
@@ -371,13 +413,21 @@ export class ReportsService {
         y = range.year;
       }
 
-      const dealsQuery = this.supabase
+      let dealsQuery = this.supabase
         .from('deals')
         .select('*')
         .neq('inquiry_type', 'unknown')
         .or(
           `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
         );
+
+      if (salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+          'customer_phone',
+        ]);
+        if (orFilter) dealsQuery = dealsQuery.or(orFilter);
+      }
 
       const { data: deals } = await dealsQuery;
       const safeDeals = deals || [];
@@ -437,7 +487,7 @@ export class ReportsService {
   async getSkuReport(
     month?: number,
     year?: number,
-    salespersonPhone?: string,
+    salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
   ) {
@@ -470,12 +520,10 @@ export class ReportsService {
         .eq('deals.stage', 'won');
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        itemsQuery = itemsQuery.or(
-          `deals.salesperson_phone.eq.${p10},deals.salesperson_phone.eq.${p12}`,
-        );
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'deals.salesperson_phone',
+        ]);
+        if (orFilter) itemsQuery = itemsQuery.or(orFilter);
       }
 
       const { data: items, error } = await itemsQuery;

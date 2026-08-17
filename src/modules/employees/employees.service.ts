@@ -1,5 +1,28 @@
-import { Injectable, Logger, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+
+export function normalizePhone(phone?: string): string {
+  if (!phone) return '';
+  return phone.replace(/\D/g, '').slice(-10);
+}
+
+export function phoneMatches(phone1?: string, phone2?: string): boolean {
+  if (!phone1 || !phone2) return false;
+  const p1 = normalizePhone(phone1);
+  const p2 = normalizePhone(phone2);
+  return p1.length === 10 && p1 === p2;
+}
+
+export function phoneInList(phone?: string, list?: string[] | null): boolean {
+  if (!phone || !list || list.length === 0) return false;
+  const target = normalizePhone(phone);
+  return list.some((p) => normalizePhone(p) === target);
+}
 
 @Injectable()
 export class EmployeesService {
@@ -11,16 +34,53 @@ export class EmployeesService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll() {
+  async findAll(currentEmployee?: any) {
     try {
       const { data, error } = await this.supabase
         .from('employees')
-        .select(
-          'id, employee_id, name, phone, email, role, is_active, created_at',
-        )
+        .select('*')
         .order('employee_id', { ascending: true });
       if (error) throw error;
-      return data;
+
+      const allEmployees = data || [];
+
+      // If no current employee or admin, return all
+      if (!currentEmployee || currentEmployee.role === 'admin') {
+        return allEmployees;
+      }
+
+      // If Sales Manager: return self + salespersons assigned under this manager
+      if (
+        currentEmployee.role === 'sales_manager' ||
+        currentEmployee.role === 'manager'
+      ) {
+        const myId = currentEmployee.id;
+        const myPhone = normalizePhone(currentEmployee.phone);
+
+        return allEmployees.filter((emp: any) => {
+          if (emp.id === myId || normalizePhone(emp.phone) === myPhone) {
+            return true;
+          }
+          if (emp.manager_id && emp.manager_id === myId) {
+            return true;
+          }
+          if (
+            emp.manager_phone &&
+            normalizePhone(emp.manager_phone) === myPhone
+          ) {
+            return true;
+          }
+          return false;
+        });
+      }
+
+      // If Salesperson: return only self
+      const selfPhone = normalizePhone(currentEmployee.phone);
+      return allEmployees.filter(
+        (emp: any) =>
+          emp.id === currentEmployee.id ||
+          normalizePhone(emp.phone) === selfPhone,
+      );
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -68,12 +128,84 @@ export class EmployeesService {
     }
   }
 
+  // Get assigned salespersons for a Sales Manager
+  async getAssignedSalespersons(
+    managerId?: string,
+    managerPhone?: string,
+  ): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('*')
+        .eq('is_active', true);
+
+      if (error || !data) return [];
+
+      const normPhone = normalizePhone(managerPhone);
+      return data.filter((emp: any) => {
+        if (emp.role === 'admin' || emp.role === 'sales_manager') return false;
+        if (managerId && emp.manager_id === managerId) return true;
+        if (normPhone && normalizePhone(emp.manager_phone) === normPhone)
+          return true;
+        return false;
+      });
+    } catch (error) {
+      this.logger.error('Error in getAssignedSalespersons:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Determine the authorized list of salesperson phones for any given API request:
+   * - Admin: Returns requested override phone or null (unrestricted/all)
+   * - Sales Manager: Returns requested phone (if in assigned team) or array of all team phones
+   * - Salesperson: Strictly returns [employee.phone]
+   */
+  async getAccessibleSalespersonPhones(
+    employee: any,
+    requestedPhoneOverride?: string,
+  ): Promise<{ phones: string[] | null; isManagerView?: boolean }> {
+    if (!employee || employee.role === 'admin') {
+      if (requestedPhoneOverride) {
+        return { phones: [requestedPhoneOverride] };
+      }
+      return { phones: null };
+    }
+
+    if (employee.role === 'sales_manager' || employee.role === 'manager') {
+      const assigned = await this.getAssignedSalespersons(
+        employee.id,
+        employee.phone,
+      );
+      const teamPhones = Array.from(
+        new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
+      );
+
+      if (requestedPhoneOverride) {
+        const isAllowed = phoneInList(requestedPhoneOverride, teamPhones);
+        if (!isAllowed) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view data for this salesperson.',
+          );
+        }
+        return { phones: [requestedPhoneOverride] };
+      }
+
+      return { phones: teamPhones, isManagerView: true };
+    }
+
+    // Default Salesperson: strictly own phone
+    return { phones: [employee.phone] };
+  }
+
   async create(dto: {
     employee_id: string;
     name: string;
     phone: string;
     email?: string;
     role?: string;
+    manager_id?: string;
+    manager_phone?: string;
   }) {
     try {
       // Check duplicate phone
@@ -90,17 +222,22 @@ export class EmployeesService {
         );
       }
 
+      const insertPayload: any = {
+        employee_id: dto.employee_id,
+        name: dto.name,
+        phone: dto.phone,
+        email: dto.email || null,
+        role: dto.role || 'salesperson',
+        is_active: true,
+        created_at: new Date().toISOString(),
+      };
+
+      if (dto.manager_id) insertPayload.manager_id = dto.manager_id;
+      if (dto.manager_phone) insertPayload.manager_phone = dto.manager_phone;
+
       const { data, error } = await this.supabase
         .from('employees')
-        .insert({
-          employee_id: dto.employee_id,
-          name: dto.name,
-          phone: dto.phone,
-          email: dto.email || null,
-          role: dto.role || 'salesperson',
-          is_active: true,
-          created_at: new Date().toISOString(),
-        })
+        .insert(insertPayload)
         .select()
         .single();
 
@@ -121,6 +258,8 @@ export class EmployeesService {
       email: string;
       role: string;
       is_active: boolean;
+      manager_id: string | null;
+      manager_phone: string | null;
     }>,
   ) {
     try {
@@ -159,15 +298,19 @@ export class EmployeesService {
     try {
       const { data } = await this.supabase
         .from('employees')
-        .select('employee_id')
-        .order('employee_id', { ascending: false })
-        .limit(1);
+        .select('employee_id');
 
       if (!data || data.length === 0) return 'EMP001';
 
-      const last = data[0].employee_id;
-      const num = parseInt(last.replace('EMP', '')) + 1;
-      return `EMP${String(num).padStart(3, '0')}`;
+      const nums = data
+        .map((d: any) => {
+          const match = d.employee_id?.match(/EMP(\d+)/i);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter((n: number) => !isNaN(n) && n > 0);
+
+      const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
+      return `EMP${String(maxNum + 1).padStart(3, '0')}`;
     } catch (error) {
       this.logger.error('Error in generateNextEmployeeId:', error);
       return 'EMP001';

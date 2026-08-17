@@ -1,3 +1,11 @@
+import WebSocket from 'ws';
+if (typeof (globalThis as any).WebSocket === 'undefined') {
+  (globalThis as any).WebSocket = WebSocket;
+}
+if (typeof (global as any).WebSocket === 'undefined') {
+  (global as any).WebSocket = WebSocket;
+}
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule } from '@nestjs/swagger';
