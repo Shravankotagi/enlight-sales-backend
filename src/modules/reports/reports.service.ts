@@ -160,12 +160,12 @@ export class ReportsService {
         (acc, deal) => {
           const reason = deal.lost_reason || 'Not Specified';
           if (!acc[reason]) {
-            acc[reason] = { reason, count: 0 };
+            acc[reason] = 0;
           }
-          acc[reason].count++;
+          acc[reason]++;
           return acc;
         },
-        {} as Record<string, any>,
+        {} as Record<string, number>,
       );
 
       return {
