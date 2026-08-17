@@ -72,9 +72,46 @@ export class InquiriesService {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+
+      // Sanitize heavy base64 strings in list view so list payload is < 60KB
+      const lightweightData = (data || []).map((item: any) => {
+        if (Array.isArray(item.media_urls) && item.media_urls.length > 0) {
+          const sanitizedUrls = item.media_urls.map((url: string) => {
+            if (typeof url === 'string' && url.startsWith('data:')) {
+              return 'attached_document';
+            }
+            return url;
+          });
+          return {
+            ...item,
+            media_urls: sanitizedUrls,
+            has_media: true,
+          };
+        }
+        return {
+          ...item,
+          has_media: false,
+        };
+      });
+
+      return lightweightData;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
+      throw error;
+    }
+  }
+
+  async findOne(id: string) {
+    try {
+      const { data, error } = await this.supabase
+        .from('inquiries')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      this.logger.error(`Error in findOne(${id}):`, error);
       throw error;
     }
   }
@@ -98,7 +135,28 @@ export class InquiriesService {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+
+      const lightweightData = (data || []).map((item: any) => {
+        if (Array.isArray(item.media_urls) && item.media_urls.length > 0) {
+          const sanitizedUrls = item.media_urls.map((url: string) => {
+            if (typeof url === 'string' && url.startsWith('data:')) {
+              return 'attached_document';
+            }
+            return url;
+          });
+          return {
+            ...item,
+            media_urls: sanitizedUrls,
+            has_media: true,
+          };
+        }
+        return {
+          ...item,
+          has_media: false,
+        };
+      });
+
+      return lightweightData;
     } catch (error) {
       this.logger.error('Error in findReviewQueue:', error);
       throw error;

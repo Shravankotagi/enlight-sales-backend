@@ -66,6 +66,11 @@ export class InquiriesController {
     return this.inquiriesService.getStats(salespersonPhone);
   }
 
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    return this.inquiriesService.findOne(id);
+  }
+
   @Patch(':id/status')
   @HttpCode(HttpStatus.OK)
   async updateStatus(

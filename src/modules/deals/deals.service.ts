@@ -134,7 +134,23 @@ export class DealsService {
         }
       }
 
-      return data;
+      // Sanitize heavy base64 strings in list view so list payload is < 60KB
+      const lightweightDeals = (data || []).map((d: any) => {
+        const hasMedia = Array.isArray(d.media_urls) && d.media_urls.length > 0;
+        return {
+          ...d,
+          has_media: hasMedia,
+          media_urls: hasMedia
+            ? d.media_urls.map((u: string) =>
+                typeof u === 'string' && u.startsWith('data:')
+                  ? 'attached_document'
+                  : u,
+              )
+            : [],
+        };
+      });
+
+      return lightweightDeals;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -164,20 +180,44 @@ export class DealsService {
           }
         }
 
-        if (
-          (!data.media_urls || data.media_urls.length === 0) &&
-          data.customer_name
-        ) {
-          const { data: matchedInq } = await this.supabase
+        if (!data.media_urls || data.media_urls.length === 0) {
+          const { data: allMediaInqs } = await this.supabase
             .from('inquiries')
-            .select('media_urls')
-            .ilike('raw_text', `%${data.customer_name}%`)
+            .select(
+              'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
+            )
             .not('media_urls', 'is', null)
             .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-          if (matchedInq && matchedInq.media_urls) {
-            data.media_urls = matchedInq.media_urls;
+            .limit(100);
+
+          const dName = (data.customer_name || '').toLowerCase().trim();
+          const dPo = (data.po_number || '').toLowerCase().trim();
+
+          const matched = (allMediaInqs || []).find((mi: any) => {
+            if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
+              return false;
+            const sName = (mi.sender_name || '').toLowerCase().trim();
+            const custJsonName = (mi.ai_extraction_json?.customer?.name || '')
+              .toLowerCase()
+              .trim();
+            const rawTxt = (mi.raw_text || '').toLowerCase();
+            const poJson = (
+              mi.ai_extraction_json?.po_number || ''
+            ).toLowerCase();
+
+            const nameMatches =
+              dName.length > 3 &&
+              (sName.includes(dName) ||
+                custJsonName.includes(dName) ||
+                rawTxt.includes(dName));
+            const poMatches =
+              dPo.length > 3 && (rawTxt.includes(dPo) || poJson.includes(dPo));
+
+            return nameMatches || poMatches;
+          });
+
+          if (matched && matched.media_urls) {
+            data.media_urls = matched.media_urls;
           }
         }
       }
