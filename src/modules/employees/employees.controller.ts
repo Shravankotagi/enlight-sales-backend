@@ -11,16 +11,17 @@ import {
 } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('employees')
 @UseGuards(JwtAuthGuard)
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 
-  // GET /employees - list all employees (admin only)
+  // GET /employees - list all employees (scoped by caller role)
   @Get()
-  async findAll() {
-    return this.employeesService.findAll();
+  async findAll(@CurrentEmployee() employee: any) {
+    return this.employeesService.findAll(employee);
   }
 
   // GET /employees/next-id - get next auto employee ID
@@ -41,6 +42,8 @@ export class EmployeesController {
       phone: string;
       email?: string;
       role?: string;
+      manager_id?: string;
+      manager_phone?: string;
     },
   ) {
     // Auto-generate employee_id if not provided

@@ -1,6 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
+function buildMultiFieldOrFilter(
+  salespersonPhones?: string[] | string,
+  fieldNames: string[] = ['salesperson_phone'],
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    for (const field of fieldNames) {
+      parts.push(`${field}.eq.${p10}`, `${field}.eq.${p12}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
@@ -11,7 +32,7 @@ export class CustomersService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll(salespersonPhone?: string) {
+  async findAll(salespersonPhone?: string[] | string) {
     try {
       let query = this.supabase
         .from('recurring_customers')
@@ -19,7 +40,11 @@ export class CustomersService {
         .order('customer_name', { ascending: true });
 
       if (salespersonPhone) {
-        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'assigned_salesperson_phone',
+        ]);
+        if (orFilter)
+          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
       }
 
       const { data, error } = await query;
@@ -31,7 +56,7 @@ export class CustomersService {
     }
   }
 
-  async findOne(id: string, salespersonPhone?: string) {
+  async findOne(id: string, salespersonPhone?: string[] | string) {
     try {
       const { data: customer, error } = await this.supabase
         .from('recurring_customers')
@@ -47,7 +72,10 @@ export class CustomersService {
         .order('created_at', { ascending: false })
         .limit(10);
       if (salespersonPhone) {
-        dealsQuery = dealsQuery.eq('salesperson_phone', salespersonPhone);
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
       }
 
       let visitsQuery = this.supabase
@@ -57,7 +85,10 @@ export class CustomersService {
         .order('visited_at', { ascending: false })
         .limit(5);
       if (salespersonPhone) {
-        visitsQuery = visitsQuery.eq('salesperson_phone', salespersonPhone);
+        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
       }
 
       let paymentsQuery = this.supabase
@@ -66,7 +97,10 @@ export class CustomersService {
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('created_at', { ascending: false });
       if (salespersonPhone) {
-        paymentsQuery = paymentsQuery.eq('salesperson_phone', salespersonPhone);
+        const paymentsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (paymentsOr) paymentsQuery = paymentsQuery.or(paymentsOr);
       }
 
       const complaintsQuery = this.supabase
@@ -108,7 +142,7 @@ export class CustomersService {
     }
   }
 
-  async getChurnRisk(salespersonPhone?: string) {
+  async getChurnRisk(salespersonPhone?: string[] | string) {
     try {
       let query = this.supabase
         .from('recurring_customers')
@@ -116,7 +150,11 @@ export class CustomersService {
         .eq('is_active', true);
 
       if (salespersonPhone) {
-        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'assigned_salesperson_phone',
+        ]);
+        if (orFilter)
+          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
       }
 
       const { data: customers, error } = await query;
@@ -135,12 +173,10 @@ export class CustomersService {
         .order('created_at', { ascending: false });
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
       }
 
       const { data: allDeals } = await dealsQuery;
@@ -229,7 +265,7 @@ export class CustomersService {
     }
   }
 
-  async getReorderQueue(salespersonPhone?: string) {
+  async getReorderQueue(salespersonPhone?: string[] | string) {
     try {
       const now = new Date();
       let query = this.supabase
@@ -238,7 +274,11 @@ export class CustomersService {
         .eq('is_active', true);
 
       if (salespersonPhone) {
-        query = query.eq('assigned_salesperson_phone', salespersonPhone);
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'assigned_salesperson_phone',
+        ]);
+        if (orFilter)
+          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
       }
 
       const { data: customers, error } = await query;
@@ -306,7 +346,7 @@ export class CustomersService {
     }
   }
 
-  async getLossAnalytics(salespersonPhone?: string) {
+  async getLossAnalytics(salespersonPhone?: string[] | string) {
     try {
       const now = new Date();
       const threeMonthsAgo = new Date(
@@ -330,14 +370,13 @@ export class CustomersService {
         .gte('created_at', threeMonthsAgo);
 
       if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const last10 = cleanDigits.slice(-10);
-        query = query.or(
-          `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
-        );
-        logsQuery = logsQuery.or(
-          `salesperson_phone.eq.${salespersonPhone},salesperson_phone.eq.91${last10},salesperson_phone.eq.${last10}`,
-        );
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) {
+          query = query.or(dealsOr);
+          logsQuery = logsQuery.or(dealsOr);
+        }
       }
 
       const [{ data: lostDeals }, { data: lostLogs }] = await Promise.all([

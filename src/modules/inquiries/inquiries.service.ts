@@ -23,6 +23,29 @@ function getCompanyLogoPath(): string | null {
 
 import { DealsService } from '../deals/deals.service';
 
+function buildInquiryPhoneOrFilter(
+  salespersonPhones?: string[] | string,
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    parts.push(
+      `salesperson_phone.eq.${p10}`,
+      `salesperson_phone.eq.${p12}`,
+      `sender_phone.eq.${p10}`,
+      `sender_phone.eq.${p12}`,
+    );
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 @Injectable()
 export class InquiriesService {
   private readonly logger = new Logger(InquiriesService.name);
@@ -41,6 +64,7 @@ export class InquiriesService {
     from?: string;
     to?: string;
     salespersonPhone?: string;
+    salespersonPhones?: string[] | string;
   }) {
     try {
       let query = this.supabase
@@ -63,13 +87,11 @@ export class InquiriesService {
         query = query.lte('created_at', toDate);
       }
 
-      if (filters?.salespersonPhone) {
-        const cleanDigits = filters.salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
+      const orFilter = buildInquiryPhoneOrFilter(
+        filters?.salespersonPhones || filters?.salespersonPhone,
+      );
+      if (orFilter) {
+        query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -107,12 +129,12 @@ export class InquiriesService {
       if (error) throw error;
       return data;
     } catch (error) {
-      this.logger.error(`Error in findOne(${id}):`, error);
+      this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
     }
   }
 
-  async findReviewQueue(salespersonPhone?: string) {
+  async findReviewQueue(salespersonPhones?: string[] | string) {
     try {
       let query = this.supabase
         .from('inquiries')
@@ -122,13 +144,9 @@ export class InquiriesService {
         .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
 
-      if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
+      const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
+      if (orFilter) {
+        query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -190,7 +208,7 @@ export class InquiriesService {
     }
   }
 
-  async getStats(salespersonPhone?: string) {
+  async getStats(salespersonPhones?: string[] | string) {
     try {
       let query = this.supabase
         .from('inquiries')
@@ -198,13 +216,9 @@ export class InquiriesService {
           'status, source_channel, created_at, salesperson_phone, sender_phone',
         );
 
-      if (salespersonPhone) {
-        const cleanDigits = salespersonPhone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},sender_phone.eq.${p10},sender_phone.eq.${p12}`,
-        );
+      const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
+      if (orFilter) {
+        query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -280,9 +294,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-      poNumber !== 'null' &&
-      poNumber !== 'None' &&
-      String(poNumber).trim().length > 2,
+        poNumber !== 'null' &&
+        poNumber !== 'None' &&
+        String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {
