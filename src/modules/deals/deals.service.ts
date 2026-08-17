@@ -180,7 +180,16 @@ export class DealsService {
           }
         }
 
-        if (!data.media_urls || data.media_urls.length === 0) {
+        const hasValidMedia =
+          Array.isArray(data.media_urls) &&
+          data.media_urls.length > 0 &&
+          data.media_urls.some(
+            (u: any) =>
+              typeof u === 'string' &&
+              (u.startsWith('data:') || u.startsWith('http')),
+          );
+
+        if (!hasValidMedia) {
           const { data: allMediaInqs } = await this.supabase
             .from('inquiries')
             .select(
@@ -192,12 +201,32 @@ export class DealsService {
 
           const dName = (data.customer_name || '').toLowerCase().trim();
           const dPo = (data.po_number || '').toLowerCase().trim();
+          const dClean = dName.replace(/[^a-z0-9]/g, ' ');
+          const dWords = dClean
+            .split(/\s+/)
+            .filter(
+              (w) =>
+                w.length >= 3 &&
+                ![
+                  'pvt',
+                  'ltd',
+                  'private',
+                  'limited',
+                  'enterprises',
+                  'steels',
+                  'steel',
+                ].includes(w),
+            );
 
           const matched = (allMediaInqs || []).find((mi: any) => {
             if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
               return false;
             const sName = (mi.sender_name || '').toLowerCase().trim();
-            const custJsonName = (mi.ai_extraction_json?.customer?.name || '')
+            const custJsonName = (
+              mi.ai_extraction_json?.customer?.name ||
+              mi.ai_extraction_json?.companyName ||
+              ''
+            )
               .toLowerCase()
               .trim();
             const rawTxt = (mi.raw_text || '').toLowerCase();
@@ -205,18 +234,28 @@ export class DealsService {
               mi.ai_extraction_json?.po_number || ''
             ).toLowerCase();
 
-            const nameMatches =
+            const combinedText = `${sName} ${custJsonName} ${rawTxt}`;
+
+            const directNameMatch =
               dName.length > 3 &&
               (sName.includes(dName) ||
                 custJsonName.includes(dName) ||
                 rawTxt.includes(dName));
+
+            const wordMatch =
+              dWords.length > 0 && dWords.some((w) => combinedText.includes(w));
+
             const poMatches =
               dPo.length > 3 && (rawTxt.includes(dPo) || poJson.includes(dPo));
 
-            return nameMatches || poMatches;
+            return directNameMatch || wordMatch || poMatches;
           });
 
-          if (matched && matched.media_urls) {
+          if (
+            matched &&
+            Array.isArray(matched.media_urls) &&
+            matched.media_urls.length > 0
+          ) {
             data.media_urls = matched.media_urls;
           }
         }
