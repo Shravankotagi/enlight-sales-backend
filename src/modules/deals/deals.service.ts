@@ -631,6 +631,32 @@ export class DealsService {
         this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
       }
 
+      // 6. Automatically resolve any open follow-up tasks for this customer & update last_order_date
+      try {
+        await this.supabase
+          .from('followup_tasks')
+          .update({
+            status: 'resolved',
+            resolved_at: nowIso,
+            resolution_notes: `Order placed: PO #${poNumber} (₹${totalAmount.toLocaleString('en-IN')}) 🎉`,
+          })
+          .ilike('customer_name', `%${customerName}%`)
+          .eq('status', 'pending');
+
+        await this.supabase
+          .from('recurring_customers')
+          .update({
+            last_order_date: poDate || nowIso.split('T')[0],
+            updated_at: nowIso,
+          })
+          .ilike('customer_name', `%${customerName}%`);
+      } catch (fErr: any) {
+        this.logger.warn(
+          'Non-blocking follow-up resolution notice:',
+          fErr?.message,
+        );
+      }
+
       return savedDeal;
     } catch (error) {
       this.logger.error('Error in processPo:', error);

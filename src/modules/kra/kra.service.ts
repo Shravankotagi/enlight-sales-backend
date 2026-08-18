@@ -2091,6 +2091,44 @@ export class KraService {
       );
     }
 
+    // Schedule Condition 2 — Visit Interest Follow-up Task
+    if (
+      data.outcome === 'positive' &&
+      (data.follow_up_action ||
+        data.material_requirement ||
+        data.product_interests ||
+        data.remarks)
+    ) {
+      try {
+        const promisedDays = Number(data.followup_days) || 4;
+        const dueDate = new Date(
+          new Date(visited_at).getTime() + promisedDays * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        const interestStr =
+          data.material_requirement ||
+          data.product_interests ||
+          data.follow_up_action ||
+          'Steel Material Discussion';
+
+        await this.supabase.from('followup_tasks').insert({
+          task_type: 'visit_interest_followup',
+          customer_name: data.customer_name,
+          customer_phone: data.contact_phone || data.contact_no || '',
+          salesperson_phone: salespersonPhone || 'Web Admin',
+          due_date: dueDate,
+          status: 'pending',
+          reminder_sent_at: null,
+          follow_up_count: 0,
+          resolution_notes: `Visit Interest Follow-up: Customer showed interest in ${interestStr}. Stated decision timeframe: ${promisedDays} days.`,
+        });
+      } catch (fErr: any) {
+        this.logger.warn(
+          'Non-blocking follow-up task insert notice:',
+          fErr?.message,
+        );
+      }
+    }
+
     return created;
   }
 }
