@@ -42,6 +42,139 @@ function buildInquiryPhoneOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+const PRODUCT_KEYWORDS = [
+  'hr coil',
+  'hot rolled',
+  'cr sheet',
+  'cold rolled',
+  'cr coil',
+  'ms plate',
+  'ms plates',
+  'ms sheet',
+  'tmt bar',
+  'tmt bars',
+  'gi coil',
+  'gi sheet',
+  'pipe',
+  'pipes',
+  'steel pipe',
+  'steel pipes',
+  'angles',
+  'channels',
+  'beams',
+  'flats',
+  'rebars',
+  'sheet',
+  'plate',
+  'coil',
+  'steel',
+  'metal',
+  'iron',
+  'structure',
+  'structures',
+  'pickled',
+  'galvanized',
+  'erw pipe',
+  'seamless pipe',
+  'is 2062',
+  'is 277',
+  'is 3589',
+  'e250',
+  'e350',
+  'fe 410',
+  'fe 500',
+];
+
+const SALESPERSON_NAMES = [
+  'rishabh',
+  'rishabh makwana',
+  'max',
+  'akruti',
+  'salesperson',
+  'sales rep',
+  'dhananjay goel',
+  'rahul sharma',
+  'suresh sharma',
+  'kumar varma',
+  'john',
+  'andrew',
+  'test',
+  'customer',
+  'client',
+  'the customer',
+  'customer inquiry',
+  'web customer',
+  'unknown',
+  'self',
+];
+
+const SYSTEM_EMPLOYEE_PHONES = new Set([
+  '8262937458',
+  '9619226169',
+  '7977088031',
+  '9187305823',
+  '9876543210',
+  '9876543222',
+  '7896248624',
+  '7892739774',
+  '7878787878',
+  '7894561237',
+]);
+
+function isProductOrGenericName(name?: string | null): boolean {
+  if (!name || typeof name !== 'string') return true;
+  const clean = name
+    .toLowerCase()
+    .trim()
+    .replace(/[.:,\-_/()]/g, ' ');
+  if (clean.length < 2) return true;
+
+  if (
+    SALESPERSON_NAMES.some(
+      (sn) =>
+        clean === sn || clean.startsWith(sn + ' ') || clean.endsWith(' ' + sn),
+    )
+  ) {
+    return true;
+  }
+
+  const words = clean.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 1 && PRODUCT_KEYWORDS.includes(words[0])) {
+    return true;
+  }
+
+  const allWordsProduct = words.every(
+    (w) =>
+      PRODUCT_KEYWORDS.includes(w) ||
+      /^\d+(?:mm|mt|ton|tons|kg|gsm|br)?$/i.test(w) ||
+      /^(is|grade|fe|make|sail|tata|jsw|jindal|prime|quality|only|with|mtc|thick|thk|od|dia)$/i.test(
+        w,
+      ),
+  );
+  if (allWordsProduct) return true;
+
+  return false;
+}
+
+function isSalespersonOrSenderPhone(
+  phone?: string | null,
+  senderPhone?: string | null,
+  spPhone?: string | null,
+): boolean {
+  if (!phone) return true;
+  const clean = String(phone).replace(/\D/g, '').slice(-10);
+  if (!clean || clean.length < 10) return true;
+  if (SYSTEM_EMPLOYEE_PHONES.has(clean)) return true;
+  if (
+    senderPhone &&
+    clean === String(senderPhone).replace(/\D/g, '').slice(-10)
+  )
+    return true;
+  if (spPhone && clean === String(spPhone).replace(/\D/g, '').slice(-10))
+    return true;
+  return false;
+}
+
 function extractCleanCustomerName(rawText: string): string | null {
   if (!rawText || typeof rawText !== 'string') return null;
 
@@ -62,35 +195,21 @@ function extractCleanCustomerName(rawText: string): string | null {
   const prefixMatch = text.match(
     /^(?:for|from|customer|client|company|account|m\/s|m\/s\.)\s+([^,:\n]+)/i,
   );
-  let candidate = prefixMatch ? prefixMatch[1] : text.split(/[,:\n]/)[0];
+  let candidate = prefixMatch ? prefixMatch[1] : null;
 
-  // 4. Split candidate at requirement / contact stop words
-  const stopIndex = candidate.search(STOP_KEYWORDS);
-  if (stopIndex !== -1) {
-    candidate = candidate.substring(0, stopIndex);
+  if (candidate) {
+    const stopIndex = candidate.search(STOP_KEYWORDS);
+    if (stopIndex !== -1) {
+      candidate = candidate.substring(0, stopIndex);
+    }
+    candidate = candidate.replace(/[.,:;*_\-\s]+$/, '').trim();
   }
 
-  candidate = candidate.replace(/[.,:;*_\-\s]+$/, '').trim();
-
-  const SALESPERSON_NAMES = [
-    'rishabh',
-    'rishabh makwana',
-    'max',
-    'akruti',
-    'salesperson',
-    'sales rep',
-    'customer',
-    'client',
-    'the customer',
-    'inquiry',
-    'deal',
-    'new',
-  ];
-  if (!candidate || SALESPERSON_NAMES.includes(candidate.toLowerCase())) {
-    return null;
+  if (candidate && !isProductOrGenericName(candidate)) {
+    return candidate;
   }
 
-  return candidate.length >= 2 ? candidate : null;
+  return null;
 }
 
 function isGenuineInquiry(item: any): boolean {
@@ -156,34 +275,31 @@ function isGenuineInquiry(item: any): boolean {
 
 function resolveInquiryEntities(item: any) {
   const aiJson = (item.ai_extraction_json as any) || {};
+  const senderName = item.sender_name || '';
+  const senderNameLower = senderName.toLowerCase().trim();
+  const isSenderSalesperson = SALESPERSON_NAMES.includes(senderNameLower);
 
   // 1. Resolve Customer Company Name
-  let extractedCustomerName =
+  let candidateName =
     aiJson.customer?.name ||
     aiJson.customer_name ||
     aiJson.companyName ||
     aiJson.customer_company ||
-    (item.source_channel === 'web_dashboard' ? item.sender_name : null);
+    item.customer_name ||
+    (!isSenderSalesperson && senderName ? senderName : null);
 
-  if (
-    !extractedCustomerName ||
-    extractedCustomerName.toLowerCase() === 'customer' ||
-    extractedCustomerName.toLowerCase() === 'client' ||
-    extractedCustomerName.toLowerCase() === 'the customer'
-  ) {
-    const cleanFromText = extractCleanCustomerName(item.raw_text);
-    if (cleanFromText) {
-      extractedCustomerName = cleanFromText;
-    } else {
-      extractedCustomerName =
-        item.source_channel === 'web_dashboard'
-          ? item.sender_name || 'Customer Inquiry'
-          : 'Customer Inquiry';
-    }
+  if (isProductOrGenericName(candidateName)) {
+    candidateName = null;
   }
 
-  // 2. Resolve Customer Contact Phone
-  let extractedCustomerPhone =
+  if (!candidateName) {
+    candidateName = extractCleanCustomerName(item.raw_text);
+  }
+
+  const extractedCustomerName = candidateName || '';
+
+  // 2. Resolve Customer Contact Phone (Strictly customer only — never salesperson or sender phone)
+  let rawCustomerPhone =
     aiJson.customer?.phone ||
     aiJson.customer_phone ||
     aiJson.contact_phone ||
@@ -191,18 +307,25 @@ function resolveInquiryEntities(item: any) {
     (item.source_channel === 'web_dashboard' ? item.sender_phone : '');
 
   if (
-    extractedCustomerPhone === item.sender_phone &&
-    item.source_channel === 'whatsapp'
+    isSalespersonOrSenderPhone(
+      rawCustomerPhone,
+      item.sender_phone,
+      item.salesperson_phone,
+    )
   ) {
-    extractedCustomerPhone = '';
+    rawCustomerPhone = '';
   }
+
+  const extractedCustomerPhone = rawCustomerPhone
+    ? String(rawCustomerPhone).replace(/\D/g, '').slice(-10)
+    : '';
 
   return {
     customer_name: extractedCustomerName,
     customer_phone: extractedCustomerPhone || '',
     salesperson_name:
-      item.source_channel === 'whatsapp'
-        ? item.sender_name
+      isSenderSalesperson && senderName
+        ? senderName
         : item.salesperson_name || 'Sales Representative',
     salesperson_phone: item.salesperson_phone || item.sender_phone || '',
   };
@@ -617,26 +740,18 @@ export class InquiriesService {
 
       const aiJson = (inquiry.ai_extraction_json as any) || {};
       const details = overrideDetails || {};
-      const isWhatsApp = inquiry.source_channel === 'whatsapp';
-      const senderNameLower = (inquiry.sender_name || '').toLowerCase();
       const rawCustName =
         details.companyName ||
         details.customer_name ||
         aiJson.companyName ||
         aiJson.customer_name ||
         aiJson.customer?.name ||
-        (inquiry.customer_name ? inquiry.customer_name : null) ||
-        (!isWhatsApp ? inquiry.sender_name : null);
+        (inquiry.customer_name ? inquiry.customer_name : null);
 
-      const isSalespersonName =
-        rawCustName &&
-        (rawCustName.toLowerCase() === senderNameLower ||
-          rawCustName.toLowerCase() === 'max' ||
-          rawCustName.toLowerCase() === 'rishabh makwana');
-
-      const customerName = isSalespersonName
-        ? 'Customer Inquiry'
-        : rawCustName || 'Customer Inquiry';
+      const customerName =
+        rawCustName && !isProductOrGenericName(rawCustName)
+          ? rawCustName
+          : 'Customer Inquiry';
 
       const rawCustPhone =
         details.customerPhone ||
@@ -645,15 +760,16 @@ export class InquiriesService {
         aiJson.customer_phone ||
         aiJson.customer?.phone ||
         (inquiry.customer_phone ? inquiry.customer_phone : null) ||
-        (!isWhatsApp ? inquiry.sender_phone : null) ||
         '';
 
-      const isSpPhone =
-        rawCustPhone &&
-        (rawCustPhone === inquiry.sender_phone ||
-          rawCustPhone === inquiry.salesperson_phone);
+      const customerPhone = isSalespersonOrSenderPhone(
+        rawCustPhone,
+        inquiry.sender_phone,
+        inquiry.salesperson_phone,
+      )
+        ? ''
+        : String(rawCustPhone).replace(/\D/g, '').slice(-10);
 
-      const customerPhone = isSpPhone ? '' : rawCustPhone;
       const salespersonPhone =
         inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';
       const deliveryLocation =
