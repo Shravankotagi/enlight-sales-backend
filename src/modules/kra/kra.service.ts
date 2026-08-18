@@ -1991,7 +1991,18 @@ export class KraService {
       const followMatch =
         v.follow_up_action ||
         rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1] ||
-        null;
+        rawRemarks.match(/\[Follow-up:\s*([^\]]+)\]/i)?.[1] ||
+        (rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1]
+          ? `Follow-up on ${rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1]} requirement`
+          : null);
+
+      const cleanRemarks =
+        rawRemarks
+          .replace(
+            /\[(Outcome|Requirement|FollowUp|Follow-up|Interests|Location):\s*[^\]]+\]\s*/gi,
+            '',
+          )
+          .trim() || rawRemarks;
 
       let outcome = (v.outcome || '').toLowerCase();
       if (!outcome || outcome === 'unknown') {
@@ -2017,6 +2028,8 @@ export class KraService {
         customer_address: loc,
         material_requirement: reqMatch,
         follow_up_action: followMatch,
+        remarks: cleanRemarks,
+        raw_remarks: rawRemarks,
         outcome,
       };
     });
@@ -2027,14 +2040,25 @@ export class KraService {
   async createVisit(data: any, salespersonPhone?: string) {
     const visited_at = data.visited_at || new Date().toISOString();
 
+    const remarksParts: string[] = [];
+    if (data.outcome)
+      remarksParts.push(
+        `[Outcome: ${data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1)}]`,
+      );
+    if (data.location || data.city)
+      remarksParts.push(`[Location: ${data.location || data.city}]`);
+    if (data.follow_up_action || data.followup)
+      remarksParts.push(
+        `[FollowUp: ${data.follow_up_action || data.followup}]`,
+      );
+    if (data.remarks) remarksParts.push(data.remarks);
+
     const payload = {
       customer_name: data.customer_name,
       person_met: data.person_met || 'Contact Person',
-      contact_phone: data.contact_phone || '',
-      location: data.location || data.city || '',
-      outcome: data.outcome || 'positive',
-      remarks: data.remarks || '',
-      follow_up_action: data.follow_up_action || data.followup || '',
+      contact_no: data.contact_phone || data.contact_no || '',
+      customer_address: data.location || data.city || '',
+      remarks: remarksParts.join(' '),
       visited_at,
       salesperson_phone: salespersonPhone || 'Web Admin',
     };
