@@ -69,7 +69,7 @@ export const getCustomer360Tool: ChatbotTool = {
     let dealsQuery = supabaseAdmin
       .from('deals')
       .select(
-        'id, stage, total_amount, po_number, po_date, created_at, deal_items(*)',
+        'id, stage, total_amount, customer_name, customer_phone, customer_gst, customer_address, delivery_location, payment_terms, po_number, po_date, created_at, deal_items(*)',
       )
       .ilike('customer_name', `%${customerName}%`)
       .order('created_at', { ascending: false });
@@ -102,6 +102,21 @@ export const getCustomer360Tool: ChatbotTool = {
 
     const { data: payments } = await paymentsQuery;
 
+    // Consolidate contact details from recurring_customers or deals
+    const latestDealWithPhone = deals?.find((d: any) => d.customer_phone);
+    const resolvedPhone =
+      profile?.phone ||
+      profile?.contact_phone ||
+      latestDealWithPhone?.customer_phone ||
+      null;
+    const resolvedGst =
+      profile?.gst_number || latestDealWithPhone?.customer_gst || null;
+    const resolvedAddress =
+      profile?.address ||
+      latestDealWithPhone?.customer_address ||
+      latestDealWithPhone?.delivery_location ||
+      null;
+
     const rowCount =
       (profile ? 1 : 0) +
       (deals ? deals.length : 0) +
@@ -110,7 +125,17 @@ export const getCustomer360Tool: ChatbotTool = {
     return {
       data: {
         customer_name: customerName,
-        profile: profile || 'No master customer profile found',
+        contact_info: {
+          phone: resolvedPhone,
+          gst: resolvedGst,
+          address: resolvedAddress,
+        },
+        profile: profile || {
+          customer_name: customerName,
+          phone: resolvedPhone,
+          gst_number: resolvedGst,
+          address: resolvedAddress,
+        },
         deals: deals || [],
         payments: payments || [],
       },

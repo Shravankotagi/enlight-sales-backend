@@ -390,18 +390,42 @@ Strict Operational Security & Guardrail Rules:
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({ apiKey });
 
-      const contents: any[] = [
-        { role: 'user', parts: [{ text: systemPrompt }] },
-      ];
+      // Format conversation turns ensuring valid alternating roles
+      const contents: any[] = [];
       for (const turn of history) {
         const role = turn.role === 'user' ? 'user' : 'model';
+        if (!turn.content) continue;
+
+        const prevTurn = contents[contents.length - 1];
+        if (prevTurn && prevTurn.role === role) {
+          prevTurn.parts[0].text += `\n${turn.content}`;
+        } else {
+          contents.push({
+            role,
+            parts: [{ text: turn.content }],
+          });
+        }
+      }
+
+      // 1. Ensure first turn is 'user' (Gemini requires first turn to be user)
+      while (contents.length > 0 && contents[0].role === 'model') {
+        contents.shift();
+      }
+
+      // 2. Ensure last turn is 'user'
+      if (
+        contents.length === 0 ||
+        contents[contents.length - 1].role === 'model'
+      ) {
         contents.push({
-          role,
-          parts: [{ text: turn.content }],
+          role: 'user',
+          parts: [{ text: messageText }],
         });
       }
 
-      const config: any = {};
+      const config: any = {
+        systemInstruction: systemPrompt,
+      };
       if (toolDeclarations && toolDeclarations.length > 0) {
         config.tools = [{ functionDeclarations: toolDeclarations }];
       }

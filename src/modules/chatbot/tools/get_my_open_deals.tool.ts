@@ -43,7 +43,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
     let query = supabaseAdmin
       .from('deals')
       .select(
-        'id, customer_name, customer_phone, total_amount, stage, status, po_number, created_at, salesperson_phone, employee_id, deal_items(sku_text, quantity, unit, rate, amount)',
+        'id, customer_name, customer_phone, customer_gst, customer_address, payment_terms, total_amount, stage, status, po_number, created_at, salesperson_phone, employee_id, deal_items(sku_text, quantity, unit, rate, amount)',
       )
       .order('created_at', { ascending: false });
 

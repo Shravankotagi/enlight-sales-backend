@@ -7,16 +7,26 @@ import { ToolRegistryService } from './tools/tool-registry.service';
 import { KbService } from './kb/kb.service';
 import { KbController } from './kb/kb.controller';
 import { GuardrailsService } from './guardrails/guardrails.service';
+import { WhatsAppChatService } from './whatsapp/whatsapp-chat.service';
+
+import { WhatsAppChatController } from './whatsapp/whatsapp-chat.controller';
 
 @Module({
   imports: [SupabaseModule, ConfigModule],
-  controllers: [ChatbotController, KbController],
+  controllers: [ChatbotController, KbController, WhatsAppChatController],
   providers: [
     ChatbotService,
     ToolRegistryService,
     KbService,
     GuardrailsService,
+    WhatsAppChatService,
   ],
-  exports: [ChatbotService, ToolRegistryService, KbService, GuardrailsService],
+  exports: [
+    ChatbotService,
+    ToolRegistryService,
+    KbService,
+    GuardrailsService,
+    WhatsAppChatService,
+  ],
 })
 export class ChatbotModule {}
