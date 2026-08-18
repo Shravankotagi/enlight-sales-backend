@@ -322,9 +322,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-        poNumber !== 'null' &&
-        poNumber !== 'None' &&
-        String(poNumber).trim().length > 2,
+      poNumber !== 'null' &&
+      poNumber !== 'None' &&
+      String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {

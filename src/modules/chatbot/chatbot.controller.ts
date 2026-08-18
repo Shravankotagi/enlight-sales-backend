@@ -73,7 +73,7 @@ export class ChatbotController {
     const caller = await this.chatbotService.resolveCallerContext(
       req.employee || req.user,
     );
-    const sessions = await this.chatbotService.getUserSessions(caller.userId);
+    const sessions = await this.chatbotService.getUserSessions(caller);
     return {
       success: true,
       sessions,
@@ -99,7 +99,7 @@ export class ChatbotController {
     );
     const messages = await this.chatbotService.getSessionMessages(
       sessionId,
-      caller.userId,
+      caller,
     );
     return {
       success: true,
