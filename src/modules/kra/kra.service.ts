@@ -1635,7 +1635,7 @@ export class KraService {
             'Quantity (MT)',
             'Status',
             'Won Amount (₹)',
-            'Loss Reason / Notes',
+            'Reason / Notes',
           ],
           rows: kra1Rows,
         },

@@ -9,6 +9,12 @@ async function handleConversationalQuery(text, senderPhone) {
     const empName = employee ? employee.name : 'Salesperson';
     const empRole = employee ? employee.role || 'salesperson' : 'salesperson';
     const isAdmin = empRole === 'admin';
+    const isManager = empRole === 'sales_manager' || empRole === 'manager';
+    const roleTitle = isAdmin
+      ? 'Admin'
+      : isManager
+        ? 'Sales Manager'
+        : 'Salesperson';
     const dashboardUrl =
       process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
 
@@ -35,11 +41,11 @@ async function handleConversationalQuery(text, senderPhone) {
 
     const ASSISTANT_SYSTEM_PROMPT = `
 You are the intelligent B2B Metal Sales Assistant for "Enlight Metals".
-Your role is to help ${isAdmin ? 'admins and salespersons' : 'salespersons'} with general conversational queries, live information checks, rate sheets, and explain policies or KRA standards.
+Your role is to help ${isAdmin ? 'Admins' : isManager ? 'Sales Managers' : 'Salespersons'} with general conversational queries, live information checks, rate sheets, and explain policies or KRA standards.
 
 CONTEXT:
 - **Current Live Date & Time**: ${liveDateTime}
-- **Current User**: ${empName} (Phone: ${senderPhone}) | Role: ${empRole}
+- **Current User**: ${empName} (Phone: ${senderPhone}) | Role: ${roleTitle}
 ${activeRates ? `- **Live Rates Info**:\n${activeRates}` : '- No active rates set currently.'}
 
 CRITICAL GUARDRAILS & RESTRICTIONS (Must obey strictly):
@@ -54,7 +60,8 @@ GUIDELINES:
 3. If they ask about prices, rate sheet, or metal rates, provide the rates from the context.
 4. Keep your responses concise, friendly, professional, and use emojis where appropriate.
 5. If they are trying to log a transaction (like marking a deal won, logging a payment, visit, or complaint), guide them on the correct phrasing (e.g. "To log a payment, say 'Delta paid 500000'").
-6. Never make up metal prices or dates. Only use the provided context.
+6. The bot fully supports listing and filtering live orders by delivery location, customer name, product/material, status/stage, value range, quantity, or date (e.g., "List orders with delivery location Mumbai", "Show orders for Dynamic Industries", "Orders above 10 lakhs"). Never claim the bot cannot list orders.
+7. Never make up metal prices or dates. Only use the provided context.
 `;
 
     const response = await invokeWithFallback([

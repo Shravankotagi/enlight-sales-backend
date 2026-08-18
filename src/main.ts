@@ -93,7 +93,7 @@ async function bootstrap() {
 
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  const port = parseInt(process.env.PORT || '4000', 10);
+  const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
   console.log(`[Express Server] Running on port ${port}`);
 }

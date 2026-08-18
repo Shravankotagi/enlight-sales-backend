@@ -44,17 +44,22 @@ export class DealsService {
         );
       }
       if (filters?.from) {
-        // For won deals: filter by won_at (when deal was actually won/received by bot)
-        // For other deals: filter by created_at
-        const dateField = isWonQuery ? 'won_at' : 'created_at';
-        query = query.gte(dateField, filters.from);
+        const fromIso = filters.from.includes('T')
+          ? filters.from
+          : `${filters.from}T00:00:00.000Z`;
+        const fromDateOnly = filters.from.split('T')[0];
+        query = query.or(
+          `won_at.gte.${fromIso},created_at.gte.${fromIso},po_date.gte.${fromDateOnly}`,
+        );
       }
       if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
-        const dateField = isWonQuery ? 'won_at' : 'created_at';
-        query = query.lte(dateField, toEnd);
+        const toDateOnly = filters.to.split('T')[0];
+        query = query.or(
+          `won_at.lte.${toEnd},created_at.lte.${toEnd},po_date.lte.${toDateOnly}`,
+        );
       }
 
       const { data, error } = await query;

@@ -455,8 +455,15 @@ export class InquiriesService {
     const nowIso = now.toISOString();
 
     const customerName =
-      data.sender_name || data.customer_name || 'Customer Inquiry';
-    const customerPhone = data.customer_phone || data.sender_phone || '';
+      data.customer_name ||
+      data.companyName ||
+      (data.sender_name &&
+      !data.sender_name.toLowerCase().includes('sales') &&
+      !data.sender_name.toLowerCase().includes('max')
+        ? data.sender_name
+        : null) ||
+      null;
+    const customerPhone = data.customer_phone || data.customerPhone || null;
 
     // Ensure structured ai_extraction_json contains all multi-line items and customer info
     const aiExtractionJson = data.ai_extraction_json || {
@@ -471,13 +478,14 @@ export class InquiriesService {
     };
 
     const payload: any = {
-      source_channel: 'web_dashboard',
+      source_channel: data.source_channel || 'web_dashboard',
       raw_text: data.raw_text || data.requirement || '',
       media_urls: data.media_urls || [],
-      sender_phone: customerPhone || salespersonPhone || '',
-      sender_name: customerName,
+      sender_phone: data.sender_phone || salespersonPhone || '',
+      sender_name: data.sender_name || 'Salesperson',
       status: data.status || 'review',
-      salesperson_phone: salespersonPhone || '910000000000',
+      salesperson_phone:
+        salespersonPhone || data.salesperson_phone || '910000000000',
       ai_extraction_json: aiExtractionJson,
       overall_confidence: Number(data.overall_confidence) || 0.95,
       created_at: nowIso,
@@ -502,9 +510,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-      poNumber !== 'null' &&
-      poNumber !== 'None' &&
-      String(poNumber).trim().length > 2,
+        poNumber !== 'null' &&
+        poNumber !== 'None' &&
+        String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {
@@ -610,22 +618,42 @@ export class InquiriesService {
       const aiJson = (inquiry.ai_extraction_json as any) || {};
       const details = overrideDetails || {};
       const isWhatsApp = inquiry.source_channel === 'whatsapp';
-      const customerName =
+      const senderNameLower = (inquiry.sender_name || '').toLowerCase();
+      const rawCustName =
         details.companyName ||
         details.customer_name ||
         aiJson.companyName ||
         aiJson.customer_name ||
         aiJson.customer?.name ||
-        (!isWhatsApp ? inquiry.sender_name : null) ||
-        'Customer Inquiry';
-      const customerPhone =
+        (inquiry.customer_name ? inquiry.customer_name : null) ||
+        (!isWhatsApp ? inquiry.sender_name : null);
+
+      const isSalespersonName =
+        rawCustName &&
+        (rawCustName.toLowerCase() === senderNameLower ||
+          rawCustName.toLowerCase() === 'max' ||
+          rawCustName.toLowerCase() === 'rishabh makwana');
+
+      const customerName = isSalespersonName
+        ? 'Customer Inquiry'
+        : rawCustName || 'Customer Inquiry';
+
+      const rawCustPhone =
         details.customerPhone ||
         details.customer_phone ||
         aiJson.customerPhone ||
         aiJson.customer_phone ||
         aiJson.customer?.phone ||
+        (inquiry.customer_phone ? inquiry.customer_phone : null) ||
         (!isWhatsApp ? inquiry.sender_phone : null) ||
         '';
+
+      const isSpPhone =
+        rawCustPhone &&
+        (rawCustPhone === inquiry.sender_phone ||
+          rawCustPhone === inquiry.salesperson_phone);
+
+      const customerPhone = isSpPhone ? '' : rawCustPhone;
       const salespersonPhone =
         inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';
       const deliveryLocation =
