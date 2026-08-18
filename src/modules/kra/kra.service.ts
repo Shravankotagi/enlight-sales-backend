@@ -769,7 +769,7 @@ export class KraService {
               'Quantity (MT)',
               'Status',
               'Won Amount (₹)',
-              'Loss Reason / Notes',
+              'Reason / Notes',
             ],
             rows: [],
           },
@@ -1671,12 +1671,14 @@ export class KraService {
           title: 'Enquiry & Pipeline Conversion',
           target: 'Achieve a minimum 70-80% enquiry-to-order conversion ratio',
           achieved:
-            safeInquiries.length > 0
+            kra4Rows.length > 0
               ? `${Math.min(
                   100,
                   Math.round(
-                    (kra4Rows.filter((r) => r.order_status === 'Won').length /
-                      safeInquiries.length) *
+                    (kra4Rows.filter((r) =>
+                      String(r.order_status || '').toLowerCase().includes('won'),
+                    ).length /
+                      kra4Rows.length) *
                       100,
                   ),
                 )}%`
