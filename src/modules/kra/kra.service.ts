@@ -1560,11 +1560,19 @@ export class KraService {
         const custRecord = customerMap.get(custKey);
 
         // Extract structured tags if present
+        const locMatch =
+          v.customer_address ||
+          v.location ||
+          v.city ||
+          rawRemarks.match(/\[Location:\s*([^\]]+)\]/i)?.[1] ||
+          custRecord?.city ||
+          custRecord?.customer_address;
         const outcomeMatch =
           v.visit_outcome || rawRemarks.match(/\[Outcome:\s*([^\]]+)\]/i)?.[1];
         const reqMatch =
           v.material_requirement ||
-          rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1];
+          rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1] ||
+          rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1];
         const followMatch =
           v.follow_up_action ||
           rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1];
@@ -1573,7 +1581,7 @@ export class KraService {
         const cleanRemarks =
           rawRemarks
             .replace(
-              /\[(Outcome|Requirement|FollowUp|Interests):\s*[^\]]+\]\s*/gi,
+              /\[(Outcome|Requirement|FollowUp|Interests|Location):\s*[^\]]+\]\s*/gi,
               '',
             )
             .trim() || 'On-site meeting';
@@ -1581,6 +1589,7 @@ export class KraService {
         return {
           sr_no: index + 1,
           company_name: v.customer_name || 'Client Site',
+          location: locMatch || '-',
           person_met: v.person_met || custRecord?.contact_person || '-',
           contact_no: v.contact_no || custRecord?.customer_phone || '-',
           outcome: outcomeMatch
@@ -1676,7 +1685,9 @@ export class KraService {
                   100,
                   Math.round(
                     (kra4Rows.filter((r) =>
-                      String(r.order_status || '').toLowerCase().includes('won'),
+                      String(r.order_status || '')
+                        .toLowerCase()
+                        .includes('won'),
                     ).length /
                       kra4Rows.length) *
                       100,
@@ -1810,6 +1821,7 @@ export class KraService {
           headers: [
             'Sr. No.',
             'Company Name',
+            'Location',
             'Person Met',
             'Contact No.',
             'Outcome',
@@ -1952,27 +1964,45 @@ export class KraService {
 
     const enriched = (visits || []).map((v) => {
       const c = customerMap.get((v.customer_name || '').toLowerCase().trim());
+      const rawRemarks = v.remarks || '';
       const phone =
+        v.contact_no ||
         v.contact_phone ||
         v.phone ||
         v.customer_phone ||
-        c?.phone ||
         c?.customer_phone ||
-        '+91 98765 43210';
+        c?.phone ||
+        '-';
       const loc =
+        v.customer_address ||
         v.location ||
         v.city ||
-        v.customer_address ||
+        rawRemarks.match(/\[Location:\s*([^\]]+)\]/i)?.[1] ||
         c?.city ||
-        c?.location ||
         c?.customer_address ||
-        'Mumbai';
+        c?.location ||
+        '-';
+
+      const reqMatch =
+        v.material_requirement ||
+        rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1] ||
+        rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1] ||
+        null;
+      const followMatch =
+        v.follow_up_action ||
+        rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1] ||
+        null;
 
       let outcome = (v.outcome || '').toLowerCase();
       if (!outcome || outcome === 'unknown') {
-        if ((v.remarks || '').toLowerCase().includes('positive')) {
+        const outcomeFromTag = rawRemarks
+          .match(/\[Outcome:\s*([^\]]+)\]/i)?.[1]
+          ?.toLowerCase();
+        if (outcomeFromTag) {
+          outcome = outcomeFromTag;
+        } else if (rawRemarks.toLowerCase().includes('positive')) {
           outcome = 'positive';
-        } else if ((v.remarks || '').toLowerCase().includes('neutral')) {
+        } else if (rawRemarks.toLowerCase().includes('neutral')) {
           outcome = 'neutral';
         } else {
           outcome = 'positive';
@@ -1981,8 +2011,12 @@ export class KraService {
 
       return {
         ...v,
+        contact_no: phone,
         contact_phone: phone,
         location: loc,
+        customer_address: loc,
+        material_requirement: reqMatch,
+        follow_up_action: followMatch,
         outcome,
       };
     });
