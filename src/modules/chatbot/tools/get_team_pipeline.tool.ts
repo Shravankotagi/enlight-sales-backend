@@ -1,4 +1,7 @@
-import { ChatbotTool } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getTeamPipelineTool: ChatbotTool = {
   name: 'get_team_pipeline',
@@ -37,47 +40,16 @@ export const getTeamPipelineTool: ChatbotTool = {
 
     // Scoping Layer
     if (callerContext.role === 'manager') {
-      if (!callerContext.employeeId) {
-        return {
-          data: [],
-          rowCount: 0,
-          message: 'Manager employee ID not found',
-        };
-      }
-
-      // Fetch subordinate employees reporting to manager
-      const { data: subEmps } = await supabaseAdmin
-        .from('employees')
-        .select('id, employee_id, phone, name')
-        .eq('reports_to_employee_id', callerContext.employeeId);
-
-      const subPhones = (subEmps || []).map((e) => e.phone).filter(Boolean);
-      const subEmpIds = (subEmps || [])
-        .map((e) => e.employee_id || e.id)
-        .filter(Boolean);
-
-      const allowedPhoneSuffixes: string[] = [];
-      const callerClean = (callerContext.phone || '')
-        .replace(/\D/g, '')
-        .slice(-10);
-      if (callerClean) allowedPhoneSuffixes.push(callerClean);
-
-      subPhones.forEach((p: string) => {
-        const pClean = p.replace(/\D/g, '').slice(-10);
-        if (pClean && !allowedPhoneSuffixes.includes(pClean)) {
-          allowedPhoneSuffixes.push(pClean);
-        }
-      });
-
-      const allowedEmpIds = [...subEmpIds, callerContext.employeeId].filter(
-        Boolean,
+      const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
       );
 
       const orClauses: string[] = [];
-      allowedPhoneSuffixes.forEach((p) => {
+      phoneSuffixes.forEach((p) => {
         orClauses.push(`salesperson_phone.ilike.%${p}%`);
       });
-      allowedEmpIds.forEach((id) => {
+      employeeIds.forEach((id) => {
         orClauses.push(`employee_id.eq.${id}`);
       });
 

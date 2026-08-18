@@ -1,4 +1,8 @@
-import { ChatbotTool, CallerContext } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  CallerContext,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getCustomer360Tool: ChatbotTool = {
   name: 'get_customer_360',
@@ -44,25 +48,14 @@ export const getCustomer360Tool: ChatbotTool = {
           `%${cleanPhone}%`,
         );
       }
-    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
-      const { data: subEmployees } = await supabaseAdmin
-        .from('employees')
-        .select('phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
+    } else if (callerContext.role === 'manager') {
+      const { phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
-      const allowedPhones: string[] = [];
-      if (cleanPhone) allowedPhones.push(cleanPhone);
-      if (subEmployees) {
-        subEmployees.forEach((e: any) => {
-          if (e.phone) {
-            const pClean = e.phone.replace(/\D/g, '').slice(-10);
-            if (pClean && !allowedPhones.includes(pClean))
-              allowedPhones.push(pClean);
-          }
-        });
-      }
-      if (allowedPhones.length > 0) {
-        const orConditions = allowedPhones.map(
+      if (phoneSuffixes.length > 0) {
+        const orConditions = phoneSuffixes.map(
           (p) => `assigned_salesperson_phone.ilike.%${p}%`,
         );
         customerQuery = customerQuery.or(orConditions.join(','));
@@ -94,31 +87,17 @@ export const getCustomer360Tool: ChatbotTool = {
       } else if (empId) {
         dealsQuery = dealsQuery.eq('employee_id', empId);
       }
-    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
-      const { data: subEmployees } = await supabaseAdmin
-        .from('employees')
-        .select('id, employee_id, phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
-
-      const allowedPhoneSuffixes: string[] = cleanPhone ? [cleanPhone] : [];
-      const allowedEmpIds: string[] = empId ? [empId] : [];
-
-      if (subEmployees && subEmployees.length > 0) {
-        subEmployees.forEach((e: any) => {
-          if (e.phone) {
-            const pClean = e.phone.replace(/\D/g, '').slice(-10);
-            if (pClean) allowedPhoneSuffixes.push(pClean);
-          }
-          if (e.employee_id) allowedEmpIds.push(e.employee_id);
-          if (e.id) allowedEmpIds.push(e.id);
-        });
-      }
+    } else if (callerContext.role === 'manager') {
+      const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
       const orClauses: string[] = [];
-      allowedPhoneSuffixes.forEach((p) => {
+      phoneSuffixes.forEach((p) => {
         orClauses.push(`salesperson_phone.ilike.%${p}%`);
       });
-      allowedEmpIds.forEach((id) => {
+      employeeIds.forEach((id) => {
         orClauses.push(`employee_id.eq.${id}`);
       });
 
@@ -142,24 +121,14 @@ export const getCustomer360Tool: ChatbotTool = {
           `%${cleanPhone}%`,
         );
       }
-    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
-      const { data: subEmployees } = await supabaseAdmin
-        .from('employees')
-        .select('phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
+    } else if (callerContext.role === 'manager') {
+      const { phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
-      const allowedPhones: string[] = cleanPhone ? [cleanPhone] : [];
-      if (subEmployees) {
-        subEmployees.forEach((e: any) => {
-          if (e.phone) {
-            const pClean = e.phone.replace(/\D/g, '').slice(-10);
-            if (pClean && !allowedPhones.includes(pClean))
-              allowedPhones.push(pClean);
-          }
-        });
-      }
-      if (allowedPhones.length > 0) {
-        const orConditions = allowedPhones.map(
+      if (phoneSuffixes.length > 0) {
+        const orConditions = phoneSuffixes.map(
           (p) => `salesperson_phone.ilike.%${p}%`,
         );
         paymentsQuery = paymentsQuery.or(orConditions.join(','));

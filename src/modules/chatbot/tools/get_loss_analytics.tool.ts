@@ -1,4 +1,7 @@
-import { ChatbotTool } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getLossAnalyticsTool: ChatbotTool = {
   name: 'get_loss_analytics',
@@ -52,36 +55,16 @@ export const getLossAnalyticsTool: ChatbotTool = {
         query = query.eq('employee_id', empId);
       }
     } else if (callerContext.role === 'manager') {
-      const empId = callerContext.employeeId;
-      const rawPhone = callerContext.phone || '';
-      const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
-
-      const allowedPhoneSuffixes: string[] = cleanPhone ? [cleanPhone] : [];
-      const allowedEmpIds: string[] = empId ? [empId] : [];
-
-      if (empId) {
-        const { data: subEmps } = await supabaseAdmin
-          .from('employees')
-          .select('id, employee_id, phone')
-          .eq('reports_to_employee_id', empId);
-
-        if (subEmps && subEmps.length > 0) {
-          subEmps.forEach((e: any) => {
-            if (e.phone) {
-              const pClean = e.phone.replace(/\D/g, '').slice(-10);
-              if (pClean) allowedPhoneSuffixes.push(pClean);
-            }
-            if (e.employee_id) allowedEmpIds.push(e.employee_id);
-            if (e.id) allowedEmpIds.push(e.id);
-          });
-        }
-      }
+      const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
       const orClauses: string[] = [];
-      allowedPhoneSuffixes.forEach((p) => {
+      phoneSuffixes.forEach((p) => {
         orClauses.push(`salesperson_phone.ilike.%${p}%`);
       });
-      allowedEmpIds.forEach((id) => {
+      employeeIds.forEach((id) => {
         orClauses.push(`employee_id.eq.${id}`);
       });
 

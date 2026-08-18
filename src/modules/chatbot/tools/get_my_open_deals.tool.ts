@@ -1,4 +1,8 @@
-import { ChatbotTool, CallerContext } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  CallerContext,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getMyOpenDealsTool: ChatbotTool = {
   name: 'get_my_open_deals',
@@ -68,37 +72,16 @@ export const getMyOpenDealsTool: ChatbotTool = {
         query = query.eq('employee_id', empId);
       }
     } else if (callerContext.role === 'manager') {
-      // Fetch subordinate employee phones/ids
-      const empId = callerContext.employeeId;
-      const rawPhone = callerContext.phone || '';
-      const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
-
-      const allowedPhoneSuffixes: string[] = cleanPhone ? [cleanPhone] : [];
-      const allowedEmpIds: string[] = empId ? [empId] : [];
-
-      if (empId) {
-        const { data: subEmployees } = await supabaseAdmin
-          .from('employees')
-          .select('id, employee_id, phone')
-          .eq('reports_to_employee_id', empId);
-
-        if (subEmployees && subEmployees.length > 0) {
-          subEmployees.forEach((e: any) => {
-            if (e.phone) {
-              const pClean = e.phone.replace(/\D/g, '').slice(-10);
-              if (pClean) allowedPhoneSuffixes.push(pClean);
-            }
-            if (e.employee_id) allowedEmpIds.push(e.employee_id);
-            if (e.id) allowedEmpIds.push(e.id);
-          });
-        }
-      }
+      const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
       const conditions: string[] = [];
-      allowedPhoneSuffixes.forEach((p) => {
+      phoneSuffixes.forEach((p) => {
         conditions.push(`salesperson_phone.ilike.%${p}%`);
       });
-      allowedEmpIds.forEach((id) => {
+      employeeIds.forEach((id) => {
         conditions.push(`employee_id.eq.${id}`);
       });
 

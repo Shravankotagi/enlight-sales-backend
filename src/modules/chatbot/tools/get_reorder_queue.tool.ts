@@ -1,4 +1,8 @@
-import { ChatbotTool, CallerContext } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  CallerContext,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getReorderQueueTool: ChatbotTool = {
   name: 'get_reorder_queue',
@@ -37,25 +41,14 @@ export const getReorderQueueTool: ChatbotTool = {
       if (cleanPhone) {
         query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
       }
-    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
-      const { data: subEmployees } = await supabaseAdmin
-        .from('employees')
-        .select('phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
+    } else if (callerContext.role === 'manager') {
+      const { phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
-      const allowedPhones: string[] = cleanPhone ? [cleanPhone] : [];
-      if (subEmployees) {
-        subEmployees.forEach((e: any) => {
-          if (e.phone) {
-            const pClean = e.phone.replace(/\D/g, '').slice(-10);
-            if (pClean && !allowedPhones.includes(pClean))
-              allowedPhones.push(pClean);
-          }
-        });
-      }
-
-      if (allowedPhones.length > 0) {
-        const orConditions = allowedPhones.map(
+      if (phoneSuffixes.length > 0) {
+        const orConditions = phoneSuffixes.map(
           (p) => `assigned_salesperson_phone.ilike.%${p}%`,
         );
         query = query.or(orConditions.join(','));

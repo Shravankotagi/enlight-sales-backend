@@ -1,4 +1,7 @@
-import { ChatbotTool } from './chatbot-tool.interface';
+import {
+  ChatbotTool,
+  getSubordinateSalespersons,
+} from './chatbot-tool.interface';
 
 export const getChurnRadarTool: ChatbotTool = {
   name: 'get_churn_radar',
@@ -32,25 +35,14 @@ export const getChurnRadarTool: ChatbotTool = {
       if (cleanPhone) {
         query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
       }
-    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
-      const { data: subEmps } = await supabaseAdmin
-        .from('employees')
-        .select('phone')
-        .eq('reports_to_employee_id', callerContext.employeeId);
+    } else if (callerContext.role === 'manager') {
+      const { phoneSuffixes } = await getSubordinateSalespersons(
+        callerContext,
+        supabaseAdmin,
+      );
 
-      const allowedPhones: string[] = cleanPhone ? [cleanPhone] : [];
-      if (subEmps) {
-        subEmps.forEach((e: any) => {
-          if (e.phone) {
-            const pClean = e.phone.replace(/\D/g, '').slice(-10);
-            if (pClean && !allowedPhones.includes(pClean))
-              allowedPhones.push(pClean);
-          }
-        });
-      }
-
-      if (allowedPhones.length > 0) {
-        const orConditions = allowedPhones.map(
+      if (phoneSuffixes.length > 0) {
+        const orConditions = phoneSuffixes.map(
           (p) => `assigned_salesperson_phone.ilike.%${p}%`,
         );
         query = query.or(orConditions.join(','));
