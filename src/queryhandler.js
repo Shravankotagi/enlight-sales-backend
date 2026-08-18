@@ -2869,4 +2869,5 @@ module.exports = {
   getInactiveCustomers,
   getReorderQueue,
   getFilteredOrders,
+  getInquiriesThisMonth,
 };
