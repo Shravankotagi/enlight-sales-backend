@@ -94,11 +94,28 @@ export const searchKnowledgeBaseTool: ChatbotTool = {
     }
 
     // 3. Vector Similarity Search via Postgres RPC match_kb_chunks
-    const { data: chunks, error } = await supabaseAdmin.rpc('match_kb_chunks', {
-      query_embedding: JSON.stringify(queryEmbedding),
+    let chunks: any = null;
+    let error: any = null;
+
+    const rpcRes1 = await supabaseAdmin.rpc('match_kb_chunks', {
+      query_embedding: queryEmbedding,
       match_count: 5,
       allowed_roles: allowedRoles,
     });
+
+    if (rpcRes1.error) {
+      // Retry with JSON.stringify format if driver expects stringified vector
+      const rpcRes2 = await supabaseAdmin.rpc('match_kb_chunks', {
+        query_embedding: JSON.stringify(queryEmbedding),
+        match_count: 5,
+        allowed_roles: allowedRoles,
+      });
+      chunks = rpcRes2.data;
+      error = rpcRes2.error;
+    } else {
+      chunks = rpcRes1.data;
+      error = rpcRes1.error;
+    }
 
     if (error) {
       throw new Error(`match_kb_chunks RPC error: ${error.message}`);

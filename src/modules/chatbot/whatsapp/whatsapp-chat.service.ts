@@ -112,10 +112,20 @@ export class WhatsAppChatService {
           allIds.push(pNorm.fullWithCountry);
       }
 
+      const rawRole = (emp.role || '').toLowerCase();
+      let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
+      if (rawRole.includes('admin')) {
+        role = 'admin';
+      } else if (rawRole.includes('manager')) {
+        role = 'manager';
+      } else {
+        role = 'salesperson';
+      }
+
       const caller: CallerContext = {
         userId: emp.id,
         email: emp.email || `${emp.employee_id}@enlightmetals.com`,
-        role: emp.role || 'salesperson',
+        role: role,
         employeeId: emp.employee_id,
         phone: emp.phone || fullWithCountry,
         reportsToId: emp.reports_to_employee_id || undefined,

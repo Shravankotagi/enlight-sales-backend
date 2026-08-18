@@ -42,6 +42,111 @@ function buildInquiryPhoneOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+function extractCleanCustomerName(rawText: string): string | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+
+  // 1. Remove greeting / action verb prefixes
+  const text = rawText
+    .replace(/^(hi|hello|hey|dear|sir)\b\s*[,.:-]?\s*/i, '')
+    .replace(
+      /^(visited|met with|met|site visit to|meeting with|talked to|called)\s+/i,
+      '',
+    )
+    .trim();
+
+  // 2. Stop words where company name ends and requirement / contact begins
+  const STOP_KEYWORDS =
+    /\b(needs?|requires?|requirement|wants?|wanted|inquiry|enquiry|quote|quotation|rate|bhav|asking for|interested in|looking for|contact|person|owner|phone|mob|mobile|call|ph|gst|gstin|location|delivery|warehouse|po|order|placed|confirmed|today|yesterday|regarding|about|with|\d+\s*(?:mt|tons?|kg|sheets?|coils?|nos?|mm))\b/i;
+
+  // 3. Extract candidate name after For / From / Client / Customer / M/s or first clause
+  const prefixMatch = text.match(
+    /^(?:for|from|customer|client|company|account|m\/s|m\/s\.)\s+([^,:\n]+)/i,
+  );
+  let candidate = prefixMatch ? prefixMatch[1] : text.split(/[,:\n]/)[0];
+
+  // 4. Split candidate at requirement / contact stop words
+  const stopIndex = candidate.search(STOP_KEYWORDS);
+  if (stopIndex !== -1) {
+    candidate = candidate.substring(0, stopIndex);
+  }
+
+  candidate = candidate.replace(/[.,:;*_\-\s]+$/, '').trim();
+
+  const SALESPERSON_NAMES = [
+    'rishabh',
+    'rishabh makwana',
+    'max',
+    'akruti',
+    'salesperson',
+    'sales rep',
+    'customer',
+    'client',
+    'the customer',
+    'inquiry',
+    'deal',
+    'new',
+  ];
+  if (!candidate || SALESPERSON_NAMES.includes(candidate.toLowerCase())) {
+    return null;
+  }
+
+  return candidate.length >= 2 ? candidate : null;
+}
+
+function resolveInquiryEntities(item: any) {
+  const aiJson = (item.ai_extraction_json as any) || {};
+
+  // 1. Resolve Customer Company Name
+  let extractedCustomerName =
+    aiJson.customer?.name ||
+    aiJson.customer_name ||
+    aiJson.companyName ||
+    aiJson.customer_company ||
+    (item.source_channel === 'web_dashboard' ? item.sender_name : null);
+
+  if (
+    !extractedCustomerName ||
+    extractedCustomerName.toLowerCase() === 'customer' ||
+    extractedCustomerName.toLowerCase() === 'client' ||
+    extractedCustomerName.toLowerCase() === 'the customer'
+  ) {
+    const cleanFromText = extractCleanCustomerName(item.raw_text);
+    if (cleanFromText) {
+      extractedCustomerName = cleanFromText;
+    } else {
+      extractedCustomerName =
+        item.source_channel === 'web_dashboard'
+          ? item.sender_name || 'Customer Inquiry'
+          : 'Customer Inquiry';
+    }
+  }
+
+  // 2. Resolve Customer Contact Phone
+  let extractedCustomerPhone =
+    aiJson.customer?.phone ||
+    aiJson.customer_phone ||
+    aiJson.contact_phone ||
+    aiJson.contact_number ||
+    (item.source_channel === 'web_dashboard' ? item.sender_phone : '');
+
+  if (
+    extractedCustomerPhone === item.sender_phone &&
+    item.source_channel === 'whatsapp'
+  ) {
+    extractedCustomerPhone = '';
+  }
+
+  return {
+    customer_name: extractedCustomerName,
+    customer_phone: extractedCustomerPhone || '',
+    salesperson_name:
+      item.source_channel === 'whatsapp'
+        ? item.sender_name
+        : item.salesperson_name || 'Sales Representative',
+    salesperson_phone: item.salesperson_phone || item.sender_phone || '',
+  };
+}
+
 @Injectable()
 export class InquiriesService {
   private readonly logger = new Logger(InquiriesService.name);
@@ -101,16 +206,16 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Clean lightweight list with instant metadata
+      // Clean lightweight list with accurate customer and salesperson entities
       const lightweightData = (data || []).map((item: any) => {
         const hasAttachment =
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp';
+        const entities = resolveInquiryEntities(item);
         return {
           ...item,
-          customer_name: item.sender_name,
-          customer_phone: item.sender_phone,
+          ...entities,
           has_media: hasAttachment,
           media_urls: hasAttachment ? ['attached_document'] : [],
         };
@@ -131,6 +236,13 @@ export class InquiriesService {
         .eq('id', id)
         .single();
       if (error) throw error;
+      if (data) {
+        const entities = resolveInquiryEntities(data);
+        return {
+          ...data,
+          ...entities,
+        };
+      }
       return data;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
@@ -169,10 +281,10 @@ export class InquiriesService {
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp';
+        const entities = resolveInquiryEntities(item);
         return {
           ...item,
-          customer_name: item.sender_name,
-          customer_phone: item.sender_phone,
+          ...entities,
           has_media: hasAttachment,
           media_urls: hasAttachment ? ['attached_document'] : [],
         };
@@ -429,13 +541,14 @@ export class InquiriesService {
 
       const aiJson = (inquiry.ai_extraction_json as any) || {};
       const details = overrideDetails || {};
+      const isWhatsApp = inquiry.source_channel === 'whatsapp';
       const customerName =
         details.companyName ||
         details.customer_name ||
         aiJson.companyName ||
         aiJson.customer_name ||
         aiJson.customer?.name ||
-        inquiry.sender_name ||
+        (!isWhatsApp ? inquiry.sender_name : null) ||
         'Customer Inquiry';
       const customerPhone =
         details.customerPhone ||
@@ -443,7 +556,7 @@ export class InquiriesService {
         aiJson.customerPhone ||
         aiJson.customer_phone ||
         aiJson.customer?.phone ||
-        inquiry.sender_phone ||
+        (!isWhatsApp ? inquiry.sender_phone : null) ||
         '';
       const salespersonPhone =
         inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';

@@ -27,6 +27,10 @@ export const getCustomer360Tool: ChatbotTool = {
       return { data: { message: 'Customer name is required' }, rowCount: 0 };
     }
 
+    const rawPhone = callerContext.phone || '';
+    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+    const empId = callerContext.employeeId;
+
     // 1. Fetch customer profile from recurring_customers
     let customerQuery = supabaseAdmin
       .from('recurring_customers')
@@ -34,28 +38,34 @@ export const getCustomer360Tool: ChatbotTool = {
       .ilike('customer_name', `%${customerName}%`);
 
     if (callerContext.role === 'salesperson') {
-      const phone = callerContext.phone;
-      if (phone)
-        customerQuery = customerQuery.eq('assigned_salesperson_phone', phone);
+      if (cleanPhone) {
+        customerQuery = customerQuery.ilike(
+          'assigned_salesperson_phone',
+          `%${cleanPhone}%`,
+        );
+      }
     } else if (callerContext.role === 'manager' && callerContext.employeeId) {
       const { data: subEmployees } = await supabaseAdmin
         .from('employees')
         .select('phone')
         .eq('reports_to_employee_id', callerContext.employeeId);
 
-      const allowedPhones: string[] = callerContext.phone
-        ? [callerContext.phone]
-        : [];
+      const allowedPhones: string[] = [];
+      if (cleanPhone) allowedPhones.push(cleanPhone);
       if (subEmployees) {
-        subEmployees.forEach(
-          (e: any) => e.phone && allowedPhones.push(e.phone),
-        );
+        subEmployees.forEach((e: any) => {
+          if (e.phone) {
+            const pClean = e.phone.replace(/\D/g, '').slice(-10);
+            if (pClean && !allowedPhones.includes(pClean))
+              allowedPhones.push(pClean);
+          }
+        });
       }
       if (allowedPhones.length > 0) {
-        customerQuery = customerQuery.in(
-          'assigned_salesperson_phone',
-          allowedPhones,
+        const orConditions = allowedPhones.map(
+          (p) => `assigned_salesperson_phone.ilike.%${p}%`,
         );
+        customerQuery = customerQuery.or(orConditions.join(','));
       }
     }
 
@@ -75,14 +85,46 @@ export const getCustomer360Tool: ChatbotTool = {
       .order('created_at', { ascending: false });
 
     if (callerContext.role === 'salesperson') {
-      const phone = callerContext.phone;
-      const empId = callerContext.employeeId;
-      if (phone && empId)
+      if (cleanPhone && empId) {
         dealsQuery = dealsQuery.or(
-          `salesperson_phone.eq.${phone},employee_id.eq.${empId}`,
+          `salesperson_phone.ilike.%${cleanPhone}%,employee_id.eq.${empId}`,
         );
-      else if (phone) dealsQuery = dealsQuery.eq('salesperson_phone', phone);
-      else if (empId) dealsQuery = dealsQuery.eq('employee_id', empId);
+      } else if (cleanPhone) {
+        dealsQuery = dealsQuery.ilike('salesperson_phone', `%${cleanPhone}%`);
+      } else if (empId) {
+        dealsQuery = dealsQuery.eq('employee_id', empId);
+      }
+    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
+      const { data: subEmployees } = await supabaseAdmin
+        .from('employees')
+        .select('id, employee_id, phone')
+        .eq('reports_to_employee_id', callerContext.employeeId);
+
+      const allowedPhoneSuffixes: string[] = cleanPhone ? [cleanPhone] : [];
+      const allowedEmpIds: string[] = empId ? [empId] : [];
+
+      if (subEmployees && subEmployees.length > 0) {
+        subEmployees.forEach((e: any) => {
+          if (e.phone) {
+            const pClean = e.phone.replace(/\D/g, '').slice(-10);
+            if (pClean) allowedPhoneSuffixes.push(pClean);
+          }
+          if (e.employee_id) allowedEmpIds.push(e.employee_id);
+          if (e.id) allowedEmpIds.push(e.id);
+        });
+      }
+
+      const orClauses: string[] = [];
+      allowedPhoneSuffixes.forEach((p) => {
+        orClauses.push(`salesperson_phone.ilike.%${p}%`);
+      });
+      allowedEmpIds.forEach((id) => {
+        orClauses.push(`employee_id.eq.${id}`);
+      });
+
+      if (orClauses.length > 0) {
+        dealsQuery = dealsQuery.or(orClauses.join(','));
+      }
     }
 
     const { data: deals } = await dealsQuery;
@@ -93,11 +135,35 @@ export const getCustomer360Tool: ChatbotTool = {
       .select('*')
       .ilike('customer_name', `%${customerName}%`);
 
-    if (callerContext.role === 'salesperson' && callerContext.phone) {
-      paymentsQuery = paymentsQuery.eq(
-        'salesperson_phone',
-        callerContext.phone,
-      );
+    if (callerContext.role === 'salesperson') {
+      if (cleanPhone) {
+        paymentsQuery = paymentsQuery.ilike(
+          'salesperson_phone',
+          `%${cleanPhone}%`,
+        );
+      }
+    } else if (callerContext.role === 'manager' && callerContext.employeeId) {
+      const { data: subEmployees } = await supabaseAdmin
+        .from('employees')
+        .select('phone')
+        .eq('reports_to_employee_id', callerContext.employeeId);
+
+      const allowedPhones: string[] = cleanPhone ? [cleanPhone] : [];
+      if (subEmployees) {
+        subEmployees.forEach((e: any) => {
+          if (e.phone) {
+            const pClean = e.phone.replace(/\D/g, '').slice(-10);
+            if (pClean && !allowedPhones.includes(pClean))
+              allowedPhones.push(pClean);
+          }
+        });
+      }
+      if (allowedPhones.length > 0) {
+        const orConditions = allowedPhones.map(
+          (p) => `salesperson_phone.ilike.%${p}%`,
+        );
+        paymentsQuery = paymentsQuery.or(orConditions.join(','));
+      }
     }
 
     const { data: payments } = await paymentsQuery;

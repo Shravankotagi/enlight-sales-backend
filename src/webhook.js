@@ -199,28 +199,53 @@ router.post('/', async (req, res) => {
           raw_text = raw_text.substring(0, 2000) + '... (truncated)';
         }
 
-        // Save incoming inquiry to `inquiries` table so it shows on the web dashboard
+        // ── 1. EARLY INTERCEPTION FOR CHATBOT ASSISTANT QUERIES ──
+        // Questions, policy inquiries, data lookups, and conversational queries
+        // route directly to the Central Chatbot Gateway without creating inquiries or modifying deals.
+        const { isQuery } = require('./queryhandler');
+        const isChatbotQuery = messageType === 'text' && isQuery(raw_text);
+
+        if (isChatbotQuery) {
+          console.log(
+            `[Webhook] Intercepted Chatbot Query from ${senderPhone}: "${raw_text.slice(0, 60)}"`,
+          );
+          const axios = require('axios');
+          const backendUrl =
+            process.env.CENTRAL_BACKEND_URL || 'http://127.0.0.1:3000';
+          try {
+            const res = await axios.post(
+              `${backendUrl}/chat/whatsapp/message`,
+              {
+                senderPhone,
+                messageText: raw_text,
+              },
+              { timeout: 25000 },
+            );
+
+            const botReply = res.data?.data?.reply || res.data?.reply;
+            if (botReply) {
+              await sendTextMessage(senderPhone, botReply);
+              return;
+            }
+          } catch (backendErr) {
+            console.error(
+              `[Webhook] Central backend error on query: ${backendErr.message}. Falling back to local query handler.`,
+            );
+          }
+
+          // Fallback to local query handler if central backend is unreachable
+          const { handleQuery } = require('./queryhandler');
+          const queryReply = await handleQuery(raw_text, senderPhone);
+          if (queryReply) {
+            await sendTextMessage(senderPhone, queryReply);
+            return;
+          }
+        }
+
         const {
-          saveInquiry,
           getFullActiveSession,
           saveActiveSession,
         } = require('./supabase');
-        try {
-          await saveInquiry({
-            source_channel: 'whatsapp',
-            raw_text: raw_text || `${messageType} message`,
-            media_urls: media_urls || [],
-            voice_url: voice_url || null,
-            sender_phone: senderPhone,
-            sender_name: employeeRecord ? employeeRecord.name : senderName,
-            message_id: messageId,
-            status: 'processed',
-            overall_confidence: 0.92,
-            employee_id: employeeRecord ? employeeRecord.employee_id : null,
-          });
-        } catch (inqErr) {
-          console.error('[Webhook] Failed to save inquiry:', inqErr.message);
-        }
 
         // --- CHECK ACTIVE REJECTION FLOWS (multi-turn logic) ---
         const activeSession = await getFullActiveSession(senderPhone);
@@ -842,32 +867,39 @@ router.post('/', async (req, res) => {
             return;
           }
 
-          // Keep session context refreshed with the validated customer name
-          await saveActiveSession(senderPhone, officialCustomerName, 'inquiry');
-
-          // Use the official/corrected customer name from the database (fixes typos)
-          if (extraction.customer) {
-            extraction.customer.name = officialCustomerName;
-          }
-
-          // Update inquiry with extraction result
-          await supabase
-            .from('inquiries')
-            .update({
-              ai_extraction_json: extraction,
-              overall_confidence: extraction.overall_confidence,
-              status:
-                extraction.overall_confidence >= 0.85 ? 'processed' : 'review',
-            })
-            .eq('id', savedInquiry.id);
+          // Save inquiry in inquiries table with validated customer and line items
+          const { saveInquiry } = require('./supabase');
+          const savedInquiry = await saveInquiry({
+            source_channel: 'whatsapp',
+            raw_text: raw_text,
+            media_urls: media_urls || [],
+            voice_url: voice_url || null,
+            sender_phone: senderPhone,
+            sender_name: senderName,
+            whatsapp_message_id: messageId || null,
+            status:
+              extraction.overall_confidence >= 0.85 ? 'processed' : 'review',
+            salesperson_phone: senderPhone,
+            employee_id: employeeId,
+            inquiry_type: extraction.inquiry_type || 'Product Requirement',
+            overall_confidence: extraction.overall_confidence || 0.95,
+            ai_extraction_json: {
+              ...extraction,
+              customer: {
+                name: officialCustomerName,
+                phone: extraction.customer?.phone || null,
+                gst: extraction.customer?.gst || null,
+                address: extraction.customer?.address || null,
+              },
+              customer_name: officialCustomerName,
+              customer_phone: extraction.customer?.phone || null,
+              companyName: officialCustomerName,
+            },
+          });
+          const inquiryId = savedInquiry?.id || null;
 
           // Save deal + line items
-          deal = await saveDeal(
-            savedInquiry.id,
-            extraction,
-            senderPhone,
-            employeeId,
-          );
+          deal = await saveDeal(inquiryId, extraction, senderPhone, employeeId);
 
           // --- KRA 2 NEW CUSTOMER CHECK ---
           if (deal && deal.customer_name) {

@@ -56,22 +56,30 @@ export const getTeamPipelineTool: ChatbotTool = {
         .map((e) => e.employee_id || e.id)
         .filter(Boolean);
 
-      const allowedPhones = [...subPhones, callerContext.phone].filter(Boolean);
+      const allowedPhoneSuffixes: string[] = [];
+      const callerClean = (callerContext.phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      if (callerClean) allowedPhoneSuffixes.push(callerClean);
+
+      subPhones.forEach((p: string) => {
+        const pClean = p.replace(/\D/g, '').slice(-10);
+        if (pClean && !allowedPhoneSuffixes.includes(pClean)) {
+          allowedPhoneSuffixes.push(pClean);
+        }
+      });
+
       const allowedEmpIds = [...subEmpIds, callerContext.employeeId].filter(
         Boolean,
       );
 
       const orClauses: string[] = [];
-      if (allowedPhones.length > 0) {
-        orClauses.push(
-          `salesperson_phone.in.(${allowedPhones.map((p) => `"${p}"`).join(',')})`,
-        );
-      }
-      if (allowedEmpIds.length > 0) {
-        orClauses.push(
-          `employee_id.in.(${allowedEmpIds.map((id) => `"${id}"`).join(',')})`,
-        );
-      }
+      allowedPhoneSuffixes.forEach((p) => {
+        orClauses.push(`salesperson_phone.ilike.%${p}%`);
+      });
+      allowedEmpIds.forEach((id) => {
+        orClauses.push(`employee_id.eq.${id}`);
+      });
 
       if (orClauses.length > 0) {
         query = query.or(orClauses.join(','));

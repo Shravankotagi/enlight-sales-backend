@@ -30,10 +30,12 @@ export const getReorderQueueTool: ChatbotTool = {
       .order('last_order_date', { ascending: true });
 
     // Scoping per role
+    const rawPhone = callerContext.phone || '';
+    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+
     if (callerContext.role === 'salesperson') {
-      const phone = callerContext.phone;
-      if (phone) {
-        query = query.eq('assigned_salesperson_phone', phone);
+      if (cleanPhone) {
+        query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
       }
     } else if (callerContext.role === 'manager' && callerContext.employeeId) {
       const { data: subEmployees } = await supabaseAdmin
@@ -41,17 +43,22 @@ export const getReorderQueueTool: ChatbotTool = {
         .select('phone')
         .eq('reports_to_employee_id', callerContext.employeeId);
 
-      const allowedPhones: string[] = callerContext.phone
-        ? [callerContext.phone]
-        : [];
+      const allowedPhones: string[] = cleanPhone ? [cleanPhone] : [];
       if (subEmployees) {
-        subEmployees.forEach(
-          (e: any) => e.phone && allowedPhones.push(e.phone),
-        );
+        subEmployees.forEach((e: any) => {
+          if (e.phone) {
+            const pClean = e.phone.replace(/\D/g, '').slice(-10);
+            if (pClean && !allowedPhones.includes(pClean))
+              allowedPhones.push(pClean);
+          }
+        });
       }
 
       if (allowedPhones.length > 0) {
-        query = query.in('assigned_salesperson_phone', allowedPhones);
+        const orConditions = allowedPhones.map(
+          (p) => `assigned_salesperson_phone.ilike.%${p}%`,
+        );
+        query = query.or(orConditions.join(','));
       }
     }
     // Admin receives all active recurring customers
