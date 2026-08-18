@@ -74,6 +74,29 @@ export class ReportsService {
         y = range.year;
       }
 
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          period: { month: monthName, year: y },
+          summary: {
+            total_revenue: 0,
+            won_revenue: 0,
+            pipeline_value: 0,
+            total_value: 0,
+            won_value: 0,
+            won: 0,
+            deals_won: 0,
+            deals_lost: 0,
+            deals_pending: 0,
+            total_deals: 0,
+            conversion_rate: 0,
+            total_inquiries: 0,
+          },
+          by_customer: [],
+          by_type: [],
+          lost_reasons: {},
+        };
+      }
+
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
@@ -95,7 +118,6 @@ export class ReportsService {
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
       }
@@ -305,7 +327,8 @@ export class ReportsService {
       );
 
       // If allowedPhones is specified (e.g. for Sales Manager), scope strictly
-      if (allowedPhones && allowedPhones.length > 0) {
+      if (allowedPhones) {
+        if (allowedPhones.length === 0) return [];
         phones = new Set(
           Array.from(phones).filter((p) => phoneInList(p, allowedPhones)),
         );
@@ -413,6 +436,28 @@ export class ReportsService {
         y = range.year;
       }
 
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        const stages = [
+          { key: 'new_deals', label: 'New Deals' },
+          { key: 'qualified', label: 'Qualified' },
+          { key: 'quoted', label: 'Quoted' },
+          { key: 'negotiation', label: 'Negotiation' },
+          { key: 'won', label: 'Won' },
+          { key: 'lost', label: 'Lost' },
+        ];
+        return {
+          period: { month: monthName, year: y },
+          funnel: stages.map(({ key, label }) => ({
+            stage: key,
+            label,
+            count: 0,
+            value: 0,
+          })),
+          max_count: 0,
+          overall_win_rate: 0,
+        };
+      }
+
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
@@ -424,7 +469,6 @@ export class ReportsService {
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
-          'customer_phone',
         ]);
         if (orFilter) dealsQuery = dealsQuery.or(orFilter);
       }
@@ -509,6 +553,13 @@ export class ReportsService {
         end = range.end;
         monthName = range.monthName;
         y = range.year;
+      }
+
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          period: { month: monthName, year: y },
+          skus: [],
+        };
       }
 
       let itemsQuery = this.supabase

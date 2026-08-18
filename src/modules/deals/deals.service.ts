@@ -40,7 +40,7 @@ export class DealsService {
         const p10 = cleanDigits.slice(-10);
         const p12 = '91' + p10;
         query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12},customer_phone.eq.${p10},customer_phone.eq.${p12},salesperson_phone.is.null`,
+          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
       }
       if (filters?.from) {
@@ -64,8 +64,8 @@ export class DealsService {
       const lightweightDeals = (data || []).map((d: any) => {
         const hasMedia = Boolean(
           d.inquiry_id ||
-          d.po_number ||
-          (Array.isArray(d.media_urls) && d.media_urls.length > 0),
+            d.po_number ||
+            (Array.isArray(d.media_urls) && d.media_urls.length > 0),
         );
         return {
           ...d,

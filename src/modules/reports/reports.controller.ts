@@ -31,7 +31,7 @@ export class ReportsController {
     return this.reportsService.getMonthlySalesReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
-      phones || undefined,
+      phones === null ? undefined : phones,
       from,
       to,
     );
@@ -60,10 +60,10 @@ export class ReportsController {
         employee.id,
         employee.phone,
       );
-      const teamPhones = [
-        employee.phone,
-        ...assigned.map((a: any) => a.phone).filter(Boolean),
-      ];
+      if (assigned.length === 0) {
+        return [];
+      }
+      const teamPhones = assigned.map((a: any) => a.phone).filter(Boolean);
       return this.reportsService.getSalespersonReport(
         month ? parseInt(month) : undefined,
         year ? parseInt(year) : undefined,
@@ -95,7 +95,7 @@ export class ReportsController {
     return this.reportsService.getFunnelReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
-      phones || undefined,
+      phones === null ? undefined : phones,
       from,
       to,
     );
@@ -120,7 +120,7 @@ export class ReportsController {
     return this.reportsService.getSkuReport(
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
-      phones || undefined,
+      phones === null ? undefined : phones,
       from,
       to,
     );

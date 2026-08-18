@@ -54,7 +54,7 @@ export class CustomersController {
         salespersonPhoneOverride,
       );
 
-    return this.customersService.findAll(phones || undefined);
+    return this.customersService.findAll(phones === null ? undefined : phones);
   }
 
   @Get('churn-risk')
@@ -68,7 +68,9 @@ export class CustomersController {
         salespersonPhoneOverride,
       );
 
-    return this.customersService.getChurnRisk(phones || undefined);
+    return this.customersService.getChurnRisk(
+      phones === null ? undefined : phones,
+    );
   }
 
   @Get('reorder-queue')
@@ -82,7 +84,9 @@ export class CustomersController {
         salespersonPhoneOverride,
       );
 
-    return this.customersService.getReorderQueue(phones || undefined);
+    return this.customersService.getReorderQueue(
+      phones === null ? undefined : phones,
+    );
   }
 
   @Get('loss-analytics')
@@ -96,7 +100,9 @@ export class CustomersController {
         salespersonPhoneOverride,
       );
 
-    return this.customersService.getLossAnalytics(phones || undefined);
+    return this.customersService.getLossAnalytics(
+      phones === null ? undefined : phones,
+    );
   }
 
   @Get(':id')
@@ -104,6 +110,9 @@ export class CustomersController {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
 
-    return this.customersService.findOne(id, phones || undefined);
+    return this.customersService.findOne(
+      id,
+      phones === null ? undefined : phones,
+    );
   }
 }

@@ -34,6 +34,10 @@ export class CustomersService {
 
   async findAll(salespersonPhone?: string[] | string) {
     try {
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return [];
+      }
+
       let query = this.supabase
         .from('recurring_customers')
         .select('*')
@@ -43,8 +47,7 @@ export class CustomersService {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'assigned_salesperson_phone',
         ]);
-        if (orFilter)
-          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
+        if (orFilter) query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -144,6 +147,10 @@ export class CustomersService {
 
   async getChurnRisk(salespersonPhone?: string[] | string) {
     try {
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return [];
+      }
+
       let query = this.supabase
         .from('recurring_customers')
         .select('*')
@@ -153,8 +160,7 @@ export class CustomersService {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'assigned_salesperson_phone',
         ]);
-        if (orFilter)
-          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
+        if (orFilter) query = query.or(orFilter);
       }
 
       const { data: customers, error } = await query;
@@ -267,6 +273,10 @@ export class CustomersService {
 
   async getReorderQueue(salespersonPhone?: string[] | string) {
     try {
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return [];
+      }
+
       const now = new Date();
       let query = this.supabase
         .from('recurring_customers')
@@ -277,8 +287,7 @@ export class CustomersService {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'assigned_salesperson_phone',
         ]);
-        if (orFilter)
-          query = query.or(`${orFilter},assigned_salesperson_phone.is.null`);
+        if (orFilter) query = query.or(orFilter);
       }
 
       const { data: customers, error } = await query;
@@ -348,6 +357,15 @@ export class CustomersService {
 
   async getLossAnalytics(salespersonPhone?: string[] | string) {
     try {
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          total_lost: 0,
+          total_lost_value: 0,
+          by_reason: [],
+          recent_lost: [],
+        };
+      }
+
       const now = new Date();
       const threeMonthsAgo = new Date(
         now.getFullYear(),

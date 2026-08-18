@@ -37,7 +37,7 @@ export class KraController {
       );
 
     return this.kraService.getDashboard(
-      phones || undefined,
+      phones === null ? undefined : phones,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
       from,
@@ -61,7 +61,7 @@ export class KraController {
       );
 
     return this.kraService.getSheets(
-      phones || undefined,
+      phones === null ? undefined : phones,
       month ? parseInt(month) : undefined,
       year ? parseInt(year) : undefined,
       from,
@@ -83,7 +83,7 @@ export class KraController {
 
     return this.kraService.getLogs(
       kraNumber ? parseInt(kraNumber) : undefined,
-      phones || undefined,
+      phones === null ? undefined : phones,
     );
   }
 
@@ -105,7 +105,7 @@ export class KraController {
       );
 
     return this.kraService.getActionQueue(
-      phones || employee.phone,
+      phones === null ? employee.phone : phones,
       isAdmin && !salespersonPhoneOverride,
       parsedMonth,
       parsedYear,
@@ -123,7 +123,7 @@ export class KraController {
         salespersonPhoneOverride,
       );
 
-    return this.kraService.getComplaints(phones || undefined);
+    return this.kraService.getComplaints(phones === null ? undefined : phones);
   }
 
   @Post('complaints')
@@ -154,7 +154,7 @@ export class KraController {
         salespersonPhoneOverride,
       );
 
-    return this.kraService.getVisits(phones || undefined);
+    return this.kraService.getVisits(phones === null ? undefined : phones);
   }
 
   @Post('visits')

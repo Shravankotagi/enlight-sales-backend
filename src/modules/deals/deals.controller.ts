@@ -38,14 +38,14 @@ export class DealsController {
         salespersonPhoneOverride,
       );
 
+    if (Array.isArray(phones) && phones.length === 0) {
+      return [];
+    }
+
     const data = await this.dealsService.findAll({ stage, from, to });
 
     if (phones) {
-      return data.filter(
-        (d: any) =>
-          phoneInList(d.salesperson_phone, phones) ||
-          phoneInList(d.customer_phone, phones),
-      );
+      return data.filter((d: any) => phoneInList(d.salesperson_phone, phones));
     }
     return data;
   }
@@ -63,15 +63,6 @@ export class DealsController {
         salespersonPhoneOverride,
       );
 
-    const deals = await this.dealsService.findAll({ from, to });
-    const filtered = phones
-      ? deals.filter(
-          (d: any) =>
-            phoneInList(d.salesperson_phone, phones) ||
-            phoneInList(d.customer_phone, phones),
-        )
-      : deals;
-
     const stages = [
       'new_inquiry',
       'qualified',
@@ -80,6 +71,19 @@ export class DealsController {
       'won',
       'lost',
     ];
+
+    if (Array.isArray(phones) && phones.length === 0) {
+      return stages.map((stage) => ({
+        stage,
+        count: 0,
+        total_value: 0,
+      }));
+    }
+
+    const deals = await this.dealsService.findAll({ from, to });
+    const filtered = phones
+      ? deals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
+      : deals;
 
     return stages.map((stage) => ({
       stage,
@@ -104,20 +108,25 @@ export class DealsController {
         salespersonPhoneOverride,
       );
 
+    const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
+
+    if (Array.isArray(phones) && phones.length === 0) {
+      return {
+        new_inquiry: [],
+        qualified: [],
+        quoted: [],
+        negotiation: [],
+      };
+    }
+
     const deals = await this.dealsService.findAll({ from, to });
     const activeDeals = deals.filter(
       (d: any) => !['won', 'lost'].includes(d.stage),
     );
 
     const filtered = phones
-      ? activeDeals.filter(
-          (d: any) =>
-            phoneInList(d.salesperson_phone, phones) ||
-            phoneInList(d.customer_phone, phones),
-        )
+      ? activeDeals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
       : activeDeals;
-
-    const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
 
     return stages.reduce(
       (acc, stage) => {
