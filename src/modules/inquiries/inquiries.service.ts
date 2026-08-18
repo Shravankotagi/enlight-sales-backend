@@ -93,6 +93,67 @@ function extractCleanCustomerName(rawText: string): string | null {
   return candidate.length >= 2 ? candidate : null;
 }
 
+function isGenuineInquiry(item: any): boolean {
+  if (!item) return false;
+  const rawText = (item.raw_text || '').trim();
+  const aiJson = (item.ai_extraction_json as any) || {};
+
+  // 1. Document / PO attachment is always genuine
+  if (
+    rawText.startsWith('[Inquiry Attachment:') ||
+    rawText.startsWith('[PO Document Attached:') ||
+    rawText.startsWith('[Inquiry Document Attached]')
+  ) {
+    return true;
+  }
+
+  // 2. Extracted line items with product & quantity is genuine
+  if (
+    Array.isArray(aiJson.line_items) &&
+    aiJson.line_items.length > 0 &&
+    aiJson.line_items.some(
+      (i: any) =>
+        (Number(i.quantity) > 0 || Number(i.quantity_tons) > 0) &&
+        (i.sku_text || i.product_name || i.product),
+    )
+  ) {
+    return true;
+  }
+
+  // 3. Reject conversational questions, chatbot queries, commands, visit logs, and payments
+  const NON_INQUIRY_PATTERNS = [
+    /^(hi|hello|hey|namaste)\b/i,
+    /^(show|list|tell|what|how|why|where|can you|give me|is there|which customers|now show|change)\b/i,
+    /\b(policy|moq|sop|guideline|portal|login|dashboard)\b/i,
+    /^(visited|met with|site visit|meeting with)\b/i,
+    /^new customer\b/i,
+    /^(deal|we have won|won the|lost the|paid|advance)\b/i,
+    /\b(paid\s+₹?|paid\s+rs|advance\s+via|via\s+cheque|via\s+rtgs|via\s+neft)\b/i,
+    /^#deal-\w+/i,
+    /^\d+$/,
+    /^this is the new inquiry$/i,
+    /^we have received a new inquiry/i,
+    /^document received$/i,
+    /^ded$/i,
+  ];
+
+  const t = rawText.toLowerCase();
+  if (NON_INQUIRY_PATTERNS.some((p) => p.test(t))) {
+    return false;
+  }
+
+  // 4. Must have minimal commercial length or tonnage / product mention
+  const hasMetalKeyword =
+    /\b(mt|tons?|kg|coils?|sheets?|plates?|rebar|tmt|steel|hr|cr|gp|gc|pipe|tube)\b/i.test(
+      t,
+    );
+  if (!hasMetalKeyword && !aiJson.customer?.name && !aiJson.customer_name) {
+    return false;
+  }
+
+  return true;
+}
+
 function resolveInquiryEntities(item: any) {
   const aiJson = (item.ai_extraction_json as any) || {};
 
@@ -206,8 +267,11 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
+      // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
+      const genuineData = (data || []).filter(isGenuineInquiry);
+
       // Clean lightweight list with accurate customer and salesperson entities
-      const lightweightData = (data || []).map((item: any) => {
+      const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
@@ -276,7 +340,9 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
-      const lightweightData = (data || []).map((item: any) => {
+      const genuineData = (data || []).filter(isGenuineInquiry);
+
+      const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
@@ -353,7 +419,7 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'status, source_channel, created_at, salesperson_phone, sender_phone',
+          'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json',
         );
 
       const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
@@ -364,16 +430,18 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
+      const genuineData = (data || []).filter(isGenuineInquiry);
+
       return {
-        total: data?.length || 0,
-        pending: data?.filter((i) => i.status === 'pending').length || 0,
-        processed: data?.filter((i) => i.status === 'processed').length || 0,
-        review:
-          data?.filter((i) => ['review', 'needs_review'].includes(i.status))
-            .length || 0,
+        total: genuineData.length,
+        pending: genuineData.filter((i) => i.status === 'pending').length,
+        processed: genuineData.filter((i) => i.status === 'processed').length,
+        review: genuineData.filter((i) =>
+          ['review', 'needs_review'].includes(i.status),
+        ).length,
         by_channel: {
-          whatsapp:
-            data?.filter((i) => i.source_channel === 'whatsapp').length || 0,
+          whatsapp: genuineData.filter((i) => i.source_channel === 'whatsapp')
+            .length,
         },
       };
     } catch (error) {
