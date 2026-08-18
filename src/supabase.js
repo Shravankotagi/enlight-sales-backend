@@ -474,7 +474,7 @@ Rules:
 /**
  * Verifies if a customer is registered in the user's account / accessible scope.
  * Supports Admin (company-wide), Sales Manager (team-wide), and Salesperson (own).
- * Handles exact matching and fuzzy matching (typos/Hinglish).
+ * Handles exact matching and fuzzy matching (typos/Hinglish) with indexed SQL candidate pre-filtering.
  * Returns the matched official name or null if not found.
  */
 async function verifyAndGetCustomerName(customerName, senderPhone) {
@@ -489,44 +489,133 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
 
   try {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
-    let query = supabase
+
+    // 1. Fast exact match at SQL level
+    let exactQuery = supabase
       .from('recurring_customers')
       .select('customer_name')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .ilike('customer_name', clean)
+      .limit(1);
 
     if (scope.phones !== null) {
       if (scope.phones.length === 1) {
-        query = query.eq('assigned_salesperson_phone', scope.phones[0]);
+        exactQuery = exactQuery.eq(
+          'assigned_salesperson_phone',
+          scope.phones[0],
+        );
       } else if (scope.phones.length > 1) {
-        query = query.in('assigned_salesperson_phone', scope.phones);
+        exactQuery = exactQuery.in('assigned_salesperson_phone', scope.phones);
       } else {
         return null;
       }
     }
 
-    let { data: customerRows } = await query;
+    const { data: exactRows } = await exactQuery;
+    if (exactRows && exactRows.length > 0) {
+      return exactRows[0].customer_name;
+    }
 
-    if (!customerRows || customerRows.length === 0) {
-      if (scope.isAdmin) {
-        const { data: allRows } = await supabase
-          .from('recurring_customers')
-          .select('customer_name')
-          .eq('is_active', true);
-        customerRows = allRows;
+    // 2. Substring candidate retrieval (scoped, max 15)
+    let subQuery = supabase
+      .from('recurring_customers')
+      .select('customer_name')
+      .eq('is_active', true)
+      .ilike('customer_name', `%${clean}%`)
+      .limit(15);
+
+    if (scope.phones !== null) {
+      if (scope.phones.length === 1) {
+        subQuery = subQuery.eq('assigned_salesperson_phone', scope.phones[0]);
+      } else if (scope.phones.length > 1) {
+        subQuery = subQuery.in('assigned_salesperson_phone', scope.phones);
       }
     }
 
-    if (!customerRows || customerRows.length === 0) return null;
+    let { data: candidateRows } = await subQuery;
 
-    const customerList = customerRows.map((c) => c.customer_name);
+    // If Admin and not found in rep scope, try company-wide
+    if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
+      const { data: adminSub } = await supabase
+        .from('recurring_customers')
+        .select('customer_name')
+        .eq('is_active', true)
+        .ilike('customer_name', `%${clean}%`)
+        .limit(15);
+      candidateRows = adminSub;
+    }
 
-    // 1. Exact match (case insensitive, trimmed)
+    // 3. Word token candidate retrieval for typos or word order differences (max 20 candidates)
+    if (!candidateRows || candidateRows.length === 0) {
+      const stopWords = [
+        'pvt',
+        'ltd',
+        'steel',
+        'company',
+        'corp',
+        'enterprises',
+        'private',
+        'limited',
+        'industries',
+        'works',
+      ];
+      const words = clean
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !stopWords.includes(w.toLowerCase()));
+
+      if (words.length > 0) {
+        const orTokens = words
+          .map((w) => `customer_name.ilike.%${w}%`)
+          .join(',');
+        let wordQuery = supabase
+          .from('recurring_customers')
+          .select('customer_name')
+          .eq('is_active', true)
+          .or(orTokens)
+          .limit(20);
+
+        if (scope.phones !== null) {
+          if (scope.phones.length === 1) {
+            wordQuery = wordQuery.eq(
+              'assigned_salesperson_phone',
+              scope.phones[0],
+            );
+          } else if (scope.phones.length > 1) {
+            wordQuery = wordQuery.in(
+              'assigned_salesperson_phone',
+              scope.phones,
+            );
+          }
+        }
+
+        const { data: wordRows } = await wordQuery;
+        candidateRows = wordRows;
+
+        if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
+          const { data: adminWordRows } = await supabase
+            .from('recurring_customers')
+            .select('customer_name')
+            .eq('is_active', true)
+            .or(orTokens)
+            .limit(20);
+          candidateRows = adminWordRows;
+        }
+      }
+    }
+
+    if (!candidateRows || candidateRows.length === 0) return null;
+
+    const customerList = Array.from(
+      new Set(candidateRows.map((c) => c.customer_name)),
+    );
+
+    // Exact match in candidates
     const exactMatch = customerList.find(
       (c) => c.toLowerCase().trim() === clean.toLowerCase(),
     );
     if (exactMatch) return exactMatch;
 
-    // 2. Fuzzy match using Gemini
+    // Fuzzy match with Gemini only across targeted candidates (max 20)
     const fuzzyMatch = await fuzzyMatchCustomer(clean, customerList);
     if (fuzzyMatch) return fuzzyMatch;
   } catch (err) {
@@ -537,7 +626,7 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
 
 /**
  * Updates an existing customer's profile and configuration in place (order frequency, contact, rep).
- * Supports full Admin, Sales Manager, and Salesperson role-scoping.
+ * Supports full Admin, Sales Manager, and Salesperson role-scoping at scale.
  */
 async function updateCustomerProfileRecord(
   senderPhone,
@@ -555,11 +644,13 @@ async function updateCustomerProfileRecord(
   try {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
 
-    // 1. Fetch accessible customer records
+    // 1. Fetch targeted customer candidates via indexed queries
     let query = supabase
       .from('recurring_customers')
       .select('*')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .ilike('customer_name', `%${cleanName}%`)
+      .limit(15);
 
     if (scope.phones !== null) {
       if (scope.phones.length === 1) {
@@ -576,12 +667,72 @@ async function updateCustomerProfileRecord(
 
     let { data: customers } = await query;
 
-    // Admin can search company-wide if not found in filtered list
+    // If Admin and not found in filtered list, search company-wide
     if ((!customers || customers.length === 0) && scope.isAdmin) {
-      const { data: allCusts } = await supabase
+      const { data: adminCusts } = await supabase
         .from('recurring_customers')
-        .select('*');
-      customers = allCusts || [];
+        .select('*')
+        .eq('is_active', true)
+        .ilike('customer_name', `%${cleanName}%`)
+        .limit(15);
+      customers = adminCusts;
+    }
+
+    // If still empty, try word tokens
+    if (!customers || customers.length === 0) {
+      const stopWords = [
+        'pvt',
+        'ltd',
+        'steel',
+        'company',
+        'corp',
+        'enterprises',
+        'private',
+        'limited',
+        'industries',
+        'works',
+      ];
+      const words = cleanName
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !stopWords.includes(w.toLowerCase()));
+      if (words.length > 0) {
+        const orTokens = words
+          .map((w) => `customer_name.ilike.%${w}%`)
+          .join(',');
+        let wordQuery = supabase
+          .from('recurring_customers')
+          .select('*')
+          .eq('is_active', true)
+          .or(orTokens)
+          .limit(20);
+
+        if (scope.phones !== null) {
+          if (scope.phones.length === 1) {
+            wordQuery = wordQuery.eq(
+              'assigned_salesperson_phone',
+              scope.phones[0],
+            );
+          } else if (scope.phones.length > 1) {
+            wordQuery = wordQuery.in(
+              'assigned_salesperson_phone',
+              scope.phones,
+            );
+          }
+        }
+
+        const { data: wordCusts } = await wordQuery;
+        customers = wordCusts;
+
+        if ((!customers || customers.length === 0) && scope.isAdmin) {
+          const { data: adminWordCusts } = await supabase
+            .from('recurring_customers')
+            .select('*')
+            .eq('is_active', true)
+            .or(orTokens)
+            .limit(20);
+          customers = adminWordCusts;
+        }
+      }
     }
 
     if (!customers || customers.length === 0) {
@@ -591,7 +742,7 @@ async function updateCustomerProfileRecord(
       };
     }
 
-    // 2. Exact or fuzzy match
+    // 2. Exact or fuzzy match across targeted candidates
     let matched = customers.find(
       (c) => c.customer_name.toLowerCase().trim() === cleanName.toLowerCase(),
     );
