@@ -217,29 +217,45 @@ function isGenuineInquiry(item: any): boolean {
   const rawText = (item.raw_text || '').trim();
   const aiJson = (item.ai_extraction_json as any) || {};
 
-  // 1. Document / PO attachment is always genuine
+  // 1. All official inquiry types and source channels are genuine
   if (
-    rawText.startsWith('[Inquiry Attachment:') ||
-    rawText.startsWith('[PO Document Attached:') ||
-    rawText.startsWith('[Inquiry Document Attached]')
+    item.inquiry_type === 'inquiry' ||
+    item.inquiry_type === 'purchase_order' ||
+    item.source_channel === 'whatsapp_text' ||
+    item.source_channel === 'whatsapp_image' ||
+    item.source_channel === 'whatsapp_po' ||
+    item.source_channel === 'web_dashboard'
   ) {
     return true;
   }
 
-  // 2. Extracted line items with product & quantity is genuine
+  // 2. Document / PO attachment is always genuine
   if (
-    Array.isArray(aiJson.line_items) &&
-    aiJson.line_items.length > 0 &&
-    aiJson.line_items.some(
+    rawText.startsWith('[Inquiry Attachment:') ||
+    rawText.startsWith('[PO Document Attached:') ||
+    rawText.startsWith('[Inquiry Document Attached]') ||
+    (Array.isArray(item.media_urls) && item.media_urls.length > 0)
+  ) {
+    return true;
+  }
+
+  // 3. Extracted line items with product & quantity is genuine
+  const lineItemsSrc = aiJson.line_items || aiJson.lineItems || [];
+  if (
+    Array.isArray(lineItemsSrc) &&
+    lineItemsSrc.length > 0 &&
+    lineItemsSrc.some(
       (i: any) =>
-        (Number(i.quantity) > 0 || Number(i.quantity_tons) > 0) &&
-        (i.sku_text || i.product_name || i.product),
+        (Number(i.quantity) > 0 ||
+          Number(i.quantity_tons) > 0 ||
+          Number(i.quantity_mt) > 0) &&
+        (i.sku_text || i.product_name || i.product || i.description),
     )
   ) {
     return true;
   }
 
-  // 3. Reject conversational questions, chatbot queries, commands, visit logs, and payments
+  // 4. Reject conversational questions, chatbot queries, commands, visit logs, and payments
   const NON_INQUIRY_PATTERNS = [
     /^(hi|hello|hey|namaste)\b/i,
     /^(show|list|tell|what|how|why|where|can you|give me|is there|which customers|now show|change)\b/i,
@@ -261,12 +277,17 @@ function isGenuineInquiry(item: any): boolean {
     return false;
   }
 
-  // 4. Must have minimal commercial length or tonnage / product mention
+  // 5. Must have minimal commercial length or tonnage / product mention
   const hasMetalKeyword =
     /\b(mt|tons?|kg|coils?|sheets?|plates?|rebar|tmt|steel|hr|cr|gp|gc|pipe|tube)\b/i.test(
       t,
     );
-  if (!hasMetalKeyword && !aiJson.customer?.name && !aiJson.customer_name) {
+  if (
+    !hasMetalKeyword &&
+    !aiJson.customer?.name &&
+    !aiJson.customer_name &&
+    !item.customer_name
+  ) {
     return false;
   }
 
