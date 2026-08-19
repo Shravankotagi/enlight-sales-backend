@@ -217,22 +217,28 @@ function isGenuineInquiry(item: any): boolean {
   const rawText = (item.raw_text || '').trim();
   const aiJson = (item.ai_extraction_json as any) || {};
 
+  // 0. Exclude Purchase Orders (POs belong strictly to the Orders tab)
+  if (
+    item.inquiry_type === 'purchase_order' ||
+    item.source_channel === 'whatsapp_po' ||
+    rawText.startsWith('[PO Document Attached:')
+  ) {
+    return false;
+  }
+
   // 1. All official inquiry types and source channels are genuine
   if (
     item.inquiry_type === 'inquiry' ||
-    item.inquiry_type === 'purchase_order' ||
     item.source_channel === 'whatsapp_text' ||
     item.source_channel === 'whatsapp_image' ||
-    item.source_channel === 'whatsapp_po' ||
     item.source_channel === 'web_dashboard'
   ) {
     return true;
   }
 
-  // 2. Document / PO attachment is always genuine
+  // 2. Document attachment is always genuine
   if (
     rawText.startsWith('[Inquiry Attachment:') ||
-    rawText.startsWith('[PO Document Attached:') ||
     rawText.startsWith('[Inquiry Document Attached]') ||
     (Array.isArray(item.media_urls) && item.media_urls.length > 0)
   ) {
