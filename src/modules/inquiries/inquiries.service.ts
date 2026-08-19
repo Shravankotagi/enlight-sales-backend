@@ -22,6 +22,11 @@ function getCompanyLogoPath(): string | null {
 }
 
 import { DealsService } from '../deals/deals.service';
+import {
+  calculatePricingSummary,
+  calculateGst,
+  calculateSubtotal,
+} from '../pricing/pricing.engine';
 
 function buildInquiryPhoneOrFilter(
   salespersonPhones?: string[] | string,
@@ -932,13 +937,7 @@ export class InquiriesService {
         Array.isArray(lineItemsSrc) &&
         lineItemsSrc.length > 0
       ) {
-        totalAmount = lineItemsSrc.reduce(
-          (s: number, i: any) =>
-            s +
-            (Number(i.amount) ||
-              Math.round(Number(i.quantity || 0) * Number(i.rate || 0))),
-          0,
-        );
+        totalAmount = calculateSubtotal(lineItemsSrc);
       }
 
       // Check if a deal already exists for this inquiry
@@ -1377,8 +1376,11 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
         }
 
         // totalAmount from frontend = pre-GST base; calculate GST on top (NOT divide by 1.18)
-        const totalAmt = Number(details.totalAmount || 0);
-        const gstAmt = Math.round(totalAmt * 0.18);
+        const pdfPricing = calculatePricingSummary(details);
+        const totalAmt = Number(
+          details.totalAmount || pdfPricing.subtotal || 0,
+        );
+        const gstAmt = calculateGst(totalAmt);
         const grandTotal = totalAmt + gstAmt;
         const unitRate = Number(details.unitPrice || 0);
         const qtyTons = Number(details.quantityTons || 0);
