@@ -38,6 +38,7 @@ const { processCustomerMessage } = require('./agents/customerAgent');
 const { processComplaintMessage } = require('./agents/complaintAgent');
 const { processVisitMessage } = require('./agents/visitAgent');
 const { processRetentionMessage } = require('./agents/retentionAgent');
+const { calculateSubtotal } = require('./utils/pricingEngine');
 
 /**
  * KRA 6 - CRM Compliance Logger
@@ -107,6 +108,12 @@ router.get('/', (req, res) => {
  * Endpoint to receive incoming WhatsApp messages.
  */
 router.post('/', async (req, res) => {
+  // ── RESPOND 200 IMMEDIATELY to prevent Meta webhook retries ──────────────
+  // Meta will retry the webhook if it doesn't get 200 within ~20s.
+  // Gemini Vision + Supabase can take longer → causes double replies.
+  // We ACK first, then process asynchronously.
+  res.status(200).send('EVENT_RECEIVED');
+
   try {
     const body = req.body;
 
@@ -136,6 +143,19 @@ router.post('/', async (req, res) => {
             value.contacts[0].profile.name) ||
           'Customer';
         const messageType = message.type;
+
+        // ── DEDUPLICATION: skip if messageId already processed (Meta retry protection) ──
+        const { data: existingMsg } = await supabase
+          .from('inquiries')
+          .select('id')
+          .eq('whatsapp_message_id', messageId)
+          .limit(1);
+        if (existingMsg && existingMsg.length > 0) {
+          console.log(
+            `[Webhook] MessageId ${messageId} already processed — skipping duplicate.`,
+          );
+          return;
+        }
 
         // Look up employee record for this sender phone
         const employeeRecord = await getEmployeeByPhone(senderPhone);
@@ -242,6 +262,8 @@ router.post('/', async (req, res) => {
           }
         }
 
+        let isMediaMessage =
+          messageType === 'image' || messageType === 'document';
         const {
           getFullActiveSession,
           saveActiveSession,
@@ -300,13 +322,7 @@ router.post('/', async (req, res) => {
               dealRow[0].deal_items &&
               dealRow[0].deal_items.length > 0
             ) {
-              dealAmount = dealRow[0].deal_items.reduce(
-                (sum, item) =>
-                  sum +
-                  (Number(item.amount) ||
-                    Number(item.quantity || 0) * Number(item.rate || 0)),
-                0,
-              );
+              dealAmount = calculateSubtotal(dealRow[0].deal_items);
             }
           }
 
@@ -434,7 +450,7 @@ router.post('/', async (req, res) => {
           return;
         }
 
-        const isMediaMessage =
+        isMediaMessage =
           messageType === 'image' ||
           messageType === 'document' ||
           (media_urls && media_urls.length > 0);
@@ -538,13 +554,39 @@ router.post('/', async (req, res) => {
           ) {
             const parts = activeSession.last_intent.split('|');
             const customerName = parts[1];
-            const qtyNum = parts[2];
+            const qtyNum = Number(parts[2]) || 0;
             const unitStr = parts[3] || 'MT';
+            const rawContextStr = parts.slice(4).join('|');
 
             const cleanInput = raw_text.trim();
             await saveActiveSession(senderPhone, customerName, 'general');
 
+            const { safeParseJSON } = require('./utils/jsonUtils');
+            const storedContext = safeParseJSON(rawContextStr, null);
             const { processSalesMessage } = require('./agents/salesAgent');
+
+            if (storedContext) {
+              const mmM = cleanInput.match(/(\d+(?:\.\d+)?)\s*mm/i);
+              storedContext.product_requirement = cleanInput;
+              storedContext.line_items = [
+                {
+                  product_requirement: cleanInput,
+                  dimensions: mmM
+                    ? `${mmM[1]}mm`
+                    : storedContext.dimensions || null,
+                  quantity_mt: qtyNum || storedContext.quantity_mt || 0,
+                  rate_per_mt: null,
+                },
+              ];
+              const reply = await processSalesMessage(
+                storedContext.raw_text || raw_text,
+                senderPhone,
+                storedContext,
+              );
+              await sendTextMessage(senderPhone, reply);
+              return;
+            }
+
             const syntheticText = `${customerName} requirement ${qtyNum} ${unitStr} ${cleanInput}`;
             const reply = await processSalesMessage(syntheticText, senderPhone);
             await sendTextMessage(senderPhone, reply);
@@ -555,6 +597,7 @@ router.post('/', async (req, res) => {
             const parts = activeSession.last_intent.split('|');
             const customerName = parts[1];
             const materialName = parts[2];
+            const rawContextStr = parts.slice(3).join('|');
 
             const cleanInput = raw_text.trim();
             await saveActiveSession(senderPhone, customerName, 'general');
@@ -565,7 +608,45 @@ router.post('/', async (req, res) => {
               : 0;
 
             if (customRate > 0) {
+              const { safeParseJSON } = require('./utils/jsonUtils');
+              const storedContext = safeParseJSON(rawContextStr, null);
               const { processSalesMessage } = require('./agents/salesAgent');
+
+              if (
+                storedContext &&
+                Array.isArray(storedContext.line_items) &&
+                storedContext.line_items.length > 0
+              ) {
+                // Merge the confirmed rate into the preserved original context
+                storedContext.line_items = storedContext.line_items.map(
+                  (item) => {
+                    const reqName = (
+                      item.product_requirement || ''
+                    ).toLowerCase();
+                    const unlistedLower = (materialName || '').toLowerCase();
+                    if (
+                      !item.rate_per_mt &&
+                      (reqName.includes(unlistedLower) ||
+                        unlistedLower.includes(reqName) ||
+                        storedContext.line_items.length === 1)
+                    ) {
+                      return { ...item, rate_per_mt: customRate };
+                    }
+                    return item;
+                  },
+                );
+                storedContext.target_stage = 'quoted';
+
+                const reply = await processSalesMessage(
+                  storedContext.raw_text || raw_text,
+                  senderPhone,
+                  storedContext,
+                );
+                await sendTextMessage(senderPhone, reply);
+                return;
+              }
+
+              // Fallback if context was not serialized
               const syntheticText = `${customerName} requirement ${materialName} rate ${customRate}`;
               const reply = await processSalesMessage(
                 syntheticText,
@@ -593,10 +674,7 @@ router.post('/', async (req, res) => {
           }
         }
 
-        // ── AGENTIC ORCHESTRATOR (LangGraph + Google Gemini 3.1 Flash Lite) ──────────────
-        // Replaces all manual intent classification and if/else routing.
-        // The orchestrator understands any message (English/Hindi/Hinglish),
-        // calls the right tool(s), and writes an intelligent natural response.
+        // ── OPERATIONAL AGENTIC ORCHESTRATOR (LangGraph + Specialized Write Agents) ──
         if (messageType === 'text' && raw_text && raw_text.length >= 2) {
           const { runOrchestrator } = require('./core/orchestrator');
           const empName = employeeRecord ? employeeRecord.name : senderName;
@@ -668,10 +746,12 @@ router.post('/', async (req, res) => {
               return;
             } else {
               // Route to dedicated OCR Agent (Inquiries Tab & Orders Tab)
+              // Pass messageId so OCR Agent can save with the correct base64 image data
               const ocrVisionReply = await processOcrDocumentImage(
                 mediaData.buffer,
                 mediaData.mimeType,
                 senderPhone,
+                messageId,
               );
               await sendTextMessage(senderPhone, ocrVisionReply);
               return;
@@ -859,13 +939,16 @@ router.post('/', async (req, res) => {
               senderPhone,
               `⚠️ *Client Not Found in your Customer List*\n\n` +
                 `Client *"${extractedCustomerName}"* is not registered under your salesperson account.\n\n` +
-                `Please onboard this customer first under *KRA 2 (Customer Onboarding)* before logging inquiries or orders.\n\n` +
+                `Please onboard this customer first under *New Customer Acquisition Card* before logging inquiries or orders.\n\n` +
                 `*Example to onboard customer:*\n` +
                 `_"New customer ${extractedCustomerName} owner Mr. Kapoor location Mumbai phone 9876543210 gst 27AAAAA1111A1Z1"_\n\n` +
                 `Once added, you can resend this inquiry.`,
             );
             return;
           }
+
+          // Keep session context refreshed with the validated customer name
+          await saveActiveSession(senderPhone, officialCustomerName, 'inquiry');
 
           // Guard: Only save to inquiries table if it has genuine product line items and is NOT a chatbot query/question
           const hasValidProductLineItems =
@@ -893,6 +976,7 @@ router.post('/', async (req, res) => {
             return;
           }
 
+          // Use the official/corrected customer name from the database (fixes typos)
           // Save inquiry in inquiries table with validated customer and line items
           const { saveInquiry } = require('./supabase');
           const savedInquiry = await saveInquiry({
@@ -1053,9 +1137,6 @@ router.post('/', async (req, res) => {
     }
   } catch (error) {
     console.error('Error processing incoming webhook POST:', error);
-  } finally {
-    // Meta requires a 200 OK response within 5 seconds for all webhook requests
-    res.status(200).send('EVENT_RECEIVED');
   }
 });
 
