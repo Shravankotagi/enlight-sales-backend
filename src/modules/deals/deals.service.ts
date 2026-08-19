@@ -356,7 +356,12 @@ export class DealsService {
 
       const board = stages.reduce(
         (acc, stage) => {
-          acc[stage] = data?.filter((d) => d.stage === stage) || [];
+          acc[stage] =
+            data?.filter((d) =>
+              stage === 'new_inquiry'
+                ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
+                : d.stage === stage,
+            ) || [];
           return acc;
         },
         {} as Record<string, any[]>,
