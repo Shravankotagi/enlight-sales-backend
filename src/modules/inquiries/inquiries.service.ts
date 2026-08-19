@@ -876,7 +876,7 @@ export class InquiriesService {
       const customerName =
         rawCustName && !isProductOrGenericName(rawCustName)
           ? rawCustName
-          : 'Customer Inquiry';
+          : null;
 
       const rawCustPhone =
         details.customerPhone ||

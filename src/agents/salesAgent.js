@@ -1394,7 +1394,9 @@ async function processSalesMessage(text, senderPhone) {
             .insert({
               source_channel: 'whatsapp_text',
               raw_text: text,
-              sender_name: finalCustomerName,
+              sender_name: finalCustomerName || null,
+              customer_name: finalCustomerName || null,
+              customer_phone: actualCustomerPhone || null,
               sender_phone: actualCustomerPhone || senderPhone,
               salesperson_phone: senderPhone,
               inquiry_type: 'inquiry',
