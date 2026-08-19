@@ -390,7 +390,7 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, media_urls',
         )
         .order('created_at', { ascending: false });
 
@@ -439,9 +439,10 @@ export class InquiriesService {
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
 
-      // Clean lightweight list with accurate customer and salesperson entities
+      // Clean list with accurate customer and salesperson entities and real document media
       const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
+          (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp';
@@ -450,7 +451,12 @@ export class InquiriesService {
           ...item,
           ...entities,
           has_media: hasAttachment,
-          media_urls: hasAttachment ? ['attached_document'] : [],
+          media_urls:
+            Array.isArray(item.media_urls) && item.media_urls.length > 0
+              ? item.media_urls
+              : hasAttachment
+                ? ['attached_document']
+                : [],
         };
       });
 
@@ -514,7 +520,7 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, media_urls',
         )
         .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
         .order('created_at', { ascending: false });
@@ -549,6 +555,7 @@ export class InquiriesService {
 
       return genuineData.map((item: any) => {
         const hasAttachment =
+          (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp';
@@ -557,7 +564,12 @@ export class InquiriesService {
           ...item,
           ...entities,
           has_media: hasAttachment,
-          media_urls: hasAttachment ? ['attached_document'] : [],
+          media_urls:
+            Array.isArray(item.media_urls) && item.media_urls.length > 0
+              ? item.media_urls
+              : hasAttachment
+                ? ['attached_document']
+                : [],
         };
       });
     } catch (error) {
