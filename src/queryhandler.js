@@ -600,35 +600,10 @@ function isProductInquiry(inquiry) {
 
 function classifyInquirySource(inquiry) {
   const channel = (inquiry.source_channel || '').toLowerCase().trim();
-  const raw = (inquiry.raw_text || '').toLowerCase().trim();
-  const inqType = (inquiry.inquiry_type || '').toLowerCase().trim();
-  const hasMedia =
-    Array.isArray(inquiry.media_urls) && inquiry.media_urls.length > 0;
-
   if (channel.includes('dashboard') || channel === 'web_dashboard') {
     return 'Dashboard Entry';
   }
-
-  if (
-    channel === 'whatsapp_po' ||
-    inqType === 'purchase_order' ||
-    raw.startsWith('[po document') ||
-    raw.startsWith('[purchase order document')
-  ) {
-    return 'WhatsApp PO';
-  }
-
-  if (
-    channel === 'whatsapp_image' ||
-    inqType.includes('document') ||
-    raw.startsWith('[inquiry attachment') ||
-    raw.startsWith('[inquiry document') ||
-    hasMedia
-  ) {
-    return 'WhatsApp Image/Document';
-  }
-
-  return 'WhatsApp Text';
+  return 'WhatsApp Entry';
 }
 
 function getInquiryTonnage(inq) {
@@ -688,9 +663,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
     const totalTonnage = inqs.reduce((s, i) => s + getInquiryTonnage(i), 0);
 
     const channelBreakdown = {
-      'WhatsApp Text': 0,
-      'WhatsApp Image/Document': 0,
-      'WhatsApp PO': 0,
+      'WhatsApp Entry': 0,
       'Dashboard Entry': 0,
     };
 
@@ -732,9 +705,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         `📥 *${title} by Source Channel - ${monthName} ${year}*\n\n` +
         `Total inquiries received: *${inqWord(totalCount)}*\n\n` +
         `📊 *Source Channel Breakdown:*\n` +
-        `• WhatsApp Text: *${inqWord(channelBreakdown['WhatsApp Text'])}*\n` +
-        `• WhatsApp Image/Document: *${inqWord(channelBreakdown['WhatsApp Image/Document'])}*\n` +
-        `• WhatsApp PO: *${inqWord(channelBreakdown['WhatsApp PO'])}*\n` +
+        `• WhatsApp Entry: *${inqWord(channelBreakdown['WhatsApp Entry'])}*\n` +
         `• Dashboard Entry: *${inqWord(channelBreakdown['Dashboard Entry'])}*\n\n` +
         `💰 *Total: ${inqWord(totalCount)}*\n\n` +
         `_Directly synced with Enlight Sales OS Inquiries_`
@@ -808,9 +779,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         ? `• Total Volume: *${totalTonnage.toLocaleString('en-IN')} MT*\n\n`
         : '\n') +
       `📱 *Source Channel Breakdown:*\n` +
-      `• WhatsApp Text: *${channelBreakdown['WhatsApp Text']}*\n` +
-      `• WhatsApp Image/Document: *${channelBreakdown['WhatsApp Image/Document']}*\n` +
-      `• WhatsApp PO: *${channelBreakdown['WhatsApp PO']}*\n` +
+      `• WhatsApp Entry: *${channelBreakdown['WhatsApp Entry']}*\n` +
       `• Dashboard Entry: *${channelBreakdown['Dashboard Entry']}*\n\n` +
       `_Directly synced with Enlight Sales OS Inquiries_`
     );
