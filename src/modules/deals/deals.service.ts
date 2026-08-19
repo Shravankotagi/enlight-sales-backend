@@ -321,14 +321,22 @@ export class DealsService {
 
       if (error) throw error;
 
-      const summary = stages.map((stage) => ({
-        stage,
-        count: data?.filter((d) => d.stage === stage).length || 0,
-        total_value:
-          data
-            ?.filter((d) => d.stage === stage)
-            .reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0,
-      }));
+      const summary = stages.map((stage) => {
+        const stageDeals = (data || []).filter((d: any) =>
+          stage === 'new_inquiry'
+            ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
+            : d.stage === stage,
+        );
+        return {
+          stage,
+          count: stageDeals.length || 0,
+          total_value:
+            stageDeals.reduce(
+              (sum: number, d: any) => sum + (d.total_amount || 0),
+              0,
+            ) || 0,
+        };
+      });
 
       return summary;
     } catch (error) {

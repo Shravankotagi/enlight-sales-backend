@@ -85,14 +85,22 @@ export class DealsController {
       ? deals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
       : deals;
 
-    return stages.map((stage) => ({
-      stage,
-      count: filtered.filter((d: any) => d.stage === stage).length || 0,
-      total_value:
-        filtered
-          .filter((d: any) => d.stage === stage)
-          .reduce((sum: number, d: any) => sum + (d.total_amount || 0), 0) || 0,
-    }));
+    return stages.map((stage) => {
+      const stageDeals = filtered.filter((d: any) =>
+        stage === 'new_inquiry'
+          ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
+          : d.stage === stage,
+      );
+      return {
+        stage,
+        count: stageDeals.length || 0,
+        total_value:
+          stageDeals.reduce(
+            (sum: number, d: any) => sum + (d.total_amount || 0),
+            0,
+          ) || 0,
+      };
+    });
   }
 
   @Get('kanban')
