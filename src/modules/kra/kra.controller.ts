@@ -93,6 +93,8 @@ export class KraController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const isAdmin = employee.role === 'admin';
     const parsedMonth = month ? parseInt(month) : undefined;
@@ -105,10 +107,12 @@ export class KraController {
       );
 
     return this.kraService.getActionQueue(
-      phones === null ? employee.phone : phones,
+      phones === null ? undefined : phones,
       isAdmin && !salespersonPhoneOverride,
       parsedMonth,
       parsedYear,
+      from,
+      to,
     );
   }
 

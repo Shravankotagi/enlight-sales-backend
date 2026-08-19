@@ -22,6 +22,71 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+function isProductInquiry(inquiry: any): boolean {
+  if (!inquiry) return false;
+  const rawText = (inquiry.raw_text || '').toLowerCase().trim();
+  const ai = inquiry.ai_extraction_json || {};
+
+  // 0. Exclude Purchase Orders (POs belong strictly to Orders)
+  if (
+    inquiry.inquiry_type === 'purchase_order' ||
+    inquiry.source_channel === 'whatsapp_po' ||
+    rawText.startsWith('[po document attached:')
+  ) {
+    return false;
+  }
+
+  // 1. All official genuine inquiry channels
+  if (
+    inquiry.inquiry_type === 'inquiry' ||
+    inquiry.source_channel === 'whatsapp_text' ||
+    inquiry.source_channel === 'whatsapp_image' ||
+    inquiry.source_channel === 'web_dashboard'
+  ) {
+    return true;
+  }
+
+  // 2. Extracted line items
+  const lineItemsSrc = ai.line_items || ai.lineItems || [];
+  if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) return true;
+  if (
+    ai.productType &&
+    ai.productType !== 'Unknown' &&
+    ai.productType !== 'Hot Rolled'
+  )
+    return true;
+  if (ai.sku_text) return true;
+
+  // 3. Reject noise
+  if (
+    /^(yes|no|ok|done|won|lost|1|2|3|4|5|hi|hello|hey|thanks|thank you|good morning)$/i.test(
+      rawText,
+    ) ||
+    rawText.length < 5
+  ) {
+    return false;
+  }
+
+  // 4. Reject status messages
+  if (
+    rawText.includes('quote sent') ||
+    rawText.includes('advance paid') ||
+    rawText.includes('visited client') ||
+    rawText.includes('deal won') ||
+    rawText.includes('deal lost') ||
+    rawText.includes('lost deal') ||
+    rawText.includes('payment received') ||
+    rawText.includes('payment of')
+  ) {
+    return false;
+  }
+
+  // 5. Relevant steel/metal keywords
+  return /\b(hr|cr|gi|gp|tmt|coil|sheet|plate|plates|sheets|coils|rebar|pipe|tube|steel|angle|beam|channel|mt|ton|tons|tonne|kg|kgs|mm|gauge|mtr|rate|price|quotation|rfq|require|requires|requirement|need|needs|dispatch)\b/i.test(
+    rawText,
+  );
+}
+
 @Injectable()
 export class KraService {
   private readonly logger = new Logger(KraService.name);
@@ -477,10 +542,12 @@ export class KraService {
   }
 
   async getActionQueue(
-    salespersonPhone: string[] | string,
-    isAdmin: boolean,
+    salespersonPhone?: string[] | string,
+    isAdmin = false,
     month?: number,
     year?: number,
+    from?: string,
+    to?: string,
   ) {
     const supabase = this.supabase;
     const now = new Date();
@@ -493,27 +560,41 @@ export class KraService {
       return { actions: [], generated_at: now.toISOString() };
     }
 
-    const targetYear = year !== undefined ? year : now.getFullYear();
-    const targetMonth = month !== undefined ? month : now.getMonth();
+    let monthStart: string;
+    let monthEnd: string;
 
-    const monthStart = new Date(targetYear, targetMonth, 1).toISOString();
-    const monthEnd = new Date(
-      targetYear,
-      targetMonth + 1,
-      0,
-      23,
-      59,
-      59,
-      999,
-    ).toISOString();
+    if (from && to) {
+      monthStart = new Date(from).toISOString();
+      monthEnd = new Date(
+        to.includes('T') ? to : to + 'T23:59:59.999Z',
+      ).toISOString();
+    } else {
+      const targetYear = year !== undefined ? year : now.getFullYear();
+      const targetMonth = month !== undefined ? month : now.getMonth();
+      monthStart = new Date(
+        Date.UTC(targetYear, targetMonth, 1, 0, 0, 0),
+      ).toISOString();
+      monthEnd = new Date(
+        Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999),
+      ).toISOString();
+    }
     const actions: any[] = [];
 
     // 1. Inquiries needing review
     try {
       let inquiryQuery = supabase
         .from('inquiries')
-        .select('id, sender_name, raw_text, created_at')
-        .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
+        .select(
+          'id, sender_name, raw_text, status, source_channel, inquiry_type, ai_extraction_json, created_at, salesperson_phone',
+        )
+        .in('status', [
+          'review',
+          'needs_review',
+          'pending',
+          'new',
+          'draft',
+          'auto_created',
+        ])
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
@@ -524,22 +605,34 @@ export class KraService {
         if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }
 
-      const { data: reviewInquiries } = await inquiryQuery
-        .order('created_at', { ascending: false })
-        .limit(5);
+      const { data: rawReviewInquiries } = await inquiryQuery.order(
+        'created_at',
+        { ascending: false },
+      );
+      const reviewInquiries = (rawReviewInquiries || []).filter(
+        isProductInquiry,
+      );
 
-      if (reviewInquiries?.length > 0) {
+      if (reviewInquiries.length > 0) {
         actions.push({
           type: 'review_queue',
           priority: 'high',
-          title: `${reviewInquiries.length} inquiries need review`,
+          title:
+            reviewInquiries.length === 1
+              ? '1 inquiry needs review'
+              : `${reviewInquiries.length} inquiries need review`,
           subtitle: 'Low confidence AI extractions',
           count: reviewInquiries.length,
           link: '/inquiries',
           color: 'orange',
         });
       }
-    } catch {}
+    } catch (err) {
+      this.logger.error(
+        'Error fetching review inquiries in getActionQueue:',
+        err,
+      );
+    }
 
     // 2. Deals stale for 7+ days
     try {
@@ -548,13 +641,12 @@ export class KraService {
       ).toISOString();
       let staleQuery = supabase
         .from('deals')
-        .select('id, customer_name, stage, created_at')
+        .select('id, customer_name, stage, created_at, salesperson_phone')
         .not('stage', 'in', '("won","lost")')
         .lte('created_at', sevenDaysAgo)
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd)
-        .order('created_at', { ascending: true })
-        .limit(10);
+        .order('created_at', { ascending: true });
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -564,26 +656,32 @@ export class KraService {
       }
 
       const { data: staleDeals } = await staleQuery;
-      if (staleDeals?.length > 0) {
+      if (staleDeals && staleDeals.length > 0) {
+        const firstCust = staleDeals[0]?.customer_name || 'Customer';
+        const sub =
+          staleDeals.length === 1 ? firstCust : `${firstCust} and others`;
         actions.push({
           type: 'stale_deals',
           priority: 'high',
-          title: `${staleDeals.length} deals stale 7+ days`,
-          subtitle:
-            (staleDeals[0]?.customer_name || 'Multiple customers') +
-            ' and others',
+          title:
+            staleDeals.length === 1
+              ? '1 deal stale 7+ days'
+              : `${staleDeals.length} deals stale 7+ days`,
+          subtitle: sub,
           count: staleDeals.length,
-          link: '/',
+          link: '/pipeline',
           color: 'red',
         });
       }
-    } catch {}
+    } catch (err) {
+      this.logger.error('Error fetching stale deals in getActionQueue:', err);
+    }
 
     // 3. Pending follow-up tasks
     try {
       let followupsQuery = supabase
         .from('followup_tasks')
-        .select('id, customer_name, due_date, task_type')
+        .select('id, customer_name, due_date, task_type, salesperson_phone')
         .eq('status', 'pending')
         .gte('due_date', monthStart)
         .lte('due_date', monthEnd);
@@ -595,57 +693,72 @@ export class KraService {
         if (orFilter) followupsQuery = followupsQuery.or(orFilter);
       }
 
-      const { data: followups } = await followupsQuery
-        .order('due_date', { ascending: true })
-        .limit(5);
+      const { data: followups } = await followupsQuery.order('due_date', {
+        ascending: true,
+      });
 
-      if (followups?.length > 0) {
+      if (followups && followups.length > 0) {
+        const firstCust = followups[0]?.customer_name || 'Customer';
+        const sub =
+          followups.length === 1 ? firstCust : `${firstCust} and others`;
         actions.push({
           type: 'followups_due',
           priority: 'medium',
-          title: `${followups.length} follow-ups due`,
-          subtitle: (followups[0]?.customer_name || 'Multiple') + ' and others',
+          title:
+            followups.length === 1
+              ? '1 follow-up due'
+              : `${followups.length} follow-ups due`,
+          subtitle: sub,
           count: followups.length,
           link: '/customers',
           color: 'yellow',
         });
       }
-    } catch {}
+    } catch (err) {
+      this.logger.error('Error fetching followups in getActionQueue:', err);
+    }
 
-    // 4. KRA 9 - weekly visit check (only for current month/year)
-    if (targetMonth === now.getMonth() && targetYear === now.getFullYear()) {
-      try {
-        const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - now.getDay());
-        weekStart.setHours(0, 0, 0, 0);
+    // 4. KRA 9 - weekly visit check
+    try {
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - now.getDay());
+      weekStart.setHours(0, 0, 0, 0);
 
-        let visitQuery = supabase
-          .from('customer_visits')
-          .select('id')
-          .gte('visited_at', weekStart.toISOString());
+      let visitQuery = supabase
+        .from('customer_visits')
+        .select('id, salesperson_phone')
+        .gte('visited_at', weekStart.toISOString());
 
-        if (!isAdmin && salespersonPhone) {
-          const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
-            'salesperson_phone',
-          ]);
-          if (orFilter) visitQuery = visitQuery.or(orFilter);
-        }
+      if (!isAdmin && salespersonPhone) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) visitQuery = visitQuery.or(orFilter);
+      }
 
-        const { data: weekVisits } = await visitQuery;
-        const visitCount = weekVisits?.length || 0;
+      const { data: weekVisits } = await visitQuery;
+      const visitCount = weekVisits?.length || 0;
+      const repCount = Array.isArray(salespersonPhone)
+        ? salespersonPhone.length
+        : salespersonPhone
+          ? 1
+          : 4;
+      const weeklyTarget = isAdmin ? 40 : repCount > 1 ? repCount * 10 : 10;
 
-        if (visitCount < 10) {
-          actions.push({
-            type: 'visit_target',
-            priority: 'medium',
-            title: `${visitCount}/10 visits this week`,
-            subtitle: `${10 - visitCount} more needed for KRA 9`,
-            count: 10 - visitCount,
-            link: '/kra',
-            color: 'blue',
-          });
-        }
-      } catch {}
+      if (visitCount < weeklyTarget) {
+        const needed = weeklyTarget - visitCount;
+        actions.push({
+          type: 'visit_target',
+          priority: 'medium',
+          title: `${visitCount}/${weeklyTarget} visits this week`,
+          subtitle: `${needed} more needed for KRA 9`,
+          count: needed,
+          link: '/visits',
+          color: 'blue',
+        });
+      }
+    } catch (err) {
+      this.logger.error('Error fetching visits in getActionQueue:', err);
     }
 
     // 5. Pending complaints past 24h
@@ -653,7 +766,7 @@ export class KraService {
       const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       let complaintsQuery = supabase
         .from('complaints')
-        .select('id, customer_name, complaint_type')
+        .select('id, customer_name, complaint_type, reported_by')
         .eq('status', 'pending')
         .lte('reported_at', dayAgo)
         .gte('reported_at', monthStart)
@@ -666,29 +779,34 @@ export class KraService {
         if (orFilter) complaintsQuery = complaintsQuery.or(orFilter);
       }
 
-      const { data: oldComplaints } = await complaintsQuery.limit(5);
+      const { data: oldComplaints } = await complaintsQuery;
 
-      if (oldComplaints?.length > 0) {
+      if (oldComplaints && oldComplaints.length > 0) {
         actions.push({
           type: 'complaints_pending',
           priority: 'high',
-          title: `${oldComplaints.length} complaints unresolved 24h+`,
+          title:
+            oldComplaints.length === 1
+              ? '1 complaint unresolved 24h+'
+              : `${oldComplaints.length} complaints unresolved 24h+`,
           subtitle:
-            (oldComplaints[0]?.customer_name || '') +
+            (oldComplaints[0]?.customer_name || 'Customer') +
             ' - ' +
-            (oldComplaints[0]?.complaint_type || ''),
+            (oldComplaints[0]?.complaint_type || 'Issue'),
           count: oldComplaints.length,
-          link: '/inquiries',
+          link: '/complaints',
           color: 'red',
         });
       }
-    } catch {}
+    } catch (err) {
+      this.logger.error('Error fetching complaints in getActionQueue:', err);
+    }
 
     // 6. Monthly KRA 1 progress
     try {
       let dealsQuery = supabase
         .from('deals')
-        .select('total_amount, stage')
+        .select('total_amount, stage, salesperson_phone')
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
@@ -700,22 +818,30 @@ export class KraService {
       }
 
       const { data: monthDeals } = await dealsQuery;
+      const totalDeals = monthDeals?.length || 0;
       const wonDealsList = monthDeals?.filter((d) => d.stage === 'won') || [];
-      const wonValue = wonDealsList.reduce(
-        (sum, d) => sum + (d.total_amount || 0),
-        0,
+      const wonValue = Math.round(
+        wonDealsList.reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0),
       );
 
       actions.push({
         type: 'monthly_progress',
         priority: 'low',
-        title: `${monthDeals?.length || 0} deals this month`,
-        subtitle: `${wonDealsList.length} won · ₹${Number(wonValue).toLocaleString('en-IN')} value`,
-        count: monthDeals?.length || 0,
+        title:
+          totalDeals === 1
+            ? '1 deal this month'
+            : `${totalDeals} deals this month`,
+        subtitle: `${wonDealsList.length} won · ₹${wonValue.toLocaleString('en-IN')} value`,
+        count: totalDeals,
         link: '/reports',
         color: 'green',
       });
-    } catch {}
+    } catch (err) {
+      this.logger.error(
+        'Error fetching deals progress in getActionQueue:',
+        err,
+      );
+    }
 
     const priorityOrder: Record<string, number> = {
       high: 0,
