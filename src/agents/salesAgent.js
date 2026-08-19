@@ -58,6 +58,9 @@ CRITICAL EXTRACTION RULES & CONTEXT DISAMBIGUATION:
 6. PAYMENT TERMS: Extract payment terms and credit duration (e.g. "30 days credit"). "30 days" in payment context is credit duration in payment_terms, NEVER product quantity.
 7. DELIVERY LOCATION: Extract exact city/location mentioned (e.g. "Nashik", "Mumbai").
 
+8. STRUCTURED FORMS: If input is a key-value template (e.g. "Company Name: Shivam Traders Pvt. Ltd.", "Material: HR coil", "Grade/Spec: 8mm", "Quantity: 40 MT", "Target Price: ₹52,000/MT"), extract each field into its corresponding JSON property.
+9. TARGET PRICE / RATE: If message specifies a target price or rate (e.g. "Target Price: ₹52,000/MT" or "rate 52000"), extract as rate_per_mt on that item.
+
 Return ONLY the JSON object.
 `;
 
@@ -511,37 +514,68 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         const textRaw = text || '';
         const textLower = textRaw.toLowerCase();
 
-        // Extract customer name
+        // Extract customer name (supports structured "Company Name: ..." as well as inline text)
         let ruleCustomer = null;
-        const reqMatch =
-          textRaw.match(
-            /^([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
-          ) ||
-          textRaw.match(
-            /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
-          ) ||
-          textRaw.match(
-            /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
-          );
-        if (
-          reqMatch &&
-          reqMatch[1].trim().toLowerCase() !== 'max' &&
-          reqMatch[1].trim().toLowerCase() !== 'customer'
-        ) {
-          ruleCustomer = reqMatch[1].trim();
+        const structComp = textRaw.match(
+          /(?:company\s+name|customer\s+name|client\s+name)\s*:\s*([^\n\r]+)/i,
+        );
+        if (structComp) {
+          ruleCustomer = structComp[1].trim().replace(/^['"]|['"]$/g, '');
+        } else {
+          const reqMatch =
+            textRaw.match(
+              /^([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
+            ) ||
+            textRaw.match(
+              /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
+            ) ||
+            textRaw.match(
+              /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
+            );
+          if (
+            reqMatch &&
+            reqMatch[1].trim().toLowerCase() !== 'max' &&
+            reqMatch[1].trim().toLowerCase() !== 'customer'
+          ) {
+            ruleCustomer = reqMatch[1].trim();
+          }
         }
 
         // Extract quantity, unit, and specification
-        const qtyMatch = textRaw.match(
-          /(\d+(?:\.\d+)?)\s*(?:mt|ton|tons|tonne)/i,
+        let qty = 0;
+        const structQty = textRaw.match(
+          /quantity\s*:\s*(\d+(?:\.\d+)?)\s*(?:mt|ton|tons|tonne)?/i,
         );
-        const qty = qtyMatch ? parseFloat(qtyMatch[1]) : 0;
+        if (structQty) {
+          qty = parseFloat(structQty[1]);
+        } else {
+          const qtyMatch = textRaw.match(
+            /(\d+(?:\.\d+)?)\s*(?:mt|ton|tons|tonne)/i,
+          );
+          qty = qtyMatch ? parseFloat(qtyMatch[1]) : 0;
+        }
 
-        const mmM = textRaw.match(/(\d+(?:\.\d+)?)\s*mm/i);
-        const specDim = mmM ? `${mmM[1]}mm` : null;
+        let specDim = null;
+        const structSpec = textRaw.match(
+          /(?:grade\/spec|spec|dimensions?|thickness|size)\s*:\s*([^\n\r]+)/i,
+        );
+        if (structSpec) {
+          specDim = structSpec[1].trim();
+        } else {
+          const mmM = textRaw.match(/(\d+(?:\.\d+)?)\s*mm/i);
+          specDim = mmM ? `${mmM[1]}mm` : null;
+        }
 
+        // Extract material / product requirement
         let pReq = null;
-        if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLower)) {
+        const structMat = textRaw.match(/material\s*:\s*([^\n\r]+)/i);
+        if (structMat) {
+          const mVal = structMat[1].trim();
+          pReq =
+            specDim && !mVal.toLowerCase().includes(specDim.toLowerCase())
+              ? `${mVal} ${specDim}`
+              : mVal;
+        } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLower)) {
           pReq = specDim ? `HR Coil ${specDim}` : 'HR Coil';
         } else if (/\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i.test(textLower)) {
           pReq = specDim ? `CR Sheets ${specDim}` : 'CR Sheets';
@@ -555,67 +589,105 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           pReq = specDim ? `TMT Bar ${specDim}` : 'TMT Bar';
         }
 
+        // Extract target price / rate per MT
+        let ruleRate = null;
+        const structPrice =
+          textRaw.match(
+            /(?:target\s+price|rate|price|unit\s+price)\s*:\s*₹?\s*([\d,.]+)(?:\s*\/\s*mt)?/i,
+          ) || textRaw.match(/@\s*₹?\s*([\d,.]+)/i);
+        if (structPrice) {
+          ruleRate = Number(structPrice[1].replace(/,/g, '')) || null;
+        }
+
         // Extract customer phone
-        const phoneMatch = textRaw.match(
-          /(?:number|phone|mobile|contact|cell)?\s*(?:is|:|-)?\s*([6-9]\d{9})\b/i,
+        let rulePhone = null;
+        const structPhone = textRaw.match(
+          /(?:phone|mobile|contact\s+no|cell)\s*:\s*([6-9]\d{9})\b/i,
         );
-        const rulePhone = phoneMatch ? phoneMatch[1] : null;
+        if (structPhone) {
+          rulePhone = structPhone[1];
+        } else {
+          const phoneMatch = textRaw.match(
+            /(?:number|phone|mobile|contact|cell)?\s*(?:is|:|-)?\s*([6-9]\d{9})\b/i,
+          );
+          rulePhone = phoneMatch ? phoneMatch[1] : null;
+        }
 
         // Extract delivery location
         let delLoc = null;
-        const locM = textRaw.match(
-          /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|deliver\s+karna\s+hai|location|destination)\s+([A-Za-z\s]+?)(?:\s+before|\s+by|\s+on|\s+within|\s+deliver|\.|$)/i,
+        const structLoc = textRaw.match(
+          /(?:delivery\s+location|location|destination)\s*:\s*([^\n\r]+)/i,
         );
-        if (locM) {
-          delLoc = locM[1].trim();
-        } else if (textLower.includes('nashik')) {
-          delLoc = 'Nashik';
-        } else if (textLower.includes('mumbai')) {
-          delLoc = 'Mumbai';
-        } else if (textLower.includes('pune')) {
-          delLoc = 'Pune';
+        if (structLoc) {
+          delLoc = structLoc[1].trim();
+        } else {
+          const locM = textRaw.match(
+            /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|deliver\s+karna\s+hai|location|destination)\s+([A-Za-z\s]+?)(?:\s+before|\s+by|\s+on|\s+within|\s+deliver|\.|$)/i,
+          );
+          if (locM) {
+            delLoc = locM[1].trim();
+          } else if (textLower.includes('nashik')) {
+            delLoc = 'Nashik';
+          } else if (textLower.includes('mumbai')) {
+            delLoc = 'Mumbai';
+          } else if (textLower.includes('pune')) {
+            delLoc = 'Pune';
+          }
         }
 
         // Extract delivery date
         let delDate = null;
-        const dM = textRaw.match(
-          /(?:before|by|on|delivery\s+date|delivery\s+before|delivery\s+by)\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{4}-\d{2}-\d{2}|\d{2}[-/]\d{2}[-/]\d{4})/i,
+        const structDate = textRaw.match(
+          /(?:expected\s+delivery\s+date|delivery\s+date|target\s+date)\s*:\s*([^\n\r]+)/i,
         );
-        if (dM) {
-          const rawDateStr = dM[1].trim();
-          const monthMap = {
-            jan: '01',
-            feb: '02',
-            mar: '03',
-            apr: '04',
-            may: '05',
-            jun: '06',
-            jul: '07',
-            aug: '08',
-            sep: '09',
-            oct: '10',
-            nov: '11',
-            dec: '12',
-            january: '01',
-            february: '02',
-            march: '03',
-            april: '04',
-            june: '06',
-            july: '07',
-            august: '08',
-            september: '09',
-            october: '10',
-            november: '11',
-            december: '12',
-          };
-          const parts = rawDateStr.toLowerCase().split(/\s+/);
-          if (parts.length === 2) {
-            const day = parts[0].replace(/\D/g, '').padStart(2, '0');
-            const mKey = parts[1].replace(/[^a-z]/g, '');
-            const month = monthMap[mKey] || '08';
-            delDate = `2026-${month}-${day}`;
+        if (structDate) {
+          const dStr = structDate[1].trim();
+          const ddmmyyyy = dStr.match(/(\d{2})[-/](\d{2})[-/](\d{4})/);
+          if (ddmmyyyy) {
+            delDate = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
           } else {
-            delDate = rawDateStr;
+            delDate = dStr;
+          }
+        } else {
+          const dM = textRaw.match(
+            /(?:before|by|on|delivery\s+date|delivery\s+before|delivery\s+by)\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{4}-\d{2}-\d{2}|\d{2}[-/]\d{2}[-/]\d{4})/i,
+          );
+          if (dM) {
+            const rawDateStr = dM[1].trim();
+            const monthMap = {
+              jan: '01',
+              feb: '02',
+              mar: '03',
+              apr: '04',
+              may: '05',
+              jun: '06',
+              jul: '07',
+              aug: '08',
+              sep: '09',
+              oct: '10',
+              nov: '11',
+              dec: '12',
+              january: '01',
+              february: '02',
+              march: '03',
+              april: '04',
+              june: '06',
+              july: '07',
+              august: '08',
+              september: '09',
+              october: '10',
+              november: '11',
+              december: '12',
+            };
+            const parts = rawDateStr.toLowerCase().split(/\s+/);
+            if (parts.length === 2) {
+              const day = parts[0].replace(/\D/g, '').padStart(2, '0');
+              const mKey = parts[1].replace(/[^a-z]/g, '');
+              const month = monthMap[mKey] || '08';
+              delDate = `2026-${month}-${day}`;
+            } else {
+              delDate = rawDateStr;
+            }
           }
         }
 
@@ -630,7 +702,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                 product_requirement: pReq || 'CR Coil',
                 dimensions: specDim,
                 quantity_mt: qty,
-                rate_per_mt: null,
+                rate_per_mt: ruleRate,
               },
             ],
             total_amount: 0,
@@ -716,8 +788,6 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       '9619226169',
       '7977088031',
       '9187305823',
-      '9876543210',
-      '9876543222',
       '7896248624',
       '7892739774',
       '7878787878',

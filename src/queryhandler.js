@@ -18,35 +18,18 @@ function isQuery(text) {
   if (!text || typeof text !== 'string') return false;
   const lowerText = text.toLowerCase().trim();
 
-  const isExplicitQuery =
-    /\b(list|show|get|filter|find|search|display|how many|which|view)\b/i.test(
+  // 1. Operational action logging patterns (inquiries, deals, visits, payments, complaints, onboarding)
+  const isOperationalAction =
+    /\b(create|log|add|new|record|enter|post)\s+(?:new\s+)?(?:deal|inquiry|requirement|rfq|quote|quotation|order)\b/i.test(
       lowerText,
     ) ||
-    lowerText.includes('orders with') ||
-    lowerText.includes('deals with') ||
-    lowerText.includes('delivery location') ||
-    lowerText.includes('summary') ||
-    lowerText.includes('report') ||
-    lowerText.includes('status');
-
-  if (!isExplicitQuery) {
-    // If it looks like a steel order/inquiry (e.g. contains quantity and units or pricing request), it is NOT a dashboard query!
-    const hasInquiryPatterns =
-      /\b\d+\s*(mt|kg|ton|pcs|sheet|coil|bar|flat|plate|mm|mtr)\b/i.test(
-        lowerText,
-      ) ||
-      lowerText.includes('rate is') ||
-      lowerText.includes('price is') ||
-      lowerText.includes('target rate') ||
-      /\b\d+\s*x\s*\d+/i.test(lowerText);
-
-    if (hasInquiryPatterns) {
-      return false;
-    }
-  }
-
-  // 2. Operational action logging patterns (visits, payments, complaints, onboarding, deal updates)
-  const isActionLogging =
+    /^(?:log\s+)?new\s+inquiry\b/i.test(lowerText) ||
+    /\b(company\s+name|material|grade\/spec|target\s+price)\s*:/i.test(
+      lowerText,
+    ) ||
+    /\b(deal won|deal lost|mark as won|mark as lost|stage update|po received|order placed|order confirmed)\b/i.test(
+      lowerText,
+    ) ||
     /\b(visited|met with|went to|meeting at|market visit|site visit)\b/i.test(
       lowerText,
     ) ||
@@ -70,10 +53,39 @@ function isQuery(text) {
     /\b(complaint status|show complaints|complaint summary)\b/i.test(
       lowerText,
     ) ||
-    /\b(customer list|my customers|which customers)\b/i.test(lowerText);
+    /\b(customer list|my customers|which customers)\b/i.test(lowerText) ||
+    /\b(how many|how much|inquiry count|deal count|total inquiries|total sales)\b/i.test(
+      lowerText,
+    );
 
-  if (isActionLogging && !isExplicitActionQuery) {
+  if (isOperationalAction && !isExplicitActionQuery) {
     return false;
+  }
+
+  const isExplicitQuery =
+    /\b(list|show|get|filter|find|search|display|how many|which|view)\b/i.test(
+      lowerText,
+    ) ||
+    lowerText.includes('orders with') ||
+    lowerText.includes('deals with') ||
+    lowerText.includes('summary') ||
+    lowerText.includes('report') ||
+    lowerText.includes('status');
+
+  if (!isExplicitQuery) {
+    // If it looks like a steel order/inquiry (e.g. contains quantity and units or pricing request), it is NOT a dashboard query!
+    const hasInquiryPatterns =
+      /\b\d+\s*(mt|kg|ton|pcs|sheet|coil|bar|flat|plate|mm|mtr)\b/i.test(
+        lowerText,
+      ) ||
+      lowerText.includes('rate is') ||
+      lowerText.includes('price is') ||
+      lowerText.includes('target rate') ||
+      /\b\d+\s*x\s*\d+/i.test(lowerText);
+
+    if (hasInquiryPatterns) {
+      return false;
+    }
   }
 
   const queryKeywords = [
@@ -126,17 +138,23 @@ function isQuery(text) {
     'this month',
     'last month',
     'pichle mahine',
-    'team sales',
-    'all sales',
-    'company sales',
-    'total sales',
-    'team deals',
     'deals this week',
     'is hafte',
     'active deals',
     'current deals',
     'won deals',
     'won customers',
+    'team sales',
+    'all sales',
+    'company sales',
+    'total sales',
+    'pending deals',
+    'open deals',
+    'meri deals',
+    'team deals',
+    'my deals',
+    'lost deals',
+    'rejected deals',
 
     // Customer & Contact queries
     'customer list',
@@ -211,8 +229,6 @@ function isQuery(text) {
     'review queue',
     'kitni inquiries',
     'team inquiries',
-    'inquiry count',
-    'total inquiries',
 
     // General / Command phrases & Conversational triggers
     'monthly report',
@@ -235,7 +251,6 @@ function isQuery(text) {
     'new customers',
     'onboarded customers',
     'kra 2',
-    // General conversational & date/pricing query triggers
     'date',
     'time',
     'today',
@@ -259,6 +274,7 @@ function isQuery(text) {
     'joke',
     'who are you',
     'kaise ho',
+    '?',
   ];
 
   return queryKeywords.some((keyword) => lowerText.includes(keyword));
@@ -375,8 +391,6 @@ function formatINR(amount) {
   return '₹' + Number(amount).toLocaleString('en-IN');
 }
 
-/**
- * Applies role-scoped salesperson phone filters to a Supabase query builder.
 function applySalespersonFilter(
   query,
   phones,
@@ -1993,7 +2007,13 @@ async function getKnowledgeBaseAnswer(senderPhone, queryText) {
 async function getReorderQueue(senderPhone) {
   try {
     const supabase = getSupabase();
-    const cleanPhone = (senderPhone || '').replace(/\D/g, '').slice(-10);
+    const phoneStr =
+      typeof senderPhone === 'object'
+        ? senderPhone?.phone ||
+          (senderPhone?.phones && senderPhone.phones[0]) ||
+          ''
+        : senderPhone || '';
+    const cleanPhone = phoneStr.replace(/\D/g, '').slice(-10);
 
     let query = supabase
       .from('recurring_customers')
@@ -2032,7 +2052,13 @@ async function getReorderQueue(senderPhone) {
 async function getChurnRadar(senderPhone) {
   try {
     const supabase = getSupabase();
-    const cleanPhone = (senderPhone || '').replace(/\D/g, '').slice(-10);
+    const phoneStr =
+      typeof senderPhone === 'object'
+        ? senderPhone?.phone ||
+          (senderPhone?.phones && senderPhone.phones[0]) ||
+          ''
+        : senderPhone || '';
+    const cleanPhone = phoneStr.replace(/\D/g, '').slice(-10);
 
     let query = supabase.from('recurring_customers').select('*').limit(20);
 
@@ -2534,7 +2560,7 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
     case 'knowledge_base':
       return await getKnowledgeBaseAnswer(phone, text);
     case 'reorder_queue':
-      return await getReorderQueue(phone);
+      return await getReorderQueue(scope);
     case 'churn_radar':
       return await getChurnRadar(phone);
     case 'dashboard_link': {
@@ -2588,8 +2614,6 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
     case 'inactive_customers':
     case 'churn_risk':
       return await getInactiveCustomers(scope);
-    case 'reorder_queue':
-      return await getReorderQueue(scope);
     default:
       return null;
   }
@@ -2712,7 +2736,6 @@ async function handleQuery(text, senderPhone) {
   }
 
   // 5. Keyword fallback (backup for low-confidence semantic router)
-
   // Customer 360 / Profile
   if (
     lower.includes('360') ||
@@ -2722,7 +2745,6 @@ async function handleQuery(text, senderPhone) {
   ) {
     return await getCustomer360(senderPhone, text);
   }
-
   // Knowledge base / SOP / Policy
   if (
     lower.includes('moq') ||
@@ -2734,18 +2756,30 @@ async function handleQuery(text, senderPhone) {
   ) {
     return await getKnowledgeBaseAnswer(senderPhone, text);
   }
+  // Reorder queue
+  if (
+    lower.includes('reorder') ||
+    lower.includes('due for order') ||
+    lower.includes('repeat order')
+  ) {
+    return await getReorderQueue(effectiveScope);
+  }
+  // Churn radar
+  if (lower.includes('churn')) {
+    return await getChurnRadar(senderPhone);
+  }
 
   // 0. Filtered order listing detection (delivery location, customer filter, product filter, status listing, price/amount filter, quantity filter)
   const isOrderListingQuery =
-    lower.includes('delivery location') ||
-    lower.includes('delivering to') ||
-    /\b(list|show|get|filter|find|search)\s+(all\s+)?(orders|deals)\b/i.test(
-      lower,
-    ) ||
-    /\b(orders|deals)\s+(with|for|in|at|by|above|below|under|over|delivering|to)\b/i.test(
-      lower,
-    ) ||
-    /\b(orders|deals)\s+(list|listing)\b/i.test(lower);
+    !isOperationalAction &&
+    (lower.includes('delivering to') ||
+      /\b(list|show|get|filter|find|search)\s+(all\s+)?(orders|deals)\b/i.test(
+        lower,
+      ) ||
+      /\b(orders|deals)\s+(with|for|in|at|by|above|below|under|over|delivering|to)\b/i.test(
+        lower,
+      ) ||
+      /\b(orders|deals)\s+(list|listing)\b/i.test(lower));
 
   if (isOrderListingQuery) {
     if (
@@ -2785,7 +2819,6 @@ async function handleQuery(text, senderPhone) {
   ) {
     return await getInquiriesThisMonth(effectiveScope, text);
   }
-
   // Full KRA report
   if (
     lower.includes('full report') ||
@@ -2798,7 +2831,6 @@ async function handleQuery(text, senderPhone) {
       getMonthRangeFromQuery(text),
     );
   }
-
   // KRA / performance
   if (
     lower.includes('kra') ||
