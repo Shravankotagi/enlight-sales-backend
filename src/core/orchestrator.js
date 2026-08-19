@@ -165,7 +165,7 @@ function getDeterministicIntentHint(text) {
     ) ||
     /^(?:log\s+)?new\s+inquiry\b/i.test(lower) ||
     /\b(company\s+name|material|grade\/spec|target\s+price)\s*:/i.test(lower) ||
-    /\b(deal won|deal lost|mark as won|mark as lost|stage update|po received|order placed|order confirmed)\b/i.test(
+    /\b(mark\b.*?\b(won|lost)|move\b.*?\b(stage|won|lost|quoted|negotiation|pipeline)|change\b.*?\b(stage|won|lost|quoted)|.*?\b(deal|inquiry|order)\b.*?\b(won|lost|closed|negotiation|quoted|qualified)|deal\s+won|deal\s+lost|mark\s+as\s+won|mark\s+as\s+lost|stage\s+update|po\s+received|order\s+placed|order\s+confirmed)\b/i.test(
       lower,
     );
 
