@@ -575,7 +575,13 @@ export class InquiriesService {
         if (details.customerPhone)
           updatePayload.sender_phone = details.customerPhone;
         if (details.requirement) updatePayload.raw_text = details.requirement;
-        if (details.media_urls) updatePayload.media_urls = details.media_urls;
+        if (
+          Array.isArray(details.media_urls) &&
+          details.media_urls.length > 0 &&
+          !details.media_urls.includes('attached_document')
+        ) {
+          updatePayload.media_urls = details.media_urls;
+        }
         updatePayload.ai_extraction_json = details;
       }
 
