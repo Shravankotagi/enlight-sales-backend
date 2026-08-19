@@ -48,22 +48,18 @@ export class DealsService {
           ? filters.from
           : `${filters.from}T00:00:00.000Z`;
         const fromDateOnly = filters.from.split('T')[0];
-        query = isWonQuery
-          ? query.or(`won_at.gte.${fromIso},created_at.gte.${fromIso}`)
-          : query.or(
-              `won_at.gte.${fromIso},created_at.gte.${fromIso},po_date.gte.${fromDateOnly}`,
-            );
+        query = query.or(
+          `won_at.gte.${fromIso},created_at.gte.${fromIso},po_date.gte.${fromDateOnly}`,
+        );
       }
       if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
         const toDateOnly = filters.to.split('T')[0];
-        query = isWonQuery
-          ? query.or(`won_at.lte.${toEnd},created_at.lte.${toEnd}`)
-          : query.or(
-              `won_at.lte.${toEnd},created_at.lte.${toEnd},po_date.lte.${toDateOnly}`,
-            );
+        query = query.or(
+          `won_at.lte.${toEnd},created_at.lte.${toEnd},po_date.lte.${toDateOnly}`,
+        );
       }
 
       const { data, error } = await query;

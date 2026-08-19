@@ -1613,10 +1613,9 @@ async function processSalesImage(
         // Use bot's internal JWT or a service secret header
         const headers = {
           'Content-Type': 'application/json',
+          'x-bot-secret':
+            process.env.BOT_INTERNAL_SECRET || 'enlight_bot_secret_2026',
         };
-        if (process.env.BOT_INTERNAL_SECRET) {
-          headers['x-bot-secret'] = process.env.BOT_INTERNAL_SECRET;
-        }
 
         const poResponse = await axios.post(
           `${backendUrl}/deals/process-po-internal`,
