@@ -26,10 +26,10 @@ const {
 const { handleNewCustomerAnnouncement } = require('./kra2');
 
 // Dedicated Specialized AI Agents
+const { processSalesMessage } = require('./agents/salesAgent');
 const {
-  processSalesMessage,
-  processSalesImage,
-} = require('./agents/salesAgent');
+  processSalesImage: processOcrDocumentImage,
+} = require('./agents/ocrAgent');
 const {
   processPaymentMessage,
   processPaymentImage,
@@ -667,13 +667,13 @@ router.post('/', async (req, res) => {
               await sendTextMessage(senderPhone, paymentVisionReply);
               return;
             } else {
-              // Route to Sales & PO Vision Agent (KRA 1 & Zoho Bigin)
-              const salesVisionReply = await processSalesImage(
+              // Route to dedicated OCR Agent (Inquiries Tab & Orders Tab)
+              const ocrVisionReply = await processOcrDocumentImage(
                 mediaData.buffer,
                 mediaData.mimeType,
                 senderPhone,
               );
-              await sendTextMessage(senderPhone, salesVisionReply);
+              await sendTextMessage(senderPhone, ocrVisionReply);
               return;
             }
           } else {
