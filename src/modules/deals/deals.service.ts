@@ -18,9 +18,6 @@ export class DealsService {
     to?: string;
   }) {
     try {
-      // For won deals (Orders tab), sort by won_at; for others, sort by created_at
-      const isWonQuery = filters?.stage === 'won';
-
       let query = this.supabase
         .from('deals')
         .select(
@@ -30,7 +27,7 @@ export class DealsService {
         `,
         )
         .neq('inquiry_type', 'unknown')
-        .order(isWonQuery ? 'won_at' : 'created_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (filters?.stage) {
         query = query.eq('stage', filters.stage);
