@@ -7,6 +7,7 @@ import {
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
 import { ChatbotTool, CallerContext } from './chatbot-tool.interface';
 import { getMyOpenDealsTool } from './get_my_open_deals.tool';
+import { getInquiriesTool } from './get_inquiries.tool';
 import { getCustomer360Tool } from './get_customer_360.tool';
 import { getReorderQueueTool } from './get_reorder_queue.tool';
 import { searchKnowledgeBaseTool } from './search_knowledge_base.tool';
@@ -20,6 +21,7 @@ export class ToolRegistryService {
   private readonly toolsMap = new Map<string, ChatbotTool>();
 
   constructor(private readonly supabaseService: SupabaseService) {
+    this.registerTool(getInquiriesTool);
     this.registerTool(getMyOpenDealsTool);
     this.registerTool(getCustomer360Tool);
     this.registerTool(getReorderQueueTool);
