@@ -120,6 +120,8 @@ export class KraController {
   async getComplaints(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -127,7 +129,11 @@ export class KraController {
         salespersonPhoneOverride,
       );
 
-    return this.kraService.getComplaints(phones === null ? undefined : phones);
+    return this.kraService.getComplaints(
+      phones === null ? undefined : phones,
+      from,
+      to,
+    );
   }
 
   @Post('complaints')
@@ -155,6 +161,8 @@ export class KraController {
   async getVisits(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -162,7 +170,11 @@ export class KraController {
         salespersonPhoneOverride,
       );
 
-    return this.kraService.getVisits(phones === null ? undefined : phones);
+    return this.kraService.getVisits(
+      phones === null ? undefined : phones,
+      from,
+      to,
+    );
   }
 
   @Post('visits')

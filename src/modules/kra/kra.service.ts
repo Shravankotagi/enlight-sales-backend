@@ -1971,7 +1971,11 @@ export class KraService {
     }
   }
 
-  async getComplaints(salespersonPhone?: string[] | string) {
+  async getComplaints(
+    salespersonPhone?: string[] | string,
+    from?: string,
+    to?: string,
+  ) {
     if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
       return [];
     }
@@ -1986,6 +1990,15 @@ export class KraService {
         'reported_by',
       ]);
       if (orFilter) query = query.or(orFilter);
+    }
+
+    if (from) {
+      const fromIso = from.includes('T') ? from : `${from}T00:00:00.000Z`;
+      query = query.gte('reported_at', fromIso);
+    }
+    if (to) {
+      const toIso = to.includes('T') ? to : `${to}T23:59:59.999Z`;
+      query = query.lte('reported_at', toIso);
     }
 
     const { data, error } = await query;
@@ -2086,7 +2099,11 @@ export class KraService {
     return data;
   }
 
-  async getVisits(salespersonPhone?: string[] | string) {
+  async getVisits(
+    salespersonPhone?: string[] | string,
+    from?: string,
+    to?: string,
+  ) {
     if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
       return [];
     }
@@ -2101,6 +2118,15 @@ export class KraService {
         'salesperson_phone',
       ]);
       if (orFilter) query = query.or(orFilter);
+    }
+
+    if (from) {
+      const fromIso = from.includes('T') ? from : `${from}T00:00:00.000Z`;
+      query = query.gte('visited_at', fromIso);
+    }
+    if (to) {
+      const toIso = to.includes('T') ? to : `${to}T23:59:59.999Z`;
+      query = query.lte('visited_at', toIso);
     }
 
     const [{ data: visits }, { data: customers }] = await Promise.all([
