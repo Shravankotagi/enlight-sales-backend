@@ -26,8 +26,8 @@ async function main() {
 
   console.log(`🔑 Gemini API Key configured: ***${apiKey.slice(-4)}`);
 
-  // Target model specified in docs: gemini-3.6-flash
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  // Target model: gemini-3.5-flash
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
   console.log(`🤖 Target Model: ${modelName}`);
 
   try {
@@ -58,7 +58,7 @@ async function main() {
       const { HumanMessage } = await import('@langchain/core/messages');
 
       const model = new ChatGoogleGenerativeAI({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         apiKey: apiKey,
         temperature: 0.1,
       });
