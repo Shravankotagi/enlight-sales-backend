@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -180,5 +181,30 @@ export class KraController {
   @Post('visits')
   async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.kraService.createVisit(body, employee.phone);
+  }
+
+  @Patch('visits/:id')
+  async updateVisit(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.kraService.updateVisit(
+      id,
+      body,
+      phones === null ? undefined : phones,
+    );
+  }
+
+  @Delete('visits/:id')
+  async deleteVisit(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.kraService.deleteVisit(
+      id,
+      phones === null ? undefined : phones,
+    );
   }
 }

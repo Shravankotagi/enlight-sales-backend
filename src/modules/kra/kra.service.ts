@@ -2310,4 +2310,77 @@ export class KraService {
 
     return created;
   }
+
+  async updateVisit(
+    id: string,
+    data: any,
+    salespersonPhones?: string[] | string,
+  ) {
+    const remarksParts: string[] = [];
+    if (data.outcome) {
+      remarksParts.push(
+        `[Outcome: ${data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1)}]`,
+      );
+    }
+    if (data.location || data.city) {
+      remarksParts.push(`[Location: ${data.location || data.city}]`);
+    }
+    if (data.follow_up_action || data.followup) {
+      remarksParts.push(
+        `[FollowUp: ${data.follow_up_action || data.followup}]`,
+      );
+    }
+    if (data.material_requirement || data.requirement) {
+      remarksParts.push(
+        `[Requirement: ${data.material_requirement || data.requirement}]`,
+      );
+    }
+    if (data.remarks) {
+      remarksParts.push(data.remarks);
+    }
+
+    const payload: any = {
+      customer_name: data.customer_name,
+      person_met: data.person_met || 'Contact Person',
+      contact_no: data.contact_phone || data.contact_no || '',
+      customer_address:
+        data.location || data.city || data.customer_address || '',
+      remarks: remarksParts.join(' '),
+    };
+
+    if (data.visited_at) {
+      payload.visited_at = data.visited_at;
+    }
+
+    let query = this.supabase
+      .from('customer_visits')
+      .update(payload)
+      .eq('id', id);
+
+    if (salespersonPhones) {
+      const orFilter = buildMultiFieldOrFilter(salespersonPhones, [
+        'salesperson_phone',
+      ]);
+      if (orFilter) query = query.or(orFilter);
+    }
+
+    const { data: updated, error } = await query.select().single();
+    if (error) throw error;
+    return updated;
+  }
+
+  async deleteVisit(id: string, salespersonPhones?: string[] | string) {
+    let query = this.supabase.from('customer_visits').delete().eq('id', id);
+
+    if (salespersonPhones) {
+      const orFilter = buildMultiFieldOrFilter(salespersonPhones, [
+        'salesperson_phone',
+      ]);
+      if (orFilter) query = query.or(orFilter);
+    }
+
+    const { error } = await query;
+    if (error) throw error;
+    return { success: true, id };
+  }
 }
