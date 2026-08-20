@@ -34,19 +34,30 @@ import {
   calculateSubtotal,
 } from '../pricing/pricing.engine';
 
-function buildInquiryPhoneOrFilter(
-  salespersonPhones?: string[] | string,
-): string | null {
+function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
-  const list = Array.isArray(salespersonPhones)
-    ? salespersonPhones
-    : [salespersonPhones];
+  let list: any[] = [];
+  if (typeof salespersonPhones === 'string') {
+    list = [salespersonPhones];
+  } else if (Array.isArray(salespersonPhones)) {
+    list = salespersonPhones;
+  } else if (typeof salespersonPhones === 'object') {
+    if (salespersonPhones.salespersonPhones) {
+      list = Array.isArray(salespersonPhones.salespersonPhones)
+        ? salespersonPhones.salespersonPhones
+        : [salespersonPhones.salespersonPhones];
+    } else if (salespersonPhones.salespersonPhone) {
+      list = [salespersonPhones.salespersonPhone];
+    }
+  }
+
   if (list.length === 0) return null;
   const parts: string[] = [];
   for (const phone of list) {
-    if (!phone) continue;
+    if (!phone || typeof phone !== 'string') continue;
     const clean = phone.replace(/\D/g, '');
     const p10 = clean.slice(-10);
+    if (!p10) continue;
     const p12 = '91' + p10;
     parts.push(`salesperson_phone.eq.${p10}`, `salesperson_phone.eq.${p12}`);
   }
