@@ -142,4 +142,9 @@ export class InquiriesController {
       body.mime_type,
     );
   }
+
+  @Post('parse-text')
+  async parseText(@Body() body: { text: string }) {
+    return this.inquiriesService.parseTextWithGemini(body.text);
+  }
 }

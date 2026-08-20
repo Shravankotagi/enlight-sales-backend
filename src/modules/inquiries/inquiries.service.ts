@@ -777,12 +777,69 @@ export class InquiriesService {
       line_items: [],
     };
 
+    // If raw_text is provided, auto-extract details via Gemini if line_items is empty or needs extraction
+    const rawText = data.raw_text || data.requirement || '';
+    if (
+      rawText &&
+      rawText.length > 15 &&
+      (!aiExtractionJson.line_items ||
+        aiExtractionJson.line_items.length === 0 ||
+        (aiExtractionJson.line_items.length === 1 &&
+          (aiExtractionJson.line_items[0].sku_text?.length > 30 ||
+            aiExtractionJson.line_items[0].quantity === 0)))
+    ) {
+      try {
+        const textExtract = await this.parseTextWithGemini(rawText);
+        if (textExtract.success && textExtract.data) {
+          const ext = textExtract.data;
+          if (Array.isArray(ext.line_items) && ext.line_items.length > 0) {
+            aiExtractionJson.line_items = ext.line_items;
+          }
+          if (
+            ext.customer_name &&
+            (!customerName || customerName === 'Salesperson')
+          ) {
+            aiExtractionJson.customer_name = ext.customer_name;
+            aiExtractionJson.companyName = ext.customer_name;
+            if (aiExtractionJson.customer)
+              aiExtractionJson.customer.name = ext.customer_name;
+          }
+          if (ext.customer_phone && !customerPhone) {
+            aiExtractionJson.customer_phone = ext.customer_phone;
+            if (aiExtractionJson.customer)
+              aiExtractionJson.customer.phone = ext.customer_phone;
+          }
+          if (ext.delivery_location) {
+            aiExtractionJson.delivery_location = ext.delivery_location;
+            aiExtractionJson.deliveryLocation = ext.delivery_location;
+          }
+          if (ext.preferred_make) {
+            aiExtractionJson.preferred_make = ext.preferred_make;
+            aiExtractionJson.make = ext.preferred_make;
+          }
+          if (ext.payment_terms) {
+            aiExtractionJson.payment_terms = ext.payment_terms;
+            aiExtractionJson.paymentTerms = ext.payment_terms;
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn('Auto text extraction warning:', err.message);
+      }
+    }
+
+    const finalCustomerName =
+      aiExtractionJson.customer_name ||
+      aiExtractionJson.companyName ||
+      customerName ||
+      'Customer';
+
     const payload: any = {
       source_channel: data.source_channel || 'web_dashboard',
-      raw_text: data.raw_text || data.requirement || '',
+      raw_text: rawText,
       media_urls: data.media_urls || [],
       sender_phone: data.sender_phone || salespersonPhone || '',
-      sender_name: data.sender_name || 'Salesperson',
+      sender_name: finalCustomerName,
+      customer_name: finalCustomerName,
       status: data.status || 'review',
       salesperson_phone:
         salespersonPhone || data.salesperson_phone || '910000000000',
@@ -1386,6 +1443,94 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
     } catch (err: any) {
       this.logger.error(
         'Gemini vision document extraction failed:',
+        err?.response?.data || err.message,
+      );
+      return {
+        success: false,
+        error: err.message,
+      };
+    }
+  }
+
+  async parseTextWithGemini(rawText: string) {
+    if (!rawText || !rawText.trim()) {
+      return { success: false, error: 'Empty text' };
+    }
+    const apiKey =
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!apiKey) {
+      return {
+        success: false,
+        error: 'GEMINI_API_KEY is not configured',
+      };
+    }
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+    try {
+      const response = await axios.post(url, {
+        contents: [
+          {
+            parts: [
+              {
+                text: `You are an expert AI extraction engine for steel product inquiries received via WhatsApp and sales dashboards. Extract ALL details from this inquiry text into a strict, structured JSON object with NO markdown, NO codeblocks, NO explanation:
+{
+  "customer_name": "Company or customer name e.g. BuildCorp Engineering",
+  "contact_person": "Contact person name if mentioned e.g. Rajesh",
+  "customer_phone": "Phone number if present else null",
+  "delivery_location": "Delivery location / site e.g. Uchgaon, Maharashtra",
+  "preferred_make": "Preferred make / brand e.g. JSW, AM/NS, Tata, SAIL, JSPL if mentioned else null",
+  "payment_terms": "Payment terms if mentioned else null",
+  "target_delivery_date": "Target delivery date if mentioned else null",
+  "line_items": [
+    {
+      "sku_text": "Material description and grade e.g. MS Plate (IS 2062 E250BR)",
+      "dimensions": "Dimensions / specs / thickness / size e.g. 12mm thickness (Size: 1500mm x 6000mm)",
+      "quantity": numeric_quantity_in_MT_or_count,
+      "unit": "MT or Pieces or KG",
+      "rate": numeric_rate_or_0,
+      "amount": numeric_amount_or_0
+    }
+  ],
+  "overall_confidence": 0.95
+}
+Extract EVERY single steel material item into the line_items array.
+Inquiry Text:
+${rawText}`,
+              },
+            ],
+          },
+        ],
+      });
+
+      const text =
+        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let parsed: any = null;
+      try {
+        const cleanJsonStr = text
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        parsed = JSON.parse(cleanJsonStr);
+      } catch {
+        const firstOpen = text.indexOf('{');
+        const lastClose = text.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose > firstOpen) {
+          parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+        }
+      }
+
+      if (!parsed) {
+        throw new Error('Failed to parse structured JSON from Gemini response');
+      }
+
+      return {
+        success: true,
+        data: parsed,
+      };
+    } catch (err: any) {
+      this.logger.error(
+        'Gemini text inquiry extraction failed:',
         err?.response?.data || err.message,
       );
       return {
