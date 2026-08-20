@@ -837,9 +837,9 @@ export class InquiriesService {
       source_channel: data.source_channel || 'web_dashboard',
       raw_text: rawText,
       media_urls: data.media_urls || [],
-      sender_phone: data.sender_phone || salespersonPhone || '',
+      sender_phone:
+        data.sender_phone || data.customer_phone || salespersonPhone || '',
       sender_name: finalCustomerName,
-      customer_name: finalCustomerName,
       status: data.status || 'review',
       salesperson_phone:
         salespersonPhone || data.salesperson_phone || '910000000000',
