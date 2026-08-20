@@ -502,6 +502,5 @@ module.exports = {
   extractFromText,
   extractFromImage,
   classifyIntent,
-  getLatestActiveRatesText,
   classifyQueryType,
 };
