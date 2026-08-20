@@ -212,7 +212,7 @@ async function getInquiries() {
 
 async function saveDeal(inquiryId, extraction, senderPhone, employeeId) {
   try {
-    const poDate = extraction.po_date || new Date().toISOString().split('T')[0];
+    const poDate = extraction.po_date || null;
     let poNumber = extraction.po_number || null;
     if (
       !poNumber &&

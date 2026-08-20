@@ -407,8 +407,8 @@ export class DealsService {
 
       if (salespersonPhone) {
         insertPayload.salesperson_phone = salespersonPhone;
-        insertPayload.customer_phone = salespersonPhone;
       }
+      insertPayload.customer_phone = data.customer_phone || null;
 
       const { data: deal, error: dealError } = await this.supabase
         .from('deals')
@@ -487,8 +487,8 @@ export class DealsService {
       const poNumber = data.po_number?.trim() || `PO-${todayStr}-${randomNum}`;
       const poDate = data.po_date || nowIso.split('T')[0];
 
-      const customerName = data.customer_name?.trim() || 'Valued Customer';
-      const customerPhone = data.customer_phone || '';
+      const customerName = data.customer_name?.trim() || null;
+      const customerPhone = data.customer_phone || null;
       const phone =
         salespersonPhone || data.salesperson_phone || '910000000000';
 
@@ -642,7 +642,8 @@ export class DealsService {
 
         const dealItemsToInsert = lineItems.map((item: any) => ({
           deal_id: dealId,
-          sku_text: item.sku_text || item.product_name || 'Material',
+          sku_text:
+            item.sku_text || item.product_name || item.description || null,
           dimensions: item.dimensions || null,
           quantity: Number(item.quantity) || null,
           unit: item.unit || 'MT',
