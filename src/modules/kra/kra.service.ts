@@ -1,5 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { phoneInList } from '../employees/employees.service';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -2039,7 +2045,28 @@ export class KraService {
     id: string,
     status: string,
     resolution_notes?: string,
+    accessiblePhones?: string[] | null,
   ) {
+    const { data: existingComplaint, error: fetchErr } = await this.supabase
+      .from('complaints')
+      .select('id, reported_by')
+      .eq('id', id)
+      .single();
+    if (fetchErr || !existingComplaint) {
+      throw new NotFoundException('Complaint not found');
+    }
+
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      if (
+        !existingComplaint.reported_by ||
+        !phoneInList(existingComplaint.reported_by, accessiblePhones)
+      ) {
+        throw new ForbiddenException(
+          'Access Denied: You do not have permission to update this complaint.',
+        );
+      }
+    }
+
     const updateData: any = { status };
     if (status === 'resolved') {
       updateData.resolved_at = new Date().toISOString();

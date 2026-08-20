@@ -4,7 +4,7 @@ export const searchKnowledgeBaseTool: ChatbotTool = {
   name: 'search_knowledge_base',
   description:
     'Searches the Enlight Sales OS Knowledge Base (SOPs, product catalogs, sales policies, and guidelines) with role-based access filtering.',
-  roles: ['salesperson', 'manager', 'admin'],
+  roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'search_knowledge_base',
     description:
@@ -59,8 +59,9 @@ export const searchKnowledgeBaseTool: ChatbotTool = {
       }
     } catch (err: any) {
       // Fallback to LangChain generative embeddings if primary SDK call fails
-      const { GoogleGenerativeAIEmbeddings } =
-        await import('@langchain/google-genai');
+      const { GoogleGenerativeAIEmbeddings } = await import(
+        '@langchain/google-genai'
+      );
       const embeddings = new GoogleGenerativeAIEmbeddings({
         model: modelName,
         apiKey: apiKey,

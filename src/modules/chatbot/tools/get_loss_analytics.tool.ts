@@ -1,13 +1,16 @@
 import {
   ChatbotTool,
   getSubordinateSalespersons,
+  isManagerRole,
+  isSalespersonRole,
+  isAdminRole,
 } from './chatbot-tool.interface';
 
 export const getLossAnalyticsTool: ChatbotTool = {
   name: 'get_loss_analytics',
   description:
     'Analyzes lost deals, common loss reasons, total lost revenue, and lost deal trends scoped to caller permissions.',
-  roles: ['salesperson', 'manager', 'admin'],
+  roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_loss_analytics',
     description:
@@ -26,7 +29,11 @@ export const getLossAnalyticsTool: ChatbotTool = {
   },
   async execute(args, callerContext, supabaseAdmin) {
     // Application-level role check
-    if (!['salesperson', 'manager', 'admin'].includes(callerContext.role)) {
+    if (
+      !isSalespersonRole(callerContext.role) &&
+      !isManagerRole(callerContext.role) &&
+      !isAdminRole(callerContext.role)
+    ) {
       throw new Error(
         `Role '${callerContext.role}' is not authorized to use tool 'get_loss_analytics'`,
       );
@@ -40,7 +47,7 @@ export const getLossAnalyticsTool: ChatbotTool = {
       .eq('stage', 'lost');
 
     // Scoping Layer
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       const rawPhone = callerContext.phone || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
       const empId = callerContext.employeeId;
@@ -54,7 +61,7 @@ export const getLossAnalyticsTool: ChatbotTool = {
       } else if (empId) {
         query = query.eq('employee_id', empId);
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
@@ -68,9 +75,19 @@ export const getLossAnalyticsTool: ChatbotTool = {
         orClauses.push(`employee_id.eq.${id}`);
       });
 
-      if (orClauses.length > 0) {
-        query = query.or(orClauses.join(','));
+      if (orClauses.length === 0) {
+        return {
+          data: {
+            total_lost_deals: 0,
+            total_lost_amount: 0,
+            top_loss_reasons: [],
+            lost_deals: [],
+          },
+          rowCount: 0,
+        };
       }
+
+      query = query.or(orClauses.join(','));
     }
     // Admin sees all lost deals
 

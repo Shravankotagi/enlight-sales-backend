@@ -39,10 +39,14 @@ export class ToolRegistryService {
   /**
    * Returns Gemini FunctionDeclarations filtered by caller role.
    */
-  getToolDeclarations(role: 'salesperson' | 'manager' | 'admin'): any[] {
+  getToolDeclarations(role: string): any[] {
     const declarations: any[] = [];
     for (const tool of this.toolsMap.values()) {
-      if (tool.roles.includes(role)) {
+      const allowed =
+        tool.roles.includes(role) ||
+        (role === 'sales_manager' && tool.roles.includes('manager')) ||
+        (role === 'manager' && tool.roles.includes('sales_manager'));
+      if (allowed) {
         declarations.push(tool.declaration);
       }
     }
@@ -64,7 +68,14 @@ export class ToolRegistryService {
     }
 
     // Role visibility check (Layer 1 application check)
-    if (!tool.roles.includes(callerContext.role)) {
+    const isAllowed =
+      tool.roles.includes(callerContext.role) ||
+      (callerContext.role === 'sales_manager' &&
+        tool.roles.includes('manager')) ||
+      (callerContext.role === 'manager' &&
+        tool.roles.includes('sales_manager'));
+
+    if (!isAllowed) {
       this.logger.warn(
         `RBAC Violation Attempt: User ${callerContext.userId} (${callerContext.role}) attempted to execute tool '${name}'`,
       );

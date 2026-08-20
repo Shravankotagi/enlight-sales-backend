@@ -150,17 +150,27 @@ export class DealsController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.dealsService.findOne(id);
+  async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.dealsService.findOne(id, phones);
   }
 
   @Patch(':id/stage')
   @HttpCode(HttpStatus.OK)
   async updateStage(
+    @CurrentEmployee() employee: any,
     @Param('id') id: string,
     @Body() body: { stage: string; lost_reason?: string },
   ) {
-    return this.dealsService.updateStage(id, body.stage, body.lost_reason);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.dealsService.updateStage(
+      id,
+      body.stage,
+      body.lost_reason,
+      phones,
+    );
   }
 
   @Post('order')
@@ -181,7 +191,9 @@ export class DealsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  async deleteDeal(@Param('id') id: string) {
-    return this.dealsService.deleteDeal(id);
+  async deleteDeal(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.dealsService.deleteDeal(id, phones);
   }
 }

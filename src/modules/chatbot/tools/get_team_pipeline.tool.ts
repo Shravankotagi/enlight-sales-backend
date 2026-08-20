@@ -1,13 +1,15 @@
 import {
   ChatbotTool,
   getSubordinateSalespersons,
+  isManagerRole,
+  isAdminRole,
 } from './chatbot-tool.interface';
 
 export const getTeamPipelineTool: ChatbotTool = {
   name: 'get_team_pipeline',
   description:
     'Retrieves team-wide sales pipeline summary aggregated by salesperson and deal stage. Available ONLY to sales managers and admins.',
-  roles: ['manager', 'admin'],
+  roles: ['manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_team_pipeline',
     description:
@@ -26,7 +28,10 @@ export const getTeamPipelineTool: ChatbotTool = {
   },
   async execute(args, callerContext, supabaseAdmin) {
     // Layer 1 Application-level role check
-    if (!['manager', 'admin'].includes(callerContext.role)) {
+    if (
+      !isManagerRole(callerContext.role) &&
+      !isAdminRole(callerContext.role)
+    ) {
       throw new Error(
         `Role '${callerContext.role}' is not authorized to use tool 'get_team_pipeline'`,
       );
@@ -39,7 +44,7 @@ export const getTeamPipelineTool: ChatbotTool = {
       );
 
     // Scoping Layer
-    if (callerContext.role === 'manager') {
+    if (isManagerRole(callerContext.role)) {
       const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
@@ -53,9 +58,19 @@ export const getTeamPipelineTool: ChatbotTool = {
         orClauses.push(`employee_id.eq.${id}`);
       });
 
-      if (orClauses.length > 0) {
-        query = query.or(orClauses.join(','));
+      if (orClauses.length === 0) {
+        return {
+          data: {
+            total_deals_count: 0,
+            grand_total_pipeline_value: 0,
+            stage_breakdown: {},
+            deals: [],
+          },
+          rowCount: 0,
+        };
       }
+
+      query = query.or(orClauses.join(','));
     }
     // Admin sees all deals across company
 

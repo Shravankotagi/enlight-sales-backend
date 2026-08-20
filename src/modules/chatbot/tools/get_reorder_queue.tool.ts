@@ -2,13 +2,15 @@ import {
   ChatbotTool,
   CallerContext,
   getSubordinateSalespersons,
+  isManagerRole,
+  isSalespersonRole,
 } from './chatbot-tool.interface';
 
 export const getReorderQueueTool: ChatbotTool = {
   name: 'get_reorder_queue',
   description:
     'Retrieves recurring customer order predictions and reorder queue, scoped strictly by assigned salesperson and team hierarchy.',
-  roles: ['salesperson', 'manager', 'admin'],
+  roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_reorder_queue',
     description:
@@ -37,22 +39,24 @@ export const getReorderQueueTool: ChatbotTool = {
     const rawPhone = callerContext.phone || '';
     const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
 
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone) {
         query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
       );
 
-      if (phoneSuffixes.length > 0) {
-        const orConditions = phoneSuffixes.map(
-          (p) => `assigned_salesperson_phone.ilike.%${p}%`,
-        );
-        query = query.or(orConditions.join(','));
+      if (phoneSuffixes.length === 0) {
+        return { data: [], rowCount: 0 };
       }
+
+      const orConditions = phoneSuffixes.map(
+        (p) => `assigned_salesperson_phone.ilike.%${p}%`,
+      );
+      query = query.or(orConditions.join(','));
     }
     // Admin receives all active recurring customers
 

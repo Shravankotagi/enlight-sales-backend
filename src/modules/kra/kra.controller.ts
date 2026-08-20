@@ -137,13 +137,17 @@ export class KraController {
 
   @Patch('complaints/:id')
   async updateComplaint(
+    @CurrentEmployee() employee: any,
     @Param('id') id: string,
     @Body() body: { status: string; resolution_notes?: string },
   ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.kraService.updateComplaintStatus(
       id,
       body.status,
       body.resolution_notes,
+      phones,
     );
   }
 

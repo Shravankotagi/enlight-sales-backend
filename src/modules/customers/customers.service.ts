@@ -1,5 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { phoneInList } from '../employees/employees.service';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -66,7 +72,23 @@ export class CustomersService {
         .select('*')
         .eq('id', id)
         .single();
-      if (error) throw error;
+      if (error || !customer) {
+        throw new NotFoundException('Customer not found');
+      }
+
+      if (salespersonPhone) {
+        const allowedList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        if (
+          !customer.assigned_salesperson_phone ||
+          !phoneInList(customer.assigned_salesperson_phone, allowedList)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this customer.',
+          );
+        }
+      }
 
       let dealsQuery = this.supabase
         .from('deals')

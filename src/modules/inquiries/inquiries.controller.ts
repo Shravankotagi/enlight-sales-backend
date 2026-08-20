@@ -94,17 +94,27 @@ export class InquiriesController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.inquiriesService.findOne(id);
+  async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.findOne(id, phones);
   }
 
   @Patch(':id/status')
   @HttpCode(HttpStatus.OK)
   async updateStatus(
+    @CurrentEmployee() employee: any,
     @Param('id') id: string,
     @Body() body: { status: string; details?: any },
   ) {
-    return this.inquiriesService.updateStatus(id, body.status, body.details);
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.updateStatus(
+      id,
+      body.status,
+      body.details,
+      phones,
+    );
   }
 
   @Post()
@@ -113,8 +123,14 @@ export class InquiriesController {
   }
 
   @Post('send-quotation/:id')
-  async sendQuotation(@Param('id') id: string, @Body() body: any) {
-    return this.inquiriesService.sendQuotation(id, body);
+  async sendQuotation(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.sendQuotation(id, body, phones);
   }
 
   @Post('parse-document')

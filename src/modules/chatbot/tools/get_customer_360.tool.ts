@@ -2,13 +2,15 @@ import {
   ChatbotTool,
   CallerContext,
   getSubordinateSalespersons,
+  isManagerRole,
+  isSalespersonRole,
 } from './chatbot-tool.interface';
 
 export const getCustomer360Tool: ChatbotTool = {
   name: 'get_customer_360',
   description:
     'Retrieves comprehensive Customer 360 overview (profile details, active deals, past orders, payment status) for a specific customer, scoped by caller role.',
-  roles: ['salesperson', 'manager', 'admin'],
+  roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_customer_360',
     description:
@@ -41,25 +43,33 @@ export const getCustomer360Tool: ChatbotTool = {
       .select('*')
       .ilike('customer_name', `%${customerName}%`);
 
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone) {
         customerQuery = customerQuery.ilike(
           'assigned_salesperson_phone',
           `%${cleanPhone}%`,
         );
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
       );
 
-      if (phoneSuffixes.length > 0) {
-        const orConditions = phoneSuffixes.map(
-          (p) => `assigned_salesperson_phone.ilike.%${p}%`,
-        );
-        customerQuery = customerQuery.or(orConditions.join(','));
+      if (phoneSuffixes.length === 0) {
+        return {
+          data: {
+            customer_name: customerName,
+            message: `No records found for "${customerName}". You currently have no salespersons assigned to your team.`,
+          },
+          rowCount: 0,
+        };
       }
+
+      const orConditions = phoneSuffixes.map(
+        (p) => `assigned_salesperson_phone.ilike.%${p}%`,
+      );
+      customerQuery = customerQuery.or(orConditions.join(','));
     }
 
     const { data: customerProfiles } = await customerQuery;
@@ -77,7 +87,7 @@ export const getCustomer360Tool: ChatbotTool = {
       .ilike('customer_name', `%${customerName}%`)
       .order('created_at', { ascending: false });
 
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone && empId) {
         dealsQuery = dealsQuery.or(
           `salesperson_phone.ilike.%${cleanPhone}%,employee_id.eq.${empId}`,
@@ -87,7 +97,7 @@ export const getCustomer360Tool: ChatbotTool = {
       } else if (empId) {
         dealsQuery = dealsQuery.eq('employee_id', empId);
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
@@ -114,14 +124,14 @@ export const getCustomer360Tool: ChatbotTool = {
       .select('*')
       .ilike('customer_name', `%${customerName}%`);
 
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone) {
         paymentsQuery = paymentsQuery.ilike(
           'salesperson_phone',
           `%${cleanPhone}%`,
         );
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,

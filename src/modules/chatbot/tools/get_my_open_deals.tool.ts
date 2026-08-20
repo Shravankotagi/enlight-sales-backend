@@ -2,13 +2,15 @@ import {
   ChatbotTool,
   CallerContext,
   getSubordinateSalespersons,
+  isManagerRole,
+  isSalespersonRole,
 } from './chatbot-tool.interface';
 
 export const getMyOpenDealsTool: ChatbotTool = {
   name: 'get_my_open_deals',
   description:
     'Fetches deals (negotiations, quotations, review, won, or lost) scoped strictly by the authenticated caller role and team hierarchy.',
-  roles: ['salesperson', 'manager', 'admin'],
+  roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_my_open_deals',
     description:
@@ -57,7 +59,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
     }
 
     // 1. Role-based scoping (Layer 1 enforcement)
-    if (callerContext.role === 'salesperson') {
+    if (isSalespersonRole(callerContext.role)) {
       const rawPhone = callerContext.phone || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
       const empId = callerContext.employeeId;
@@ -71,7 +73,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
       } else if (empId) {
         query = query.eq('employee_id', empId);
       }
-    } else if (callerContext.role === 'manager') {
+    } else if (isManagerRole(callerContext.role)) {
       const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
@@ -85,9 +87,11 @@ export const getMyOpenDealsTool: ChatbotTool = {
         conditions.push(`employee_id.eq.${id}`);
       });
 
-      if (conditions.length > 0) {
-        query = query.or(conditions.join(','));
+      if (conditions.length === 0) {
+        return { data: [], rowCount: 0 };
       }
+
+      query = query.or(conditions.join(','));
     }
     // Admin role receives no filtering (unfiltered view)
 

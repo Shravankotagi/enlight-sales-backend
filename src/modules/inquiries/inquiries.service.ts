@@ -1,10 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { phoneInList } from '../employees/employees.service';
 
 function getCompanyLogoPath(): string | null {
   const possiblePaths = [
@@ -499,14 +505,26 @@ export class InquiriesService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, accessiblePhones?: string[] | null) {
     try {
       const { data, error } = await this.supabase
         .from('inquiries')
         .select('*')
         .eq('id', id)
         .single();
-      if (error) throw error;
+      if (error || !data) {
+        throw new NotFoundException('Inquiry not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        const inqPhone = data.salesperson_phone || data.sender_phone;
+        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this inquiry.',
+          );
+        }
+      }
+
       if (data) {
         const { data: deals } = await this.supabase
           .from('deals')
@@ -541,25 +559,19 @@ export class InquiriesService {
 
   async findReviewQueue(salespersonPhones?: string[] | string) {
     try {
-      if (
-        salespersonPhones &&
-        Array.isArray(salespersonPhones) &&
-        salespersonPhones.length === 0
-      ) {
+      if (Array.isArray(salespersonPhones) && salespersonPhones.length === 0) {
         return [];
       }
 
       let query = this.supabase
         .from('inquiries')
-        .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, media_urls',
-        )
-        .in('status', ['review', 'needs_review', 'pending', 'auto_created'])
+        .select('*')
+        .in('status', ['review', 'pending', 'new', 'draft'])
         .order('created_at', { ascending: false });
 
-      const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
-      if (orFilter) {
-        query = query.or(orFilter);
+      if (salespersonPhones) {
+        const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
+        if (orFilter) query = query.or(orFilter);
       }
 
       const { data, error } = await query;
@@ -583,25 +595,25 @@ export class InquiriesService {
         }
       });
 
-      const genuineData = (data || []).filter(isGenuineInquiry);
-
-      return genuineData.map((item: any) => {
-        const hasAttachment =
-          (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
-          item.raw_text?.includes('[Inquiry Attachment:') ||
-          Boolean(item.ai_extraction_json) ||
-          item.source_channel === 'whatsapp';
-        const entities = resolveInquiryEntities(item, dealByInqId, dealByName);
+      return (data || []).map((row: any) => {
+        const entities = resolveInquiryEntities(row, dealByInqId, dealByName);
+        const hasMedia = Boolean(
+          row.media_urls &&
+            Array.isArray(row.media_urls) &&
+            row.media_urls.length > 0,
+        );
         return {
-          ...item,
+          ...row,
           ...entities,
-          has_media: hasAttachment,
-          media_urls:
-            Array.isArray(item.media_urls) && item.media_urls.length > 0
-              ? item.media_urls
-              : hasAttachment
-                ? ['attached_document']
-                : [],
+          has_media: hasMedia,
+          media_urls: hasMedia
+            ? Array.isArray(row.media_urls) &&
+              row.media_urls.length > 0 &&
+              (row.media_urls[0].startsWith('http') ||
+                row.media_urls[0].startsWith('data:'))
+              ? row.media_urls
+              : ['attached_document']
+            : [],
         };
       });
     } catch (error) {
@@ -610,8 +622,32 @@ export class InquiriesService {
     }
   }
 
-  async updateStatus(id: string, status: string, details?: any) {
+  async updateStatus(
+    id: string,
+    status: string,
+    details?: any,
+    accessiblePhones?: string[] | null,
+  ) {
     try {
+      const { data: existingInq, error: fetchErr } = await this.supabase
+        .from('inquiries')
+        .select('id, salesperson_phone, sender_phone')
+        .eq('id', id)
+        .single();
+      if (fetchErr || !existingInq) {
+        throw new NotFoundException('Inquiry not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        const inqPhone =
+          existingInq.salesperson_phone || existingInq.sender_phone;
+        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this inquiry.',
+          );
+        }
+      }
+
       const updatePayload: any = { status };
       if (details) {
         if (details.companyName)
@@ -1026,7 +1062,11 @@ export class InquiriesService {
     }
   }
 
-  async sendQuotation(id: string, payload: any) {
+  async sendQuotation(
+    id: string,
+    payload: any,
+    accessiblePhones?: string[] | null,
+  ) {
     try {
       // 1. Fetch inquiry
       const { data: inquiry, error: inqErr } = await this.supabase
@@ -1035,7 +1075,18 @@ export class InquiriesService {
         .eq('id', id)
         .single();
 
-      if (inqErr) throw inqErr;
+      if (inqErr || !inquiry) {
+        throw new NotFoundException('Inquiry not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        const inqPhone = inquiry.salesperson_phone || inquiry.sender_phone;
+        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to send quotations for this inquiry.',
+          );
+        }
+      }
 
       let customerEmail =
         payload.customer_email || inquiry.customer_email || '';

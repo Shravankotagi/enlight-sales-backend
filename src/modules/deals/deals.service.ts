@@ -1,5 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { phoneInList } from '../employees/employees.service';
 
 @Injectable()
 export class DealsService {
@@ -26,12 +32,18 @@ export class DealsService {
           deal_items (*)
         `,
         )
-        .neq('inquiry_type', 'unknown')
         .order('created_at', { ascending: false });
 
       if (filters?.stage) {
-        query = query.eq('stage', filters.stage);
+        if (filters.stage === 'new_inquiry') {
+          query = query.or(
+            'stage.eq.new_inquiry,stage.eq.review,stage.is.null',
+          );
+        } else {
+          query = query.eq('stage', filters.stage);
+        }
       }
+
       if (filters?.salesperson_phone) {
         const cleanDigits = filters.salesperson_phone.replace(/\D/g, '');
         const p10 = cleanDigits.slice(-10);
@@ -62,7 +74,6 @@ export class DealsService {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Clean lightweight list with instant metadata (0ms load)
       const lightweightDeals = (data || []).map((d: any) => {
         const hasMedia = Boolean(
           d.inquiry_id ||
@@ -83,14 +94,27 @@ export class DealsService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, accessiblePhones?: string[] | null) {
     try {
       const { data, error } = await this.supabase
         .from('deals')
         .select('*, deal_items(*)')
         .eq('id', id)
         .single();
-      if (error) throw error;
+      if (error || !data) {
+        throw new NotFoundException('Deal not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        if (
+          !data.salesperson_phone ||
+          !phoneInList(data.salesperson_phone, accessiblePhones)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this deal.',
+          );
+        }
+      }
 
       // Enrich with media_urls from inquiries if available
       if (data) {
@@ -156,32 +180,27 @@ export class DealsService {
               .toLowerCase()
               .trim();
             const rawTxt = (mi.raw_text || '').toLowerCase();
-            const poJson = (
-              mi.ai_extraction_json?.po_number || ''
-            ).toLowerCase();
+            const poJson = (mi.ai_extraction_json?.po_number || '')
+              .toLowerCase()
+              .trim();
 
-            const combinedText = `${sName} ${custJsonName} ${rawTxt}`;
+            if (dPo && poJson && (poJson.includes(dPo) || dPo.includes(poJson)))
+              return true;
+            if (dPo && rawTxt && rawTxt.includes(dPo)) return true;
+            if (
+              custJsonName &&
+              (custJsonName.includes(dName) || dName.includes(custJsonName))
+            )
+              return true;
+            if (sName && (sName.includes(dName) || dName.includes(sName)))
+              return true;
+            if (dWords.length > 0 && dWords.some((w) => rawTxt.includes(w)))
+              return true;
 
-            const directNameMatch =
-              dName.length > 3 &&
-              (sName.includes(dName) ||
-                custJsonName.includes(dName) ||
-                rawTxt.includes(dName));
-
-            const wordMatch =
-              dWords.length > 0 && dWords.some((w) => combinedText.includes(w));
-
-            const poMatches =
-              dPo.length > 3 && (rawTxt.includes(dPo) || poJson.includes(dPo));
-
-            return directNameMatch || wordMatch || poMatches;
+            return false;
           });
 
-          if (
-            matched &&
-            Array.isArray(matched.media_urls) &&
-            matched.media_urls.length > 0
-          ) {
+          if (matched && matched.media_urls) {
             data.media_urls = matched.media_urls;
           }
         }
@@ -210,8 +229,33 @@ export class DealsService {
     }
   }
 
-  async updateStage(id: string, stage: string, lostReason?: string) {
+  async updateStage(
+    id: string,
+    stage: string,
+    lostReason?: string,
+    accessiblePhones?: string[] | null,
+  ) {
     try {
+      const { data: existingDeal, error: fetchErr } = await this.supabase
+        .from('deals')
+        .select('id, salesperson_phone')
+        .eq('id', id)
+        .single();
+      if (fetchErr || !existingDeal) {
+        throw new NotFoundException('Deal not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        if (
+          !existingDeal.salesperson_phone ||
+          !phoneInList(existingDeal.salesperson_phone, accessiblePhones)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this deal.',
+          );
+        }
+      }
+
       const updateData: any = { stage };
       if (stage === 'lost' && lostReason) {
         updateData.lost_reason = lostReason;
@@ -249,7 +293,7 @@ export class DealsService {
           const { data: byCust } = await this.supabase
             .from('payment_tracking')
             .select('id')
-            .eq('customer_name', data.customer_name)
+            .ilike('customer_name', `%${data.customer_name}%`)
             .limit(1);
           if (byCust && byCust.length > 0) {
             existingRecord = byCust[0];
@@ -260,23 +304,24 @@ export class DealsService {
           await this.supabase
             .from('payment_tracking')
             .update({
+              total_deal_amount: data.total_amount || 0,
+              pending_amount: data.total_amount || 0,
               due_date: dueDateStr,
-              invoice_amount: data.total_amount || undefined,
               deal_id: data.id,
-              credit_period_days: 30,
+              salesperson_phone: data.salesperson_phone || null,
               updated_at: new Date().toISOString(),
             })
             .eq('id', existingRecord.id);
         } else {
           await this.supabase.from('payment_tracking').insert({
-            salesperson_phone: data.salesperson_phone,
+            deal_id: data.id,
             customer_name: data.customer_name,
-            invoice_amount: data.total_amount || 0,
-            outstanding: data.total_amount || 0,
+            total_deal_amount: data.total_amount || 0,
+            paid_amount: 0,
+            pending_amount: data.total_amount || 0,
             status: 'pending',
             due_date: dueDateStr,
-            deal_id: data.id,
-            credit_period_days: 30,
+            salesperson_phone: data.salesperson_phone || null,
             created_at: new Date().toISOString(),
           });
         }
@@ -338,6 +383,65 @@ export class DealsService {
       return summary;
     } catch (error) {
       this.logger.error('Error in getPipelineSummary:', error);
+      throw error;
+    }
+  }
+
+  async createOrder(data: any, salespersonPhone?: string) {
+    try {
+      const wonAt = data.won_at || new Date().toISOString();
+      const insertPayload: any = {
+        customer_name: data.customer_name,
+        stage: 'won',
+        inquiry_type: 'purchase_order',
+        po_number: data.po_number || null,
+        po_date: data.po_date || null,
+        total_amount: Number(data.total_amount || 0),
+        won_at: wonAt,
+        delivery_location: data.delivery_location || null,
+        delivery_date: data.delivery_date || null,
+        payment_terms: data.payment_terms || null,
+        notes: data.notes || null,
+        created_at: new Date().toISOString(),
+      };
+
+      if (salespersonPhone) {
+        insertPayload.salesperson_phone = salespersonPhone;
+        insertPayload.customer_phone = salespersonPhone;
+      }
+
+      const { data: deal, error: dealError } = await this.supabase
+        .from('deals')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (dealError) throw dealError;
+
+      if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+        const itemRows = data.items.map((item: any) => ({
+          deal_id: deal.id,
+          sku_text: item.sku_text,
+          dimensions: item.dimensions || null,
+          quantity: Number(item.quantity || 0),
+          unit: item.unit || 'MT',
+          rate: Number(item.rate || 0),
+          amount: Number(item.amount || item.quantity * item.rate || 0),
+          created_at: new Date().toISOString(),
+        }));
+
+        const { error: itemsError } = await this.supabase
+          .from('deal_items')
+          .insert(itemRows);
+
+        if (itemsError) {
+          this.logger.error('Error inserting deal items:', itemsError);
+        }
+      }
+
+      return deal;
+    } catch (error) {
+      this.logger.error('Error in createOrder:', error);
       throw error;
     }
   }
@@ -670,20 +774,30 @@ export class DealsService {
     }
   }
 
-  async createOrder(data: any, salespersonPhone?: string) {
-    return this.processPo(data, salespersonPhone);
-  }
-
-  async deleteDeal(id: string) {
+  async deleteDeal(id: string, accessiblePhones?: string[] | null) {
     try {
       this.logger.log(`Deleting deal ${id} and all associated records...`);
 
-      // 1. Fetch deal to inspect details
-      const { data: deal } = await this.supabase
+      // 1. Fetch deal to inspect details and check access
+      const { data: deal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, inquiry_id, po_number, customer_name')
+        .select('id, inquiry_id, po_number, customer_name, salesperson_phone')
         .eq('id', id)
         .single();
+      if (fetchErr || !deal) {
+        throw new NotFoundException('Deal not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        if (
+          !deal.salesperson_phone ||
+          !phoneInList(deal.salesperson_phone, accessiblePhones)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to delete this deal.',
+          );
+        }
+      }
 
       // 2. Delete deal_items
       await this.supabase.from('deal_items').delete().eq('deal_id', id);
