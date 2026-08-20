@@ -65,7 +65,7 @@ export class GuardrailsService {
   }
 
   /**
-   * Screens input for prompt injection, jailbreak attempts, or system instruction overrides using gemini-3.1-flash-lite.
+   * Screens input for prompt injection, jailbreak attempts, or system instruction overrides using gemini-3.5-flash-lite.
    */
   async screenInput(
     input: string,
@@ -96,7 +96,7 @@ Respond ONLY with valid JSON in this exact format:
 { "safe": true } or { "safe": false, "reason": "short explanation" }`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         contents: [{ role: 'user', parts: [{ text: guardrailPrompt }] }],
       });
 

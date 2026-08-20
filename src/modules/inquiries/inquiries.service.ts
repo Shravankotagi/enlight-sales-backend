@@ -810,9 +810,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-        poNumber !== 'null' &&
-        poNumber !== 'None' &&
-        String(poNumber).trim().length > 2,
+      poNumber !== 'null' &&
+      poNumber !== 'None' &&
+      String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {
@@ -1312,7 +1312,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
     }
     const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
 
     try {
       const response = await axios.post(url, {

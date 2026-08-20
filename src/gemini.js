@@ -1,5 +1,5 @@
 /**
- * gemini.js — Inquiry extraction & classification module using Google Gemini (gemini-3.1-flash-lite)
+ * gemini.js — Inquiry extraction & classification module using Google Gemini (gemini-3.5-flash / gemini-3.5-flash-lite)
  */
 
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
@@ -266,7 +266,7 @@ async function extractFromImage(imageBuffer, mimeType) {
       process.env.GEMINI_API_KEY_1 ||
       process.env.GEMINI_API_KEY_2;
     const model = new ChatGoogleGenerativeAI({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash',
       apiKey: apiKey,
       temperature: 0.1,
     });

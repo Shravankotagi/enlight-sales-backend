@@ -2,7 +2,7 @@
  * modelRouter.js — Multi-key Google Gemini Model Router
  *
  * Uses process.env.GEMINI_API_KEY / GEMINI_API_KEY_1 / GEMINI_API_KEY_2 / GEMINI_API_KEY_3.
- * Primary model: gemini-3.1-flash-lite
+ * Primary model: gemini-3.5-flash-lite
  */
 
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
@@ -14,7 +14,7 @@ const GEMINI_KEYS = [
   process.env.GEMINI_API_KEY_3,
 ].filter(Boolean);
 
-const GEMINI_MODELS = ['gemini-3.1-flash-lite'];
+const GEMINI_MODELS = ['gemini-3.5-flash-lite'];
 
 let roundRobinIdx = 0;
 
@@ -26,9 +26,9 @@ function getNextGeminiKey() {
 }
 
 /**
- * Returns a ChatGoogleGenerativeAI instance using gemini-3.1-flash-lite.
+ * Returns a ChatGoogleGenerativeAI instance using gemini-3.5-flash-lite.
  */
-function getGeminiModel(tools = null, modelName = 'gemini-3.1-flash-lite') {
+function getGeminiModel(tools = null, modelName = 'gemini-3.5-flash-lite') {
   const key = getNextGeminiKey();
   if (!key) return null;
 
