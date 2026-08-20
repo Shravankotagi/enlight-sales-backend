@@ -810,9 +810,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-      poNumber !== 'null' &&
-      poNumber !== 'None' &&
-      String(poNumber).trim().length > 2,
+        poNumber !== 'null' &&
+        poNumber !== 'None' &&
+        String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {
@@ -1538,54 +1538,127 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
           .lineWidth(1)
           .stroke();
 
-        // 2. Customer & Delivery Info Box
-        doc.roundedRect(36, 105, 523, 75, 8).fill('#F8FAFC').stroke('#E2E8F0');
+        // 2. Customer & Delivery Info Box (Dynamic layout to avoid text overlap)
+        const infoBoxY = 105;
+        const leftColX = 48;
+        const leftColWidth = 230;
+        const rightColX = 300;
+        const rightColWidth = 240;
 
-        // Left Column
+        // Measure heights dynamically
+        doc.font(fontBold).fontSize(11);
+        const custNameHeight = doc.heightOfString(
+          customerName || 'Valued Customer',
+          { width: leftColWidth },
+        );
+
+        let leftContentHeight = 11 + custNameHeight + 4;
+        if (details.customerPhone) {
+          doc.font(fontRegular).fontSize(8.5);
+          leftContentHeight +=
+            doc.heightOfString(`Phone: ${details.customerPhone}`, {
+              width: leftColWidth,
+            }) + 3;
+        }
+        doc.font(fontRegular).fontSize(8);
+        leftContentHeight += doc.heightOfString(
+          `Customer Email: ${customerEmail}`,
+          { width: leftColWidth },
+        );
+
+        const deliveryText =
+          deliveryLocation || 'As agreed in requirement / PO';
+        doc.font(fontBold).fontSize(9.5);
+        const deliveryLocHeight = doc.heightOfString(deliveryText, {
+          width: rightColWidth,
+        });
+
+        const paymentText = `Payment Terms: ${paymentTerms || 'As agreed'}`;
+        doc.font(fontBold).fontSize(8.5);
+        const paymentTermsHeight = doc.heightOfString(paymentText, {
+          width: rightColWidth,
+        });
+
+        const rightContentHeight =
+          11 + deliveryLocHeight + 4 + paymentTermsHeight;
+
+        const maxContentHeight = Math.max(
+          leftContentHeight,
+          rightContentHeight,
+        );
+        const infoBoxPaddingTop = 10;
+        const infoBoxPaddingBottom = 12;
+        const infoBoxHeight = Math.max(
+          70,
+          infoBoxPaddingTop + maxContentHeight + infoBoxPaddingBottom,
+        );
+
+        // Draw Info Box container background & border
+        doc
+          .roundedRect(36, infoBoxY, 523, infoBoxHeight, 8)
+          .fill('#F8FAFC')
+          .stroke('#E2E8F0');
+
+        // Render Left Column
+        const contentStartY = infoBoxY + infoBoxPaddingTop;
         doc
           .fillColor('#94A3B8')
           .font(fontBold)
           .fontSize(7)
-          .text('CUSTOMER / COMPANY DETAILS', 48, 115);
+          .text('CUSTOMER / COMPANY DETAILS', leftColX, contentStartY);
+
+        let curLeftY = contentStartY + 11;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(12)
-          .text(customerName, 48, 126, { width: 230 });
-        // Show phone only if extracted
+          .fontSize(11)
+          .text(customerName || 'Valued Customer', leftColX, curLeftY, {
+            width: leftColWidth,
+          });
+        curLeftY += custNameHeight + 4;
+
         if (details.customerPhone) {
           doc
             .fillColor('#475569')
             .font(fontRegular)
-            .fontSize(9)
-            .text(`Phone: ${details.customerPhone}`, 48, 144);
+            .fontSize(8.5)
+            .text(`Phone: ${details.customerPhone}`, leftColX, curLeftY, {
+              width: leftColWidth,
+            });
+          curLeftY +=
+            doc.heightOfString(`Phone: ${details.customerPhone}`, {
+              width: leftColWidth,
+            }) + 3;
         }
+
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(8)
-          .text(
-            `Customer Email: ${customerEmail}`,
-            48,
-            details.customerPhone ? 158 : 144,
-          );
+          .text(`Customer Email: ${customerEmail}`, leftColX, curLeftY, {
+            width: leftColWidth,
+          });
 
-        // Right Column
+        // Render Right Column
         doc
           .fillColor('#94A3B8')
           .font(fontBold)
           .fontSize(7)
-          .text('DELIVERY & COMMERCIAL TERMS', 300, 115);
+          .text('DELIVERY & COMMERCIAL TERMS', rightColX, contentStartY);
+
+        const curRightY = contentStartY + 11;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
-          .text(deliveryLocation, 300, 126, { width: 240 });
+          .fontSize(9.5)
+          .text(deliveryText, rightColX, curRightY, { width: rightColWidth });
+
+        const paymentY = curRightY + deliveryLocHeight + 4;
         doc
           .fillColor('#6B21A8')
           .font(fontBold)
-          .fontSize(9)
-          .text(`Payment Terms: ${paymentTerms || 'As agreed'}`, 300, 142);
+          .fontSize(8.5)
+          .text(paymentText, rightColX, paymentY, { width: rightColWidth });
 
         // 3. Line Items Table (dynamic — supports multiple items)
         const lineItems: Array<{
@@ -1613,7 +1686,7 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
                 },
               ];
 
-        const tableY = 192;
+        const tableY = Math.max(192, infoBoxY + infoBoxHeight + 12);
         const headerHeight = 24;
         const rowH = 40; // per-row height
         const totalTableHeight = headerHeight + rowH * lineItems.length;
