@@ -16,9 +16,30 @@ async function callLightweightModel(prompt) {
 }
 
 const EXTRACTION_PROMPT = `
-You are an inquiry parser for an Indian B2B metal distributor called Enlight Metals.
-Input may be English, Hindi, or Hinglish. It could be typed text OR a photo of a 
-Purchase Order, handwritten requirement, or printed RFQ.
+You are an expert document parser for Enlight Metals, an Indian B2B metal distributor.
+Input is a photo or PDF of a business document — either a PURCHASE ORDER (PO) or a MATERIAL REQUIREMENT/INQUIRY/RFQ.
+
+════════════════════════════════════════════════════
+🔴 RULE #1 — PO vs INQUIRY (MOST IMPORTANT RULE):
+════════════════════════════════════════════════════
+
+STEP 1: Scan the ENTIRE document for a field explicitly labeled:
+  "PO No", "P.O. No", "PO Number", "Purchase Order No", "Purchase Order Number", "PO Ref", "P.O. Ref"
+
+STEP 2A — If such a label EXISTS and has a value (e.g. "PO No: 471" or "PO/2026/123"):
+  → Set inquiry_type: "purchase_order"
+  → Set po_number: "<that exact value>"
+  → This is a CONFIRMED PURCHASE ORDER.
+
+STEP 2B — If NO such label exists, OR the document says "Inquiry", "RFQ", "Quotation Request", "Material Requirement":
+  → Set inquiry_type: "inquiry"
+  → Set po_number: null
+  → This is an INQUIRY/RFQ, NOT a purchase order.
+
+⚠️  IMPORTANT: "Ref No", "Inquiry Ref", "Quotation Ref", "Our Ref", "Your Ref" are NOT PO numbers.
+    Only fields explicitly labeled PO No / Purchase Order No qualify.
+    When in doubt → inquiry_type: "inquiry", po_number: null.
+════════════════════════════════════════════════════
 
 Extract the following into ONLY a JSON object (no prose, no markdown, no backticks):
 
@@ -43,27 +64,36 @@ Extract the following into ONLY a JSON object (no prose, no markdown, no backtic
       "confidence": 0.0
     }
   ],
-  "po_number": "",
-  "po_date": "",
+  "po_number": null,
+  "po_date": null,
   "delivery_location": "",
   "delivery_date": "",
   "payment_terms": "",
+  "subtotal": 0,
+  "basic_amount": 0,
+  "sgst_amount": 0,
+  "cgst_amount": 0,
+  "igst_amount": 0,
+  "gst_amount": 0,
+  "grand_total": 0,
   "total_amount": 0,
   "overall_confidence": 0.0,
   "inquiry_type": "purchase_order|inquiry|visiting_card|unknown"
 }
 
-Rules:
+Additional Rules:
+- Line Items: Extract each line item's quantity, unit rate, and line amount separately (these are always pre-GST values).
+- Subtotal / Basic Amount: Sum of line item amounts BEFORE GST. If the document shows a pre-tax total (e.g. "Total: ₹10,33,000.00"), use that exact pre-GST amount. NEVER store the PO Grand Total as subtotal or basic_amount!
+- GST Components: Extract SGST (e.g. 9%), CGST (e.g. 9%), IGST (e.g. 18%), and total GST amount as stated in the document.
+- Grand Total: The final GST-inclusive value stated in the PO document (e.g. "Grand Total: ₹12,18,940.00").
 - Quantities: normalize to MT where unit is tonnes/ton/MT; keep KG/PCS as stated
-- SKU text: preserve the customer exact words in sku_text
-- If a field is absent return null - never invent values
-- DATE RULE: Current Year is 2026. Any date specifying month/day (e.g. "20 August", "25 August") MUST ALWAYS use year 2026 (e.g. 2026-08-20). NEVER output past years like 2024 or 2025.
+- SKU text: preserve the customer's exact words in sku_text
+- If a field is absent return null — never invent values
+- DATE RULE: Current Year is 2026. Any date specifying month/day MUST ALWAYS use year 2026 (e.g. 2026-08-14).
 - CONFIDENCE RULE:
-  * 1.0 (100%) ONLY when quantity, product, unit, AND explicit rate/price per MT are stated.
+  * 1.0 (100%) when quantity, product, unit, AND explicit rate/price per MT are stated.
   * 0.85 when rate is auto-derived from rate sheet.
   * 0.75 - 0.80 when rate or customer details are missing.
-- overall_confidence: average of line item confidences, capped at 0.85 if rate is auto-derived.
-- inquiry_type: "purchase_order" if PO number present, "inquiry" if just a requirement
 - Return ONLY the JSON object. No prose. No markdown. No backticks.
 `;
 
@@ -94,6 +124,24 @@ async function getLatestActiveRatesText() {
 function postProcessExtraction(parsed) {
   if (!parsed) return parsed;
 
+  // 0. PO vs Inquiry enforcement: if po_number is set, inquiry_type MUST be purchase_order
+  if (
+    parsed.po_number &&
+    parsed.po_number !== 'null' &&
+    parsed.po_number !== 'None' &&
+    String(parsed.po_number).trim().length > 2
+  ) {
+    // Has a real PO number → this IS a purchase order, regardless of what model said
+    parsed.inquiry_type = 'purchase_order';
+  } else if (parsed.inquiry_type === 'purchase_order') {
+    // Model said purchase_order but no PO number found → revert to inquiry
+    parsed.inquiry_type = 'inquiry';
+    parsed.po_number = null;
+    console.warn(
+      '[Gemini] postProcess: model set purchase_order but no po_number found — corrected to inquiry',
+    );
+  }
+
   // 1. Delivery Date Year Correction (Ensure 2026 or future year)
   if (parsed.delivery_date) {
     const parts = parsed.delivery_date.split('-');
@@ -102,8 +150,8 @@ function postProcessExtraction(parsed) {
     }
   }
 
-  // 2. Line Item Rate and Amount calculation
-  let totalCalculatedAmount = 0;
+  // 2. Line Item Rate and Amount calculation (Always Pre-GST)
+  let totalCalculatedItemsAmount = 0;
   let hasMissingRate = false;
 
   if (Array.isArray(parsed.line_items) && parsed.line_items.length > 0) {
@@ -126,15 +174,56 @@ function postProcessExtraction(parsed) {
         hasMissingRate = true;
       }
 
-      totalCalculatedAmount += amount;
+      totalCalculatedItemsAmount += amount;
     });
   }
 
+  // Pre-GST Subtotal
+  const preGstSubtotal =
+    totalCalculatedItemsAmount > 0
+      ? totalCalculatedItemsAmount
+      : Number(parsed.basic_amount || parsed.subtotal || 0);
+
+  parsed.basic_amount = preGstSubtotal;
+  parsed.subtotal = preGstSubtotal;
+
+  // Stated or Calculated GST
+  const statedGst = Number(
+    parsed.gst_amount ||
+      Number(parsed.sgst_amount || 0) +
+        Number(parsed.cgst_amount || 0) +
+        Number(parsed.igst_amount || 0) ||
+      0,
+  );
+  const calculatedGst = Math.round(preGstSubtotal * 0.18);
+  parsed.gst_amount = statedGst > 0 ? statedGst : calculatedGst;
+
+  // Stated or Calculated Grand Total (GST-inclusive)
+  const statedGrandTotal = Number(
+    parsed.grand_total || parsed.total_amount || 0,
+  );
+  const calculatedGrandTotal = preGstSubtotal + parsed.gst_amount;
+
   if (
-    totalCalculatedAmount > 0 &&
-    (!parsed.total_amount || parsed.total_amount === 0)
+    statedGrandTotal > 0 &&
+    Math.abs(statedGrandTotal - calculatedGrandTotal) <= 2
   ) {
-    parsed.total_amount = totalCalculatedAmount;
+    parsed.grand_total = statedGrandTotal;
+    parsed.total_amount = statedGrandTotal;
+  } else if (
+    statedGrandTotal > 0 &&
+    Math.abs(statedGrandTotal - preGstSubtotal) <= 2
+  ) {
+    parsed.grand_total = calculatedGrandTotal;
+    parsed.total_amount = calculatedGrandTotal;
+  } else if (statedGrandTotal > 0) {
+    parsed.grand_total = statedGrandTotal;
+    parsed.total_amount = statedGrandTotal;
+    parsed.calculation_warning = `Calculated total (₹${calculatedGrandTotal.toLocaleString('en-IN')}) does not match PO document total (₹${statedGrandTotal.toLocaleString('en-IN')}) — please review`;
+    console.warn('[Gemini OCR]', parsed.calculation_warning);
+  } else {
+    parsed.grand_total = calculatedGrandTotal;
+    parsed.total_amount = calculatedGrandTotal;
   }
 
   // 3. Realistic Confidence Adjustment
