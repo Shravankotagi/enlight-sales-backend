@@ -669,7 +669,6 @@ async function isKRA1AlreadyLogged(senderPhone, customerName) {
 const {
   extractDimensions,
   isDimensionCompatible,
-  lookupRateSheetPrice,
   calculateLineItem,
   calculateLineItems,
   calculateSubtotal,
@@ -1215,15 +1214,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             : null);
 
       if (pName) {
-        if (!rate) {
-          const autoRate = await lookupRateSheetPrice(pName);
-          if (autoRate) {
-            rate = autoRate.price_per_mt;
-            pName = autoRate.matched_sku || pName;
-          } else if (qty > 0 || data.action === 'purchase_order') {
-            hasUnlistedMaterial = true;
-            unlistedMaterialName = pName;
-          }
+        if (!rate && (qty > 0 || data.action === 'purchase_order')) {
+          hasUnlistedMaterial = true;
+          unlistedMaterialName = pName;
         }
       } else if (qty > 0) {
         // Quantity specified but NO specific metal product name was mentioned!
@@ -1255,7 +1248,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         );
       }
 
-      if (qty > 0 && pName) {
+      if (qty > 0 && pName && rate > 0) {
         const lineCalc = calculateLineItem({ quantity: qty, rate });
         const itemAmount = lineCalc.amount;
         calculatedTotal += itemAmount;
@@ -1307,9 +1300,8 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         `pending_custom_rate|${finalCustomerName}|${unlistedMaterialName}|${JSON.stringify(pendingContext)}`,
       );
       return (
-        `⚠️ *Product Price Confirmation Required*\n\n` +
-        `The material *"${unlistedMaterialName}"* is not listed in our active rate sheet.\n\n` +
-        `Please confirm the per MT rate for *${unlistedMaterialName}* (e.g. reply _"54000"_ or _"${unlistedMaterialName} rate is 54000"_) so I can calculate the deal quotation and update your Sales Pipeline & Inquiries! 📈`
+        `⚠️ *Rate Required*\n\n` +
+        `Please provide the rate per MT for *${unlistedMaterialName}* (e.g. reply _"54000"_ or _"${unlistedMaterialName} rate 54000"_) so I can calculate the quotation and update your Sales Pipeline! 📈`
       );
     }
 
@@ -2006,7 +1998,6 @@ module.exports = {
   processSalesMessage,
   processSalesImage,
   findBestDeal,
-  lookupRateSheetPrice,
   detectInvalidUnitInMessage,
   extractDeliveryLocation,
 };
