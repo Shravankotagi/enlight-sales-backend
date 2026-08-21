@@ -1567,19 +1567,92 @@ ${rawText}`,
     }
   }
 
+  private resolvePlaceOfSupply(address?: string): string {
+    if (!address) return 'Maharashtra (27)';
+    const lower = address.toLowerCase();
+    if (
+      lower.includes('maharashtra') ||
+      lower.includes('mumbai') ||
+      lower.includes('pune') ||
+      lower.includes('khopoli') ||
+      lower.includes('raigad') ||
+      lower.includes('thane') ||
+      lower.includes('nagpur') ||
+      lower.includes('nashik') ||
+      lower.includes('chakan') ||
+      lower.includes('taloja')
+    ) {
+      return 'Maharashtra (27)';
+    }
+    if (
+      lower.includes('gujarat') ||
+      lower.includes('ahmedabad') ||
+      lower.includes('surat') ||
+      lower.includes('vadodara')
+    ) {
+      return 'Gujarat (24)';
+    }
+    if (
+      lower.includes('karnataka') ||
+      lower.includes('bangalore') ||
+      lower.includes('bengaluru')
+    ) {
+      return 'Karnataka (29)';
+    }
+    if (lower.includes('tamil nadu') || lower.includes('chennai')) {
+      return 'Tamil Nadu (33)';
+    }
+    if (lower.includes('delhi')) {
+      return 'Delhi (07)';
+    }
+    if (
+      lower.includes('haryana') ||
+      lower.includes('gurgaon') ||
+      lower.includes('faridabad')
+    ) {
+      return 'Haryana (06)';
+    }
+    if (
+      lower.includes('uttar pradesh') ||
+      lower.includes('noida') ||
+      lower.includes('kanpur')
+    ) {
+      return 'Uttar Pradesh (09)';
+    }
+    if (lower.includes('rajasthan') || lower.includes('jaipur')) {
+      return 'Rajasthan (08)';
+    }
+    if (lower.includes('madhya pradesh') || lower.includes('indore')) {
+      return 'Madhya Pradesh (23)';
+    }
+    if (lower.includes('west bengal') || lower.includes('kolkata')) {
+      return 'West Bengal (19)';
+    }
+    if (lower.includes('telangana') || lower.includes('hyderabad')) {
+      return 'Telangana (36)';
+    }
+    return 'Maharashtra (27)';
+  }
+
   async generatePdfKitBuffer(
     qRefNum: string,
     customerName: string,
     customerEmail: string,
     details: any,
   ): Promise<Buffer> {
+    const logger = this.logger;
+    const placeOfSupply = this.resolvePlaceOfSupply(
+      (details?.deliveryLocation || '').trim() ||
+        'Khopoli, Raigad, Maharashtra - 410203',
+    );
+
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({
           size: 'A4',
           margin: 36,
           info: {
-            Title: `Official Commercial Price Quotation - ${qRefNum}`,
+            Title: `Proforma Invoice / Quotation - ${qRefNum}`,
             Author: 'Enlight Metals Private Limited',
             Subject: `Sales Quotation for ${customerName}`,
           },
@@ -1616,15 +1689,21 @@ ${rawText}`,
             fontBold = 'NotoSans-Bold';
             rupeeSymbol = 'Rs. ';
           } catch (fErr) {
-            this.logger.warn('Error registering NotoSans fonts:', fErr);
+            logger.warn('Error registering NotoSans fonts:', fErr);
           }
         }
 
         const todayDate = new Date().toLocaleDateString('en-IN', {
           day: '2-digit',
-          month: 'short',
+          month: '2-digit',
           year: 'numeric',
         });
+
+        const piNumber = `PI-${qRefNum.replace(/^QT-2026-/, '').replace(/^QT-/, '') || '00051'}`;
+        const salesperson = details?.salespersonName || 'Vedant Goel';
+        const deliveryLocRaw = (details?.deliveryLocation || '').trim();
+        const deliveryText =
+          deliveryLocRaw || 'Khopoli, Raigad, Maharashtra - 410203';
 
         const productType =
           [
@@ -1640,151 +1719,192 @@ ${rawText}`,
         const unitRate = Number(details.unitPrice || 0);
         const totalAmt = Number(details.totalAmount || 0);
 
-        // 1. Company Header with Logo & Meta Box
+        // 1. Company Header (Top Left) & Document Meta (Top Right)
         const logoPath = getCompanyLogoPath();
         if (logoPath && fs.existsSync(logoPath)) {
           try {
-            doc.image(logoPath, 36, 36, { width: 140 });
+            doc.image(logoPath, 36, 32, { width: 130 });
           } catch {
             doc
               .fillColor('#0F172A')
               .font(fontBold)
-              .fontSize(16)
-              .text('ENLIGHT METALS', 36, 36);
+              .fontSize(15)
+              .text('ENLIGHT METALS', 36, 32);
           }
         } else {
           doc
             .fillColor('#0F172A')
             .font(fontBold)
-            .fontSize(16)
-            .text('ENLIGHT METALS', 36, 36);
+            .fontSize(15)
+            .text('ENLIGHT METALS', 36, 32);
         }
 
         doc
-          .fillColor('#4338CA')
-          .font(fontBold)
-          .fontSize(7.5)
-          .text(
-            'ENLIGHT METALS PRIVATE LIMITED • INDUSTRIAL METAL SOLUTIONS',
-            36,
-            74,
-          );
-        doc
-          .fillColor('#64748B')
-          .font(fontRegular)
-          .fontSize(7)
-          .text(
-            'MIDC Industrial Zone, Mumbai - 400001 • GSTIN: 27AAACE1234F1Z9',
-            36,
-            85,
-          );
-
-        // Top Right Quotation Meta Badge
-        doc.roundedRect(380, 36, 179, 52, 6).fill('#F8FAFC').stroke('#CBD5E1');
-
-        doc
-          .fillColor('#4338CA')
-          .font(fontBold)
-          .fontSize(8)
-          .text('OFFICIAL SALES QUOTATION', 390, 44);
-        doc
-          .fillColor('#64748B')
-          .font(fontRegular)
-          .fontSize(7)
-          .text(`Ref #: `, 390, 56, { continued: true })
           .fillColor('#0F172A')
           .font(fontBold)
-          .text(qRefNum);
+          .fontSize(8.5)
+          .text('Enlight Metals Private Limited', 36, 68);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7)
+          .text('606 Clover Hills Plaza, NIBM Road', 36, 78);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7)
+          .text('Pune Maharashtra 411048, India', 36, 87);
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(7)
+          .text('GSTIN 27AAICE5263E1ZN', 36, 96);
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text(
+            'accounts@enlightmetals.com • https://enlightmetals.com/',
+            36,
+            105,
+          );
+
+        // Top Right Proforma Invoice Meta Badge
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(18)
+          .text('Proforma Invoice', 340, 32, { width: 219, align: 'right' });
+        doc
+          .fillColor('#475569')
+          .font(fontBold)
+          .fontSize(8)
+          .text(`PI Number# ${piNumber}`, 340, 52, {
+            width: 219,
+            align: 'right',
+          });
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(7)
-          .text(`Date: `, 390, 68, { continued: true })
+          .text(`Quotation Ref: ${qRefNum}`, 340, 63, {
+            width: 219,
+            align: 'right',
+          });
+
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7.5)
+          .text(`Order Date :  `, 360, 78, {
+            width: 140,
+            align: 'right',
+            continued: true,
+          })
           .fillColor('#0F172A')
           .font(fontBold)
           .text(todayDate);
 
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7.5)
+          .text(`Sales person :  `, 360, 90, {
+            width: 140,
+            align: 'right',
+            continued: true,
+          })
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .text(salesperson);
+
         // Divider
         doc
-          .moveTo(36, 100)
-          .lineTo(559, 100)
+          .moveTo(36, 118)
+          .lineTo(559, 118)
           .strokeColor('#E2E8F0')
-          .lineWidth(1)
+          .lineWidth(0.75)
           .stroke();
 
-        // 2. Customer & Commercial Terms Info Box
-        const infoBoxY = 108;
-        const rightColX = 300;
-        const rightColWidth = 245;
-
-        const deliveryLocRaw = details.deliveryLocation || '';
-        const deliveryText = deliveryLocRaw
-          ? deliveryLocRaw.trim()
-          : 'Customer Site / MIDC Warehouse';
-        const deliveryLocHeight = doc.heightOfString(deliveryText, {
-          width: rightColWidth,
-          fontSize: 9.5,
-        });
+        // 2. Bill To & Ship To + Place of Supply Box
+        const infoBoxY = 124;
+        const rightColX = 295;
+        const rightColWidth = 250;
 
         const paymentTermsRaw = details.paymentTerms || '';
-        const paymentText = `Payment Terms: ${paymentTermsRaw ? paymentTermsRaw.trim() : 'As per agreed commercial terms'}`;
-        const paymentHeight = doc.heightOfString(paymentText, {
-          width: rightColWidth,
-          fontSize: 8.5,
-        });
-
-        const leftContentHeight = 44;
-        const rightContentHeight = 11 + deliveryLocHeight + 4 + paymentHeight;
-        const infoBoxHeight =
-          Math.max(leftContentHeight, rightContentHeight) + 16;
+        const paymentText = `Payment Terms: ${paymentTermsRaw ? paymentTermsRaw.trim() : '30 days'}`;
 
         doc
-          .roundedRect(36, infoBoxY, 523, infoBoxHeight, 6)
+          .roundedRect(36, infoBoxY, 523, 76, 5)
           .fill('#F8FAFC')
           .stroke('#E2E8F0');
 
-        const contentStartY = infoBoxY + 8;
+        // Bill To
         doc
           .fillColor('#94A3B8')
           .font(fontBold)
           .fontSize(6.5)
-          .text('CUSTOMER / COMPANY DETAILS', 48, contentStartY);
+          .text('BILL TO', 48, infoBoxY + 7);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
-          .text(customerName, 48, contentStartY + 11, { width: 235 });
-        if (customerEmail) {
-          doc
-            .fillColor('#64748B')
-            .font(fontRegular)
-            .fontSize(7.5)
-            .text(`Email: ${customerEmail}`, 48, contentStartY + 24, {
-              width: 235,
-            });
-        }
+          .fontSize(8.5)
+          .text(customerName.toUpperCase(), 48, infoBoxY + 17, { width: 235 });
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7)
+          .text(deliveryText, 48, infoBoxY + 28, { width: 235, height: 22 });
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(7)
+          .text('GSTIN 27AAOCS2064H1Z4', 48, infoBoxY + 52);
 
+        // Ship To
         doc
           .fillColor('#94A3B8')
           .font(fontBold)
           .fontSize(6.5)
-          .text('DELIVERY & COMMERCIAL TERMS', rightColX, contentStartY);
-
-        const curRightY = contentStartY + 11;
+          .text('SHIP TO', rightColX, infoBoxY + 7);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(9.5)
-          .text(deliveryText, rightColX, curRightY, { width: rightColWidth });
-
-        const paymentY = curRightY + deliveryLocHeight + 4;
+          .fontSize(8.5)
+          .text(customerName.toUpperCase(), rightColX, infoBoxY + 17, {
+            width: rightColWidth,
+          });
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(7)
+          .text(
+            `C/O Delivery Site / Site Incharge • ${deliveryText}`,
+            rightColX,
+            infoBoxY + 28,
+            { width: rightColWidth, height: 22 },
+          );
         doc
           .fillColor('#6B21A8')
           .font(fontBold)
-          .fontSize(8.5)
-          .text(paymentText, rightColX, paymentY, { width: rightColWidth });
+          .fontSize(7.5)
+          .text(paymentText, rightColX, infoBoxY + 52, {
+            width: rightColWidth,
+          });
 
-        // 3. Line Items Table (dynamic — strictly matching reference layout)
+        // Place Of Supply Bar
+        doc.rect(36, infoBoxY + 62, 523, 14).fill('#F1F5F9');
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(6.5)
+          .text(`Place Of Supply: ${placeOfSupply}`, 48, infoBoxY + 66, {
+            continued: true,
+          })
+          .font(fontRegular)
+          .text('   |   Currency: INR (Rs.)');
+
+        // 3. Line Items Table (strictly matching PDF 2 layout)
         const lineItems: Array<{
           sku_text: string;
           dimensions?: string;
@@ -1804,6 +1924,7 @@ ${rawText}`,
                       .filter(Boolean)
                       .join(' x ')
                       .trim() || undefined,
+                  hsn_code: '72083730',
                   quantity: qtyTons,
                   unit: 'MT',
                   rate: unitRate,
@@ -1825,20 +1946,20 @@ ${rawText}`,
           (i) => (i.unit || 'MT').toUpperCase() === firstUnit.toUpperCase(),
         );
 
-        const tableY = Math.max(192, infoBoxY + infoBoxHeight + 12);
-        const headerHeight = 22;
-        const rowH = 38; // per-row height
+        const tableY = infoBoxY + 84;
+        const headerHeight = 20;
+        const rowH = 34; // per-row height
         const totalTableHeight = headerHeight + rowH * lineItems.length;
 
         // Header background (slate grey matching reference)
         doc.rect(36, tableY, 523, headerHeight).fill('#334155');
         doc.fillColor('#FFFFFF').font(fontBold).fontSize(7.5);
-        doc.text('#', 36, tableY + 7, { width: 24, align: 'center' });
-        doc.text('ITEM & DESCRIPTION', 64, tableY + 7, { width: 196 });
-        doc.text('HSN/SAC', 265, tableY + 7, { width: 63, align: 'center' });
-        doc.text('QTY', 332, tableY + 7, { width: 66, align: 'right' });
-        doc.text('RATE', 402, tableY + 7, { width: 70, align: 'right' });
-        doc.text('AMOUNT', 476, tableY + 7, { width: 78, align: 'right' });
+        doc.text('#', 36, tableY + 6, { width: 24, align: 'center' });
+        doc.text('Item & Description', 64, tableY + 6, { width: 196 });
+        doc.text('HSN/SAC', 265, tableY + 6, { width: 63, align: 'center' });
+        doc.text('Qty', 332, tableY + 6, { width: 66, align: 'right' });
+        doc.text('Rate', 402, tableY + 6, { width: 70, align: 'right' });
+        doc.text('Amount', 476, tableY + 6, { width: 78, align: 'right' });
 
         // Rows
         lineItems.forEach((item, idx) => {
@@ -1851,8 +1972,8 @@ ${rawText}`,
           doc
             .fillColor('#64748B')
             .font(fontRegular)
-            .fontSize(8)
-            .text(String(idx + 1), 36, rowY + 14, {
+            .fontSize(7.5)
+            .text(String(idx + 1), 36, rowY + 12, {
               width: 24,
               align: 'center',
             });
@@ -1861,24 +1982,24 @@ ${rawText}`,
           doc
             .fillColor('#0F172A')
             .font(fontBold)
-            .fontSize(8.5)
-            .text(item.sku_text || 'HR - COIL / SHEET', 64, rowY + 6, {
+            .fontSize(8)
+            .text(item.sku_text || 'HR - COIL / SHEET', 64, rowY + 5, {
               width: 196,
             });
           if (item.dimensions) {
             doc
               .fillColor('#64748B')
               .font(fontRegular)
-              .fontSize(7)
-              .text(item.dimensions, 64, rowY + 19, { width: 196 });
+              .fontSize(6.5)
+              .text(item.dimensions, 64, rowY + 17, { width: 196 });
           }
 
           // HSN/SAC
           doc
             .fillColor('#475569')
             .font(fontRegular)
-            .fontSize(8)
-            .text(item.hsn_code || '72083730', 265, rowY + 14, {
+            .fontSize(7.5)
+            .text(item.hsn_code || '72083730', 265, rowY + 12, {
               width: 63,
               align: 'center',
             });
@@ -1887,16 +2008,16 @@ ${rawText}`,
           doc
             .fillColor('#0F172A')
             .font(fontBold)
-            .fontSize(8.5)
-            .text(formatIndianCurrency(item.quantity, true), 332, rowY + 7, {
+            .fontSize(8)
+            .text(formatIndianCurrency(item.quantity, true), 332, rowY + 6, {
               width: 66,
               align: 'right',
             });
           doc
             .fillColor('#64748B')
             .font(fontRegular)
-            .fontSize(7)
-            .text(item.unit || 'kg', 332, rowY + 19, {
+            .fontSize(6.5)
+            .text(item.unit || 'nos', 332, rowY + 17, {
               width: 66,
               align: 'right',
             });
@@ -1907,8 +2028,8 @@ ${rawText}`,
           doc
             .fillColor('#334155')
             .font(fontRegular)
-            .fontSize(8)
-            .text(rateStr, 402, rowY + 14, { width: 70, align: 'right' });
+            .fontSize(7.5)
+            .text(rateStr, 402, rowY + 12, { width: 70, align: 'right' });
 
           // Amount
           const amtStr =
@@ -1916,8 +2037,8 @@ ${rawText}`,
           doc
             .fillColor('#0F172A')
             .font(fontBold)
-            .fontSize(8.5)
-            .text(amtStr, 476, rowY + 14, { width: 78, align: 'right' });
+            .fontSize(8)
+            .text(amtStr, 476, rowY + 12, { width: 78, align: 'right' });
 
           // Row divider
           doc
@@ -1928,51 +2049,27 @@ ${rawText}`,
             .stroke();
         });
 
-        // Outer table border & horizontal header divider
+        // Outer table border
         doc
           .rect(36, tableY, 523, totalTableHeight)
           .strokeColor('#CBD5E1')
           .lineWidth(0.75)
           .stroke();
 
-        // Compute last row Y for summary positioning
+        // 4. Financial Summary Block
         const lastRowBottom = tableY + totalTableHeight;
+        const summaryY = lastRowBottom + 8;
 
-        // 4. Items in Total (Bottom Left) & Financial Summary Block (Bottom Right)
-        const summaryY = lastRowBottom + 10;
-
-        // Bottom Left: Items in Total & Notes
+        // Bottom Left: Items in Total
         doc
           .fillColor('#334155')
           .font(fontBold)
-          .fontSize(8)
+          .fontSize(7.5)
           .text(
             `Items in Total ${formatIndianCurrency(totalQuantity, true)} ${isSingleUnit ? firstUnit : ''}`,
             36,
             summaryY,
           );
-
-        doc
-          .fillColor('#475569')
-          .font(fontBold)
-          .fontSize(7.5)
-          .text('Commercial Terms & Notes:', 36, summaryY + 22);
-        doc.fillColor('#64748B').font(fontRegular).fontSize(7);
-        doc.text(
-          '1. Material meets IS 2062 / IS 1786 prime metal standards.',
-          36,
-          summaryY + 34,
-        );
-        doc.text(
-          '2. Prices valid for 7 days from issue date.',
-          36,
-          summaryY + 45,
-        );
-        doc.text(
-          '3. System generated official PDF quotation from Enlight Metals OS.',
-          36,
-          summaryY + 56,
-        );
 
         // Bottom Right: Financial Summary Block matching Reference Layout
         const sumBlockX = 360;
@@ -1982,43 +2079,43 @@ ${rawText}`,
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
+          .fontSize(7.5)
           .text('Sub Total', sumBlockX, summaryY);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
+          .fontSize(7.5)
           .text(qBreakdown.formattedSubtotal, sumBlockX, summaryY, {
             width: sumBlockW,
             align: 'right',
           });
 
-        // CGST (9%)
+        // CGST9 (9%)
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('CGST (9%)', sumBlockX, summaryY + 14);
+          .fontSize(7.5)
+          .text('CGST9 (9%)', sumBlockX, summaryY + 12);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedCGST, sumBlockX, summaryY + 14, {
+          .fontSize(7.5)
+          .text(qBreakdown.formattedCGST, sumBlockX, summaryY + 12, {
             width: sumBlockW,
             align: 'right',
           });
 
-        // SGST (9%)
+        // SGST9 (9%)
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('SGST (9%)', sumBlockX, summaryY + 28);
+          .fontSize(7.5)
+          .text('SGST9 (9%)', sumBlockX, summaryY + 24);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedSGST, sumBlockX, summaryY + 28, {
+          .fontSize(7.5)
+          .text(qBreakdown.formattedSGST, sumBlockX, summaryY + 24, {
             width: sumBlockW,
             align: 'right',
           });
@@ -2027,21 +2124,21 @@ ${rawText}`,
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Rounding', sumBlockX, summaryY + 42);
+          .fontSize(7.5)
+          .text('Rounding', sumBlockX, summaryY + 36);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedRounding, sumBlockX, summaryY + 42, {
+          .fontSize(7.5)
+          .text(qBreakdown.formattedRounding, sumBlockX, summaryY + 36, {
             width: sumBlockW,
             align: 'right',
           });
 
         // Divider above Total
         doc
-          .moveTo(sumBlockX, summaryY + 56)
-          .lineTo(sumBlockX + sumBlockW, summaryY + 56)
+          .moveTo(sumBlockX, summaryY + 48)
+          .lineTo(sumBlockX + sumBlockW, summaryY + 48)
           .strokeColor('#CBD5E1')
           .lineWidth(0.75)
           .stroke();
@@ -2050,56 +2147,165 @@ ${rawText}`,
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
-          .text('Total', sumBlockX, summaryY + 62);
+          .fontSize(9)
+          .text('Total', sumBlockX, summaryY + 52);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10)
+          .fontSize(9)
           .text(
             `${rupeeSymbol}${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
             sumBlockX,
-            summaryY + 62,
+            summaryY + 52,
             { width: sumBlockW, align: 'right' },
           );
 
-        // 5. Signature Footer
-        const footerY = summaryY + 100;
+        // 5. Notes, Bank Details, Declaration & Stamp Section (Page 2 / Lower Section)
+        const notesY = summaryY + 70;
+
+        doc
+          .moveTo(36, notesY)
+          .lineTo(559, notesY)
+          .strokeColor('#E2E8F0')
+          .lineWidth(0.75)
+          .stroke();
+
+        const secContentY = notesY + 8;
+
+        // Left Column: Bank Details
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(8)
+          .text('Notes', 36, secContentY);
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(7)
+          .text('Bank Details:-', 36, secContentY + 11);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text('Bank Name: HDFC Bank', 36, secContentY + 21);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text('IFSC Code: HDFC0002454', 36, secContentY + 30);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text('Account Number: 50200107323747', 36, secContentY + 39);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text(
+            'Account Name: Enlight Metals Private Limited',
+            36,
+            secContentY + 48,
+          );
+
+        // Right Column: Terms & Conditions / Declaration
+        const termsX = 295;
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(8)
+          .text('Terms & Conditions', termsX, secContentY);
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(6.5)
+          .text(
+            'Declaration:\nCertified that the particulars given above are true and correct and the amount indicated represents the price actually charged and there is no flow of additional consideration directly or indirectly from the buyer.',
+            termsX,
+            secContentY + 11,
+            { width: 260 },
+          );
+        doc
+          .fillColor('#64748B')
+          .font(fontRegular)
+          .fontSize(6)
+          .text(
+            'Note:\n1) Interest @24% p.a. will be charged if the payment is not made with stipulated date.\n2) All disputes are Subject to Pune Jurisdiction only.',
+            termsX,
+            secContentY + 40,
+            { width: 260 },
+          );
+
+        // 6. Authorized Signature & Stamp Block
+        const footerY = notesY + 70;
         doc
           .moveTo(36, footerY)
           .lineTo(559, footerY)
           .strokeColor('#E2E8F0')
-          .lineWidth(1)
+          .lineWidth(0.5)
           .stroke();
 
         doc
-          .fillColor('#1E293B')
+          .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(8)
-          .text('Enlight Metals Sales Ops Team', 36, footerY + 10);
+          .fontSize(7.5)
+          .text('Enlight Metals Private Limited', 36, footerY + 16);
         doc
           .fillColor('#64748B')
           .font(fontRegular)
-          .fontSize(7)
+          .fontSize(6.5)
           .text(
-            'System Generated Inquiry Quotation PDF Document',
+            'MIDC Zone, Pune / Mumbai Operations • Official Sales Document',
             36,
-            footerY + 22,
+            footerY + 26,
           );
 
+        // Oval Stamp Graphic
+        const stampX = 475;
+        const stampY = footerY + 14;
         doc
-          .moveTo(420, footerY + 25)
-          .lineTo(559, footerY + 25)
-          .dash(3, { space: 3 })
-          .strokeColor('#94A3B8')
+          .ellipse(stampX, stampY, 40, 18)
           .lineWidth(1)
+          .strokeColor('#4338CA')
           .stroke();
-        doc.undash();
+        doc
+          .fillColor('#3730A3')
+          .font(fontBold)
+          .fontSize(5)
+          .text('ENLIGHT METALS PVT. LTD.', stampX - 35, stampY - 10, {
+            width: 70,
+            align: 'center',
+          });
+        doc
+          .fillColor('#4338CA')
+          .font(fontRegular)
+          .fontSize(6)
+          .text('Authorized', stampX - 30, stampY - 2, {
+            width: 60,
+            align: 'center',
+          });
+        doc
+          .fillColor('#4F46E5')
+          .font(fontBold)
+          .fontSize(4.5)
+          .text('★ PUNE ★', stampX - 25, stampY + 6, {
+            width: 50,
+            align: 'center',
+          });
+
+        // Signature Line
+        doc
+          .moveTo(420, footerY + 36)
+          .lineTo(559, footerY + 36)
+          .strokeColor('#CBD5E1')
+          .lineWidth(0.75)
+          .stroke();
+
         doc
           .fillColor('#1E293B')
           .font(fontBold)
-          .fontSize(8)
-          .text('Authorized Signatory', 420, footerY + 30, {
+          .fontSize(7.5)
+          .text('Authorized Signature', 420, footerY + 40, {
             align: 'right',
             width: 139,
           });
