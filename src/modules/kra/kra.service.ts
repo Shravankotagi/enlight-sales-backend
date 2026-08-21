@@ -2003,14 +2003,41 @@ export class KraService {
 
     const { data, error } = await query;
     if (error) throw error;
-    return data || [];
+
+    const complaintsList = data || [];
+    if (complaintsList.length === 0) return [];
+
+    try {
+      const { data: employees } = await this.supabase
+        .from('employees')
+        .select('name, phone, role');
+
+      const empMap = new Map<string, string>();
+      (employees || []).forEach((e) => {
+        if (e.phone) {
+          const clean = e.phone.replace(/\D/g, '').slice(-10);
+          if (clean) empMap.set(clean, e.name);
+        }
+      });
+
+      return complaintsList.map((c) => {
+        const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
+        return {
+          ...c,
+          salesperson_name:
+            empMap.get(cleanRep) || c.reported_by || 'Web Admin',
+        };
+      });
+    } catch {
+      return complaintsList;
+    }
   }
 
   async createComplaint(data: any, salespersonPhone?: string) {
     const reported_at = new Date().toISOString();
     const sla_due_at = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
-    const payload = {
+    const payload: Record<string, any> = {
       customer_name: data.customer_name,
       affected_product:
         data.affected_product || data.product || 'General Material',
@@ -2023,13 +2050,40 @@ export class KraService {
       reported_by: salespersonPhone || 'Web Admin',
     };
 
-    const { data: created, error } = await this.supabase
+    let created: any = null;
+    const { data: resData, error } = await this.supabase
       .from('complaints')
       .insert(payload)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      this.logger.error('Error inserting complaint into database:', error);
+      // Fallback if extra columns ever fail
+      const minimalPayload = {
+        customer_name: payload.customer_name,
+        complaint_type: payload.complaint_type,
+        description: payload.description,
+        status: payload.status,
+        reported_at: payload.reported_at,
+        reported_by: payload.reported_by,
+      };
+      const { data: fallbackData, error: fallbackError } = await this.supabase
+        .from('complaints')
+        .insert(minimalPayload)
+        .select()
+        .single();
+      if (fallbackError) {
+        this.logger.error(
+          'Fallback complaint insertion also failed:',
+          fallbackError,
+        );
+        throw error;
+      }
+      created = fallbackData;
+    } else {
+      created = resData;
+    }
 
     // Log to kra_logs (KRA 8)
     try {
@@ -2054,15 +2108,14 @@ export class KraService {
     return created;
   }
 
-  async updateComplaintStatus(
+  async updateComplaint(
     id: string,
-    status: string,
-    resolution_notes?: string,
+    data: any,
     accessiblePhones?: string[] | null,
   ) {
     const { data: existingComplaint, error: fetchErr } = await this.supabase
       .from('complaints')
-      .select('id, reported_by')
+      .select('id, reported_by, status')
       .eq('id', id)
       .single();
     if (fetchErr || !existingComplaint) {
@@ -2080,15 +2133,28 @@ export class KraService {
       }
     }
 
-    const updateData: any = { status };
-    if (status === 'resolved') {
-      updateData.resolved_at = new Date().toISOString();
+    const updateData: Record<string, any> = {};
+    if (data.customer_name !== undefined)
+      updateData.customer_name = data.customer_name;
+    if (data.affected_product !== undefined)
+      updateData.affected_product = data.affected_product;
+    if (data.complaint_type !== undefined)
+      updateData.complaint_type = data.complaint_type;
+    if (data.description !== undefined)
+      updateData.description = data.description;
+    if (data.status !== undefined) {
+      updateData.status = data.status;
+      if (data.status === 'resolved') {
+        updateData.resolved_at = new Date().toISOString();
+      } else if (data.status === 'reported') {
+        updateData.resolved_at = null;
+      }
     }
-    if (resolution_notes) {
-      updateData.resolution_notes = resolution_notes;
+    if (data.resolution_notes !== undefined) {
+      updateData.resolution_notes = data.resolution_notes;
     }
 
-    const { data, error } = await this.supabase
+    const { data: updated, error } = await this.supabase
       .from('complaints')
       .update(updateData)
       .eq('id', id)
@@ -2096,7 +2162,20 @@ export class KraService {
       .single();
 
     if (error) throw error;
-    return data;
+    return updated;
+  }
+
+  async updateComplaintStatus(
+    id: string,
+    status: string,
+    resolution_notes?: string,
+    accessiblePhones?: string[] | null,
+  ) {
+    return this.updateComplaint(
+      id,
+      { status, resolution_notes },
+      accessiblePhones,
+    );
   }
 
   async getVisits(
@@ -2129,10 +2208,12 @@ export class KraService {
       query = query.lte('visited_at', toIso);
     }
 
-    const [{ data: visits }, { data: customers }] = await Promise.all([
-      query,
-      this.supabase.from('recurring_customers').select('*'),
-    ]);
+    const [{ data: visits }, { data: customers }, { data: employees }] =
+      await Promise.all([
+        query,
+        this.supabase.from('recurring_customers').select('*'),
+        this.supabase.from('employees').select('name, phone, role'),
+      ]);
 
     const customerMap = new Map<string, any>();
     (customers || []).forEach((c) => {
@@ -2141,7 +2222,19 @@ export class KraService {
       }
     });
 
+    const empMap = new Map<string, string>();
+    (employees || []).forEach((e) => {
+      if (e.phone) {
+        const clean = e.phone.replace(/\D/g, '').slice(-10);
+        if (clean) empMap.set(clean, e.name);
+      }
+    });
+
     const enriched = (visits || []).map((v) => {
+      const cleanRep = (v.salesperson_phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      const repName = empMap.get(cleanRep) || v.salesperson_phone || null;
       const c = customerMap.get((v.customer_name || '').toLowerCase().trim());
       const rawRemarks = v.remarks || '';
       const phone =
@@ -2201,6 +2294,7 @@ export class KraService {
 
       return {
         ...v,
+        salesperson_name: repName,
         contact_no: phone,
         contact_phone: phone,
         location: loc,
