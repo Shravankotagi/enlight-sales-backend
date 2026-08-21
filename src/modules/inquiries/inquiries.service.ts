@@ -1405,7 +1405,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
   "customer_phone": "phone number if present else null",
   "customer_gst": "GST number if present else null",
   "customer_address": "company address if present else null",
-  "delivery_location": "concise delivery city and state e.g. Chakan, Maharashtra or Pune, Maharashtra (only City, State — never include full gat/plot/street address)",
+  "delivery_location": "full delivery address / location as stated in document e.g. Plot No 42, MIDC Chakan, Pune, Maharashtra 410501",
   "payment_terms": "payment terms e.g. 45 Days or 30 Days Credit",
   "po_number": "PO Number / Ref number if present e.g. 26-27/MPO/471",
   "po_date": "PO Date in YYYY-MM-DD or present date format",
@@ -1500,7 +1500,7 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
   "customer_name": "Company or customer name e.g. BuildCorp Engineering",
   "contact_person": "Contact person name if mentioned e.g. Rajesh",
   "customer_phone": "Phone number if present else null",
-  "delivery_location": "Concise delivery city and state e.g. Uchgaon, Maharashtra or Chakan, Maharashtra",
+  "delivery_location": "Full detailed delivery address / location exactly as stated in inquiry (e.g. Plot No 42, MIDC Industrial Area, Khopoli, Raigad, Maharashtra 410203 or Chakan Industrial Area, Pune)",
   "preferred_make": "Preferred make / brand e.g. JSW, AM/NS, Tata, SAIL, JSPL if mentioned else null",
   "payment_terms": "Payment terms e.g. 30 Days Credit, 100% Advance, 45 Days Credit if mentioned else null",
   "line_items": [
@@ -1520,6 +1520,7 @@ CRITICAL RULES:
 1. MULTIPLE LINE ITEMS: NEVER merge, collapse, or summarize multiple distinct products into one line item! Every distinct product with its own thickness, grade, spec, or quantity (e.g. "CR 1mm (300 nos), CR 1.2mm (200 nos), HR 1.6mm (200 nos)") MUST produce its own separate line item object in the line_items array.
 2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" — NEVER convert to MT).
 3. PAYMENT TERMS: Always extract payment terms if mentioned in the text (e.g., "30 days", "30 days credit", "100% advance", "45 days"). Never drop payment terms.
+4. FULL DELIVERY ADDRESS: Always extract the complete, full delivery address and location exactly as provided in the inquiry (including plot, gat, street, MIDC/industrial area, city, district, state, and pin code). Never truncate or shorten address details.
 
 Inquiry Text:
 ${rawText}`,
