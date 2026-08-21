@@ -1661,10 +1661,6 @@ ${rawText}`,
     details: any,
   ): Promise<Buffer> {
     const logger = this.logger;
-    const placeOfSupply = this.resolvePlaceOfSupply(
-      (details?.deliveryLocation || '').trim() ||
-        'Khopoli, Raigad, Maharashtra - 410203',
-    );
 
     return new Promise((resolve, reject) => {
       try {
@@ -1819,46 +1815,52 @@ ${rawText}`,
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(7.5)
-          .text(`Order Date :  `, 360, 78, {
-            width: 140,
-            align: 'right',
-            continued: true,
-          })
+          .text('Order Date :', 340, 77, { width: 120, align: 'right' });
+        doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .text(todayDate);
+          .fontSize(7.5)
+          .text(todayDate, 465, 77, { width: 94, align: 'right' });
 
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(7.5)
-          .text(`Sales person :  `, 360, 90, {
-            width: 140,
-            align: 'right',
-            continued: true,
-          })
+          .text('Sales person :', 340, 89, { width: 120, align: 'right' });
+        doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .text(salesperson);
+          .fontSize(7.5)
+          .text(salesperson, 465, 89, { width: 94, align: 'right' });
 
         // Divider
         doc
-          .moveTo(36, 118)
-          .lineTo(559, 118)
+          .moveTo(36, 114)
+          .lineTo(559, 114)
           .strokeColor('#E2E8F0')
           .lineWidth(0.75)
           .stroke();
 
-        // 2. Bill To & Ship To + Place of Supply Box
-        const infoBoxY = 124;
+        // 2. Bill To & Ship To Box (Place of Supply removed)
+        const infoBoxY = 120;
         const rightColX = 295;
         const rightColWidth = 250;
 
         const paymentTermsRaw = details.paymentTerms || '';
         const paymentText = `Payment Terms: ${paymentTermsRaw ? paymentTermsRaw.trim() : '30 days'}`;
 
+        const customerAddress =
+          deliveryLocRaw ||
+          (details as any).customerAddress ||
+          (details as any).address ||
+          '';
+        const customerGstin =
+          (details as any).customerGstin || (details as any).gstin || '';
+        const customerPhone =
+          (details as any).customerPhone || (details as any).phone || '';
+
         doc
-          .roundedRect(36, infoBoxY, 523, 76, 5)
+          .roundedRect(36, infoBoxY, 523, 62, 5)
           .fill('#F8FAFC')
           .stroke('#E2E8F0');
 
@@ -1872,17 +1874,30 @@ ${rawText}`,
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(8.5)
-          .text(customerName.toUpperCase(), 48, infoBoxY + 17, { width: 235 });
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(7)
-          .text(deliveryText, 48, infoBoxY + 28, { width: 235, height: 22 });
-        doc
-          .fillColor('#334155')
-          .font(fontBold)
-          .fontSize(7)
-          .text('GSTIN 27AAOCS2064H1Z4', 48, infoBoxY + 52);
+          .text(customerName.toUpperCase(), 48, infoBoxY + 16, { width: 235 });
+        if (customerAddress) {
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(7)
+            .text(customerAddress, 48, infoBoxY + 27, {
+              width: 235,
+              height: 18,
+            });
+        }
+        if (customerGstin) {
+          doc
+            .fillColor('#334155')
+            .font(fontBold)
+            .fontSize(7)
+            .text(`GSTIN ${customerGstin}`, 48, infoBoxY + 47);
+        } else if (customerPhone) {
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(7)
+            .text(`Phone: ${customerPhone}`, 48, infoBoxY + 47);
+        }
 
         // Ship To
         doc
@@ -1894,7 +1909,7 @@ ${rawText}`,
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(8.5)
-          .text(customerName.toUpperCase(), rightColX, infoBoxY + 17, {
+          .text(customerName.toUpperCase(), rightColX, infoBoxY + 16, {
             width: rightColWidth,
           });
         doc
@@ -1902,32 +1917,20 @@ ${rawText}`,
           .font(fontRegular)
           .fontSize(7)
           .text(
-            `C/O Delivery Site / Site Incharge • ${deliveryText}`,
+            `C/O Delivery Site / Site Incharge${deliveryText ? ` • ${deliveryText}` : ''}`,
             rightColX,
-            infoBoxY + 28,
-            { width: rightColWidth, height: 22 },
+            infoBoxY + 27,
+            { width: rightColWidth, height: 18 },
           );
         doc
           .fillColor('#6B21A8')
           .font(fontBold)
           .fontSize(7.5)
-          .text(paymentText, rightColX, infoBoxY + 52, {
+          .text(paymentText, rightColX, infoBoxY + 47, {
             width: rightColWidth,
           });
 
-        // Place Of Supply Bar
-        doc.rect(36, infoBoxY + 62, 523, 14).fill('#F1F5F9');
-        doc
-          .fillColor('#334155')
-          .font(fontBold)
-          .fontSize(6.5)
-          .text(`Place Of Supply: ${placeOfSupply}`, 48, infoBoxY + 66, {
-            continued: true,
-          })
-          .font(fontRegular)
-          .text('   |   Currency: INR (Rs.)');
-
-        // 3. Line Items Table (strictly matching PDF 2 layout)
+        // 3. Line Items Table
         const lineItems: Array<{
           sku_text: string;
           dimensions?: string;
@@ -1947,7 +1950,7 @@ ${rawText}`,
                       .filter(Boolean)
                       .join(' x ')
                       .trim() || undefined,
-                  hsn_code: '72083730',
+                  hsn_code: '',
                   quantity: qtyTons,
                   unit: 'MT',
                   rate: unitRate,
@@ -1969,12 +1972,12 @@ ${rawText}`,
           (i) => (i.unit || 'MT').toUpperCase() === firstUnit.toUpperCase(),
         );
 
-        const tableY = infoBoxY + 84;
+        const tableY = infoBoxY + 70;
         const headerHeight = 20;
-        const rowH = 34; // per-row height
+        const rowH = 32; // per-row height
         const totalTableHeight = headerHeight + rowH * lineItems.length;
 
-        // Header background (slate grey matching reference)
+        // Header background
         doc.rect(36, tableY, 523, headerHeight).fill('#334155');
         doc.fillColor('#FFFFFF').font(fontBold).fontSize(7.5);
         doc.text('#', 36, tableY + 6, { width: 24, align: 'center' });
@@ -1996,7 +1999,7 @@ ${rawText}`,
             .fillColor('#64748B')
             .font(fontRegular)
             .fontSize(7.5)
-            .text(String(idx + 1), 36, rowY + 12, {
+            .text(String(idx + 1), 36, rowY + 11, {
               width: 24,
               align: 'center',
             });
@@ -2014,7 +2017,7 @@ ${rawText}`,
               .fillColor('#64748B')
               .font(fontRegular)
               .fontSize(6.5)
-              .text(item.dimensions, 64, rowY + 17, { width: 196 });
+              .text(item.dimensions, 64, rowY + 16, { width: 196 });
           }
 
           // HSN/SAC
@@ -2022,28 +2025,25 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(7.5)
-            .text(item.hsn_code || '72083730', 265, rowY + 12, {
+            .text(item.hsn_code || '—', 265, rowY + 11, {
               width: 63,
               align: 'center',
             });
 
-          // Quantity (number on line 1, unit on line 2)
+          // Quantity and unit on same line
           doc
             .fillColor('#0F172A')
             .font(fontBold)
-            .fontSize(8)
-            .text(formatIndianCurrency(item.quantity, true), 332, rowY + 6, {
-              width: 66,
-              align: 'right',
-            });
-          doc
-            .fillColor('#64748B')
-            .font(fontRegular)
-            .fontSize(6.5)
-            .text(item.unit || 'nos', 332, rowY + 17, {
-              width: 66,
-              align: 'right',
-            });
+            .fontSize(7.5)
+            .text(
+              `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
+              332,
+              rowY + 11,
+              {
+                width: 66,
+                align: 'right',
+              },
+            );
 
           // Rate
           const rateStr =
@@ -2052,7 +2052,7 @@ ${rawText}`,
             .fillColor('#334155')
             .font(fontRegular)
             .fontSize(7.5)
-            .text(rateStr, 402, rowY + 12, { width: 70, align: 'right' });
+            .text(rateStr, 402, rowY + 11, { width: 70, align: 'right' });
 
           // Amount
           const amtStr =
@@ -2061,7 +2061,7 @@ ${rawText}`,
             .fillColor('#0F172A')
             .font(fontBold)
             .fontSize(8)
-            .text(amtStr, 476, rowY + 12, { width: 78, align: 'right' });
+            .text(amtStr, 476, rowY + 11, { width: 78, align: 'right' });
 
           // Row divider
           doc
@@ -2094,7 +2094,7 @@ ${rawText}`,
             summaryY,
           );
 
-        // Bottom Right: Financial Summary Block matching Reference Layout
+        // Bottom Right: Financial Summary Block
         const sumBlockX = 360;
         const sumBlockW = 195;
 
@@ -2183,8 +2183,8 @@ ${rawText}`,
             { width: sumBlockW, align: 'right' },
           );
 
-        // 5. Notes, Bank Details, Declaration & Stamp Section (Page 2 / Lower Section)
-        const notesY = summaryY + 70;
+        // 5. Notes, Bank Details, Declaration & Stamp Section
+        const notesY = summaryY + 68;
 
         doc
           .moveTo(36, notesY)
@@ -2231,7 +2231,7 @@ ${rawText}`,
             secContentY + 48,
           );
 
-        // Right Column: Terms & Conditions / Declaration
+        // Right Column: Terms & Conditions / Declaration (Non-overlapping structured vertical offsets)
         const termsX = 295;
         doc
           .fillColor('#0F172A')
@@ -2239,28 +2239,38 @@ ${rawText}`,
           .fontSize(8)
           .text('Terms & Conditions', termsX, secContentY);
         doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(6.5)
+          .text('Declaration:', termsX, secContentY + 11);
+        doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(6.5)
+          .fontSize(6)
           .text(
-            'Declaration:\nCertified that the particulars given above are true and correct and the amount indicated represents the price actually charged and there is no flow of additional consideration directly or indirectly from the buyer.',
+            'Certified that the particulars given above are true and correct and the amount indicated represents the price actually charged and there is no flow of additional consideration directly or indirectly from the buyer.',
             termsX,
-            secContentY + 11,
-            { width: 260 },
+            secContentY + 19,
+            { width: 260, lineGap: 1 },
           );
+        doc
+          .fillColor('#334155')
+          .font(fontBold)
+          .fontSize(6.5)
+          .text('Note:', termsX, secContentY + 46);
         doc
           .fillColor('#64748B')
           .font(fontRegular)
           .fontSize(6)
           .text(
-            'Note:\n1) Interest @24% p.a. will be charged if the payment is not made with stipulated date.\n2) All disputes are Subject to Pune Jurisdiction only.',
+            '1) Interest @24% p.a. will be charged if the payment is not made with stipulated date.\n2) All disputes are Subject to Pune Jurisdiction only.',
             termsX,
-            secContentY + 40,
-            { width: 260 },
+            secContentY + 54,
+            { width: 260, lineGap: 1 },
           );
 
         // 6. Authorized Signature & Stamp Block
-        const footerY = notesY + 70;
+        const footerY = notesY + 84;
         doc
           .moveTo(36, footerY)
           .lineTo(559, footerY)
@@ -2272,7 +2282,7 @@ ${rawText}`,
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(7.5)
-          .text('Enlight Metals Private Limited', 36, footerY + 16);
+          .text('Enlight Metals Private Limited', 36, footerY + 12);
         doc
           .fillColor('#64748B')
           .font(fontRegular)
@@ -2280,14 +2290,14 @@ ${rawText}`,
           .text(
             'MIDC Zone, Pune / Mumbai Operations • Official Sales Document',
             36,
-            footerY + 26,
+            footerY + 22,
           );
 
         // Oval Stamp Graphic
-        const stampX = 475;
-        const stampY = footerY + 14;
+        const stampX = 485;
+        const stampY = footerY + 16;
         doc
-          .ellipse(stampX, stampY, 40, 18)
+          .ellipse(stampX, stampY, 38, 16)
           .lineWidth(1)
           .strokeColor('#4338CA')
           .stroke();
@@ -2295,14 +2305,14 @@ ${rawText}`,
           .fillColor('#3730A3')
           .font(fontBold)
           .fontSize(5)
-          .text('ENLIGHT METALS PVT. LTD.', stampX - 35, stampY - 10, {
+          .text('ENLIGHT METALS PVT. LTD.', stampX - 35, stampY - 9, {
             width: 70,
             align: 'center',
           });
         doc
           .fillColor('#4338CA')
           .font(fontRegular)
-          .fontSize(6)
+          .fontSize(5.5)
           .text('Authorized', stampX - 30, stampY - 2, {
             width: 60,
             align: 'center',
@@ -2311,15 +2321,15 @@ ${rawText}`,
           .fillColor('#4F46E5')
           .font(fontBold)
           .fontSize(4.5)
-          .text('★ PUNE ★', stampX - 25, stampY + 6, {
+          .text('PUNE', stampX - 25, stampY + 5, {
             width: 50,
             align: 'center',
           });
 
         // Signature Line
         doc
-          .moveTo(420, footerY + 36)
-          .lineTo(559, footerY + 36)
+          .moveTo(420, footerY + 38)
+          .lineTo(559, footerY + 38)
           .strokeColor('#CBD5E1')
           .lineWidth(0.75)
           .stroke();
@@ -2328,7 +2338,7 @@ ${rawText}`,
           .fillColor('#1E293B')
           .font(fontBold)
           .fontSize(7.5)
-          .text('Authorized Signature', 420, footerY + 40, {
+          .text('Authorized Signature', 420, footerY + 42, {
             align: 'right',
             width: 139,
           });
