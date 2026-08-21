@@ -1720,7 +1720,10 @@ ${rawText}`,
         });
 
         const piNumber = `PI-${qRefNum.replace(/^QT-2026-/, '').replace(/^QT-/, '') || '00051'}`;
-        const salesperson = details?.salespersonName || 'Vedant Goel';
+        const salesperson =
+          details?.salespersonName ||
+          details?.salesperson_name ||
+          'Sales Representative';
         const deliveryLocRaw = (details?.deliveryLocation || '').trim();
         const deliveryText =
           deliveryLocRaw || 'Khopoli, Raigad, Maharashtra - 410203';
