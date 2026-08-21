@@ -1509,7 +1509,7 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
       "sku_text": "Material description and grade e.g. MS Plate (IS 2062 E250BR)",
       "dimensions": "Dimensions / specs / thickness / size e.g. 12mm thickness (Size: 1500mm x 6000mm)",
       "quantity": numeric_quantity_in_MT_or_count,
-      "unit": "MT or Pieces or KG",
+      "unit": "Exact unit specified in text e.g. MT, Pieces, or KG. If MT or Tons is specified (e.g. 20 MT), unit MUST be MT (NEVER assume Pieces).",
       "rate": numeric_rate_or_0,
       "amount": numeric_amount_or_0
     }
@@ -1517,6 +1517,7 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
   "overall_confidence": 0.95
 }
 Extract EVERY single steel material item into the line_items array.
+Strict Rule: If unit is written as MT or Tons in inquiry text (e.g. "20 MT"), preserve unit as "MT".
 Inquiry Text:
 ${rawText}`,
               },
@@ -1990,53 +1991,15 @@ ${rawText}`,
         );
 
         doc
-          .roundedRect(320, summaryY - 4, 239, 68, 6)
+          .roundedRect(320, summaryY - 4, 239, 36, 6)
           .fill('#F8FAFC')
           .stroke('#CBD5E1');
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8)
-          .text('Subtotal (Base Value):', 330, summaryY + 4);
-        doc
-          .fillColor('#334155')
-          .font(fontBold)
-          .fontSize(8)
-          .text(
-            `${rupeeSymbol}${totalAmt.toLocaleString('en-IN')}`,
-            440,
-            summaryY + 4,
-            { align: 'right', width: 110 },
-          );
-
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8)
-          .text('GST (18% Estimated):', 330, summaryY + 20);
-        doc
-          .fillColor('#334155')
-          .font(fontBold)
-          .fontSize(8)
-          .text(
-            `${rupeeSymbol}${gstAmt.toLocaleString('en-IN')}`,
-            440,
-            summaryY + 20,
-            { align: 'right', width: 110 },
-          );
-
-        doc
-          .moveTo(330, summaryY + 36)
-          .lineTo(549, summaryY + 36)
-          .strokeColor('#CBD5E1')
-          .lineWidth(1)
-          .stroke();
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9)
-          .text('Total Quotation Amount:', 330, summaryY + 44);
+          .text('Grand Total Amount (Incl. 18% GST):', 330, summaryY + 8);
         doc
           .fillColor('#047857')
           .font(fontBold)
@@ -2044,7 +2007,7 @@ ${rawText}`,
           .text(
             `${rupeeSymbol}${grandTotal.toLocaleString('en-IN')}`,
             440,
-            summaryY + 43,
+            summaryY + 7,
             { align: 'right', width: 110 },
           );
 
