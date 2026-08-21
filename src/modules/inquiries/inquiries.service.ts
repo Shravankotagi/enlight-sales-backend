@@ -1401,21 +1401,25 @@ MIDC Industrial Zone, Mumbai - 400001`;
               {
                 text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": "company name from document header",
+  "customer_name": null,
+  "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
   "customer_phone": "phone number if present else null",
+  "customer_email": "email if present else null",
   "customer_gst": "GST number if present else null",
   "customer_address": "company address if present else null",
-  "delivery_location": "full delivery address / location as stated in document e.g. Plot No 42, MIDC Chakan, Pune, Maharashtra 410501",
-  "payment_terms": "payment terms e.g. 45 Days or 30 Days Credit",
-  "po_number": "PO Number / Ref number if present e.g. 26-27/MPO/471",
+  "delivery_location": "full delivery address / location as stated in document e.g. MIDC Industrial Area, Nashik, Maharashtra - 422010",
+  "payment_terms": "payment terms e.g. 30 Days Credit or 45 Days Credit",
+  "preferred_make": "preferred brand/make e.g. SAIL / JSW / TATA if stated else null",
+  "additional_notes": "non-product contextual notes, delivery timeline instructions (e.g. 'Delivery within 10 days of order confirmation'), preferred make, contact info, special remarks. NEVER put product line items or product rows here.",
+  "po_number": "PO Number / Ref number if present else null",
   "po_date": "PO Date in YYYY-MM-DD or present date format",
   "line_items": [
     {
-      "sku_text": "full material description e.g. SHEET 8 MM THK MS-E250",
-      "dimensions": "specs e.g. 8X6000X1500",
-      "quantity": numeric_quantity_in_MT,
-      "unit": "MT",
-      "rate": numeric_rate_per_MT_or_0,
+      "sku_text": "full material description e.g. MS Sheet 5MM THK E250",
+      "dimensions": "specs e.g. 1250 x 2500",
+      "quantity": numeric_quantity,
+      "unit": "exact unit stated e.g. Nos, MT, Kg, Pcs, Sheets",
+      "rate": numeric_rate_or_0,
       "amount": numeric_amount_or_0
     }
   ],
@@ -1424,7 +1428,23 @@ MIDC Industrial Zone, Mumbai - 400001`;
   "total_amount": numeric_total_po_value_including_gst_or_0,
   "overall_confidence": 0.98
 }
-Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Total PO Value). Return ONLY the JSON.`,
+
+CRITICAL EXTRACTION RULES:
+1. COMPANY NAME (STRICT):
+- Extract "customer_name" ONLY if it is explicitly stated as the formal buyer/customer company name in a formal document letterhead, header banner, or explicit "Customer Name:" / "Buyer:" field.
+- If the document is an email inquiry or letter signed off with a name/entity at the bottom (e.g. "Thanks & Regards, Rajesh Kumar, Sunrise Traders" or "From: ...@sunrisetraders.in"), leave "customer_name" as null or "" (empty string).
+- NEVER guess, infer, or populate "customer_name" from email sign-offs, email signatures, email headers (From: ...), email addresses, or footers.
+
+2. LINE ITEMS vs ADDITIONAL NOTES (STRICT):
+- Line items: Every product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
+- Additional notes: Must ONLY contain non-product contextual remarks such as delivery timeline requirements (e.g. "Delivery within 10 days of order confirmation"), preferred make, special conditions, or contact details.
+- Product rows / line items MUST NEVER appear in "additional_notes".
+
+3. PRESERVE EXACT UNITS & DETAILS:
+- Keep exact units (Nos, MT, Kg, Pcs, Sheets). Never convert or fabricate units.
+- Extract complete payment terms (e.g. "30 Days Credit") and full delivery location (e.g. "MIDC Industrial Area, Nashik, Maharashtra - 422010").
+
+Return ONLY the JSON.`,
               },
               {
                 inline_data: {
