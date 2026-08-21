@@ -139,7 +139,7 @@ export class KraController {
 
   @Post('complaints')
   async createComplaint(@CurrentEmployee() employee: any, @Body() body: any) {
-    return this.kraService.createComplaint(body, employee.phone);
+    return this.kraService.createComplaint(body, employee?.phone);
   }
 
   @Patch('complaints/:id')
@@ -180,7 +180,7 @@ export class KraController {
 
   @Post('visits')
   async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
-    return this.kraService.createVisit(body, employee.phone);
+    return this.kraService.createVisit(body, employee?.phone);
   }
 
   @Patch('visits/:id')

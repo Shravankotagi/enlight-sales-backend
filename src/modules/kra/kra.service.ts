@@ -2010,7 +2010,7 @@ export class KraService {
     const reported_at = new Date().toISOString();
     const sla_due_at = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
-    const payload = {
+    const payload: Record<string, any> = {
       customer_name: data.customer_name,
       affected_product:
         data.affected_product || data.product || 'General Material',
@@ -2023,13 +2023,40 @@ export class KraService {
       reported_by: salespersonPhone || 'Web Admin',
     };
 
-    const { data: created, error } = await this.supabase
+    let created: any = null;
+    const { data: resData, error } = await this.supabase
       .from('complaints')
       .insert(payload)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      this.logger.error('Error inserting complaint into database:', error);
+      // Fallback if extra columns ever fail
+      const minimalPayload = {
+        customer_name: payload.customer_name,
+        complaint_type: payload.complaint_type,
+        description: payload.description,
+        status: payload.status,
+        reported_at: payload.reported_at,
+        reported_by: payload.reported_by,
+      };
+      const { data: fallbackData, error: fallbackError } = await this.supabase
+        .from('complaints')
+        .insert(minimalPayload)
+        .select()
+        .single();
+      if (fallbackError) {
+        this.logger.error(
+          'Fallback complaint insertion also failed:',
+          fallbackError,
+        );
+        throw error;
+      }
+      created = fallbackData;
+    } else {
+      created = resData;
+    }
 
     // Log to kra_logs (KRA 8)
     try {
