@@ -488,21 +488,43 @@ export class InquiriesService {
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
 
-      // Clean list with accurate customer and salesperson entities and real document media
+      // Clean list with accurate customer and salesperson entities and lightweight media indicators
       const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
           (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
-          item.source_channel === 'whatsapp';
+          item.source_channel === 'whatsapp' ||
+          item.source_channel === 'whatsapp_image';
+
         const entities = resolveInquiryEntities(item, dealByInqId, dealByName);
+
+        // Sanitize media_urls: keep lightweight HTTP URLs, replace large base64 data with 'attached_document'
+        const cleanMedia = (item.media_urls || [])
+          .map((m: any) =>
+            typeof m === 'string' && m.startsWith('http')
+              ? m
+              : 'attached_document',
+          )
+          .filter(Boolean);
+
+        // Strip duplicate nested base64 data from ai_extraction_json for high performance list transfer
+        let cleanAiJson = item.ai_extraction_json;
+        if (cleanAiJson && typeof cleanAiJson === 'object') {
+          cleanAiJson = { ...cleanAiJson };
+          if (cleanAiJson.media_urls) delete cleanAiJson.media_urls;
+          if (cleanAiJson.image_base64) delete cleanAiJson.image_base64;
+          if (cleanAiJson.file_base64) delete cleanAiJson.file_base64;
+        }
+
         return {
           ...item,
           ...entities,
+          ai_extraction_json: cleanAiJson,
           has_media: hasAttachment,
           media_urls:
-            Array.isArray(item.media_urls) && item.media_urls.length > 0
-              ? item.media_urls
+            cleanMedia.length > 0
+              ? cleanMedia
               : hasAttachment
                 ? ['attached_document']
                 : [],
