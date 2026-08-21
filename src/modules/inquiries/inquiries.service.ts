@@ -1993,32 +1993,32 @@ ${rawText}`,
             align: 'right',
           });
 
-        // CGST9 (9%)
+        // CGST (9%)
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8)
-          .text('CGST9 (9%)', sumBlockX, summaryY + 14);
+          .text('CGST (9%)', sumBlockX, summaryY + 14);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8)
-          .text(qBreakdown.formattedCgst9, sumBlockX, summaryY + 14, {
+          .text(qBreakdown.formattedCGST, sumBlockX, summaryY + 14, {
             width: sumBlockW,
             align: 'right',
           });
 
-        // SGST9 (9%)
+        // SGST (9%)
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8)
-          .text('SGST9 (9%)', sumBlockX, summaryY + 28);
+          .text('SGST (9%)', sumBlockX, summaryY + 28);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8)
-          .text(qBreakdown.formattedSgst9, sumBlockX, summaryY + 28, {
+          .text(qBreakdown.formattedSGST, sumBlockX, summaryY + 28, {
             width: sumBlockW,
             align: 'right',
           });

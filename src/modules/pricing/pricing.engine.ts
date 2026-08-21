@@ -270,13 +270,13 @@ export function calculatePricingSummary(
 
 export interface QuotationFinancialBreakdown {
   subtotal: number;
-  cgst9: number;
-  sgst9: number;
+  CGST: number;
+  SGST: number;
   rounding: number;
   grandTotal: number;
   formattedSubtotal: string;
-  formattedCgst9: string;
-  formattedSgst9: string;
+  formattedCGST: string;
+  formattedSGST: string;
   formattedRounding: string;
   formattedGrandTotal: string;
 }
@@ -321,21 +321,21 @@ export function calculateQuotationBreakdown(
   baseAmount: number,
 ): QuotationFinancialBreakdown {
   const subtotal = Math.max(0, Number(baseAmount) || 0);
-  const cgst9 = Math.round(subtotal * 0.09 * 100) / 100;
-  const sgst9 = Math.round(subtotal * 0.09 * 100) / 100;
-  const exactTotal = subtotal + cgst9 + sgst9;
+  const CGST = Math.round(subtotal * 0.09 * 100) / 100;
+  const SGST = Math.round(subtotal * 0.09 * 100) / 100;
+  const exactTotal = subtotal + CGST + SGST;
   const grandTotal = Math.round(exactTotal);
   const rounding = Math.round((grandTotal - exactTotal) * 100) / 100;
 
   return {
     subtotal,
-    cgst9,
-    sgst9,
+    CGST,
+    SGST,
     rounding,
     grandTotal,
     formattedSubtotal: formatIndianCurrency(subtotal, true),
-    formattedCgst9: formatIndianCurrency(cgst9, true),
-    formattedSgst9: formatIndianCurrency(sgst9, true),
+    formattedCGST: formatIndianCurrency(CGST, true),
+    formattedSGST: formatIndianCurrency(SGST, true),
     formattedRounding: formatIndianCurrency(rounding, true),
     formattedGrandTotal: `₹${formatIndianCurrency(grandTotal, true)}`,
   };
