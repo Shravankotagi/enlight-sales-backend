@@ -139,23 +139,18 @@ export class KraController {
 
   @Post('complaints')
   async createComplaint(@CurrentEmployee() employee: any, @Body() body: any) {
-    return this.kraService.createComplaint(body, employee.phone);
+    return this.kraService.createComplaint(body, employee?.phone);
   }
 
   @Patch('complaints/:id')
   async updateComplaint(
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
-    @Body() body: { status: string; resolution_notes?: string },
+    @Body() body: any,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.kraService.updateComplaintStatus(
-      id,
-      body.status,
-      body.resolution_notes,
-      phones,
-    );
+    return this.kraService.updateComplaint(id, body, phones);
   }
 
   @Get('visits')
@@ -180,7 +175,7 @@ export class KraController {
 
   @Post('visits')
   async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
-    return this.kraService.createVisit(body, employee.phone);
+    return this.kraService.createVisit(body, employee?.phone);
   }
 
   @Patch('visits/:id')
