@@ -1495,29 +1495,32 @@ Extract EVERY line item and all commercial figures (PO Basic Value, GST, and Tot
           {
             parts: [
               {
-                text: `You are an expert AI extraction engine for steel product inquiries received via WhatsApp and sales dashboards. Extract ALL details from this inquiry text into a strict, structured JSON object with NO markdown, NO codeblocks, NO explanation:
+                text: `You are an expert AI extraction engine for steel product inquiries received via WhatsApp, emails, and sales dashboards. Extract ALL details from this inquiry text into a strict, structured JSON object with NO markdown, NO codeblocks, NO explanation:
 {
   "customer_name": "Company or customer name e.g. BuildCorp Engineering",
   "contact_person": "Contact person name if mentioned e.g. Rajesh",
   "customer_phone": "Phone number if present else null",
   "delivery_location": "Concise delivery city and state e.g. Uchgaon, Maharashtra or Chakan, Maharashtra",
   "preferred_make": "Preferred make / brand e.g. JSW, AM/NS, Tata, SAIL, JSPL if mentioned else null",
-  "payment_terms": "Payment terms if mentioned else null",
-  "target_delivery_date": "Target delivery date if mentioned else null",
+  "payment_terms": "Payment terms e.g. 30 Days Credit, 100% Advance, 45 Days Credit if mentioned else null",
   "line_items": [
     {
-      "sku_text": "Material description and grade e.g. MS Plate (IS 2062 E250BR)",
-      "dimensions": "Dimensions / specs / thickness / size e.g. 12mm thickness (Size: 1500mm x 6000mm)",
-      "quantity": numeric_quantity_in_MT_or_count,
-      "unit": "Exact unit specified in text e.g. MT, Pieces, or KG. If MT or Tons is specified (e.g. 20 MT), unit MUST be MT (NEVER assume Pieces).",
+      "sku_text": "Material name/grade e.g. CR Sheet, HR Sheet, MS Plate (IS 2062 E250BR), SS 304 Pipe",
+      "dimensions": "Thickness / size / spec e.g. 1mm, 1.2mm, 1.6mm, 12mm (1500mm x 6000mm)",
+      "quantity": numeric_quantity,
+      "unit": "Exact unit stated e.g. nos, pcs, MT, KG, sheets (NEVER convert or fabricate)",
       "rate": numeric_rate_or_0,
       "amount": numeric_amount_or_0
     }
   ],
   "overall_confidence": 0.95
 }
-Extract EVERY single steel material item into the line_items array.
-Strict Rule: If unit is written as MT or Tons in inquiry text (e.g. "20 MT"), preserve unit as "MT".
+
+CRITICAL RULES:
+1. MULTIPLE LINE ITEMS: NEVER merge, collapse, or summarize multiple distinct products into one line item! Every distinct product with its own thickness, grade, spec, or quantity (e.g. "CR 1mm (300 nos), CR 1.2mm (200 nos), HR 1.6mm (200 nos)") MUST produce its own separate line item object in the line_items array.
+2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" — NEVER convert to MT).
+3. PAYMENT TERMS: Always extract payment terms if mentioned in the text (e.g., "30 days", "30 days credit", "100% advance", "45 days"). Never drop payment terms.
+
 Inquiry Text:
 ${rawText}`,
               },
