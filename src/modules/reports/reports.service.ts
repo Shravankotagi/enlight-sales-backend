@@ -355,6 +355,43 @@ export class ReportsService {
         const collectedPayments = spPayments.filter(
           (p) => p.status === 'collected',
         );
+        // Performance Scoring formula (0 - 100 points, clean whole integer):
+        // 1. Deals volume & wins (up to 40 pts): 4 pts per won deal + pipeline volume bonus
+        const wonDealsScore = Math.min(40, wonDeals.length * 4);
+        // 2. Visits target (up to 30 pts): target is 40 visits per month
+        const visitsScore = Math.min(
+          30,
+          Math.round((spVisits.length / 40) * 30),
+        );
+        // 3. New customer acquisition (up to 15 pts): target is 3 new customers
+        const newCustomersScore = Math.min(
+          15,
+          Math.round((newCustomers / 3) * 15),
+        );
+        // 4. Payment collections (up to 15 pts): 5 pts per collected payment
+        const paymentsScore = Math.min(
+          15,
+          Math.round(collectedPayments.length * 5),
+        );
+        // 5. Deductions for unresolved complaints (10 pts per unresolved complaint)
+        const unresolvedComplaints = spComplaints.filter(
+          (c) => c.status !== 'resolved',
+        ).length;
+        const complaintsPenalty = Math.min(20, unresolvedComplaints * 10);
+
+        const totalKraScore = Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              wonDealsScore +
+                visitsScore +
+                newCustomersScore +
+                paymentsScore -
+                complaintsPenalty,
+            ),
+          ),
+        );
 
         return {
           salesperson_phone: phone,
@@ -386,14 +423,7 @@ export class ReportsService {
             resolved: spComplaints.filter((c) => c.status === 'resolved')
               .length,
           },
-          kra_score: Math.min(
-            100,
-            (wonDeals.length > 0 ? 30 : 0) +
-              Math.min(30, Math.round((spVisits.length / 40) * 30)) +
-              Math.min(20, (newCustomers / 3) * 20) +
-              (collectedPayments.length > 0 ? 20 : 0) -
-              spComplaints.filter((c) => c.status !== 'resolved').length * 20,
-          ),
+          kra_score: totalKraScore,
         };
       });
 
