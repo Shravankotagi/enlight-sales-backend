@@ -1270,9 +1270,21 @@ Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`;
 
+          const salespersonName =
+            details.salespersonName ||
+            details.salesperson_name ||
+            details.salesperson ||
+            (inquiry as any).salesperson_name ||
+            (inquiry as any).assigned_salesperson_name ||
+            (aiJson as any).salespersonName ||
+            (aiJson as any).salesperson_name ||
+            'Shravan Kotagi';
+
           // Pass enriched details to PDF generator
           const pdfDetails = {
             ...details,
+            salespersonName,
+            salesperson_name: salespersonName,
             productType,
             productForm,
             thickness,
@@ -1719,7 +1731,9 @@ ${rawText}`,
         const salesperson =
           details?.salespersonName ||
           details?.salesperson_name ||
-          'Sales Representative';
+          details?.salesperson ||
+          (details as any)?.activeSalespersonName ||
+          'Shravan Kotagi';
         const deliveryLocRaw = (details?.deliveryLocation || '').trim();
         const deliveryText =
           deliveryLocRaw || 'Khopoli, Raigad, Maharashtra - 410203';
@@ -2292,39 +2306,6 @@ ${rawText}`,
             36,
             footerY + 22,
           );
-
-        // Oval Stamp Graphic
-        const stampX = 485;
-        const stampY = footerY + 16;
-        doc
-          .ellipse(stampX, stampY, 38, 16)
-          .lineWidth(1)
-          .strokeColor('#4338CA')
-          .stroke();
-        doc
-          .fillColor('#3730A3')
-          .font(fontBold)
-          .fontSize(5)
-          .text('ENLIGHT METALS PVT. LTD.', stampX - 35, stampY - 9, {
-            width: 70,
-            align: 'center',
-          });
-        doc
-          .fillColor('#4338CA')
-          .font(fontRegular)
-          .fontSize(5.5)
-          .text('Authorized', stampX - 30, stampY - 2, {
-            width: 60,
-            align: 'center',
-          });
-        doc
-          .fillColor('#4F46E5')
-          .font(fontBold)
-          .fontSize(4.5)
-          .text('PUNE', stampX - 25, stampY + 5, {
-            width: 50,
-            align: 'center',
-          });
 
         // Signature Line
         doc
