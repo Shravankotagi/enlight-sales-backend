@@ -709,8 +709,9 @@ export class InquiriesService {
       // Automatically sync to pipeline / deals
       if (status === 'quoted') {
         await this.syncInquiryToDeal(id, 'quoted', details);
-      } else if (status === 'confirmed' || status === 'processed') {
-        await this.syncInquiryToDeal(id, 'qualified', details);
+      } else {
+        // Keep deal in new_inquiry (New Deals) or its existing pipeline stage
+        await this.syncInquiryToDeal(id, undefined, details);
       }
 
       return data;
@@ -976,7 +977,7 @@ export class InquiriesService {
 
   async syncInquiryToDeal(
     inquiryId: string,
-    stage: string,
+    stage?: string,
     overrideDetails?: any,
   ) {
     try {
@@ -1076,10 +1077,11 @@ export class InquiriesService {
       let dealId: string;
       if (existingDeals && existingDeals.length > 0) {
         dealId = existingDeals[0].id;
+        const targetStage = stage || existingDeals[0].stage || 'new_inquiry';
         await this.supabase
           .from('deals')
           .update({
-            stage,
+            stage: targetStage,
             customer_name: customerName,
             customer_phone: customerPhone || undefined,
             salesperson_phone: salespersonPhone,
@@ -1091,11 +1093,12 @@ export class InquiriesService {
           })
           .eq('id', dealId);
       } else {
+        const targetStage = stage || 'new_inquiry';
         const { data: newDeal, error: dealError } = await this.supabase
           .from('deals')
           .insert({
             inquiry_id: inquiryId,
-            stage,
+            stage: targetStage,
             customer_name: customerName,
             customer_phone: customerPhone || null,
             salesperson_phone: salespersonPhone,

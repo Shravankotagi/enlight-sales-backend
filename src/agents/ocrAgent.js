@@ -330,7 +330,7 @@ async function processSalesImage(
         }
       }
     } else {
-      // Create new inquiry deal in review stage
+      // Create new inquiry deal in new_inquiry stage
       const { data: newInqDeal, error: dealErr } = await supabase
         .from('deals')
         .insert({
@@ -338,7 +338,7 @@ async function processSalesImage(
           customer_name: finalCustomerName,
           salesperson_phone: senderPhone,
           customer_phone: customerPhone,
-          stage: 'review',
+          stage: 'new_inquiry',
           total_amount: baseAmt || 0,
           inquiry_type: 'inquiry',
           delivery_location: extraction.delivery_location || null,
