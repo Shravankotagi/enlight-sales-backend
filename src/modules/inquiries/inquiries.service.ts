@@ -17,9 +17,27 @@ function getCompanyLogoPath(): string | null {
     path.join(process.cwd(), 'assets', 'logo.png'),
     path.join(process.cwd(), 'assets', 'logo.jpg'),
     path.join(process.cwd(), 'assets', 'logo.jpeg'),
+    path.join(process.cwd(), 'backend', 'assets', 'logo.png'),
     path.join(__dirname, '../../../assets/logo.png'),
     path.join(__dirname, '../../../assets/logo.jpg'),
     path.join(__dirname, '../../../assets/logo.jpeg'),
+    path.join(__dirname, '../../assets/logo.png'),
+    path.join(__dirname, '../assets/logo.png'),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function getAssetFontPath(fontFilename: string): string | null {
+  const possiblePaths = [
+    path.join(process.cwd(), 'assets', 'fonts', fontFilename),
+    path.join(process.cwd(), 'backend', 'assets', 'fonts', fontFilename),
+    path.join(__dirname, '../../../assets/fonts', fontFilename),
+    path.join(__dirname, '../../assets/fonts', fontFilename),
+    path.join(__dirname, '../assets/fonts', fontFilename),
+    path.join(__dirname, 'assets/fonts', fontFilename),
   ];
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) return p;
@@ -1855,7 +1873,7 @@ ${rawText}`,
       try {
         const doc = new PDFDocument({
           size: 'A4',
-          margin: 36,
+          margin: 40,
           info: {
             Title: `Proforma Invoice - ${qRefNum}`,
             Author: 'Enlight Metals Private Limited',
@@ -1870,31 +1888,28 @@ ${rawText}`,
         });
         doc.on('error', (err: Error) => reject(err));
 
-        const notoSansPath = path.join(
-          process.cwd(),
-          'assets',
-          'fonts',
-          'NotoSans-Regular.ttf',
-        );
-        const notoSansBoldPath = path.join(
-          process.cwd(),
-          'assets',
-          'fonts',
-          'NotoSans-Bold.ttf',
-        );
+        const notoSansPath = getAssetFontPath('NotoSans-Regular.ttf');
+        const notoSansBoldPath = getAssetFontPath('NotoSans-Bold.ttf');
         let fontRegular = 'Helvetica';
         let fontBold = 'Helvetica-Bold';
+        let hasNotoSans = false;
 
-        if (fs.existsSync(notoSansPath) && fs.existsSync(notoSansBoldPath)) {
+        if (notoSansPath && notoSansBoldPath) {
           try {
             doc.registerFont('NotoSans', notoSansPath);
             doc.registerFont('NotoSans-Bold', notoSansBoldPath);
             fontRegular = 'NotoSans';
             fontBold = 'NotoSans-Bold';
+            hasNotoSans = true;
           } catch (fErr) {
             logger.warn('Error registering NotoSans fonts:', fErr);
           }
         }
+        doc.font(fontRegular);
+
+        const leftX = 40;
+        const rightEdge = 555.28;
+        const contentWidth = rightEdge - leftX;
 
         const todayDate =
           details?.poDate ||
@@ -1951,127 +1966,131 @@ ${rawText}`,
         const logoPath = getCompanyLogoPath();
         if (logoPath && fs.existsSync(logoPath)) {
           try {
-            doc.image(logoPath, 36, 36, { width: 140 });
+            doc.image(logoPath, leftX, 40, { width: 145 });
           } catch {
             doc
               .fillColor('#0F172A')
               .font(fontBold)
               .fontSize(16)
-              .text('ENLIGHT METALS', 36, 36);
+              .text('ENLIGHT METALS', leftX, 40);
           }
         } else {
           doc
             .fillColor('#0F172A')
             .font(fontBold)
             .fontSize(16)
-            .text('ENLIGHT METALS', 36, 36);
+            .text('ENLIGHT METALS', leftX, 40);
         }
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(8.5)
-          .text('Enlight Metals Private Limited', 36, 76);
-        doc.fillColor('#475569').font(fontRegular).fontSize(7.5);
-        doc.text('606 Clover Hills Plaza', 36, 88);
-        doc.text('NIBM Road', 36, 98);
-        doc.text('Pune Maharashtra 411048', 36, 108);
-        doc.text('India', 36, 118);
-        doc.text('GSTIN 27AAICE5263E1ZN', 36, 128);
-        doc.text('accounts@enlightmetals.com', 36, 138);
-        doc.text('https://enlightmetals.com/', 36, 148);
+          .fontSize(9)
+          .text('Enlight Metals Private Limited', leftX, 84);
+        doc.fillColor('#475569').font(fontRegular).fontSize(8);
+        doc.text('606 Clover Hills Plaza', leftX, 96);
+        doc.text('NIBM Road', leftX, 107);
+        doc.text('Pune Maharashtra 411048', leftX, 118);
+        doc.text('India', leftX, 129);
+        doc.text('GSTIN 27AAICE5263E1ZN', leftX, 140);
+        doc.text('accounts@enlightmetals.com', leftX, 151);
+        doc.text('https://enlightmetals.com/', leftX, 162);
 
         // Top Right Proforma Invoice Header
         doc
           .fillColor('#1E293B')
           .font(fontBold)
           .fontSize(22)
-          .text('Proforma Invoice', 300, 36, { width: 259, align: 'right' });
+          .text('Proforma Invoice', 280, 40, { width: 275, align: 'right' });
         doc
           .fillColor('#334155')
           .font(fontRegular)
-          .fontSize(8.5)
-          .text(`PI Number# ${piNumber}`, 300, 68, {
-            width: 259,
+          .fontSize(9)
+          .text(`PI Number# ${piNumber}`, 280, 70, {
+            width: 275,
             align: 'right',
           });
 
         // 2. Bill To, Ship To & Supply Section (Left) / Order Date & Salesperson (Right)
-        let currY = 175;
+        let currY = 195;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(8.5)
-          .text('Bill To', 36, currY);
+          .fontSize(9)
+          .text('Bill To', leftX, currY);
+        currY += 13;
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(9)
+          .text(compName, leftX, currY);
         currY += 12;
-        doc
-          .fillColor('#0F172A')
-          .font(fontBold)
-          .fontSize(8.5)
-          .text(compName, 36, currY);
-        currY += 11;
-        doc.fillColor('#475569').font(fontRegular).fontSize(7.5);
+        doc.fillColor('#475569').font(fontRegular).fontSize(8);
         for (const line of addressLines) {
-          doc.text(line, 36, currY);
-          currY += 10;
+          doc.text(line, leftX, currY);
+          currY += 11;
         }
         if (customerGstin) {
-          doc.text(`GSTIN ${customerGstin}`, 36, currY);
-          currY += 10;
+          doc.text(`GSTIN ${customerGstin}`, leftX, currY);
+          currY += 11;
         }
-        currY += 4;
+        currY += 5;
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(8.5)
-          .text('Ship To', 36, currY);
+          .fontSize(9)
+          .text('Ship To', leftX, currY);
+        currY += 13;
+        doc
+          .fillColor('#0F172A')
+          .font(fontBold)
+          .fontSize(9)
+          .text(compName, leftX, currY);
         currY += 12;
-        doc
-          .fillColor('#0F172A')
-          .font(fontBold)
-          .fontSize(8.5)
-          .text(compName, 36, currY);
-        currY += 11;
-        doc.fillColor('#475569').font(fontRegular).fontSize(7.5);
+        doc.fillColor('#475569').font(fontRegular).fontSize(8);
         for (const line of addressLines) {
-          doc.text(line, 36, currY);
-          currY += 10;
+          doc.text(line, leftX, currY);
+          currY += 11;
         }
-        currY += 4;
+        currY += 5;
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(8)
-          .text('Place Of Supply: ', 36, currY, { continued: true })
+          .fontSize(8.5)
+          .text('Place Of Supply: ', leftX, currY, { continued: true })
           .font(fontRegular)
           .fillColor('#475569')
           .text(placeOfSupply);
-        currY += 16;
+        currY += 18;
 
-        // Right Column: Order Date & Sales Person (Clean horizontal layout)
+        // Right Column: Order Date & Sales Person
+        const metaRightY = currY - 36;
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Order Date :', 360, 260, { width: 85 });
+          .fontSize(8.5)
+          .text('Order Date :', 350, metaRightY, { width: 90 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(todayDate, 450, 260, { width: 109, align: 'right' });
+          .fontSize(8.5)
+          .text(todayDate, 445, metaRightY, { width: 110, align: 'right' });
 
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Sales person :', 360, 274, { width: 85 });
+          .fontSize(8.5)
+          .text('Sales person :', 350, metaRightY + 16, { width: 90 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(salesperson, 450, 274, { width: 109, align: 'right' });
+          .fontSize(8.5)
+          .text(salesperson, 445, metaRightY + 16, {
+            width: 110,
+            align: 'right',
+          });
 
         // 3. Line Items Table (Header bg: #525E6F)
         const lineItemsSrc =
@@ -2138,52 +2157,63 @@ ${rawText}`,
           ) || Number(details.totalAmount || 0);
         const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
 
-        const tableY = Math.max(currY, 295);
-        doc.rect(36, tableY, 523, 22).fill('#525E6F');
-        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
-        doc.text('#', 36, tableY + 7, { width: 24, align: 'center' });
-        doc.text('Item & Description', 64, tableY + 7, { width: 196 });
-        doc.text('HSN/SAC', 265, tableY + 7, { width: 63, align: 'center' });
-        doc.text('Qty', 332, tableY + 7, { width: 66, align: 'right' });
-        doc.text('Rate', 402, tableY + 7, { width: 70, align: 'right' });
-        doc.text('Amount', 476, tableY + 7, { width: 78, align: 'right' });
+        const tableY = currY + 6;
+        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
+        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
+        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
+        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
+        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
+        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
+        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
+        doc.text('Amount', 479, tableY + 7.5, { width: 76, align: 'right' });
 
-        let rowY = tableY + 22;
+        let rowY = tableY + 24;
         lineItems.forEach((item, idx) => {
-          const rowH = item.dimensions ? 34 : 24;
-          doc.rect(36, rowY, 523, rowH).fill('#FFFFFF');
+          doc.font(fontBold).fontSize(8);
+          const skuH = doc.heightOfString(item.sku_text, { width: 205 });
+          const dimH = item.dimensions
+            ? doc
+                .font(fontRegular)
+                .fontSize(7.5)
+                .heightOfString(item.dimensions, { width: 205 }) + 3
+            : 0;
+          const rowH = Math.max(30, skuH + dimH + 16);
 
-          // #
+          doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
+
+          // Index
           doc
             .fillColor('#64748B')
             .font(fontRegular)
             .fontSize(8)
-            .text(String(idx + 1), 36, rowY + 7, {
-              width: 24,
+            .text(String(idx + 1), leftX, rowY + 9, {
+              width: 26,
               align: 'center',
             });
 
-          // Item & Description
+          // SKU title
           doc
             .fillColor('#0F172A')
             .font(fontBold)
             .fontSize(8)
-            .text(item.sku_text, 64, rowY + 7, { width: 196 });
+            .text(item.sku_text, 70, rowY + 9, { width: 205 });
+
+          // Dimensions placed cleanly below SKU title
           if (item.dimensions) {
             doc
               .fillColor('#64748B')
               .font(fontRegular)
-              .fontSize(7)
-              .text(item.dimensions, 64, rowY + 18, { width: 196 });
+              .fontSize(7.5)
+              .text(item.dimensions, 70, rowY + 9 + skuH + 2, { width: 205 });
           }
 
           // HSN/SAC
           doc
             .fillColor('#475569')
             .font(fontRegular)
-            .fontSize(7.5)
-            .text(item.hsn_code || '72083730', 265, rowY + 7, {
-              width: 63,
+            .fontSize(8)
+            .text(item.hsn_code || '72083730', 278, rowY + 9, {
+              width: 62,
               align: 'center',
             });
 
@@ -2194,9 +2224,9 @@ ${rawText}`,
             .fontSize(8)
             .text(
               `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
-              332,
-              rowY + 7,
-              { width: 66, align: 'right' },
+              342,
+              rowY + 9,
+              { width: 68, align: 'right' },
             );
 
           // Rate
@@ -2204,8 +2234,8 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8)
-            .text(formatIndianCurrency(item.rate, true), 402, rowY + 7, {
-              width: 70,
+            .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
+              width: 65,
               align: 'right',
             });
 
@@ -2214,15 +2244,15 @@ ${rawText}`,
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8)
-            .text(formatIndianCurrency(item.amount, true), 476, rowY + 7, {
-              width: 78,
+            .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
+              width: 76,
               align: 'right',
             });
 
           // Bottom divider line
           doc
-            .moveTo(36, rowY + rowH)
-            .lineTo(559, rowY + rowH)
+            .moveTo(leftX, rowY + rowH)
+            .lineTo(rightEdge, rowY + rowH)
             .strokeColor('#F1F5F9')
             .lineWidth(0.5)
             .stroke();
@@ -2231,10 +2261,10 @@ ${rawText}`,
         });
 
         // 4. Financial Totals & Summary Block
-        const summaryY = rowY + 14;
+        const summaryY = rowY + 16;
         doc
-          .moveTo(36, summaryY - 6)
-          .lineTo(559, summaryY - 6)
+          .moveTo(leftX, summaryY - 6)
+          .lineTo(rightEdge, summaryY - 6)
           .strokeColor('#E2E8F0')
           .lineWidth(0.75)
           .stroke();
@@ -2243,8 +2273,8 @@ ${rawText}`,
         doc
           .fillColor('#334155')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Items in Total ', 36, summaryY, { continued: true })
+          .fontSize(8.5)
+          .text('Items in Total ', leftX, summaryY, { continued: true })
           .font(fontBold)
           .fillColor('#0F172A')
           .text(`${formatIndianCurrency(totalQuantity, true)} ${primaryUnit}`);
@@ -2253,27 +2283,27 @@ ${rawText}`,
           doc
             .fillColor('#334155')
             .font(fontRegular)
-            .fontSize(8)
-            .text('Payment Terms : ', 36, summaryY + 16, { continued: true })
+            .fontSize(8.5)
+            .text('Payment Terms : ', leftX, summaryY + 18, { continued: true })
             .font(fontRegular)
             .fillColor('#0F172A')
             .text(paymentTerms);
         }
 
         // Right Financial Breakdown
-        const sumX = 360;
-        const sumW = 199;
+        const sumX = 350;
+        const sumW = 205;
 
         // Sub Total
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
+          .fontSize(8.5)
           .text('Sub Total', sumX, summaryY);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
+          .fontSize(8.5)
           .text(qBreakdown.formattedSubtotal, sumX, summaryY, {
             width: sumW,
             align: 'right',
@@ -2283,13 +2313,13 @@ ${rawText}`,
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('CGST9 (9%)', sumX, summaryY + 13);
+          .fontSize(8.5)
+          .text('CGST9 (9%)', sumX, summaryY + 14);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedCGST, sumX, summaryY + 13, {
+          .fontSize(8.5)
+          .text(qBreakdown.formattedCGST, sumX, summaryY + 14, {
             width: sumW,
             align: 'right',
           });
@@ -2298,13 +2328,13 @@ ${rawText}`,
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('SGST9 (9%)', sumX, summaryY + 26);
+          .fontSize(8.5)
+          .text('SGST9 (9%)', sumX, summaryY + 28);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedSGST, sumX, summaryY + 26, {
+          .fontSize(8.5)
+          .text(qBreakdown.formattedSGST, sumX, summaryY + 28, {
             width: sumW,
             align: 'right',
           });
@@ -2313,39 +2343,32 @@ ${rawText}`,
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Rounding', sumX, summaryY + 39);
+          .fontSize(8.5)
+          .text('Rounding', sumX, summaryY + 42);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
-          .fontSize(8)
-          .text(qBreakdown.formattedRounding, sumX, summaryY + 39, {
+          .fontSize(8.5)
+          .text(qBreakdown.formattedRounding, sumX, summaryY + 42, {
             width: sumW,
             align: 'right',
           });
 
-        // Total Divider
-        doc
-          .moveTo(sumX, summaryY + 54)
-          .lineTo(sumX + sumW, summaryY + 54)
-          .strokeColor('#E2E8F0')
-          .lineWidth(0.5)
-          .stroke();
-
         // Total
+        const rupeeSign = hasNotoSans ? '₹' : 'Rs. ';
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(9.5)
-          .text('Total', sumX, summaryY + 58);
+          .fontSize(10)
+          .text('Total', sumX, summaryY + 62);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(10.5)
+          .fontSize(11)
           .text(
-            `₹${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
+            `${rupeeSign}${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
             sumX,
-            summaryY + 58,
+            summaryY + 62,
             {
               width: sumW,
               align: 'right',
@@ -2357,8 +2380,8 @@ ${rawText}`,
 
         // Top Divider
         doc
-          .moveTo(36, 40)
-          .lineTo(559, 40)
+          .moveTo(leftX, 40)
+          .lineTo(rightEdge, 40)
           .strokeColor('#E2E8F0')
           .lineWidth(0.75)
           .stroke();
@@ -2367,69 +2390,69 @@ ${rawText}`,
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(9.5)
-          .text('Notes', 36, 55);
+          .fontSize(10)
+          .text('Notes', leftX, 55);
 
         doc
           .fillColor('#334155')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Bank Details: -', 36, 70);
+          .fontSize(8.5)
+          .text('Bank Details: -', leftX, 72);
 
-        doc.fillColor('#475569').font(fontRegular).fontSize(8);
-        doc.text('Bank Name: HDFC Bank', 36, 84);
-        doc.text('IFSC Code: HDFC0002454', 36, 96);
-        doc.text('Account Number: 50200107323747', 36, 108);
-        doc.text('Account Name: Enlight Metals Private Limited', 36, 120);
+        doc.fillColor('#475569').font(fontRegular).fontSize(8.5);
+        doc.text('Bank Name: HDFC Bank', leftX, 86);
+        doc.text('IFSC Code: HDFC0002454', leftX, 99);
+        doc.text('Account Number: 50200107323747', leftX, 112);
+        doc.text('Account Name: Enlight Metals Private Limited', leftX, 125);
 
         // Terms & Conditions
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(9.5)
-          .text('Terms & Conditions', 36, 145);
+          .fontSize(10)
+          .text('Terms & Conditions', leftX, 150);
 
         doc
           .fillColor('#334155')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Declaration:', 36, 160);
+          .fontSize(8.5)
+          .text('Declaration:', leftX, 166);
 
         doc
           .fillColor('#475569')
           .font(fontRegular)
-          .fontSize(8)
+          .fontSize(8.5)
           .text(
             'Certified that the particulars given above are true and correct and the amount indicated represents the price actually charged and there is no flow of additional consideration directly or indirectly from the buyer.',
-            36,
-            172,
-            { width: 523, lineGap: 1.5 },
+            leftX,
+            180,
+            { width: contentWidth, lineGap: 2 },
           );
 
         doc
           .fillColor('#334155')
           .font(fontRegular)
-          .fontSize(8)
-          .text('Note:', 36, 205);
+          .fontSize(8.5)
+          .text('Note:', leftX, 220);
 
-        doc.fillColor('#475569').font(fontRegular).fontSize(8);
+        doc.fillColor('#475569').font(fontRegular).fontSize(8.5);
         doc.text(
           '1) Interest @24% p.a. will be charged if the payment is not made with stipulated date.',
-          36,
-          218,
+          leftX,
+          234,
         );
         doc.text(
           '2) All disputes are Subject to Pune Jurisdiction only.',
-          36,
-          230,
+          leftX,
+          248,
         );
 
         // Authorized Signature
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(9.5)
-          .text('Authorized Signature', 36, 285);
+          .fontSize(10)
+          .text('Authorized Signature', leftX, 310);
 
         doc.end();
       } catch (err) {
