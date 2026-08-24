@@ -1892,7 +1892,6 @@ ${rawText}`,
         const notoSansBoldPath = getAssetFontPath('NotoSans-Bold.ttf');
         let fontRegular = 'Helvetica';
         let fontBold = 'Helvetica-Bold';
-        let hasNotoSans = false;
 
         if (notoSansPath && notoSansBoldPath) {
           try {
@@ -1900,7 +1899,6 @@ ${rawText}`,
             doc.registerFont('NotoSans-Bold', notoSansBoldPath);
             fontRegular = 'NotoSans';
             fontBold = 'NotoSans-Bold';
-            hasNotoSans = true;
           } catch (fErr) {
             logger.warn('Error registering NotoSans fonts:', fErr);
           }
@@ -2012,48 +2010,48 @@ ${rawText}`,
           });
 
         // 2. Bill To, Ship To & Supply Section (Left) / Order Date & Salesperson (Right)
-        let currY = 195;
+        let currY = 190;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9)
           .text('Bill To', leftX, currY);
-        currY += 13;
+        currY += 12;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9)
           .text(compName, leftX, currY);
-        currY += 12;
+        currY += 11;
         doc.fillColor('#475569').font(fontRegular).fontSize(8);
         for (const line of addressLines) {
           doc.text(line, leftX, currY);
-          currY += 11;
+          currY += 10;
         }
         if (customerGstin) {
           doc.text(`GSTIN ${customerGstin}`, leftX, currY);
-          currY += 11;
+          currY += 10;
         }
-        currY += 5;
+        currY += 4;
 
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9)
           .text('Ship To', leftX, currY);
-        currY += 13;
+        currY += 12;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9)
           .text(compName, leftX, currY);
-        currY += 12;
+        currY += 11;
         doc.fillColor('#475569').font(fontRegular).fontSize(8);
         for (const line of addressLines) {
           doc.text(line, leftX, currY);
-          currY += 11;
+          currY += 10;
         }
-        currY += 5;
+        currY += 4;
 
         doc
           .fillColor('#0F172A')
@@ -2066,7 +2064,7 @@ ${rawText}`,
         currY += 18;
 
         // Right Column: Order Date & Sales Person
-        const metaRightY = currY - 36;
+        const metaRightY = currY - 32;
         doc
           .fillColor('#475569')
           .font(fontRegular)
@@ -2082,12 +2080,12 @@ ${rawText}`,
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Sales person :', 350, metaRightY + 16, { width: 90 });
+          .text('Sales person :', 350, metaRightY + 14, { width: 90 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(salesperson, 445, metaRightY + 16, {
+          .text(salesperson, 445, metaRightY + 14, {
             width: 110,
             align: 'right',
           });
@@ -2157,17 +2155,17 @@ ${rawText}`,
           ) || Number(details.totalAmount || 0);
         const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
 
-        const tableY = currY + 6;
-        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
+        const tableY = Math.max(currY, 290);
+        doc.rect(leftX, tableY, contentWidth, 22).fill('#525E6F');
         doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
-        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
-        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
-        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
-        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
-        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
-        doc.text('Amount', 479, tableY + 7.5, { width: 76, align: 'right' });
+        doc.text('#', leftX, tableY + 6.5, { width: 26, align: 'center' });
+        doc.text('Item & Description', 70, tableY + 6.5, { width: 205 });
+        doc.text('HSN/SAC', 278, tableY + 6.5, { width: 62, align: 'center' });
+        doc.text('Qty', 342, tableY + 6.5, { width: 68, align: 'right' });
+        doc.text('Rate', 412, tableY + 6.5, { width: 65, align: 'right' });
+        doc.text('Amount', 479, tableY + 6.5, { width: 76, align: 'right' });
 
-        let rowY = tableY + 24;
+        let rowY = tableY + 22;
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8);
           const skuH = doc.heightOfString(item.sku_text, { width: 205 });
@@ -2175,9 +2173,9 @@ ${rawText}`,
             ? doc
                 .font(fontRegular)
                 .fontSize(7.5)
-                .heightOfString(item.dimensions, { width: 205 }) + 3
+                .heightOfString(item.dimensions, { width: 205 }) + 2
             : 0;
-          const rowH = Math.max(30, skuH + dimH + 16);
+          const rowH = Math.max(28, skuH + dimH + 14);
 
           doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
 
@@ -2186,7 +2184,7 @@ ${rawText}`,
             .fillColor('#64748B')
             .font(fontRegular)
             .fontSize(8)
-            .text(String(idx + 1), leftX, rowY + 9, {
+            .text(String(idx + 1), leftX, rowY + 7, {
               width: 26,
               align: 'center',
             });
@@ -2196,7 +2194,7 @@ ${rawText}`,
             .fillColor('#0F172A')
             .font(fontBold)
             .fontSize(8)
-            .text(item.sku_text, 70, rowY + 9, { width: 205 });
+            .text(item.sku_text, 70, rowY + 7, { width: 205 });
 
           // Dimensions placed cleanly below SKU title
           if (item.dimensions) {
@@ -2204,7 +2202,7 @@ ${rawText}`,
               .fillColor('#64748B')
               .font(fontRegular)
               .fontSize(7.5)
-              .text(item.dimensions, 70, rowY + 9 + skuH + 2, { width: 205 });
+              .text(item.dimensions, 70, rowY + 7 + skuH + 2, { width: 205 });
           }
 
           // HSN/SAC
@@ -2212,7 +2210,7 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8)
-            .text(item.hsn_code || '72083730', 278, rowY + 9, {
+            .text(item.hsn_code || '72083730', 278, rowY + 7, {
               width: 62,
               align: 'center',
             });
@@ -2225,7 +2223,7 @@ ${rawText}`,
             .text(
               `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
               342,
-              rowY + 9,
+              rowY + 7,
               { width: 68, align: 'right' },
             );
 
@@ -2234,7 +2232,7 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8)
-            .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
+            .text(formatIndianCurrency(item.rate, true), 412, rowY + 7, {
               width: 65,
               align: 'right',
             });
@@ -2244,7 +2242,7 @@ ${rawText}`,
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8)
-            .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
+            .text(formatIndianCurrency(item.amount, true), 479, rowY + 7, {
               width: 76,
               align: 'right',
             });
@@ -2261,10 +2259,10 @@ ${rawText}`,
         });
 
         // 4. Financial Totals & Summary Block
-        const summaryY = rowY + 16;
+        const summaryY = rowY + 14;
         doc
-          .moveTo(leftX, summaryY - 6)
-          .lineTo(rightEdge, summaryY - 6)
+          .moveTo(leftX, rowY + 6)
+          .lineTo(rightEdge, rowY + 6)
           .strokeColor('#E2E8F0')
           .lineWidth(0.75)
           .stroke();
@@ -2284,7 +2282,7 @@ ${rawText}`,
             .fillColor('#334155')
             .font(fontRegular)
             .fontSize(8.5)
-            .text('Payment Terms : ', leftX, summaryY + 18, { continued: true })
+            .text('Payment Terms : ', leftX, summaryY + 14, { continued: true })
             .font(fontRegular)
             .fillColor('#0F172A')
             .text(paymentTerms);
@@ -2314,12 +2312,12 @@ ${rawText}`,
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('CGST9 (9%)', sumX, summaryY + 14);
+          .text('CGST9 (9%)', sumX, summaryY + 13);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(qBreakdown.formattedCGST, sumX, summaryY + 14, {
+          .text(qBreakdown.formattedCGST, sumX, summaryY + 13, {
             width: sumW,
             align: 'right',
           });
@@ -2329,12 +2327,12 @@ ${rawText}`,
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('SGST9 (9%)', sumX, summaryY + 28);
+          .text('SGST9 (9%)', sumX, summaryY + 26);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(qBreakdown.formattedSGST, sumX, summaryY + 28, {
+          .text(qBreakdown.formattedSGST, sumX, summaryY + 26, {
             width: sumW,
             align: 'right',
           });
@@ -2344,31 +2342,30 @@ ${rawText}`,
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Rounding', sumX, summaryY + 42);
+          .text('Rounding', sumX, summaryY + 39);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(qBreakdown.formattedRounding, sumX, summaryY + 42, {
+          .text(qBreakdown.formattedRounding, sumX, summaryY + 39, {
             width: sumW,
             align: 'right',
           });
 
         // Total
-        const rupeeSign = hasNotoSans ? '₹' : 'Rs. ';
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Total', sumX, summaryY + 62);
+          .text('Total', sumX, summaryY + 54);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
-          .fontSize(11)
+          .fontSize(10.5)
           .text(
-            `${rupeeSign}${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
+            `Rs. ${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
             sumX,
-            summaryY + 62,
+            summaryY + 54,
             {
               width: sumW,
               align: 'right',
