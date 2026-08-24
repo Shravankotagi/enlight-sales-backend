@@ -1946,12 +1946,41 @@ ${rawText}`,
           details?.address ||
           ''
         ).trim();
-        const addressLines = rawAddress
-          ? rawAddress
-              .split(',')
-              .map((p: string) => p.trim())
-              .filter(Boolean)
-          : ['MIDC Industrial Area', 'Nashik', 'Maharashtra - 422010'];
+
+        const cleanAddressLines = (raw: string, company: string): string[] => {
+          if (!raw)
+            return ['MIDC Industrial Area', 'Nashik', 'Maharashtra - 422010'];
+          const parts = raw
+            .split(',')
+            .map((p: string) => p.trim())
+            .filter(Boolean);
+          const cleaned: string[] = [];
+          for (let part of parts) {
+            if (part.toUpperCase() === company.toUpperCase()) continue;
+            if (part.toUpperCase().startsWith(company.toUpperCase())) {
+              part = part
+                .substring(company.length)
+                .trim()
+                .replace(/^[-,\s]+/, '');
+            }
+            if (part) cleaned.push(part);
+          }
+          return cleaned.length > 0 ? cleaned : parts;
+        };
+
+        const billToAddress = (
+          details?.customerAddress ||
+          details?.address ||
+          rawAddress
+        ).trim();
+        const shipToAddress = (
+          details?.deliveryLocation ||
+          details?.customerAddress ||
+          rawAddress
+        ).trim();
+
+        const billToLines = cleanAddressLines(billToAddress, compName);
+        const shipToLines = cleanAddressLines(shipToAddress, compName);
         const customerGstin = details?.customerGstin || details?.gstin || '';
         const placeOfSupply = this.resolvePlaceOfSupply(rawAddress);
 
@@ -1980,19 +2009,36 @@ ${rawText}`,
             .text('ENLIGHT METALS', leftX, 40);
         }
 
+        let leftHeaderY = 86;
         doc
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(9.5)
-          .text('Enlight Metals Private Limited', leftX, 84);
+          .text('Enlight Metals Private Limited', leftX, leftHeaderY);
+        leftHeaderY += 14;
+
         doc.fillColor('#475569').font(fontRegular).fontSize(8);
-        doc.text('606 Clover Hills Plaza', leftX, 96);
-        doc.text('NIBM Road', leftX, 107);
-        doc.text('Pune Maharashtra 411048', leftX, 118);
-        doc.text('India', leftX, 129);
-        doc.text('GSTIN 27AAICE5263E1ZN', leftX, 140);
-        doc.text('accounts@enlightmetals.com', leftX, 151);
-        doc.text('https://enlightmetals.com/', leftX, 162);
+        doc.text('606 Clover Hills Plaza', leftX, leftHeaderY);
+        leftHeaderY += 12;
+        doc.text('NIBM Road', leftX, leftHeaderY);
+        leftHeaderY += 12;
+        doc.text('Pune Maharashtra 411048', leftX, leftHeaderY);
+        leftHeaderY += 12;
+        doc.text('India', leftX, leftHeaderY);
+        leftHeaderY += 12;
+
+        doc
+          .fillColor('#334155')
+          .font(fontRegular)
+          .fontSize(8)
+          .text('GSTIN 27AAICE5263E1ZN', leftX, leftHeaderY);
+        leftHeaderY += 12;
+
+        doc.fillColor('#475569').font(fontRegular).fontSize(8);
+        doc.text('accounts@enlightmetals.com', leftX, leftHeaderY);
+        leftHeaderY += 12;
+        doc.text('https://enlightmetals.com/', leftX, leftHeaderY);
+        leftHeaderY += 12;
 
         // Top Right Proforma Invoice Header
         doc
@@ -2010,7 +2056,9 @@ ${rawText}`,
           });
 
         // 2. Bill To, Ship To & Supply Section (Left) / Order Date & Salesperson (Right)
-        let currY = 195;
+        let currY = Math.max(leftHeaderY + 22, 205);
+
+        // Bill To Block
         doc
           .fillColor('#1E293B')
           .font(fontBold)
@@ -2022,18 +2070,21 @@ ${rawText}`,
           .font(fontBold)
           .fontSize(9)
           .text(compName, leftX, currY);
-        currY += 12;
+        currY += 13;
         doc.fillColor('#475569').font(fontRegular).fontSize(8);
-        for (const line of addressLines) {
+        for (const line of billToLines) {
           doc.text(line, leftX, currY);
-          currY += 11;
+          currY += 11.5;
         }
         if (customerGstin) {
           doc.text(`GSTIN ${customerGstin}`, leftX, currY);
-          currY += 11;
+          currY += 11.5;
         }
-        currY += 6;
 
+        // Space between Bill To and Ship To
+        currY += 12;
+
+        // Ship To Block
         doc
           .fillColor('#1E293B')
           .font(fontBold)
@@ -2045,13 +2096,15 @@ ${rawText}`,
           .font(fontBold)
           .fontSize(9)
           .text(compName, leftX, currY);
-        currY += 12;
+        currY += 13;
         doc.fillColor('#475569').font(fontRegular).fontSize(8);
-        for (const line of addressLines) {
+        for (const line of shipToLines) {
           doc.text(line, leftX, currY);
-          currY += 11;
+          currY += 11.5;
         }
-        currY += 6;
+
+        // Space before Place of Supply
+        currY += 10;
 
         doc
           .fillColor('#1E293B')
@@ -2064,29 +2117,33 @@ ${rawText}`,
         currY += 16;
 
         // Right Column: Order Date & Sales Person
-        const metaRightY = currY - 32;
+        const rightBoxX = 395;
+        const metaRightY = currY - 34;
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Order Date :', 350, metaRightY, { width: 90 });
+          .text('Order Date :', rightBoxX, metaRightY, { width: 75 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(todayDate, 445, metaRightY, { width: 110.28, align: 'right' });
+          .text(todayDate, rightBoxX + 75, metaRightY, {
+            width: 85,
+            align: 'right',
+          });
 
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Sales person :', 350, metaRightY + 15, { width: 90 });
+          .text('Sales person :', rightBoxX, metaRightY + 16, { width: 75 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(salesperson, 445, metaRightY + 15, {
-            width: 110.28,
+          .text(salesperson, rightBoxX + 75, metaRightY + 16, {
+            width: 85,
             align: 'right',
           });
 
