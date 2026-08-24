@@ -1360,13 +1360,9 @@ export class InquiriesService {
 
       if (resendApiKey) {
         try {
-          const isOrderDoc = Boolean(details.isOrder || isDealRecord);
+          const isOrderDoc = Boolean(details?.isOrder === true);
           const poRefNum =
-            details.poNumber ||
-            (isDealRecord
-              ? (inquiry.ai_extraction_json as any)?.po_number
-              : null) ||
-            `PO-${Math.floor(1000 + Math.random() * 9000)}`;
+            details.poNumber || `PO-${Math.floor(1000 + Math.random() * 9000)}`;
           const qRefNum = isOrderDoc
             ? poRefNum
             : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
