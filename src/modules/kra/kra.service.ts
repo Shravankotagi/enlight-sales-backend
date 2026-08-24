@@ -330,6 +330,18 @@ export class KraService {
         if (d.total_amount && Number(d.total_amount) > 0) {
           return sum + Number(d.total_amount);
         }
+        if (Array.isArray(d.deal_items) && d.deal_items.length > 0) {
+          const subtotal = d.deal_items.reduce((s: number, i: any) => {
+            const amt =
+              Number(i.amount) ||
+              (Number(i.quantity) || 0) *
+                (Number(i.rate || i.quoted_price || i.price_per_mt) || 0);
+            return s + amt;
+          }, 0);
+          if (subtotal > 0) {
+            return sum + (subtotal + Math.round(subtotal * 0.18));
+          }
+        }
         // Fallback: check if kra_logs or payment_tracking has value for this customer
         const customerLogs = kraLogs.filter(
           (l) =>

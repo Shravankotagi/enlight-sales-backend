@@ -75,6 +75,24 @@ export class DealsService {
       if (error) throw error;
 
       const lightweightDeals = (data || []).map((d: any) => {
+        let computedTotal = Number(d.total_amount) || 0;
+        if (
+          computedTotal <= 0 &&
+          Array.isArray(d.deal_items) &&
+          d.deal_items.length > 0
+        ) {
+          const subtotal = d.deal_items.reduce((s: number, i: any) => {
+            const amt =
+              Number(i.amount) ||
+              (Number(i.quantity) || 0) *
+                (Number(i.rate || i.quoted_price || i.price_per_mt) || 0);
+            return s + amt;
+          }, 0);
+          if (subtotal > 0) {
+            computedTotal = subtotal + Math.round(subtotal * 0.18);
+          }
+        }
+
         const hasMedia = Boolean(
           d.inquiry_id ||
             d.po_number ||
@@ -82,6 +100,7 @@ export class DealsService {
         );
         return {
           ...d,
+          total_amount: computedTotal > 0 ? computedTotal : null,
           has_media: hasMedia,
           media_urls: hasMedia ? ['attached_document'] : [],
         };
@@ -282,6 +301,34 @@ export class DealsService {
         .single();
       if (error) throw error;
 
+      // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
+      let effectiveTotal = Number(data?.total_amount) || 0;
+      if (stage === 'won') {
+        if (effectiveTotal <= 0) {
+          const { data: items } = await this.supabase
+            .from('deal_items')
+            .select('*')
+            .eq('deal_id', id);
+          if (items && items.length > 0) {
+            const subtotal = items.reduce((s: number, i: any) => {
+              const amt =
+                Number(i.amount) ||
+                (Number(i.quantity) || 0) *
+                  (Number(i.rate || i.quoted_price || i.price_per_mt) || 0);
+              return s + amt;
+            }, 0);
+            if (subtotal > 0) {
+              effectiveTotal = subtotal + Math.round(subtotal * 0.18);
+              await this.supabase
+                .from('deals')
+                .update({ total_amount: effectiveTotal })
+                .eq('id', id);
+              data.total_amount = effectiveTotal;
+            }
+          }
+        }
+      }
+
       // Automatically create or update payment tracking record when a deal is marked WON
       if (stage === 'won' && data) {
         const wonDate = data.won_at ? new Date(data.won_at) : new Date();
@@ -313,8 +360,8 @@ export class DealsService {
           await this.supabase
             .from('payment_tracking')
             .update({
-              total_deal_amount: data.total_amount || 0,
-              pending_amount: data.total_amount || 0,
+              total_deal_amount: effectiveTotal || data.total_amount || 0,
+              pending_amount: effectiveTotal || data.total_amount || 0,
               due_date: dueDateStr,
               deal_id: data.id,
               salesperson_phone: data.salesperson_phone || null,
@@ -325,14 +372,33 @@ export class DealsService {
           await this.supabase.from('payment_tracking').insert({
             deal_id: data.id,
             customer_name: data.customer_name,
-            total_deal_amount: data.total_amount || 0,
+            total_deal_amount: effectiveTotal || data.total_amount || 0,
             paid_amount: 0,
-            pending_amount: data.total_amount || 0,
+            pending_amount: effectiveTotal || data.total_amount || 0,
             status: 'pending',
             due_date: dueDateStr,
             salesperson_phone: data.salesperson_phone || null,
             created_at: new Date().toISOString(),
           });
+        }
+
+        // Log to kra_logs for KRA 1 (Sales Achievement)
+        try {
+          const now = new Date();
+          const nowIso = now.toISOString();
+          await this.supabase.from('kra_logs').insert({
+            kra_number: 1,
+            kra_type: 'deal_won',
+            description: `Deal Won: ${data.customer_name} (₹${(effectiveTotal || 0).toLocaleString('en-IN')})`,
+            salesperson_phone: data.salesperson_phone || null,
+            customer_name: data.customer_name,
+            value: effectiveTotal || 0,
+            month: now.getMonth() + 1,
+            year: now.getFullYear(),
+            created_at: nowIso,
+          });
+        } catch (kraErr: any) {
+          this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
         }
       }
 

@@ -47,7 +47,6 @@ function getAssetFontPath(fontFilename: string): string | null {
 
 import { DealsService } from '../deals/deals.service';
 import {
-  calculateSubtotal,
   calculateQuotationBreakdown,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
@@ -1173,20 +1172,29 @@ export class InquiriesService {
         aiJson.line_items ||
         [];
 
-      let totalAmount = Number(
-        details.totalAmount ||
-          details.total_amount ||
-          aiJson.totalAmount ||
-          aiJson.total_amount ||
-          0,
-      );
+      let subtotal = 0;
+      let hasValidRates = false;
 
-      if (
-        totalAmount <= 0 &&
-        Array.isArray(lineItemsSrc) &&
-        lineItemsSrc.length > 0
-      ) {
-        totalAmount = calculateSubtotal(lineItemsSrc);
+      if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) {
+        subtotal = lineItemsSrc.reduce((s: number, item: any) => {
+          const q = Number(item.quantity) || 0;
+          const r = Number(item.rate) || 0;
+          if (r > 0) hasValidRates = true;
+          const amt = Number(item.amount) || Math.round(q * r);
+          return s + amt;
+        }, 0);
+      }
+
+      let grandTotal: number | null = null;
+      if (hasValidRates && subtotal > 0) {
+        // Grand Total = Subtotal + 18% GST
+        const gst = Math.round(subtotal * 0.18);
+        grandTotal = subtotal + gst;
+      } else if (Number(details.grandTotal || details.grand_total || 0) > 0) {
+        grandTotal = Number(details.grandTotal || details.grand_total);
+      } else if (Number(details.totalAmount || details.total_amount || 0) > 0) {
+        const rawBase = Number(details.totalAmount || details.total_amount);
+        grandTotal = rawBase + Math.round(rawBase * 0.18);
       }
 
       // Check if a deal already exists for this inquiry
@@ -1209,7 +1217,8 @@ export class InquiriesService {
             salesperson_phone: salespersonPhone,
             delivery_location: deliveryLocation || undefined,
             payment_terms: paymentTerms || undefined,
-            total_amount: totalAmount > 0 ? totalAmount : undefined,
+            total_amount:
+              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
             status: 'auto_created',
             updated_at: new Date().toISOString(),
           })
@@ -1226,7 +1235,8 @@ export class InquiriesService {
             salesperson_phone: salespersonPhone,
             delivery_location: deliveryLocation || null,
             payment_terms: paymentTerms || null,
-            total_amount: totalAmount > 0 ? totalAmount : null,
+            total_amount:
+              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
             inquiry_type: inquiry.inquiry_type || 'Product Requirement',
             status: 'auto_created',
             overall_confidence: Number(inquiry.overall_confidence) || 0.95,
