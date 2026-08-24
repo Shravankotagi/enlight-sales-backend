@@ -1486,15 +1486,83 @@ MIDC Industrial Zone, Mumbai - 400001`;
             lineItems: lineItemsList,
           };
 
-          const pdfBuffer = payload.pdf_base64
-            ? Buffer.from(payload.pdf_base64, 'base64')
-            : await this.generatePdfKitBuffer(
-                qRefNum,
-                customerName,
-                customerEmail,
-                pdfDetails,
-              );
-          const pdfBase64 = pdfBuffer.toString('base64');
+          const attachments: Array<{ filename: string; content: string }> = [];
+          const sanitizedRef = qRefNum.replace(/[/\\?%*:|"<>]/g, '_');
+
+          // Check if an original PO document is available
+          const rawMedia =
+            Array.isArray(details.media_urls) && details.media_urls.length > 0
+              ? details.media_urls[0]
+              : Array.isArray(inquiry?.media_urls) &&
+                  inquiry.media_urls.length > 0
+                ? inquiry.media_urls[0]
+                : null;
+
+          let hasOriginalDoc = false;
+          if (rawMedia && typeof rawMedia === 'string') {
+            if (rawMedia.startsWith('data:')) {
+              const matches = rawMedia.match(/^data:([^;]+);base64,(.+)$/s);
+              if (matches) {
+                const mime = matches[1];
+                const base64Data = matches[2];
+                let ext = '.pdf';
+                if (mime.includes('png')) ext = '.png';
+                else if (mime.includes('jpeg') || mime.includes('jpg'))
+                  ext = '.jpg';
+
+                attachments.push({
+                  filename: `Original_PO_${sanitizedRef}${ext}`,
+                  content: base64Data,
+                });
+                hasOriginalDoc = true;
+              }
+            } else if (rawMedia.startsWith('http')) {
+              try {
+                const docFetch = await fetch(rawMedia);
+                if (docFetch.ok) {
+                  const arrBuf = await docFetch.arrayBuffer();
+                  const base64Data = Buffer.from(arrBuf).toString('base64');
+                  const contentType =
+                    docFetch.headers.get('content-type') || '';
+                  let ext = '.pdf';
+                  if (contentType.includes('png')) ext = '.png';
+                  else if (
+                    contentType.includes('jpeg') ||
+                    contentType.includes('jpg')
+                  )
+                    ext = '.jpg';
+
+                  attachments.push({
+                    filename: `Original_PO_${sanitizedRef}${ext}`,
+                    content: base64Data,
+                  });
+                  hasOriginalDoc = true;
+                }
+              } catch (fetchErr) {
+                this.logger.warn(
+                  'Failed to fetch remote original media:',
+                  fetchErr,
+                );
+              }
+            }
+          }
+
+          // If no original document was attached or if explicit pdf_base64 was provided, generate official PDF document
+          if (!hasOriginalDoc || payload.pdf_base64) {
+            const pdfBuffer = payload.pdf_base64
+              ? Buffer.from(payload.pdf_base64, 'base64')
+              : await this.generatePdfKitBuffer(
+                  qRefNum,
+                  customerName,
+                  customerEmail,
+                  pdfDetails,
+                );
+            const pdfBase64 = pdfBuffer.toString('base64');
+            attachments.push({
+              filename: `${isOrderDoc ? 'Official_PO' : 'Official_Quotation'}_${sanitizedRef}.pdf`,
+              content: pdfBase64,
+            });
+          }
 
           const fromAddress =
             fromEmail === 'onboarding@resend.dev'
@@ -1502,7 +1570,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
               : `Enlight Metals <${fromEmail}>`;
 
           const docSubject = isOrderDoc
-            ? `Official Purchase Order Quotation ${qRefNum} - ${customerName}`
+            ? `Purchase Order ${qRefNum} - ${customerName} | Enlight Metals`
             : `Official Commercial Quotation ${qRefNum} - ${customerName}`;
 
           const resendRes = await fetch('https://api.resend.com/emails', {
@@ -1516,26 +1584,21 @@ MIDC Industrial Zone, Mumbai - 400001`;
               to: [customerEmail],
               subject: docSubject,
               text: textContent,
-              attachments: [
-                {
-                  filename: `${isOrderDoc ? 'PO_Quotation' : 'Official_Quotation'}_${qRefNum.replace(/[/\\?%*:|"<>]/g, '_')}.pdf`,
-                  content: pdfBase64,
-                },
-              ],
+              attachments,
             }),
           });
 
           const resendData = await resendRes.json();
           if (resendRes.ok) {
             emailSent = true;
-            emailNotice = `Live email & PDF Quotation (${qRefNum}.pdf) dispatched to ${customerEmail} via Resend!`;
+            emailNotice = `Live email & PO Document (${qRefNum}) dispatched to ${customerEmail} via Resend!`;
           } else {
             this.logger.warn('Resend API call error:', resendData);
             emailNotice = `Resend Notice: ${resendData.message || 'Check recipient email or domain verification.'}`;
           }
         } catch (rErr: any) {
           this.logger.error('Resend fetch exception:', rErr);
-          emailNotice = `Quotation logged! ${rErr.message || 'Add valid RESEND_API_KEY to send live emails.'}`;
+          emailNotice = `Order logged! ${rErr.message || 'Add valid RESEND_API_KEY to send live emails.'}`;
         }
       } else {
         emailNotice =
