@@ -171,7 +171,7 @@ async function processCustomerMessage(text, senderPhone) {
           `pending_profile|${payloadStr}`,
         );
         return (
-          `Oops! I missed getting the *Company Name* for this customer. 😅\n\n` +
+          `Oops! I missed getting the *Company Name* for this customer. \n\n` +
           `Could you please tell me the Company Name for ${data.contact_person ? `*${data.contact_person}*` : 'this contact'}` +
           (data.phone ? ` with mobile number *${data.phone}*` : '') +
           `?\n\n` +
@@ -179,7 +179,7 @@ async function processCustomerMessage(text, senderPhone) {
         );
       }
 
-      return `⚠️ *Customer Agent — Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
+      return ` *Customer Agent — Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -265,20 +265,20 @@ async function processCustomerMessage(text, senderPhone) {
         // Prompt missing info for the found customer
         const missingInfo = [];
         if (!record.customer_phone && !data.phone)
-          missingInfo.push('• 📱 *Mobile Number*');
+          missingInfo.push('•  *Mobile Number*');
         if (!record.contact_person && !data.contact_person)
-          missingInfo.push('• 👤 *Owner / Contact Person Name*');
+          missingInfo.push('•  *Owner / Contact Person Name*');
         if (!record.customer_address && !data.city)
-          missingInfo.push('• 📍 *City / Location*');
+          missingInfo.push('•  *City / Location*');
         if (!record.customer_gst && !data.gst)
-          missingInfo.push('• 🧾 *GSTIN* (optional)');
+          missingInfo.push('•  *GSTIN* (optional)');
         const promptSuffix =
           missingInfo.length > 0
-            ? `\n\n📌 *To complete the profile, reply with:*\n${missingInfo.join('\n')}`
+            ? `\n\n *To complete the profile, reply with:*\n${missingInfo.join('\n')}`
             : '';
 
         return (
-          `ℹ️ *Customer Already Exists*\n\n` +
+          `ℹ *Customer Already Exists*\n\n` +
           `*${record.customer_name}* is already registered under your account.\n` +
           (data.contact_person
             ? `Contact updated to: *${data.contact_person}*\n`
@@ -343,21 +343,21 @@ async function processCustomerMessage(text, senderPhone) {
 
     // Prompt for missing info
     const missingInfo = [];
-    if (!data.phone) missingInfo.push('• 📱 *Mobile Number*');
+    if (!data.phone) missingInfo.push('•  *Mobile Number*');
     if (!data.contact_person)
-      missingInfo.push('• 👤 *Owner / Contact Person Name*');
-    if (!data.city) missingInfo.push('• 📍 *City / Location*');
-    if (!data.gst) missingInfo.push('• 🧾 *GSTIN* (optional)');
+      missingInfo.push('•  *Owner / Contact Person Name*');
+    if (!data.city) missingInfo.push('•  *City / Location*');
+    if (!data.gst) missingInfo.push('•  *GSTIN* (optional)');
 
     const promptSuffix =
       missingInfo.length > 0
-        ? `\n\n📌 *To complete ${finalCustomerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
+        ? `\n\n *To complete ${finalCustomerName}'s profile, reply with:*\n${missingInfo.join('\n')}` +
           `\n\n_(e.g. "${finalCustomerName} phone 9876543210 owner Mr. Kapoor location Mumbai")_`
         : '';
 
     if (alreadyLogged && !isNewAcquisition) {
       return (
-        `✅ *Customer Profile Updated!*\n\n` +
+        ` *Customer Profile Updated!*\n\n` +
         `Company: *${finalCustomerName}*\n` +
         (data.contact_person ? `Contact: *${data.contact_person}*\n` : '') +
         (data.phone ? `Phone: *${data.phone}*\n` : '') +
@@ -378,18 +378,18 @@ async function processCustomerMessage(text, senderPhone) {
     });
 
     return (
-      `👤 *KRA 2 - New Customer Onboarded!*\n\n` +
+      ` *KRA 2 - New Customer Onboarded!*\n\n` +
       `Company: *${finalCustomerName}*\n` +
       (data.contact_person ? `Contact/Owner: *${data.contact_person}*\n` : '') +
       (data.phone ? `Phone: *${data.phone}*\n` : '') +
       (data.city ? `City: *${data.city}*\n` : '') +
       `Monthly Progress: *${currentCount} / 3 Onboarded*\n\n` +
-      `Added live to your Customers Dashboard! ✅` +
+      `Added live to your Customers Dashboard! ` +
       promptSuffix
     );
   } catch (error) {
     console.error('Customer Agent Error:', error.message);
-    return `⚠️ Could not process customer onboarding: ${error.message}`;
+    return ` Could not process customer onboarding: ${error.message}`;
   }
 }
 

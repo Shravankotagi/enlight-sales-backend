@@ -13,7 +13,7 @@ async function applyPhase2RLS() {
 
   if (!connectionString) {
     console.error(
-      '❌ FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
+      ' FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
     );
     process.exit(1);
   }
@@ -26,11 +26,11 @@ async function applyPhase2RLS() {
 
   try {
     await client.connect();
-    console.log('✅ Connected to database successfully.');
+    console.log(' Connected to database successfully.');
 
     const sqlFilePath = path.resolve(process.cwd(), 'supabase-phase2-rls.sql');
     if (!fs.existsSync(sqlFilePath)) {
-      console.error(`❌ Migration file not found at ${sqlFilePath}`);
+      console.error(` Migration file not found at ${sqlFilePath}`);
       process.exit(1);
     }
 
@@ -39,9 +39,9 @@ async function applyPhase2RLS() {
 
     await client.query(sql);
 
-    console.log('✅ SUCCESS: Phase 2 RLS policies applied successfully!');
+    console.log(' SUCCESS: Phase 2 RLS policies applied successfully!');
   } catch (err: any) {
-    console.error('❌ RLS Execution Error:', err.message || err);
+    console.error(' RLS Execution Error:', err.message || err);
     process.exit(1);
   } finally {
     await client.end();

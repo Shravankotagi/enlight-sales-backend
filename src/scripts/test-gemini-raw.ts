@@ -16,7 +16,7 @@ async function main() {
 
   if (!apiKey) {
     console.error(
-      '❌ FAILED: Neither GEMINI_API_KEY nor GEMINI_API_KEY_1/2/3 is set in environment variables.',
+      ' FAILED: Neither GEMINI_API_KEY nor GEMINI_API_KEY_1/2/3 is set in environment variables.',
     );
     console.log(
       'Please ensure GEMINI_API_KEY is configured in em-os-backend/.env',
@@ -24,11 +24,11 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`🔑 Gemini API Key configured: ***${apiKey.slice(-4)}`);
+  console.log(` Gemini API Key configured: ***${apiKey.slice(-4)}`);
 
   // Target model: gemini-3.5-flash
   const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-  console.log(`🤖 Target Model: ${modelName}`);
+  console.log(` Target Model: ${modelName}`);
 
   try {
     const { GoogleGenAI } = await import('@google/genai');
@@ -41,20 +41,21 @@ async function main() {
         'Respond with a single sentence confirming that the Enlight Sales OS Chatbot backend connection to Gemini is functional.',
     });
 
-    console.log('\n✅ SUCCESS: Gemini Raw API Response Received:');
+    console.log('\n SUCCESS: Gemini Raw API Response Received:');
     console.log('--------------------------------------------------');
     console.log(response.text?.trim() || JSON.stringify(response));
     console.log('--------------------------------------------------');
   } catch (err: any) {
     console.warn(
-      `\n⚠️ Primary test with @google/genai / ${modelName} encountered an issue:`,
+      `\n Primary test with @google/genai / ${modelName} encountered an issue:`,
       err?.message || err,
     );
     console.log('Retrying with LangChain Google GenAI fallback router...');
 
     try {
-      const { ChatGoogleGenerativeAI } =
-        await import('@langchain/google-genai');
+      const { ChatGoogleGenerativeAI } = await import(
+        '@langchain/google-genai'
+      );
       const { HumanMessage } = await import('@langchain/core/messages');
 
       const model = new ChatGoogleGenerativeAI({
@@ -69,7 +70,7 @@ async function main() {
         ),
       ]);
 
-      console.log('\n✅ SUCCESS: Gemini LangChain Response Received:');
+      console.log('\n SUCCESS: Gemini LangChain Response Received:');
       console.log('--------------------------------------------------');
       console.log(
         typeof res.content === 'string'
@@ -79,7 +80,7 @@ async function main() {
       console.log('--------------------------------------------------');
     } catch (fallbackErr: any) {
       console.error(
-        '❌ FAILED: Gemini raw API call failed:',
+        ' FAILED: Gemini raw API call failed:',
         fallbackErr?.message || fallbackErr,
       );
       process.exit(1);

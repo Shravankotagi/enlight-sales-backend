@@ -113,7 +113,7 @@ async function processComplaintMessage(text, senderPhone) {
 
     // Edge Case 5: Missing customer name
     if (!data.customer_name) {
-      return `⚠️ *Quality Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company Name* for this complaint.\nExample: _"Quality complaint from Delta Structural Steel — wrong material delivered"_`;
+      return ` *Quality Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company Name* for this complaint.\nExample: _"Quality complaint from Delta Structural Steel — wrong material delivered"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -194,7 +194,7 @@ async function processComplaintMessage(text, senderPhone) {
             kra_number: 8,
             kra_type: 'complaint_resolved',
             customer_name: finalCustomerName,
-            description: `Complaint Resolved: ${finalCustomerName} (${resolutionTimeHrs}h — ${isSlaCompliant ? 'Within SLA ✅' : 'SLA BREACHED ⚠️'})`,
+            description: `Complaint Resolved: ${finalCustomerName} (${resolutionTimeHrs}h — ${isSlaCompliant ? 'Within SLA ' : 'SLA BREACHED '})`,
             month: new Date().getMonth() + 1,
             year: new Date().getFullYear(),
           });
@@ -222,12 +222,12 @@ async function processComplaintMessage(text, senderPhone) {
         );
 
         return (
-          `✅ *KRA 8 - Complaint Resolved!*\n\n` +
+          ` *KRA 8 - Complaint Resolved!*\n\n` +
           `Customer: *${finalCustomerName}*\n` +
           `Complaint Type: *${complaintType.toUpperCase()}*\n` +
           `Resolution Time: *${resolutionTimeHrs} Hours*\n` +
-          `SLA Target (48h): *${isSlaCompliant ? '✅ Achieved — Within Target!' : '⚠️ Breached — Escalated!'}*\n\n` +
-          `Updated KRA 8 Complaint Resolution Dashboard! ✅` +
+          `SLA Target (48h): *${isSlaCompliant ? ' Achieved — Within Target!' : ' Breached — Escalated!'}*\n\n` +
+          `Updated KRA 8 Complaint Resolution Dashboard! ` +
           (missingPrompt || '')
         );
       } else {
@@ -261,10 +261,10 @@ async function processComplaintMessage(text, senderPhone) {
         );
 
         return (
-          `✅ *KRA 8 - Complaint Resolved!*\n\n` +
+          ` *KRA 8 - Complaint Resolved!*\n\n` +
           `Customer: *${finalCustomerName}*\n` +
           `_Note: No prior open complaint found. Created and resolved in one step._\n\n` +
-          `Updated KRA 8 Complaint Resolution Dashboard! ✅` +
+          `Updated KRA 8 Complaint Resolution Dashboard! ` +
           (missingPrompt || '')
         );
       }
@@ -275,7 +275,7 @@ async function processComplaintMessage(text, senderPhone) {
     const existingOpen = await getOpenComplaint(finalCustomerName);
     if (existingOpen && existingOpen.complaint_type === complaintType) {
       return (
-        `⚠️ *Complaint Already Open*\n\n` +
+        ` *Complaint Already Open*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Type: *${complaintType.toUpperCase()}*\n` +
         `Reported: *${new Date(existingOpen.reported_at).toLocaleString('en-IN')}*\n\n` +
@@ -326,10 +326,10 @@ async function processComplaintMessage(text, senderPhone) {
         const { sendTextMessage } = require('../whatsapp');
         await sendTextMessage(
           targetPhone,
-          `🚨 *URGENT COMPLAINT ALERT — ${finalCustomerName}*\n\n` +
+          ` *URGENT COMPLAINT ALERT — ${finalCustomerName}*\n\n` +
             `Type: *${complaintType.toUpperCase()}*\n` +
             `Issue: ${description}\n` +
-            `SLA Target: *Resolve within 48 Hours ⏱️*\n\n` +
+            `SLA Target: *Resolve within 48 Hours *\n\n` +
             `Reply: _"Resolved ${finalCustomerName} complaint"_ once sorted.`,
         );
       } catch (alertError) {
@@ -353,19 +353,19 @@ async function processComplaintMessage(text, senderPhone) {
     });
 
     return (
-      `🚨 *KRA 7 - Quality Complaint Logged*\n\n` +
+      ` *KRA 7 - Quality Complaint Logged*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Type: *${complaintType.toUpperCase()}*\n` +
       (affectedProduct ? `Product Affected: *${affectedProduct}*\n` : '') +
       `Details: ${rawDescription}\n` +
-      `Status: *Open ⏱️ (48-Hour SLA Clock Started)*\n` +
+      `Status: *Open  (48-Hour SLA Clock Started)*\n` +
       `SLA Due: *${slaDueAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}*\n\n` +
-      `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ✅` +
+      `When resolved, reply: _"Resolved ${finalCustomerName} complaint"_ ` +
       (missingPrompt || '')
     );
   } catch (error) {
     console.error('Complaint Agent Error:', error.message);
-    return `⚠️ Could not process complaint update: ${error.message}`;
+    return ` Could not process complaint update: ${error.message}`;
   }
 }
 

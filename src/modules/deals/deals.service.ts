@@ -731,7 +731,7 @@ export class DealsService {
         await this.supabase.from('kra_logs').insert({
           kra_number: 1,
           kra_type: 'order_created',
-          description: `PO Received: ${poNumber} - ${customerName} (₹${totalAmount.toLocaleString('en-IN')}) - Deal Won 🎉`,
+          description: `PO Received: ${poNumber} - ${customerName} (₹${totalAmount.toLocaleString('en-IN')}) - Deal Won `,
           salesperson_phone: phone,
           customer_name: customerName,
           month: now.getMonth() + 1,
@@ -749,7 +749,7 @@ export class DealsService {
           .update({
             status: 'resolved',
             resolved_at: nowIso,
-            resolution_notes: `Order placed: PO #${poNumber} (₹${totalAmount.toLocaleString('en-IN')}) 🎉`,
+            resolution_notes: `Order placed: PO #${poNumber} (₹${totalAmount.toLocaleString('en-IN')}) `,
           })
           .ilike('customer_name', `%${customerName}%`)
           .eq('status', 'pending');

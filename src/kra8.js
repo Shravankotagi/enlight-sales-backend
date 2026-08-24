@@ -218,33 +218,33 @@ function buildComplaintConfirmation(details, complaint) {
   const shortId = complaint?.id?.substring(0, 8) || 'N/A';
   const severityEmoji =
     {
-      low: '🟡',
-      medium: '🟠',
-      high: '🔴',
-      critical: '🚨',
-    }[details.severity] || '🟠';
+      low: '',
+      medium: '',
+      high: '',
+      critical: '',
+    }[details.severity] || '';
 
   const typeEmoji =
     {
-      quality: '🔍',
-      quantity: '📦',
-      billing: '💰',
-      delivery: '🚚',
-      size: '📏',
-      grade: '⚗️',
-      damage: '💔',
-      other: '❓',
-    }[details.complaint_type] || '❓';
+      quality: '',
+      quantity: '',
+      billing: '',
+      delivery: '',
+      size: '',
+      grade: '',
+      damage: '',
+      other: '',
+    }[details.complaint_type] || '';
 
   return (
     `${severityEmoji} *Customer Complaint Logged*\n\n` +
-    `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
+    ` Customer: ${details.customer_name || 'Not specified'}\n` +
     `${typeEmoji} Type: ${details.complaint_type}\n` +
-    `📝 Description: ${details.description}\n` +
-    `⚡ Severity: ${details.severity}\n` +
-    `🔖 Ref: ${shortId}\n\n` +
-    `⏰ *48-hour resolution timer started*\n\n` +
-    `Updated Customer Complaints Card! ✅\n\n` +
+    ` Description: ${details.description}\n` +
+    ` Severity: ${details.severity}\n` +
+    ` Ref: ${shortId}\n\n` +
+    ` *48-hour resolution timer started*\n\n` +
+    `Updated Customer Complaints Card! \n\n` +
     `You will receive reminders at:\n` +
     `• 24 hours - if still open\n` +
     `• 48 hours - escalation to Sales Lead\n\n` +
@@ -323,7 +323,7 @@ async function checkComplaints() {
         if (now - lastReminded >= SIX_HOURS_MS) {
           const count = teamComplaints.length;
           let managerMsg =
-            `⚠️ *Customer Complaints Reminder — Team Alert*\n\n` +
+            ` *Customer Complaints Reminder — Team Alert*\n\n` +
             `Hello ${manager.name || 'Sales Manager'},\n` +
             `You have *${count} open complaint${count > 1 ? 's' : ''}* pending resolution in your sales team:\n\n`;
 
@@ -340,14 +340,14 @@ async function checkComplaints() {
               : c.reported_by || 'Salesperson';
 
             managerMsg +=
-              `${idx + 1}️⃣ *${c.customer_name || 'Customer'}* (Type: ${c.complaint_type || 'General'})\n` +
-              `📝 ${c.description}\n` +
-              `👤 Reported by: ${repName} (${c.reported_by})\n` +
-              `⏰ Open for: *${hrsOpen}h* ${hrsOpen >= 48 ? '🚨 *(SLA BREACHED)*' : `(⏰ ${hoursLeft}h until SLA breach)`}\n\n`;
+              `${idx + 1} *${c.customer_name || 'Customer'}* (Type: ${c.complaint_type || 'General'})\n` +
+              ` ${c.description}\n` +
+              ` Reported by: ${repName} (${c.reported_by})\n` +
+              ` Open for: *${hrsOpen}h* ${hrsOpen >= 48 ? ' *(SLA BREACHED)*' : `( ${hoursLeft}h until SLA breach)`}\n\n`;
           });
 
           managerMsg +=
-            `💡 *Action Required:* Please follow up with your team to resolve these complaints within the 48-hour SLA.\n` +
+            ` *Action Required:* Please follow up with your team to resolve these complaints within the 48-hour SLA.\n` +
             `Salesperson can reply *RESOLVED [Customer] [resolution]* on WhatsApp or mark resolved on the web dashboard.`;
 
           await sendTextMessage(manager.phone, managerMsg);
@@ -375,7 +375,7 @@ async function checkComplaints() {
     ) {
       const totalOpen = openComplaints.length;
       let adminMsg =
-        `⚠️ *Daily Customer Complaints Digest — Enlight Metals*\n\n` +
+        ` *Daily Customer Complaints Digest — Enlight Metals*\n\n` +
         `There are currently *${totalOpen} unresolved complaint${totalOpen > 1 ? 's' : ''}* across all sales teams:\n\n`;
 
       openComplaints.forEach((c, idx) => {
@@ -388,13 +388,13 @@ async function checkComplaints() {
         const repName = repEmp ? repEmp.name : c.reported_by || 'Salesperson';
 
         adminMsg +=
-          `${idx + 1}️⃣ *${c.customer_name || 'Customer'}* (Type: ${c.complaint_type || 'General'})\n` +
-          `📝 ${c.description}\n` +
-          `👤 Salesperson: ${repName}\n` +
-          `⏰ Open for: *${hrsOpen}h* ${hrsOpen >= 48 ? '🚨 *(Escalated / Overdue)*' : '⏳ (Within 48h SLA)'}\n\n`;
+          `${idx + 1} *${c.customer_name || 'Customer'}* (Type: ${c.complaint_type || 'General'})\n` +
+          ` ${c.description}\n` +
+          ` Salesperson: ${repName}\n` +
+          ` Open for: *${hrsOpen}h* ${hrsOpen >= 48 ? ' *(Escalated / Overdue)*' : ' (Within 48h SLA)'}\n\n`;
       });
 
-      adminMsg += `📊 Full details and status updates are available on the Enlight Sales Dashboard.`;
+      adminMsg += ` Full details and status updates are available on the Enlight Sales Dashboard.`;
 
       for (const admin of admins) {
         await sendTextMessage(admin.phone, adminMsg);
@@ -428,12 +428,12 @@ async function checkComplaints() {
           .eq('id', complaint.id);
 
         const salespersonMsg =
-          `🚨 *Customer Complaint Escalated*\n\n` +
+          ` *Customer Complaint Escalated*\n\n` +
           `Complaint ref: ${complaint.id.substring(0, 8)}\n` +
           `Customer: ${complaint.customer_name || 'Unknown'}\n` +
           `Type: ${complaint.complaint_type}\n` +
           `Hours open: ${Math.round(hoursElapsed)}h\n\n` +
-          `⚠️ This has exceeded the 48-hour SLA and has been escalated to Management.\n` +
+          ` This has exceeded the 48-hour SLA and has been escalated to Management.\n` +
           `Please resolve immediately and reply:\n` +
           `*RESOLVED ${complaint.customer_name?.split(' ')[0]?.toUpperCase() || 'COMPLAINT'} [resolution]*`;
 
@@ -450,12 +450,12 @@ async function checkComplaints() {
           notificationThrottleState.complaintLastReminded[complaint.id] || 0;
         if (now - lastComplaintReminded >= SIX_HOURS_MS) {
           const reminderMsg =
-            `⚠️ *Customer Complaint Reminder*\n\n` +
+            ` *Customer Complaint Reminder*\n\n` +
             `Complaint open for ${Math.round(hoursElapsed)} hours:\n\n` +
             `Customer: ${complaint.customer_name || 'Unknown'}\n` +
             `Type: ${complaint.complaint_type}\n` +
             `Description: ${complaint.description}\n\n` +
-            `⏰ ${Math.max(0, Math.round(48 - hoursElapsed))} hours until escalation\n\n` +
+            ` ${Math.max(0, Math.round(48 - hoursElapsed))} hours until escalation\n\n` +
             `Resolve and reply:\n` +
             `*RESOLVED ${complaint.customer_name?.split(' ')[0]?.toUpperCase() || 'COMPLAINT'} [resolution]*`;
 
@@ -518,7 +518,7 @@ async function handleComplaintLog(text, senderPhone) {
     return buildComplaintConfirmation(details, complaint);
   } catch (error) {
     console.error('handleComplaintLog error:', error.message);
-    return '❌ Could not log complaint. Please try again.';
+    return ' Could not log complaint. Please try again.';
   }
 }
 
@@ -664,7 +664,7 @@ async function handleComplaintResolution(text, senderPhone) {
       console.log(
         `No active open complaint found for customer keyword: ${customerKeyword}`,
       );
-      return `⚠️ *Resolution Update Declined*\n\nCould not find an active open complaint matching *"${customerKeyword || 'this customer'}"*.\n\nPlease check the dashboard to verify the customer name or if the complaint was already marked as resolved.`;
+      return ` *Resolution Update Declined*\n\nCould not find an active open complaint matching *"${customerKeyword || 'this customer'}"*.\n\nPlease check the dashboard to verify the customer name or if the complaint was already marked as resolved.`;
     }
 
     const reportedAt = new Date(complaint.reported_at);
@@ -721,16 +721,16 @@ async function handleComplaintResolution(text, senderPhone) {
 
     const withinTarget = resolutionHrs <= 48;
     return (
-      `✅ *Complaint Resolved*\n\n` +
+      ` *Complaint Resolved*\n\n` +
       `Customer: ${resolvedCustomerName}\n` +
       `Resolution: ${resolution}\n` +
       `Time taken: ${resolutionHrs} hours\n` +
-      `${withinTarget ? '✅ Within 48-hour target!' : '⚠️ Exceeded 48-hour target'}\n\n` +
-      `Updated Customer Complaints Card! ✅`
+      `${withinTarget ? ' Within 48-hour target!' : ' Exceeded 48-hour target'}\n\n` +
+      `Updated Customer Complaints Card! `
     );
   } catch (error) {
     console.error('handleComplaintResolution error:', error.message);
-    return '❌ Could not log resolution. Please try again.';
+    return ' Could not log resolution. Please try again.';
   }
 }
 
@@ -752,7 +752,7 @@ async function getComplaintSummary(senderPhone) {
       .order('reported_at', { ascending: false });
 
     if (!complaints || complaints.length === 0) {
-      return '✅ No complaints logged this month!';
+      return ' No complaints logged this month!';
     }
 
     const pending = complaints.filter((c) => c.status === 'pending');
@@ -768,15 +768,15 @@ async function getComplaintSummary(senderPhone) {
         : null;
 
     let msg =
-      `📊 *KRA 8 - Complaint Summary*\n\n` +
+      ` *KRA 8 - Complaint Summary*\n\n` +
       `Total this month: ${complaints.length}\n` +
-      `✅ Resolved: ${resolved.length}\n` +
-      `⏳ Pending: ${pending.length}\n` +
-      `🚨 Escalated: ${escalated.length}\n`;
+      ` Resolved: ${resolved.length}\n` +
+      ` Pending: ${pending.length}\n` +
+      ` Escalated: ${escalated.length}\n`;
 
     if (avgResolutionTime !== null) {
-      msg += `⏱️ Avg resolution: ${avgResolutionTime}h\n`;
-      msg += `${avgResolutionTime <= 48 ? '✅ Within KRA target' : '⚠️ Above 48h target'}\n`;
+      msg += ` Avg resolution: ${avgResolutionTime}h\n`;
+      msg += `${avgResolutionTime <= 48 ? ' Within KRA target' : ' Above 48h target'}\n`;
     }
 
     if (pending.length > 0) {
@@ -792,7 +792,7 @@ async function getComplaintSummary(senderPhone) {
     return msg;
   } catch (error) {
     console.error('getComplaintSummary error:', error.message);
-    return '❌ Could not fetch complaint summary.';
+    return ' Could not fetch complaint summary.';
   }
 }
 

@@ -153,7 +153,7 @@ async function processRetentionMessage(text, senderPhone) {
 
     // Edge Case 4: Missing customer name
     if (!data.customer_name) {
-      return `⚠️ *Retention Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company Name* for this follow-up update.\nExample: _"Called Mehta Industries, they are planning a reorder next month"_`;
+      return ` *Retention Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company Name* for this follow-up update.\nExample: _"Called Mehta Industries, they are planning a reorder next month"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -257,11 +257,11 @@ async function processRetentionMessage(text, senderPhone) {
       });
 
       return (
-        `⚠️ *KRA 3 - Churn Signal Logged*\n\n` +
+        ` *KRA 3 - Churn Signal Logged*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Status: *Marked Inactive — No Further Orders Expected*\n` +
         (followupSummary ? `Note: ${followupSummary}\n` : '') +
-        `\nCustomer flagged in Retention Dashboard. 📉`
+        `\nCustomer flagged in Retention Dashboard. `
       );
     }
 
@@ -377,34 +377,34 @@ async function processRetentionMessage(text, senderPhone) {
 
     // Status display map
     const statusLabels = {
-      reviewing_quotation: '📄 Reviewing Quotation',
-      awaiting_decision: '⏳ Awaiting Decision',
-      reorder_confirmed: '✅ Reorder Confirmed',
-      price_negotiation: '💬 Price Negotiation',
-      site_visit_pending: '🏭 Site Visit Pending',
-      payment_pending: '💰 Payment Pending',
-      routine_checkin: '📞 Routine Check-in',
+      reviewing_quotation: ' Reviewing Quotation',
+      awaiting_decision: ' Awaiting Decision',
+      reorder_confirmed: ' Reorder Confirmed',
+      price_negotiation: ' Price Negotiation',
+      site_visit_pending: ' Site Visit Pending',
+      payment_pending: ' Payment Pending',
+      routine_checkin: ' Routine Check-in',
     };
 
     return (
-      `🔄 *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
+      ` *KRA 3 - Customer Retention Follow-up Logged!*\n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Status: *${statusLabels[followupStatus] || followupStatus}*\n` +
       `Summary: ${followupSummary}\n` +
       (orderExpectedTimeline
-        ? `📅 Order Expected: *${orderExpectedTimeline}*\n`
+        ? ` Order Expected: *${orderExpectedTimeline}*\n`
         : '') +
       (linkedDealId && linkedDealAmount && Number(linkedDealAmount) > 0
-        ? `🔗 Linked Deal: *₹${Number(linkedDealAmount).toLocaleString('en-IN')}*\n`
+        ? ` Linked Deal: *₹${Number(linkedDealAmount).toLocaleString('en-IN')}*\n`
         : '') +
-      `📌 Next Follow-up Scheduled: *${followupDateStr}* (${followupDays} days)\n` +
+      ` Next Follow-up Scheduled: *${followupDateStr}* (${followupDays} days)\n` +
       `Monthly Follow-ups: *${followupCount} logged this month*\n\n` +
-      `Updated KRA 3 Customer Retention Dashboard! ✅` +
+      `Updated KRA 3 Customer Retention Dashboard! ` +
       (missingPrompt || '')
     );
   } catch (error) {
     console.error('Retention Agent Error:', error.message);
-    return `⚠️ Could not process retention update: ${error.message}`;
+    return ` Could not process retention update: ${error.message}`;
   }
 }
 

@@ -217,13 +217,13 @@ function buildDealSummary(data, salespersonName) {
   const timeline = [];
   if (deal.created_at) {
     timeline.push(
-      `📋 Inquiry Created: ${new Date(deal.created_at).toLocaleDateString('en-IN')}`,
+      ` Inquiry Created: ${new Date(deal.created_at).toLocaleDateString('en-IN')}`,
     );
   }
   if (visits.length > 0) {
     visits.forEach((v) => {
       timeline.push(
-        `🏭 Visit: ${new Date(v.visited_at).toLocaleDateString('en-IN')}` +
+        ` Visit: ${new Date(v.visited_at).toLocaleDateString('en-IN')}` +
           (v.person_met ? ` — Met ${v.person_met}` : ''),
       );
     });
@@ -231,19 +231,17 @@ function buildDealSummary(data, salespersonName) {
   if (followups.length > 0) {
     followups.forEach((f) => {
       timeline.push(
-        `🔄 Follow-up: ${new Date(f.created_at).toLocaleDateString('en-IN')}` +
+        ` Follow-up: ${new Date(f.created_at).toLocaleDateString('en-IN')}` +
           (f.followup_status ? ` — ${f.followup_status}` : ''),
       );
     });
   }
   if (deal.stage === 'won' && deal.won_at) {
-    timeline.push(
-      `🏆 Won: ${new Date(deal.won_at).toLocaleDateString('en-IN')}`,
-    );
+    timeline.push(` Won: ${new Date(deal.won_at).toLocaleDateString('en-IN')}`);
   }
   if (deal.stage === 'lost') {
     timeline.push(
-      `❌ Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
+      ` Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
         (deal.lost_reason || deal.loss_reason
           ? ` — Reason: ${deal.lost_reason || deal.loss_reason}`
           : ''),
@@ -253,21 +251,21 @@ function buildDealSummary(data, salespersonName) {
   const paymentSection = payment
     ? [
         '',
-        '💰 PAYMENT SUMMARY',
+        ' PAYMENT SUMMARY',
         `  Invoice Amount: ₹${Number(payment.invoice_amount || 0).toLocaleString('en-IN')}`,
         `  Collected: ₹${Number(payment.collected_amount || 0).toLocaleString('en-IN')}`,
         `  Outstanding: ₹${Number(payment.outstanding || 0).toLocaleString('en-IN')}`,
-        `  Status: ${payment.status === 'collected' ? 'Fully Settled ✅' : payment.status === 'partial' ? 'Partial ⏳' : 'Pending ⏳'}`,
+        `  Status: ${payment.status === 'collected' ? 'Fully Settled ' : payment.status === 'partial' ? 'Partial ' : 'Pending '}`,
       ].join('\n')
     : '';
 
   return [
-    `📊 DEAL SUMMARY — ${deal.customer_name}`,
+    ` DEAL SUMMARY — ${deal.customer_name}`,
     `Salesperson: ${salespersonName}`,
     `Status: ${deal.stage?.toUpperCase()}`,
     deal.po_number ? `PO Number: ${deal.po_number}` : '',
     '',
-    '📦 LINE ITEMS',
+    ' LINE ITEMS',
     itemLines || '  No items recorded',
     deal.total_amount ? `  ─────────────────────` : '',
     deal.total_amount
@@ -280,7 +278,7 @@ function buildDealSummary(data, salespersonName) {
     deal.payment_terms ? `  Payment Terms: ${deal.payment_terms}` : '',
     paymentSection,
     '',
-    '📅 ACTIVITY TIMELINE',
+    ' ACTIVITY TIMELINE',
     ...timeline,
     '',
     `Last Updated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
@@ -303,13 +301,13 @@ function buildVisitSummary(data, salespersonName) {
   } = data;
 
   const outcomeLabel = {
-    positive: 'Positive 🟢',
-    neutral: 'Neutral 🟡',
-    negative: 'Negative 🔴',
+    positive: 'Positive ',
+    neutral: 'Neutral ',
+    negative: 'Negative ',
   };
 
   return [
-    `🏭 VISIT SUMMARY — ${customerName}`,
+    ` VISIT SUMMARY — ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Location: ${city || 'Not specified'}`,
@@ -317,11 +315,11 @@ function buildVisitSummary(data, salespersonName) {
     contactNo ? `Contact: ${contactNo}` : '',
     `Outcome: ${outcomeLabel[visitOutcome] || visitOutcome || 'Neutral'}`,
     '',
-    '📝 DISCUSSION NOTES',
+    ' DISCUSSION NOTES',
     remarks || 'Meeting conducted',
-    productInterests ? `\n🛒 Product Interests: ${productInterests}` : '',
-    materialRequirement ? `📦 Requirement: ${materialRequirement}` : '',
-    followUpAction ? `📌 Follow-up Action: ${followUpAction}` : '',
+    productInterests ? `\n Product Interests: ${productInterests}` : '',
+    materialRequirement ? ` Requirement: ${materialRequirement}` : '',
+    followUpAction ? ` Follow-up Action: ${followUpAction}` : '',
     '',
     `Logged via Enlight Sales Bot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
@@ -346,7 +344,7 @@ function buildPaymentSummary(data, salespersonName) {
   };
 
   return [
-    `💰 PAYMENT UPDATE — ${customerName}`,
+    ` PAYMENT UPDATE — ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Type: ${typeLabel[paymentType] || paymentType || 'Payment'}`,
@@ -357,7 +355,7 @@ function buildPaymentSummary(data, salespersonName) {
     amountPending > 0
       ? `Outstanding Balance: ₹${Number(amountPending).toLocaleString('en-IN')}`
       : '',
-    isFullPayment ? '✅ FULLY SETTLED — No outstanding balance' : '',
+    isFullPayment ? ' FULLY SETTLED — No outstanding balance' : '',
     '',
     `Logged via Enlight Sales Bot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
@@ -378,11 +376,11 @@ function buildComplaintSummary(data, salespersonName) {
   if (action === 'resolve') {
     const slaStatus =
       resolutionTimeHrs <= 48
-        ? `Within SLA ✅ (${resolutionTimeHrs}h)`
-        : `SLA Breached ⚠️ (${resolutionTimeHrs}h — target: 48h)`;
+        ? `Within SLA  (${resolutionTimeHrs}h)`
+        : `SLA Breached  (${resolutionTimeHrs}h — target: 48h)`;
 
     return [
-      `✅ COMPLAINT RESOLVED — ${customerName}`,
+      ` COMPLAINT RESOLVED — ${customerName}`,
       `Salesperson: ${salespersonName}`,
       `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
       affectedProduct ? `Product: ${affectedProduct}` : '',
@@ -395,7 +393,7 @@ function buildComplaintSummary(data, salespersonName) {
   }
 
   return [
-    `🚨 COMPLAINT REPORTED — ${customerName}`,
+    ` COMPLAINT REPORTED — ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     affectedProduct ? `Product Affected: ${affectedProduct}` : '',
@@ -410,7 +408,7 @@ function buildComplaintSummary(data, salespersonName) {
 function buildCustomerSummary(data, salespersonName) {
   const { customerName, phone, gst, city, contactPerson } = data;
   return [
-    `👤 NEW CUSTOMER — ${customerName}`,
+    ` NEW CUSTOMER — ${customerName}`,
     `Onboarded by: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     contactPerson ? `Contact Person: ${contactPerson}` : '',
@@ -954,7 +952,7 @@ async function syncActivity(activityType, data) {
                 {
                   parentId: zohoDealId,
                   parentModule: 'Deals',
-                  noteTitle: `${normalizedType === 'deal_won' ? '🏆 Deal Closed Won' : '❌ Deal Closed Lost'} — ${new Date().toLocaleDateString('en-IN')}`,
+                  noteTitle: `${normalizedType === 'deal_won' ? ' Deal Closed Won' : ' Deal Closed Lost'} — ${new Date().toLocaleDateString('en-IN')}`,
                   noteContent: summary,
                 },
                 token,
@@ -1093,7 +1091,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: `🚨 Complaint Reported — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: ` Complaint Reported — ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1120,7 +1118,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: `✅ Complaint Resolved — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: ` Complaint Resolved — ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1175,12 +1173,10 @@ async function syncActivity(activityType, data) {
         payload: data,
       });
 
-      console.log(
-        `[BiginSync] ✅ ${normalizedType} synced for ${customerName}`,
-      );
+      console.log(`[BiginSync]  ${normalizedType} synced for ${customerName}`);
     } catch (err) {
       console.error(
-        `[BiginSync] ❌ ${normalizedType} sync failed for ${customerName}:`,
+        `[BiginSync]  ${normalizedType} sync failed for ${customerName}:`,
         err.message,
       );
 
@@ -1336,10 +1332,10 @@ async function syncAllDatabaseToBigin() {
           .join('\n');
 
         const summary = [
-          `📊 DEAL SUMMARY — ${custName}`,
+          ` DEAL SUMMARY — ${custName}`,
           `Status: ${(deal.stage || 'NEW_INQUIRY').toUpperCase()}`,
           deal.po_number ? `PO Number: ${deal.po_number}` : '',
-          '📦 LINE ITEMS',
+          ' LINE ITEMS',
           itemLines || '  No items recorded',
           deal.total_amount
             ? `  Total: ₹${Number(deal.total_amount).toLocaleString('en-IN')}`
@@ -1371,7 +1367,7 @@ async function syncAllDatabaseToBigin() {
               {
                 parentId: dealId,
                 parentModule: 'Deals',
-                noteTitle: `${deal.stage === 'won' ? '🏆 Deal Closed Won' : '❌ Deal Closed Lost'} — ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
+                noteTitle: `${deal.stage === 'won' ? ' Deal Closed Won' : ' Deal Closed Lost'} — ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,

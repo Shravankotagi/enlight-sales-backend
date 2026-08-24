@@ -5,7 +5,12 @@ export interface IngestDocumentDto {
   title: string;
   content: string;
   visibilityRole:
-    'all' | 'salesperson' | 'manager' | 'manager_plus' | 'admin' | 'admin_only';
+    | 'all'
+    | 'salesperson'
+    | 'manager'
+    | 'manager_plus'
+    | 'admin'
+    | 'admin_only';
   uploadedBy: string;
   sourceFileUrl?: string;
 }
@@ -70,8 +75,9 @@ export class KbService {
       );
 
       try {
-        const { GoogleGenerativeAIEmbeddings } =
-          await import('@langchain/google-genai');
+        const { GoogleGenerativeAIEmbeddings } = await import(
+          '@langchain/google-genai'
+        );
         const embeddings = new GoogleGenerativeAIEmbeddings({
           model: modelName,
           apiKey: apiKey,
@@ -208,7 +214,7 @@ export class KbService {
     }
 
     this.logger.log(
-      `✅ Ingested document '${dto.title}' (${insertedChunks?.length || 0} chunks stored).`,
+      ` Ingested document '${dto.title}' (${insertedChunks?.length || 0} chunks stored).`,
     );
 
     return {

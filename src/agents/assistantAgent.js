@@ -28,11 +28,11 @@ async function handleConversationalQuery(text, senderPhone) {
 
     // Role-aware blocked response for admin actions / product suggestions
     const adminBlockedMessage = isAdmin
-      ? `🔗 *This action requires Dashboard access.*\n\n` +
+      ? ` *This action requires Dashboard access.*\n\n` +
         `Admin operations and configurations are available on the portal:\n\n` +
-        `👉 ${dashboardUrl}\n\n` +
+        ` ${dashboardUrl}\n\n` +
         `Log in with your admin credentials to proceed.`
-      : `⚠️ *I do not have the capability to perform this action.*\n\n` +
+      : ` *I do not have the capability to perform this action.*\n\n` +
         `This action or recommendation is not supported by the assistant. Please contact your Sales Lead or Admin.`;
 
     const ASSISTANT_SYSTEM_PROMPT = `
@@ -75,7 +75,7 @@ GUIDELINES:
     return reply;
   } catch (error) {
     console.error('Conversational assistant error:', error.message);
-    return `⚠️ Sorry, I encountered an error answering your question: ${error.message}`;
+    return ` Sorry, I encountered an error answering your question: ${error.message}`;
   }
 }
 

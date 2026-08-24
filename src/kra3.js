@@ -156,8 +156,8 @@ async function checkOrderFrequencyFollowups(supabase) {
             const salesLeadPhone = process.env.SALES_LEAD_PHONE;
             if (salesLeadPhone) {
               const escalationMsg =
-                `🚨 *Customer Reorder Follow-up Escalation*\n\n` +
-                `🏢 *${customer.customer_name}*\n` +
+                ` *Customer Reorder Follow-up Escalation*\n\n` +
+                ` *${customer.customer_name}*\n` +
                 `Assigned Rep: ${spPhone}\n` +
                 `Last order: ${daysSinceOrder} days ago (Cycle: ${freqDays} days)\n` +
                 `Reminders sent: ${newCount}\n\n` +
@@ -272,7 +272,7 @@ async function checkVisitInterestFollowups(supabase) {
           .update({
             status: 'resolved',
             resolved_at: now.toISOString(),
-            resolution_notes: `Order received (Deal #${recentOrders[0].id.slice(0, 8)}). Visit follow-up fulfilled 🎉`,
+            resolution_notes: `Order received (Deal #${recentOrders[0].id.slice(0, 8)}). Visit follow-up fulfilled `,
           })
           .eq('id', task.id);
         console.log(
@@ -328,7 +328,7 @@ function buildOrderFrequencyMessage(
 ) {
   const shortId = taskId ? taskId.substring(0, 8) : 'N/A';
   const reminderText =
-    reminderCount > 1 ? `\n⚠️ *Reminder #${reminderCount}*` : '';
+    reminderCount > 1 ? `\n *Reminder #${reminderCount}*` : '';
 
   const lastOrderDateStr =
     lastDeal?.won_at || lastDeal?.created_at || customer.last_order_date;
@@ -340,17 +340,17 @@ function buildOrderFrequencyMessage(
     : '';
 
   return (
-    `🔔 *Order Frequency Follow-up Alert*${reminderText}\n\n` +
-    `🏢 *${customer.customer_name}*\n` +
-    `📅 Last Order: *${formattedLastDate}*${lastAmtStr}\n` +
-    `⏳ Elapsed: *${daysSinceOrder} days ago*\n` +
-    `⏱️ Configured Cycle: Every *${freqDays} days*\n\n` +
+    ` *Order Frequency Follow-up Alert*${reminderText}\n\n` +
+    ` *${customer.customer_name}*\n` +
+    ` Last Order: *${formattedLastDate}*${lastAmtStr}\n` +
+    ` Elapsed: *${daysSinceOrder} days ago*\n` +
+    ` Configured Cycle: Every *${freqDays} days*\n\n` +
     `The order frequency period has elapsed without a repeat order.\n\n` +
     `Please follow up with the client and reply:\n` +
-    `✅ *ORDERED ${customer.customer_name.split(' ')[0].toUpperCase()} [amount]*\n` +
-    `🚗 *VISITED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
-    `📞 *CALLED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
-    `❌ *LOST ${customer.customer_name.split(' ')[0].toUpperCase()} [reason]*\n\n` +
+    ` *ORDERED ${customer.customer_name.split(' ')[0].toUpperCase()} [amount]*\n` +
+    ` *VISITED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
+    ` *CALLED ${customer.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
+    ` *LOST ${customer.customer_name.split(' ')[0].toUpperCase()} [reason]*\n\n` +
     `Ref: ${shortId}`
   );
 }
@@ -358,7 +358,7 @@ function buildOrderFrequencyMessage(
 function buildVisitInterestMessage(task, reminderCount) {
   const shortId = task.id ? task.id.substring(0, 8) : 'N/A';
   const reminderText =
-    reminderCount > 1 ? `\n⚠️ *Reminder #${reminderCount}*` : '';
+    reminderCount > 1 ? `\n *Reminder #${reminderCount}*` : '';
 
   let notesContext = task.resolution_notes || '';
   let productStr = 'Discussed Steel Products';
@@ -374,16 +374,16 @@ function buildVisitInterestMessage(task, reminderCount) {
     : 'Recent Visit';
 
   return (
-    `🚗 *Visit Interest Follow-up Alert*${reminderText}\n\n` +
-    `🏢 *${task.customer_name}*\n` +
-    `📅 Visit Date: *${visitDateStr}*\n` +
-    `📦 Product of Interest: *${productStr}*\n\n` +
+    ` *Visit Interest Follow-up Alert*${reminderText}\n\n` +
+    ` *${task.customer_name}*\n` +
+    ` Visit Date: *${visitDateStr}*\n` +
+    ` Product of Interest: *${productStr}*\n\n` +
     `During the visit, the customer showed interest and indicated a decision timeframe which is now due.\n` +
     `No order has been received yet.\n\n` +
     `Please follow up with the customer today to close this order and reply:\n` +
-    `✅ *ORDERED ${task.customer_name.split(' ')[0].toUpperCase()} [amount]*\n` +
-    `📞 *CALLED ${task.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
-    `❌ *LOST ${task.customer_name.split(' ')[0].toUpperCase()} [reason]*\n\n` +
+    ` *ORDERED ${task.customer_name.split(' ')[0].toUpperCase()} [amount]*\n` +
+    ` *CALLED ${task.customer_name.split(' ')[0].toUpperCase()} [outcome]*\n` +
+    ` *LOST ${task.customer_name.split(' ')[0].toUpperCase()} [reason]*\n\n` +
     `Ref: ${shortId}`
   );
 }
@@ -485,26 +485,26 @@ async function handleFollowUpReply(text, senderPhone) {
     });
 
     const emojiMap = {
-      VISITED: '🚗',
-      CALLED: '📞',
-      LOST: '❌',
-      ORDERED: '🎉',
-      FOLLOWED: '🔄',
-      'FOLLOW-UP': '🔄',
-      FOLLOWUP: '🔄',
+      VISITED: '',
+      CALLED: '',
+      LOST: '',
+      ORDERED: '',
+      FOLLOWED: '',
+      'FOLLOW-UP': '',
+      FOLLOWUP: '',
     };
-    const emoji = emojiMap[matchedAction.toUpperCase()] || '🔄';
+    const emoji = emojiMap[matchedAction.toUpperCase()] || '';
 
     return (
       `${emoji} *Follow-up Recorded*\n\n` +
       `Action: *${matchedAction}*\n` +
       `Customer: *${task?.customer_name || customerKeyword}*\n` +
       `Outcome: *${outcome}*\n\n` +
-      `Customer Retention (KRA 3) updated! ✅`
+      `Customer Retention (KRA 3) updated! `
     );
   } catch (error) {
     console.error('handleFollowUpReply error:', error);
-    return '❌ Could not log follow-up. Please try again.';
+    return ' Could not log follow-up. Please try again.';
   }
 }
 

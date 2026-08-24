@@ -477,11 +477,11 @@ async function processSalesImage(
 
     if (isPo) {
       return (
-        `🎉 *PURCHASE ORDER RECEIVED & DEAL WON!* 🏆\n\n` +
+        ` *PURCHASE ORDER RECEIVED & DEAL WON!* \n\n` +
         `Customer: *${finalCustomerName || '—'}*\n` +
-        `PO Number: *${poNumber}* 📄\n` +
+        `PO Number: *${poNumber}* \n` +
         `PO Date: *${poDate}*\n` +
-        `Stage: *WON / DELIVERED 🎉*\n\n` +
+        `Stage: *WON / DELIVERED *\n\n` +
         (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
         `PO Basic Value: *₹${baseAmt.toLocaleString('en-IN')}*\n` +
         `GST (18%): *₹${gstAmt.toLocaleString('en-IN')}*\n` +
@@ -491,7 +491,7 @@ async function processSalesImage(
         (extraction.delivery_location
           ? `Delivery Location: *${extraction.delivery_location}*\n\n`
           : '\n') +
-        `✅ Synced live to Orders Tab, Sales Achievement & Payment Tracking! 🚀`
+        ` Synced live to Orders Tab, Sales Achievement & Payment Tracking! `
       );
     }
 
@@ -502,21 +502,21 @@ async function processSalesImage(
       : `${frontendUrl}/inquiries`;
 
     return (
-      `📄 *INQUIRY / SALES DEAL LOGGED!* 🏗️\n\n` +
+      ` *INQUIRY / SALES DEAL LOGGED!* \n\n` +
       `Customer: *${finalCustomerName || '—'}*\n` +
-      `Stage: *REVIEW 📄*\n` +
+      `Stage: *REVIEW *\n` +
       (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
       (baseAmt > 0
         ? `Product Amount: *₹${baseAmt.toLocaleString('en-IN')}*\nGST (18%): *₹${gstAmt.toLocaleString('en-IN')}*\n*Grand Total: ₹${grandTotal.toLocaleString('en-IN')}*\n`
         : '') +
       `Delivery Location: *${extraction.delivery_location || 'Not Specified'}*\n\n` +
-      `✏️ *Review & Finalize Quotation:* \n` +
+      ` *Review & Finalize Quotation:* \n` +
       `${inquiryEditLink}\n\n` +
-      `✅ Logged live to Inquiries tab & Sales Pipeline!`
+      ` Logged live to Inquiries tab & Sales Pipeline!`
     );
   } catch (error) {
     console.error('[OCRAgent] Error processing sales image:', error);
-    return `⚠️ Error processing document image: ${error.message}`;
+    return ` Error processing document image: ${error.message}`;
   }
 }
 

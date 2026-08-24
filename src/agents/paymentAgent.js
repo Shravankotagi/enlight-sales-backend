@@ -129,13 +129,13 @@ function checkAmountDiscrepancy(amountPaid, explicitPending, dealTotal) {
       return {
         hasDiscrepancy: true,
         message:
-          `⚠️ *Amount Mismatch Detected*\n\n` +
+          ` *Amount Mismatch Detected*\n\n` +
           `Deal Total on Record: *${dealTotalFormatted}*\n` +
           `You reported: Paid *${paidFormatted}* + Pending *${pendingFormatted}* = *${reportedTotalFormatted}*\n\n` +
           `These don't add up to the deal total. Please confirm:\n\n` +
-          `1️⃣ *Use deal total* — Paid ${paidFormatted}, Pending *₹${correctedPending.toLocaleString('en-IN')}* (correct based on deal)\n` +
-          `2️⃣ *Use my numbers* — Paid ${paidFormatted}, Pending ${pendingFormatted} (override)\n` +
-          `3️⃣ *Cancel* — I'll re-check and resend\n\n` +
+          `1 *Use deal total* — Paid ${paidFormatted}, Pending *₹${correctedPending.toLocaleString('en-IN')}* (correct based on deal)\n` +
+          `2 *Use my numbers* — Paid ${paidFormatted}, Pending ${pendingFormatted} (override)\n` +
+          `3 *Cancel* — I'll re-check and resend\n\n` +
           `Reply *1*, *2*, or *3* to proceed.`,
         correctedPending,
       };
@@ -147,12 +147,12 @@ function checkAmountDiscrepancy(amountPaid, explicitPending, dealTotal) {
       return {
         hasDiscrepancy: true,
         message:
-          `⚠️ *Amount Exceeds Deal Total*\n\n` +
+          ` *Amount Exceeds Deal Total*\n\n` +
           `Deal Total on Record: *₹${Number(dealTotal).toLocaleString('en-IN')}*\n` +
           `Amount you reported: *₹${Number(amountPaid).toLocaleString('en-IN')}*\n\n` +
           `The payment exceeds the deal value. Please confirm:\n\n` +
-          `1️⃣ *Correct, overpayment received* — log as-is\n` +
-          `2️⃣ *Cancel* — I'll re-check and resend`,
+          `1 *Correct, overpayment received* — log as-is\n` +
+          `2 *Cancel* — I'll re-check and resend`,
         correctedPending: 0,
       };
     }
@@ -374,7 +374,7 @@ async function processPaymentMessage(text, senderPhone) {
     const data = safeParseJSON(cleaned, null);
 
     if (!data) {
-      return `⚠️ Payment information could not be parsed. Please state the customer name and payment amount.`;
+      return ` Payment information could not be parsed. Please state the customer name and payment amount.`;
     }
 
     let customerName = data.customer_name ? data.customer_name.trim() : null;
@@ -383,7 +383,7 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     if (!customerName) {
-      return `⚠️ *Payment Agent — Customer Missing*\n\nPlease specify the *Customer/Company Name* for this payment record.`;
+      return ` *Payment Agent — Customer Missing*\n\nPlease specify the *Customer/Company Name* for this payment record.`;
     }
 
     const amountPaid = Math.max(0, Number(data.amount_paid || 0));
@@ -428,10 +428,10 @@ async function processPaymentMessage(text, senderPhone) {
 
       if (!isPendingPaymentConfirm) {
         const stageLabels = {
-          new_inquiry: 'New Inquiry 📋',
-          qualified: 'Qualified ✅',
-          quoted: 'Quoted 📄',
-          negotiation: 'Negotiation 🤝',
+          new_inquiry: 'New Inquiry ',
+          qualified: 'Qualified ',
+          quoted: 'Quoted ',
+          negotiation: 'Negotiation ',
         };
         const stageLabel = stageLabels[activeDeal.stage] || activeDeal.stage;
         const dealValue = activeDeal.total_amount
@@ -445,13 +445,13 @@ async function processPaymentMessage(text, senderPhone) {
         );
 
         return (
-          `⚠️ *Payment Confirmation Required*\n\n` +
+          ` *Payment Confirmation Required*\n\n` +
           `*${finalCustomerName}* currently has an open deal:\n` +
           `Stage: *${stageLabel}*\n` +
           `Deal Value: *${dealValue}*\n\n` +
           `Before logging this payment of *₹${amountPaid.toLocaleString('en-IN')}*, please confirm:\n\n` +
-          `1️⃣ *Yes, log payment* — deal will remain at ${stageLabel}\n` +
-          `2️⃣ *Mark deal as Won first* — then payment will be logged automatically\n\n` +
+          `1 *Yes, log payment* — deal will remain at ${stageLabel}\n` +
+          `2 *Mark deal as Won first* — then payment will be logged automatically\n\n` +
           `Reply *1* or *2* to proceed.`
         );
       }
@@ -501,12 +501,12 @@ async function processPaymentMessage(text, senderPhone) {
       return (
         `Perfect, I've updated the payment mode for *${finalCustomerName}* to *${paymentMode || 'RTGS'}*.\n\n` +
         `Current Status: *₹${resultMode.finalCollected.toLocaleString('en-IN')}* collected | *₹${resultMode.finalOutstanding.toLocaleString('en-IN')}* remaining balance.\n\n` +
-        `Updated KRA 5 Payment Collection Dashboard! ✅`
+        `Updated KRA 5 Payment Collection Dashboard! `
       );
     }
 
     if (amountPaid <= 0 && amountPending <= 0 && !isFullPayment) {
-      return `⚠️ *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${finalCustomerName}*.`;
+      return ` *Payment Agent — Amount Missing*\n\nPlease specify the *Payment Amount* or *Outstanding Pending Amount* for *${finalCustomerName}*.`;
     }
 
     const paymentType =
@@ -537,7 +537,7 @@ async function processPaymentMessage(text, senderPhone) {
           : '') +
         (result2.finalOutstanding > 0
           ? ` | Outstanding: ₹${result2.finalOutstanding.toLocaleString('en-IN')}`
-          : ' | Fully Settled 🎉'),
+          : ' | Fully Settled '),
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear(),
     });
@@ -553,7 +553,7 @@ async function processPaymentMessage(text, senderPhone) {
     }
 
     const lines = [
-      `💰 *KRA 5 - Payment ${result2.existing ? 'Updated' : 'Logged'}!*`,
+      ` *KRA 5 - Payment ${result2.existing ? 'Updated' : 'Logged'}!*`,
       ``,
       `Customer: *${finalCustomerName}*`,
       amountPaid > 0
@@ -564,16 +564,16 @@ async function processPaymentMessage(text, senderPhone) {
         ? `Total Deal Invoice: *₹${result2.dealTotal.toLocaleString('en-IN')}*`
         : null,
       `Total Collected: *₹${result2.finalCollected.toLocaleString('en-IN')}*`,
-      `Remaining Outstanding: *${result2.finalOutstanding > 0 ? '₹' + result2.finalOutstanding.toLocaleString('en-IN') : '₹0 (Fully Settled 🎉)'}*`,
+      `Remaining Outstanding: *${result2.finalOutstanding > 0 ? '₹' + result2.finalOutstanding.toLocaleString('en-IN') : '₹0 (Fully Settled )'}*`,
       `Status: *${result2.finalStatus.toUpperCase()}*`,
       ``,
-      `Updated KRA 5 Payment Collection Dashboard! ✅`,
+      `Updated KRA 5 Payment Collection Dashboard! `,
     ].filter(Boolean);
 
     return lines.join('\n');
   } catch (error) {
     console.error('[PaymentAgent] Error processing payment message:', error);
-    return `⚠️ Error logging payment: ${error.message}`;
+    return ` Error logging payment: ${error.message}`;
   }
 }
 

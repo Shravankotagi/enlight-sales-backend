@@ -623,7 +623,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 .join(', ') || 'N/A';
             return `| ${idx + 1} | **${i.customer_name || 'N/A'}** | ${i.customer_phone || '-'} | ${itemsSummary} | \`${i.status}\` | ${i.source_channel} | ${i.received_at ? new Date(i.received_at).toLocaleDateString('en-IN') : '-'} |\n> **Original Message:** "${i.original_whatsapp_message || 'N/A'}"\n`;
           });
-          return `### 📋 Inquiries Overview (${items.length} records found):\n\n| # | Customer | Phone | Extracted Items | Status | Channel | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+          return `###  Inquiries Overview (${items.length} records found):\n\n| # | Customer | Phone | Extracted Items | Status | Channel | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
         }
 
         if (
@@ -633,10 +633,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           const lines = items.slice(0, 15).map((d: any, idx: number) => {
             return `| ${idx + 1} | **${d.customer_name || 'N/A'}** | ${d.customer_phone || '-'} | \`${d.stage || 'review'}\` | ₹${(d.total_amount || 0).toLocaleString('en-IN')} | ${d.payment_terms || '-'} |`;
           });
-          return `### 💼 Deals & Pipeline Overview (${items.length} records found):\n\n| # | Customer | Phone | Stage | Total Amount | Payment Terms |\n|---|---|---|---|---|---|\n${lines.join('\n')}`;
+          return `###  Deals & Pipeline Overview (${items.length} records found):\n\n| # | Customer | Phone | Stage | Total Amount | Payment Terms |\n|---|---|---|---|---|---|\n${lines.join('\n')}`;
         }
 
-        return `### 📊 Retrieved Data (${toolName} - ${items.length} records):\n\`\`\`json\n${JSON.stringify(items.slice(0, 10), null, 2)}\n\`\`\``;
+        return `###  Retrieved Data (${toolName} - ${items.length} records):\n\`\`\`json\n${JSON.stringify(items.slice(0, 10), null, 2)}\n\`\`\``;
       }
 
       return typeof parsed === 'string'

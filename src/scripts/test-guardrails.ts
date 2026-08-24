@@ -10,15 +10,18 @@ async function runGuardrailsTestSuite() {
     '=== Phase 4 Guardrails, Safety & Spend Cap Verification Suite ===\n',
   );
 
-  const { SupabaseService } =
-    await import('../infrastructure/supabase/supabase.service');
+  const { SupabaseService } = await import(
+    '../infrastructure/supabase/supabase.service'
+  );
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
   const { ChatbotService } = await import('../modules/chatbot/chatbot.service');
-  const { ToolRegistryService } =
-    await import('../modules/chatbot/tools/tool-registry.service');
-  const { GuardrailsService } =
-    await import('../modules/chatbot/guardrails/guardrails.service');
+  const { ToolRegistryService } = await import(
+    '../modules/chatbot/tools/tool-registry.service'
+  );
+  const { GuardrailsService } = await import(
+    '../modules/chatbot/guardrails/guardrails.service'
+  );
   const { KbService } = await import('../modules/chatbot/kb/kb.service');
 
   const configService = new ConfigService(new NestConfigService());
@@ -65,10 +68,10 @@ async function runGuardrailsTestSuite() {
     processResponse.reply.includes('prohibited system override')
   ) {
     console.log(
-      '  ✅ PASS: Direct prompt injection successfully screened and blocked.',
+      '   PASS: Direct prompt injection successfully screened and blocked.',
     );
   } else {
-    console.error('  ❌ FAIL: Direct injection was not blocked');
+    console.error('   FAIL: Direct injection was not blocked');
     process.exit(1);
   }
 
@@ -106,12 +109,10 @@ async function runGuardrailsTestSuite() {
     indirectResponse.reply.includes('304')
   ) {
     console.log(
-      '  ✅ PASS: Untrusted Content boundary enforced. Raw data returned without instruction hijacking.',
+      '   PASS: Untrusted Content boundary enforced. Raw data returned without instruction hijacking.',
     );
   } else {
-    console.error(
-      '  ❌ FAIL: Indirect injection failed or corrupted response.',
-    );
+    console.error('   FAIL: Indirect injection failed or corrupted response.');
     process.exit(1);
   }
 
@@ -135,11 +136,11 @@ async function runGuardrailsTestSuite() {
 
   if (rateLimitBlocked) {
     console.log(
-      '  ✅ PASS: Per-user rate limiter correctly threw HTTP 429 on request burst.',
+      '   PASS: Per-user rate limiter correctly threw HTTP 429 on request burst.',
     );
   } else {
     console.error(
-      '  ❌ FAIL: Rate limiter did not trigger on 20 rapid requests!',
+      '   FAIL: Rate limiter did not trigger on 20 rapid requests!',
     );
     process.exit(1);
   }
@@ -165,9 +166,7 @@ async function runGuardrailsTestSuite() {
 
   const capExceededCheck = await guardrailsService.isDailySpendCapExceeded();
   if (capExceededCheck) {
-    console.log(
-      '  ✅ PASS: Spend cap threshold exceeded detected in database.',
-    );
+    console.log('   PASS: Spend cap threshold exceeded detected in database.');
   }
 
   // Attempt chat message under active spend cap block
@@ -181,10 +180,10 @@ async function runGuardrailsTestSuite() {
 
   if (cappedResponse.reply.includes('Daily AI spend cap reached')) {
     console.log(
-      '  ✅ PASS: Spend cap block enforced. Non-critical LLM calls safely blocked.',
+      '   PASS: Spend cap block enforced. Non-critical LLM calls safely blocked.',
     );
   } else {
-    console.error('  ❌ FAIL: Spend cap block did not intercept chat request.');
+    console.error('   FAIL: Spend cap block did not intercept chat request.');
     process.exit(1);
   }
 
@@ -214,18 +213,18 @@ async function runGuardrailsTestSuite() {
 
   if (auditEntries && auditEntries.length > 0) {
     console.log(
-      `  ✅ PASS: Found ${auditEntries.length} guardrails & spend-cap alert entries in audit_log.`,
+      `   PASS: Found ${auditEntries.length} guardrails & spend-cap alert entries in audit_log.`,
     );
     console.log(
       `  Sample Alert Logged: '${auditEntries[0].tool_name}' | Details: ${JSON.stringify(auditEntries[0].details)}`,
     );
   } else {
-    console.error('❌ FAIL: Guardrail audit entries missing');
+    console.error(' FAIL: Guardrail audit entries missing');
     process.exit(1);
   }
 
   console.log(
-    '\n🎉 ALL PHASE 4 GUARDRAILS, SAFETY & COST CONTROL EXIT CRITERIA PASSED!',
+    '\n ALL PHASE 4 GUARDRAILS, SAFETY & COST CONTROL EXIT CRITERIA PASSED!',
   );
 }
 

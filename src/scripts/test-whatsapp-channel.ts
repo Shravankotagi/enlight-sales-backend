@@ -19,7 +19,7 @@ const SUPABASE_KEY =
   process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('❌ Missing Supabase credentials in environment.');
+  console.error(' Missing Supabase credentials in environment.');
   process.exit(1);
 }
 
@@ -51,7 +51,7 @@ async function runWhatsAppSuite() {
   console.log(
     '===============================================================',
   );
-  console.log('🧪 Starting Phase 6: WhatsApp Channel Verification Suite');
+  console.log(' Starting Phase 6: WhatsApp Channel Verification Suite');
   console.log(
     '===============================================================\n',
   );
@@ -81,7 +81,7 @@ async function runWhatsAppSuite() {
     role: 'admin',
   };
 
-  console.log(`📋 Test Personas:`);
+  console.log(` Test Personas:`);
   console.log(`   - Salesperson: ${salesperson.name} (${salesperson.phone})`);
   console.log(`   - Manager/Admin: ${manager.name} (${manager.phone})\n`);
 
@@ -102,18 +102,18 @@ async function runWhatsAppSuite() {
       res.reply.includes('not registered')
     ) {
       console.log(
-        '  ✅ PASSED: Unregistered phone blocked immediately without tool access.\n',
+        '   PASSED: Unregistered phone blocked immediately without tool access.\n',
       );
       passed++;
     } else {
       console.error(
-        '  ❌ FAILED: Unregistered phone was not rejected correctly:',
+        '   FAILED: Unregistered phone was not rejected correctly:',
         res,
       );
       failed++;
     }
   } catch (err: any) {
-    console.error('  ❌ FAILED with error:', err.message);
+    console.error('   FAILED with error:', err.message);
     failed++;
   }
 
@@ -131,18 +131,18 @@ async function runWhatsAppSuite() {
 
     if (res.success && res.caller?.role === 'salesperson') {
       console.log(
-        `  ✅ PASSED: Caller resolved to Salesperson (${res.caller.name}).`,
+        `   PASSED: Caller resolved to Salesperson (${res.caller.name}).`,
       );
       console.log(
-        `  💬 Sample WhatsApp Formatted Reply:\n${res.reply.slice(0, 180)}...\n`,
+        `   Sample WhatsApp Formatted Reply:\n${res.reply.slice(0, 180)}...\n`,
       );
       passed++;
     } else {
-      console.error('  ❌ FAILED: Salesperson message did not succeed:', res);
+      console.error('   FAILED: Salesperson message did not succeed:', res);
       failed++;
     }
   } catch (err: any) {
-    console.error('  ❌ FAILED with error:', err.message);
+    console.error('   FAILED with error:', err.message);
     failed++;
   }
 
@@ -163,18 +163,18 @@ async function runWhatsAppSuite() {
       res.reply.includes('cannot process this request')
     ) {
       console.log(
-        '  ✅ PASSED: Adversarial prompt injection screened and blocked over WhatsApp.\n',
+        '   PASSED: Adversarial prompt injection screened and blocked over WhatsApp.\n',
       );
       passed++;
     } else {
       console.error(
-        '  ❌ FAILED: Adversarial prompt was not blocked:',
+        '   FAILED: Adversarial prompt was not blocked:',
         res.reply,
       );
       failed++;
     }
   } catch (err: any) {
-    console.error('  ❌ FAILED with error:', err.message);
+    console.error('   FAILED with error:', err.message);
     failed++;
   }
 
@@ -195,15 +195,15 @@ async function runWhatsAppSuite() {
       (res.caller?.role === 'manager' || res.caller?.role === 'admin')
     ) {
       console.log(
-        `  ✅ PASSED: Manager caller resolved (${res.caller.role}) and pipeline generated.\n`,
+        `   PASSED: Manager caller resolved (${res.caller.role}) and pipeline generated.\n`,
       );
       passed++;
     } else {
-      console.error('  ❌ FAILED: Manager pipeline request failed:', res);
+      console.error('   FAILED: Manager pipeline request failed:', res);
       failed++;
     }
   } catch (err: any) {
-    console.error('  ❌ FAILED with error:', err.message);
+    console.error('   FAILED with error:', err.message);
     failed++;
   }
 
@@ -227,25 +227,25 @@ async function runWhatsAppSuite() {
         res.reply.includes('Source:'))
     ) {
       console.log(
-        '  ✅ PASSED: RAG tool executed and returned answer with citation format.',
+        '   PASSED: RAG tool executed and returned answer with citation format.',
       );
-      console.log(`  📄 Output Preview:\n${res.reply.slice(0, 160)}...\n`);
+      console.log(`   Output Preview:\n${res.reply.slice(0, 160)}...\n`);
       passed++;
     } else {
       console.log(
-        '  ⚠️ NOTE: Knowledge base query succeeded (live embedding match executed).',
+        '   NOTE: Knowledge base query succeeded (live embedding match executed).',
       );
       passed++;
     }
   } catch (err: any) {
-    console.error('  ❌ FAILED with error:', err.message);
+    console.error('   FAILED with error:', err.message);
     failed++;
   }
 
   console.log(
     '===============================================================',
   );
-  console.log(`🏁 Suite Finished: ${passed} Passed, ${failed} Failed`);
+  console.log(` Suite Finished: ${passed} Passed, ${failed} Failed`);
   console.log(
     '===============================================================',
   );

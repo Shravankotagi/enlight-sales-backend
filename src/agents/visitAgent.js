@@ -110,7 +110,7 @@ async function processVisitMessage(text, senderPhone) {
 
     // Missing customer name — must ask
     if (!data.customer_name) {
-      return `⚠️ *Visit Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Mehta Engineering in Pune today, met Purchase Manager, interested in CR Sheets"_`;
+      return ` *Visit Agent — Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Mehta Engineering in Pune today, met Purchase Manager, interested in CR Sheets"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -169,11 +169,11 @@ async function processVisitMessage(text, senderPhone) {
       );
 
       return (
-        `ℹ️ *Visit Already Logged for ${finalCustomerName}*\n\n` +
+        `ℹ *Visit Already Logged for ${finalCustomerName}*\n\n` +
         `Your visit with *${finalCustomerName}* is already recorded on your KRA 9 dashboard!\n\n` +
         `If you meant to update their contact info, say: _"${finalCustomerName} phone 9876543210 owner Mr. Kapoor"_\n` +
         `Or to log a new inquiry, say: _"${finalCustomerName} needs 10 MT HR Coil"_\n\n` +
-        `Updated Customer Visits Card! ✅`
+        `Updated Customer Visits Card! `
       );
     }
 
@@ -348,7 +348,7 @@ async function processVisitMessage(text, senderPhone) {
       .ilike('customer_name', `%${finalCustomerName}%`);
 
     const outcomeEmoji =
-      { positive: '🟢', neutral: '🟡', negative: '🔴' }[visitOutcome] || '🟡';
+      { positive: '', neutral: '', negative: '' }[visitOutcome] || '';
 
     // Async Zoho Bigin Smart Sync
     syncActivity('visit', {
@@ -365,7 +365,7 @@ async function processVisitMessage(text, senderPhone) {
     // Build response
     let reply = isNewProspect
       ? `🆕 *New Prospect Added & Visit Logged!*\n\n`
-      : `🚗 *Customer Visit Logged!*\n\n`;
+      : ` *Customer Visit Logged!*\n\n`;
 
     reply += `Customer: *${finalCustomerName}*\n`;
     if (data.city) reply += `Location: *${data.city}*\n`;
@@ -374,23 +374,23 @@ async function processVisitMessage(text, senderPhone) {
     reply += `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n`;
     reply += `Notes: ${remarks}\n`;
     if (productInterests)
-      reply += `🛒 Product Interests: *${productInterests}*\n`;
+      reply += ` Product Interests: *${productInterests}*\n`;
     if (materialRequirement)
-      reply += `📦 Requirement: *${materialRequirement}*\n`;
-    if (followUpAction) reply += `📌 Follow-up: *${followUpAction}*\n`;
+      reply += ` Requirement: *${materialRequirement}*\n`;
+    if (followUpAction) reply += ` Follow-up: *${followUpAction}*\n`;
     reply += `\nTotal Visits This Month: *${totalVisits}*\n`;
-    reply += `\nUpdated Customer Visits Card! ✅`;
+    reply += `\nUpdated Customer Visits Card! `;
 
     // For new prospects, ask for missing mandatory details
     if (isNewProspect) {
       const missingFields = [];
-      if (!contactNo) missingFields.push('• 📱 *Mobile Number*');
-      if (!personMet) missingFields.push('• 👤 *Owner / Contact Person Name*');
-      if (!data.city) missingFields.push('• 📍 *City / Location*');
-      missingFields.push('• 🧾 *GSTIN* (optional)');
+      if (!contactNo) missingFields.push('•  *Mobile Number*');
+      if (!personMet) missingFields.push('•  *Owner / Contact Person Name*');
+      if (!data.city) missingFields.push('•  *City / Location*');
+      missingFields.push('•  *GSTIN* (optional)');
 
       reply +=
-        `\n\n📌 *${finalCustomerName} has been added as a new prospect.*\n` +
+        `\n\n *${finalCustomerName} has been added as a new prospect.*\n` +
         `To complete their profile, please share:\n${missingFields.join('\n')}\n\n` +
         `_(Simply reply: "${finalCustomerName} phone 9876543210 owner Mr. Kapoor")_`;
     } else {
@@ -404,13 +404,13 @@ async function processVisitMessage(text, senderPhone) {
     }
 
     if (materialRequirement || productInterests) {
-      reply += `\n\n💡 *Potential Opportunity:* To create a sales pipeline deal for this requirement, reply *"Create deal for ${finalCustomerName}"*.`;
+      reply += `\n\n *Potential Opportunity:* To create a sales pipeline deal for this requirement, reply *"Create deal for ${finalCustomerName}"*.`;
     }
 
     return reply;
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
-    return `⚠️ Could not process site visit update: ${error.message}`;
+    return ` Could not process site visit update: ${error.message}`;
   }
 }
 

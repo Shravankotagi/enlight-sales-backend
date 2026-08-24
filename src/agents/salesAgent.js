@@ -228,7 +228,7 @@ function extractDeliveryLocation(text) {
       !/phone|mobile|contact\s+no|payment|preferred|pvt|ltd|gst/i.test(trimmed)
     ) {
       return trimmed
-        .replace(/^📍\s*/, '')
+        .replace(/^\s*/, '')
         .replace(/^(?:delivery(?:\s+address|\s+location)?\s*[:\-]?\s*)/i, '');
     }
   }
@@ -706,7 +706,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const invalidUnitCheck = detectInvalidUnitInMessage(text);
       if (invalidUnitCheck) {
         return (
-          `❌ *Invalid Quantity Unit*\n\n` +
+          ` *Invalid Quantity Unit*\n\n` +
           `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
           `Metal products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
           `Please specify the quantity using a valid unit (e.g. **15 MT**, **1500 Kg**, **100 Sheets**, or **50 Pcs**).`
@@ -967,7 +967,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             confidence: 0.9,
           };
         } else {
-          return `❓ I couldn't clearly understand the deal update. Could you please specify the customer name and status (e.g. "Mehta Engineering 20 MT CR sheets quote sent")?`;
+          return ` I couldn't clearly understand the deal update. Could you please specify the customer name and status (e.g. "Mehta Engineering 20 MT CR sheets quote sent")?`;
         }
       }
     }
@@ -1134,7 +1134,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         'Unknown',
         'pending_customer_for_deal',
       );
-      return `❓ Which customer is this inquiry for? Please reply with the customer/company name (e.g. _"Inquiry for ABC Steel"_).`;
+      return ` Which customer is this inquiry for? Please reply with the customer/company name (e.g. _"Inquiry for ABC Steel"_).`;
     }
 
     const officialCustomerName = await verifyAndGetCustomerName(
@@ -1263,9 +1263,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           `pending_product_for_deal|${finalCustomerName}|${qty}|${unit}|${JSON.stringify(pendingContext)}`,
         );
         return (
-          `❓ *Which metal product is ${finalCustomerName} asking for?*\n\n` +
+          ` *Which metal product is ${finalCustomerName} asking for?*\n\n` +
           `You specified a quantity of *${qty} ${unit}*, but no specific metal product was mentioned.\n\n` +
-          `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can record the requirement for your Sales Pipeline! 📈`
+          `Please reply with the product name (e.g. _HR Coil_, _CR Sheet_, _TMT Bar_, _MS Plates_) so I can record the requirement for your Sales Pipeline! `
         );
       }
 
@@ -1382,7 +1382,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                   ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})`
                   : '';
               const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
-              return `${idx + 1}️⃣ *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
+              return `${idx + 1} *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
             })
             .join('\n');
 
@@ -1394,10 +1394,10 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           );
 
           return (
-            `❓ *Multiple Active Deals Found for ${finalCustomerName}*\n\n` +
+            ` *Multiple Active Deals Found for ${finalCustomerName}*\n\n` +
             `${finalCustomerName} has *${openDeals.length} active deals* in your sales pipeline:\n\n` +
             `${dealsListStr}\n\n` +
-            `Please reply with the **Deal ID** (e.g. _"${getDealCode(openDeals[0])}"_) or option number to specify which deal to update! 📈`
+            `Please reply with the **Deal ID** (e.g. _"${getDealCode(openDeals[0])}"_) or option number to specify which deal to update! `
           );
         }
       } else if (openDeals.length === 0) {
@@ -1547,7 +1547,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       );
 
       return (
-        `📍 *Delivery Location Required Before Confirmation*\n\n` +
+        ` *Delivery Location Required Before Confirmation*\n\n` +
         `Please provide the delivery location for **${finalCustomerName}** (e.g. reply _"Pune"_ or _"Deliver to Mumbai"_) before I can confirm this order and generate the PO.`
       );
     }
@@ -1731,16 +1731,16 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             `pending_loss_reason|${dealId}|${finalCustomerName}`,
           );
           return (
-            `❌ *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
+            ` *Marking Deal as Lost: ${finalCustomerName}*\n\n` +
             `Please reply with the reason for rejection (reply with a number or type your own reason):\n\n` +
-            `1️⃣ Price too high\n` +
-            `2️⃣ Credit terms / Payment terms mismatch\n` +
-            `3️⃣ Delivery timeline delay\n` +
-            `4️⃣ Material unavailable / Out of stock\n` +
-            `5️⃣ Spec mismatch\n` +
-            `6️⃣ Competitor relationship\n` +
-            `7️⃣ Customer silent / No response\n` +
-            `8️⃣ Cancelled by customer`
+            `1 Price too high\n` +
+            `2 Credit terms / Payment terms mismatch\n` +
+            `3 Delivery timeline delay\n` +
+            `4 Material unavailable / Out of stock\n` +
+            `5 Spec mismatch\n` +
+            `6 Competitor relationship\n` +
+            `7 Customer silent / No response\n` +
+            `8 Cancelled by customer`
           );
         }
       }
@@ -1793,16 +1793,16 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           );
 
           return (
-            `❓ *Deal Marked as Lost — Reason Required*\n\n` +
+            ` *Deal Marked as Lost — Reason Required*\n\n` +
             `Please specify why the deal for *${finalCustomerName}* was lost:\n\n` +
-            `1️⃣ Price too high\n` +
-            `2️⃣ Payment/Credit terms mismatch\n` +
-            `3️⃣ Delivery timeline issue\n` +
-            `4️⃣ Material unavailable / Out of stock\n` +
-            `5️⃣ Spec mismatch\n` +
-            `6️⃣ Competitor relationship\n` +
-            `7️⃣ Customer silent / No response\n` +
-            `8️⃣ Cancelled by customer`
+            `1 Price too high\n` +
+            `2 Payment/Credit terms mismatch\n` +
+            `3 Delivery timeline issue\n` +
+            `4 Material unavailable / Out of stock\n` +
+            `5 Spec mismatch\n` +
+            `6 Competitor relationship\n` +
+            `7 Customer silent / No response\n` +
+            `8 Cancelled by customer`
           );
         }
       }
@@ -1924,13 +1924,13 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
     if (dbStage === 'won') {
       let resultMsg =
-        `🎉 *DEAL WON & ORDER CONFIRMED!* 🏆\n\n` +
+        ` *DEAL WON & ORDER CONFIRMED!* \n\n` +
         `Customer: *${finalCustomerName}*\n` +
         `Deal ID: *${dealCode}*\n` +
-        `Official PO Number: *${poNumber}* 📄\n` +
+        `Official PO Number: *${poNumber}* \n` +
         `Total Value: *₹${Number(dealAmount).toLocaleString('en-IN')}* + GST\n` +
         (poDate ? `PO Date: *${poDate}*\n` : '') +
-        `\nUpdated Sales Achievement Card! ✅`;
+        `\nUpdated Sales Achievement Card! `;
 
       if (missingPrompt) {
         resultMsg += `\n\n${missingPrompt}`;
@@ -1963,10 +1963,10 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     const grandTot = calculateGrandTotal(dealAmount);
 
     let resultMsg =
-      `💼 *Sales Inquiry & Pipeline Logged!* 🏗️\n\n` +
+      ` *Sales Inquiry & Pipeline Logged!* \n\n` +
       `Customer: *${finalCustomerName}*\n` +
       `Deal ID: *${dealCode}*\n` +
-      `Stage: *${dbStage.toUpperCase()} 📄*\n` +
+      `Stage: *${dbStage.toUpperCase()} *\n` +
       (itemsBreakdownStr ? `Line Items:\n${itemsBreakdownStr}\n` : '') +
       (data.preferred_make
         ? `Preferred Make: *${data.preferred_make}*\n`
@@ -1979,7 +1979,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       (dealAmount > 0
         ? `Quotation Subtotal: *₹${Number(dealAmount).toLocaleString('en-IN')}* + GST (₹${Number(gstVal).toLocaleString('en-IN')})\nGrand Total: *₹${Number(grandTot).toLocaleString('en-IN')}*\n`
         : '') +
-      `\nLogged to Sales Pipeline & Inquiries! 📋`;
+      `\nLogged to Sales Pipeline & Inquiries! `;
 
     if (missingPrompt) {
       resultMsg += `\n\n${missingPrompt}`;
@@ -1988,7 +1988,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     return resultMsg;
   } catch (error) {
     console.error('[SalesAgent] Error processing sales message:', error);
-    return `⚠️ Error updating deal: ${error.message}`;
+    return ` Error updating deal: ${error.message}`;
   }
 }
 

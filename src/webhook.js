@@ -293,7 +293,7 @@ router.post('/', async (req, res) => {
           };
 
           // Clean up response input
-          const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+          const cleanInput = raw_text.replace(/[\s]/g, '').trim();
           let selectedReason = cleanInput;
           if (MAP_REASONS[cleanInput]) {
             selectedReason = MAP_REASONS[cleanInput];
@@ -357,11 +357,11 @@ router.post('/', async (req, res) => {
 
           // Send confirmation
           const reply =
-            `❌ *Deal Marked as LOST*\n\n` +
+            ` *Deal Marked as LOST*\n\n` +
             `Customer: *${customerName}*\n` +
             `Stage: *Closed Lost*\n` +
             `Reason: *${selectedReason}*\n\n` +
-            `Updated Loss Analytics Dashboard! 📉`;
+            `Updated Loss Analytics Dashboard! `;
 
           await sendTextMessage(senderPhone, reply);
           return;
@@ -377,7 +377,7 @@ router.post('/', async (req, res) => {
           const amountPending = Number(parts[4]);
           const isFullPayment = parts[5] === 'true';
 
-          const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+          const cleanInput = raw_text.replace(/[\s]/g, '').trim();
 
           if (cleanInput === '2' || cleanInput.toLowerCase().includes('won')) {
             // Fetch existing PO number or generate a unique PO number if missing
@@ -421,7 +421,7 @@ router.post('/', async (req, res) => {
 
             await sendTextMessage(
               senderPhone,
-              `🎉 *Deal Marked as WON & Payment Logged!*\n\n` + reply,
+              ` *Deal Marked as WON & Payment Logged!*\n\n` + reply,
             );
             return;
           }
@@ -469,7 +469,7 @@ router.post('/', async (req, res) => {
             const isFullPayment = parts[4] === 'true';
             const correctedPending = Number(parts[5]);
 
-            const cleanInput = raw_text.replace(/[️⃣\s]/g, '').trim();
+            const cleanInput = raw_text.replace(/[\s]/g, '').trim();
             await saveActiveSession(senderPhone, customerName, 'general');
 
             if (
@@ -478,7 +478,7 @@ router.post('/', async (req, res) => {
             ) {
               await sendTextMessage(
                 senderPhone,
-                `✅ Cancelled. Please resend the correct payment details when ready.`,
+                ` Cancelled. Please resend the correct payment details when ready.`,
               );
               return;
             }
@@ -825,7 +825,7 @@ router.post('/', async (req, res) => {
           if (lineItems.length === 0) {
             await sendTextMessage(
               senderPhone,
-              `❓ *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name, quantity, and unit (e.g. _15 MT HR Coil_ or _20 sheets MS Plate_).`,
+              ` *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name, quantity, and unit (e.g. _15 MT HR Coil_ or _20 sheets MS Plate_).`,
             );
             return;
           }
@@ -838,21 +838,21 @@ router.post('/', async (req, res) => {
             ) {
               await sendTextMessage(
                 senderPhone,
-                `❓ *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name (e.g. _HR Coil_ or _MS Sheet_).`,
+                ` *Which metal product/grade does ${currentCustomerLabel} require?*\n\nPlease specify the product name (e.g. _HR Coil_ or _MS Sheet_).`,
               );
               return;
             }
             if (!item.quantity || Number(item.quantity) <= 0) {
               await sendTextMessage(
                 senderPhone,
-                `❓ *How much ${item.sku_text} does ${currentCustomerLabel} require?*\n\nPlease specify the quantity (e.g. _10 MT_ or _50 Sheets_).`,
+                ` *How much ${item.sku_text} does ${currentCustomerLabel} require?*\n\nPlease specify the quantity (e.g. _10 MT_ or _50 Sheets_).`,
               );
               return;
             }
             if (!item.unit || item.unit.toLowerCase().trim() === 'null') {
               await sendTextMessage(
                 senderPhone,
-                `❓ *What unit should we use for ${item.quantity} of ${item.sku_text}?*\n\nPlease mention a valid unit like MT, Kg, Tons, Nos, or Sheets.`,
+                ` *What unit should we use for ${item.quantity} of ${item.sku_text}?*\n\nPlease mention a valid unit like MT, Kg, Tons, Nos, or Sheets.`,
               );
               return;
             }
@@ -860,7 +860,7 @@ router.post('/', async (req, res) => {
             if (!validUnits.includes(normUnit)) {
               await sendTextMessage(
                 senderPhone,
-                `⚠️ *Invalid unit*\n\nUnit *"${item.unit}"* is not a valid unit. Please specify a valid unit like MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`,
+                ` *Invalid unit*\n\nUnit *"${item.unit}"* is not a valid unit. Please specify a valid unit like MT, Kg, Tons, Nos, or Sheets for *${item.sku_text}*.`,
               );
               return;
             }
@@ -892,7 +892,7 @@ router.post('/', async (req, res) => {
             } else {
               await sendTextMessage(
                 senderPhone,
-                `❓ *Which customer is this inquiry for?*\n\n` +
+                ` *Which customer is this inquiry for?*\n\n` +
                   `Please specify the customer/company name so I can log this inquiry.\n` +
                   `*Example:* _"For Mehta Industries, need 15 MT HR Coil"_`,
               );
@@ -913,7 +913,7 @@ router.post('/', async (req, res) => {
           if (!officialCustomerName) {
             await sendTextMessage(
               senderPhone,
-              `⚠️ *Client Not Found in your Customer List*\n\n` +
+              ` *Client Not Found in your Customer List*\n\n` +
                 `Client *"${extractedCustomerName}"* is not registered under your salesperson account.\n\n` +
                 `Please onboard this customer first under *New Customer Acquisition Card* before logging inquiries or orders.\n\n` +
                 `*Example to onboard customer:*\n` +
@@ -1059,24 +1059,24 @@ router.post('/', async (req, res) => {
           );
           const status =
             extraction.overall_confidence >= 0.85
-              ? '✅ Auto-logged'
-              : '⚠️ Needs review';
+              ? ' Auto-logged'
+              : ' Needs review';
 
           replyMessage =
             `${status} - Deal #${deal.id.substring(0, 8)}\n\n` +
-            `📋 *${extraction.inquiry_type === 'purchase_order' ? 'Purchase Order' : 'Inquiry'}*\n` +
+            ` *${extraction.inquiry_type === 'purchase_order' ? 'Purchase Order' : 'Inquiry'}*\n` +
             (extraction.customer?.name
-              ? `🏢 Customer: ${extraction.customer.name}\n`
+              ? ` Customer: ${extraction.customer.name}\n`
               : '') +
-            (extraction.po_number ? `📄 PO: ${extraction.po_number}\n` : '') +
-            `\n📦 Items:\n${itemSummary}\n` +
+            (extraction.po_number ? ` PO: ${extraction.po_number}\n` : '') +
+            `\n Items:\n${itemSummary}\n` +
             (extraction.total_amount
-              ? `\n💰 Total: ₹${extraction.total_amount.toLocaleString('en-IN')}\n`
+              ? `\n Total: ₹${extraction.total_amount.toLocaleString('en-IN')}\n`
               : '') +
             (extraction.delivery_date
-              ? `📅 Delivery: ${extraction.delivery_date}\n`
+              ? ` Delivery: ${extraction.delivery_date}\n`
               : '') +
-            `\n🎯 Confidence: ${confidence}%`;
+            `\n Confidence: ${confidence}%`;
 
           // Append missing customer profile info check
           const { getCustomerMissingInfoPrompt } = require('./supabase');
@@ -1090,13 +1090,13 @@ router.post('/', async (req, res) => {
         } else {
           if (mediaDownloadFailed) {
             replyMessage =
-              `⚠️ *Download Error*\n\n` +
+              ` *Download Error*\n\n` +
               `Failed to download the attachment from WhatsApp. Please check the file and try sending it again.`;
           } else if (messageType === 'audio' && !extraction) {
             replyMessage = `Voice note received but transcription failed. Please send as text.`;
           } else {
             replyMessage =
-              `🤔 Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
+              ` Samajh nahi aaya. Kya aap thoda aur detail mein bata sakte hain?\n\n` +
               `For example:\n` +
               `• Deal update ke liye: "ABC ka deal won hua"\n` +
               `• Payment ke liye: "Supreme ne 50000 diya"\n` +
@@ -1145,7 +1145,7 @@ const handleBiginSync = async (req, res) => {
         <body>
           <div class="card">
             <span class="badge">LIVE SYNC COMPLETED</span>
-            <h2>✅ Database Synced to Zoho Bigin!</h2>
+            <h2> Database Synced to Zoho Bigin!</h2>
             <p>All customer profiles and active pipeline deals have been synced to Zoho Bigin CRM.</p>
             
             <div class="grid">
@@ -1178,7 +1178,7 @@ const handleBiginSync = async (req, res) => {
   } catch (err) {
     res.status(500).send(`
       <div style="font-family: system-ui; padding: 40px; max-width: 500px; margin: 0 auto; color: #ef4444;">
-        <h3>❌ Zoho Bigin Sync Error</h3>
+        <h3> Zoho Bigin Sync Error</h3>
         <p>${err.message}</p>
       </div>
     `);
@@ -1221,7 +1221,7 @@ const handleBiginCleanup = async (req, res) => {
         <body>
           <div class="card">
             <span class="badge">CLEANUP & RE-SYNC COMPLETED</span>
-            <h2>✅ Cleaned & Re-synced to Zoho Bigin!</h2>
+            <h2> Cleaned & Re-synced to Zoho Bigin!</h2>
             <p>Old records cleared and database customers/deals re-synced clean.</p>
             
             <div class="grid">
@@ -1256,7 +1256,7 @@ const handleBiginCleanup = async (req, res) => {
   } catch (err) {
     res.status(500).send(`
       <div style="font-family: system-ui; padding: 40px; max-width: 500px; margin: 0 auto; color: #ef4444;">
-        <h3>❌ Zoho Bigin Error</h3>
+        <h3> Zoho Bigin Error</h3>
         <p>${err.message}</p>
       </div>
     `);
@@ -1295,7 +1295,7 @@ const handleBiginImport = async (req, res) => {
         <body>
           <div class="card">
             <span class="badge">INBOUND IMPORT COMPLETED</span>
-            <h2>📥 Bigin Data Imported to Database!</h2>
+            <h2> Bigin Data Imported to Database!</h2>
             <p>Customer contacts and active pipeline deals have been pulled from Zoho Bigin into your database.</p>
             
             <div class="grid">
@@ -1328,7 +1328,7 @@ const handleBiginImport = async (req, res) => {
   } catch (err) {
     res.status(500).send(`
       <div style="font-family: system-ui; padding: 40px; max-width: 500px; margin: 0 auto; color: #ef4444;">
-        <h3>❌ Bigin Import Error</h3>
+        <h3> Bigin Import Error</h3>
         <p>${err.message}</p>
       </div>
     `);

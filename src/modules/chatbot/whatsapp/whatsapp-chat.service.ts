@@ -231,7 +231,7 @@ export class WhatsAppChatService {
         success: false,
         requiresVerification: true,
         reply:
-          '🔒 *Enlight Sales OS Assistant*\n\nYour phone number is not registered in our system. Please contact your system administrator to register your phone number for Enlight Metals Sales OS.',
+          ' *Enlight Sales OS Assistant*\n\nYour phone number is not registered in our system. Please contact your system administrator to register your phone number for Enlight Metals Sales OS.',
       };
     }
 
@@ -239,7 +239,7 @@ export class WhatsAppChatService {
       return {
         success: false,
         requiresVerification: true,
-        reply: `🔒 *Verification Required*\n\nHello ${caller.name}, your account (${caller.employeeId}) requires WhatsApp verification. Please request an OTP from your administrator or verify your number in the Web Dashboard.`,
+        reply: ` *Verification Required*\n\nHello ${caller.name}, your account (${caller.employeeId}) requires WhatsApp verification. Please request an OTP from your administrator or verify your number in the Web Dashboard.`,
       };
     }
 

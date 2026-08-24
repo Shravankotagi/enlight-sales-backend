@@ -161,27 +161,27 @@ function buildVisitConfirmation(details, weekStats) {
 
   const outcomeEmoji =
     {
-      positive: '😊',
-      order_received: '🎉',
-      follow_up_needed: '📞',
-      negative: '😔',
-      neutral: '👍',
-    }[details.outcome] || '👍';
+      positive: '',
+      order_received: '',
+      follow_up_needed: '',
+      negative: '',
+      neutral: '',
+    }[details.outcome] || '';
 
   return (
-    `✅ *Visit Logged - KRA 9*\n\n` +
-    `🏢 Customer: ${details.customer_name || 'Not specified'}\n` +
-    (details.person_met ? `👤 Met: ${details.person_met}\n` : '') +
-    (details.remarks ? `💬 Remarks: ${details.remarks}\n` : '') +
+    ` *Visit Logged - KRA 9*\n\n` +
+    ` Customer: ${details.customer_name || 'Not specified'}\n` +
+    (details.person_met ? ` Met: ${details.person_met}\n` : '') +
+    (details.remarks ? ` Remarks: ${details.remarks}\n` : '') +
     `${outcomeEmoji} Outcome: ${details.outcome || 'neutral'}\n\n` +
-    `📊 *This Week's Progress*\n` +
+    ` *This Week's Progress*\n` +
     `Visits: ${weekStats.count}/10` +
-    (remaining > 0 ? ` (${remaining} more needed)` : ' ✅ Target met!') +
+    (remaining > 0 ? ` (${remaining} more needed)` : '  Target met!') +
     '\n' +
     `Field days: ${weekStats.days}/3` +
-    (daysRemaining > 0 ? ` (${daysRemaining} more days needed)` : ' ✅') +
+    (daysRemaining > 0 ? ` (${daysRemaining} more days needed)` : ' ') +
     '\n\n' +
-    `_Keep it up! 💪_`
+    `_Keep it up! _`
   );
 }
 
@@ -222,16 +222,16 @@ async function checkWeeklyVisits() {
         const daysLeftInWeek = 6 - now.getDay();
 
         const message =
-          `📊 *KRA 9 Weekly Visit Update*\n\n` +
+          ` *KRA 9 Weekly Visit Update*\n\n` +
           `Visits this week: ${stats.count}/10\n` +
           `Field days: ${stats.days}/3\n\n` +
           (remaining > 0
-            ? `⚠️ ${remaining} more visits needed\n`
-            : '✅ Visit target met!\n') +
+            ? ` ${remaining} more visits needed\n`
+            : ' Visit target met!\n') +
           (daysRemaining > 0
-            ? `⚠️ ${daysRemaining} more field days needed\n`
-            : '✅ Field days target met!\n') +
-          `\n📅 ${daysLeftInWeek} days left this week\n\n` +
+            ? ` ${daysRemaining} more field days needed\n`
+            : ' Field days target met!\n') +
+          `\n ${daysLeftInWeek} days left this week\n\n` +
           `Log a visit by sending:\n` +
           `"visited [Company] today, met [Person], [outcome]"`;
 
@@ -263,7 +263,7 @@ async function handleVisitLog(text, senderPhone) {
       console.log(
         'Gemini determined this is not a valid completed visit. Skipping save.',
       );
-      return `⚠️ *Visit Not Logged*\n\nYour message does not appear to describe a completed customer visit. Visits can only be logged for completed meetings that have already occurred.`;
+      return ` *Visit Not Logged*\n\nYour message does not appear to describe a completed customer visit. Visits can only be logged for completed meetings that have already occurred.`;
     }
 
     // Check for same-day duplicates (same customer, same salesperson, same day)
@@ -289,8 +289,8 @@ async function handleVisitLog(text, senderPhone) {
       );
       const weekStats = await getWeeklyVisitCount(senderPhone);
       return (
-        `⚠️ *Duplicate Visit Detected*\n\nA visit for *${details.customer_name}* has already been logged by you today!\n\n` +
-        `📊 *This Week's Progress*\n` +
+        ` *Duplicate Visit Detected*\n\nA visit for *${details.customer_name}* has already been logged by you today!\n\n` +
+        ` *This Week's Progress*\n` +
         `Visits: ${weekStats.count}/10\n` +
         `Field days: ${weekStats.days}/3`
       );
@@ -317,7 +317,7 @@ async function handleVisitLog(text, senderPhone) {
     return buildVisitConfirmation(details, weekStats);
   } catch (error) {
     console.error('handleVisitLog error:', error.message);
-    return '❌ Could not log visit. Please try again.';
+    return ' Could not log visit. Please try again.';
   }
 }
 

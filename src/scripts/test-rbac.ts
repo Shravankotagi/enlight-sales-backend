@@ -26,16 +26,19 @@ async function runRbacTestSuite() {
     '=== Phase 2, 3 & 5 RBAC, Tool Layer & Knowledge Base Verification Suite ===\n',
   );
 
-  const { SupabaseService } =
-    await import('../infrastructure/supabase/supabase.service');
+  const { SupabaseService } = await import(
+    '../infrastructure/supabase/supabase.service'
+  );
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
   const { ChatbotService } = await import('../modules/chatbot/chatbot.service');
-  const { ToolRegistryService } =
-    await import('../modules/chatbot/tools/tool-registry.service');
+  const { ToolRegistryService } = await import(
+    '../modules/chatbot/tools/tool-registry.service'
+  );
   const { KbService } = await import('../modules/chatbot/kb/kb.service');
-  const { GuardrailsService } =
-    await import('../modules/chatbot/guardrails/guardrails.service');
+  const { GuardrailsService } = await import(
+    '../modules/chatbot/guardrails/guardrails.service'
+  );
 
   const configService = new ConfigService(new NestConfigService());
   const supabaseService = new SupabaseService(configService);
@@ -73,10 +76,10 @@ async function runRbacTestSuite() {
     adminDeclarations.length === 7
   ) {
     console.log(
-      '  ✅ PASS: Tool declarations correctly filtered per role (Salesperson: 5, Manager/Admin: 7).',
+      '   PASS: Tool declarations correctly filtered per role (Salesperson: 5, Manager/Admin: 7).',
     );
   } else {
-    console.error('  ❌ FAIL: Tool declarations count mismatch!');
+    console.error('   FAIL: Tool declarations count mismatch!');
     process.exit(1);
   }
 
@@ -117,11 +120,11 @@ async function runRbacTestSuite() {
 
   if (pipelineBlocked) {
     console.log(
-      '  ✅ PASS: Salesperson attempt to use get_team_pipeline rejected with 403 Forbidden.',
+      '   PASS: Salesperson attempt to use get_team_pipeline rejected with 403 Forbidden.',
     );
   } else {
     console.error(
-      '  ❌ FAIL: Salesperson was able to execute manager pipeline tool!',
+      '   FAIL: Salesperson was able to execute manager pipeline tool!',
     );
     process.exit(1);
   }
@@ -148,7 +151,7 @@ async function runRbacTestSuite() {
     `  Manager team pipeline grand value: $${mgrPipeline.grand_total_pipeline_value || 0}`,
   );
   console.log(
-    '  ✅ PASS: Sales Manager successfully retrieved team pipeline analytics.',
+    '   PASS: Sales Manager successfully retrieved team pipeline analytics.',
   );
 
   const churnRadarRaw = await toolRegistry.executeTool(
@@ -160,7 +163,7 @@ async function runRbacTestSuite() {
   console.log(
     `  Churn radar assessed ${churnRadar.total_accounts_assessed || 0} accounts.`,
   );
-  console.log('  ✅ PASS: Churn radar risk detection executed successfully.');
+  console.log('   PASS: Churn radar risk detection executed successfully.');
 
   const lossAnalyticsRaw = await toolRegistry.executeTool(
     'get_loss_analytics',
@@ -172,7 +175,7 @@ async function runRbacTestSuite() {
     `  Loss analytics total lost deals: ${lossAnalytics.total_lost_deals_count || 0}`,
   );
   console.log(
-    '  ✅ PASS: Loss analytics executed successfully for Sales Manager.',
+    '   PASS: Loss analytics executed successfully for Sales Manager.',
   );
 
   console.log(
@@ -200,7 +203,7 @@ async function runRbacTestSuite() {
     uploadedBy: 'usr-admin-001',
   });
   console.log(
-    '  ✅ PASS: Knowledge Base documents ingested and embedded with 768-dim vector embeddings.',
+    '   PASS: Knowledge Base documents ingested and embedded with 768-dim vector embeddings.',
   );
 
   console.log(
@@ -228,10 +231,10 @@ async function runRbacTestSuite() {
   );
   if (leakedAdminChunks.length === 0) {
     console.log(
-      '  ✅ PASS: admin_only document strictly invisible to Sales Executive (zero leakage).',
+      '   PASS: admin_only document strictly invisible to Sales Executive (zero leakage).',
     );
   } else {
-    console.error('  ❌ FAIL: admin_only chunk leaked');
+    console.error('   FAIL: admin_only chunk leaked');
     process.exit(1);
   }
 
@@ -252,7 +255,7 @@ async function runRbacTestSuite() {
     advResponse.reply.includes('prohibited system override')
   ) {
     console.log(
-      '  ✅ PASS: Adversarial prompt injection safely screened and blocked.',
+      '   PASS: Adversarial prompt injection safely screened and blocked.',
     );
   }
 
@@ -265,18 +268,18 @@ async function runRbacTestSuite() {
 
   if (auditEntries && auditEntries.length > 0) {
     console.log(
-      `  ✅ PASS: Verified ${auditEntries.length} total audit log entries for Manager ${managerContext.userId}.`,
+      `   PASS: Verified ${auditEntries.length} total audit log entries for Manager ${managerContext.userId}.`,
     );
     console.log(
       `  Latest Manager Tool Logged: '${auditEntries[0].tool_name}' | Row Count: ${auditEntries[0].row_count}`,
     );
   } else {
-    console.error('❌ FAIL: Audit log missing for manager');
+    console.error(' FAIL: Audit log missing for manager');
     process.exit(1);
   }
 
   console.log(
-    '\n🎉 ALL PHASE 5 RBAC, TOOL LAYER & ANALYTICS EXIT CRITERIA PASSED!',
+    '\n ALL PHASE 5 RBAC, TOOL LAYER & ANALYTICS EXIT CRITERIA PASSED!',
   );
 }
 

@@ -15,7 +15,7 @@ async function applyPhase3KB() {
 
   if (!connectionString) {
     console.error(
-      '❌ FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
+      ' FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
     );
     process.exit(1);
   }
@@ -28,14 +28,14 @@ async function applyPhase3KB() {
 
   try {
     await client.connect();
-    console.log('✅ Connected to database successfully.');
+    console.log(' Connected to database successfully.');
 
     const sqlFilePath = path.resolve(
       process.cwd(),
       'supabase-phase3-kb-rls.sql',
     );
     if (!fs.existsSync(sqlFilePath)) {
-      console.error(`❌ Migration file not found at ${sqlFilePath}`);
+      console.error(` Migration file not found at ${sqlFilePath}`);
       process.exit(1);
     }
 
@@ -45,10 +45,10 @@ async function applyPhase3KB() {
     await client.query(sql);
 
     console.log(
-      '✅ SUCCESS: Phase 3 KB RPC vector function and RLS policies applied successfully!',
+      ' SUCCESS: Phase 3 KB RPC vector function and RLS policies applied successfully!',
     );
   } catch (err: any) {
-    console.error('❌ KB Execution Error:', err.message || err);
+    console.error(' KB Execution Error:', err.message || err);
     process.exit(1);
   } finally {
     await client.end();

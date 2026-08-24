@@ -40,7 +40,7 @@ export class OtpService {
       return;
     }
 
-    const message = `🔐 *Enlight Sales OS*\n\nYour OTP is: *${otp}*\n\nValid for 10 minutes. Do not share with anyone.`;
+    const message = ` *Enlight Sales OS*\n\nYour OTP is: *${otp}*\n\nValid for 10 minutes. Do not share with anyone.`;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {

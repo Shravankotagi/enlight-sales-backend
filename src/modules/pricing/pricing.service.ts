@@ -221,10 +221,10 @@ export class PricingService {
         .join('\n');
 
       const message =
-        `📢 *OFFICIAL RATE SHEET FINALIZED & UPDATED!*\n\n` +
-        `📅 Date: *${dateStr}*\n\n` +
+        ` *OFFICIAL RATE SHEET FINALIZED & UPDATED!*\n\n` +
+        ` Date: *${dateStr}*\n\n` +
         `${formattedItems}\n\n` +
-        `All new customer inquiries & bot calculations are now updated to these rates! ✅`;
+        `All new customer inquiries & bot calculations are now updated to these rates! `;
 
       const token = process.env.WHATSAPP_TOKEN;
       const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;

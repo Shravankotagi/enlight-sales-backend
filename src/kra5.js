@@ -168,13 +168,13 @@ function buildPaymentAlert(deal, dueDate, daysUntilDue) {
   let emoji = '';
 
   if (daysUntilDue > 0) {
-    emoji = '💰';
+    emoji = '';
     urgencyLine = `Due in ${daysUntilDue} day${daysUntilDue > 1 ? 's' : ''}`;
   } else if (daysUntilDue === 0) {
-    emoji = '⚠️';
+    emoji = '';
     urgencyLine = 'Due TODAY';
   } else {
-    emoji = '🔴';
+    emoji = '';
     urgencyLine = `OVERDUE by ${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) > 1 ? 's' : ''}`;
   }
 
@@ -182,16 +182,16 @@ function buildPaymentAlert(deal, dueDate, daysUntilDue) {
 
   return (
     `${emoji} *KRA 5 - Payment Alert*\n\n` +
-    `🏢 ${deal.customer_name}\n` +
-    `💵 Amount: ${formatAmount(deal.total_amount)}\n` +
-    `📋 Terms: ${deal.payment_terms || '30 days'}\n` +
-    `📅 Due: ${dueDateStr}\n` +
-    `⏰ ${urgencyLine}\n` +
-    (deal.po_number ? `📄 PO: ${deal.po_number}\n` : '') +
+    ` ${deal.customer_name}\n` +
+    ` Amount: ${formatAmount(deal.total_amount)}\n` +
+    ` Terms: ${deal.payment_terms || '30 days'}\n` +
+    ` Due: ${dueDateStr}\n` +
+    ` ${urgencyLine}\n` +
+    (deal.po_number ? ` PO: ${deal.po_number}\n` : '') +
     `\nPlease follow up and reply:\n` +
-    `✅ *PAID ${customerShort} [amount received]*\n` +
-    `📞 *FOLLOWEDUP ${customerShort} [outcome]*\n` +
-    `🔄 *COLLECTED ${customerShort} [amount]*`
+    ` *PAID ${customerShort} [amount received]*\n` +
+    ` *FOLLOWEDUP ${customerShort} [outcome]*\n` +
+    ` *COLLECTED ${customerShort} [amount]*`
   );
 }
 
@@ -299,15 +299,15 @@ async function handlePaymentUpdate(text, senderPhone, intentData) {
 
       const remainingStr =
         amountPending > 0
-          ? `\n⏳ Outstanding Pending: *₹${Number(amountPending).toLocaleString('en-IN')}*`
+          ? `\n Outstanding Pending: *₹${Number(amountPending).toLocaleString('en-IN')}*`
           : '';
 
       return (
-        `💵 *KRA 5 - Advance/Partial Payment Logged!*\n\n` +
-        `🏢 Customer: *${payment?.customer_name || customerName}*\n` +
-        `💰 Amount Paid: *₹${Number(amountPaid).toLocaleString('en-IN')}*` +
+        ` *KRA 5 - Advance/Partial Payment Logged!*\n\n` +
+        ` Customer: *${payment?.customer_name || customerName}*\n` +
+        ` Amount Paid: *₹${Number(amountPaid).toLocaleString('en-IN')}*` +
         `${remainingStr}\n\n` +
-        `Recorded in KRA 5 Pending ✅`
+        `Recorded in KRA 5 Pending `
       );
     } else {
       // Record full payment collection
@@ -350,18 +350,18 @@ async function handlePaymentUpdate(text, senderPhone, intentData) {
       });
 
       return (
-        `💰 *KRA 5 - Full Payment Collected!*\n\n` +
-        `🏢 Customer: *${payment?.customer_name || customerName}*\n` +
+        ` *KRA 5 - Full Payment Collected!*\n\n` +
+        ` Customer: *${payment?.customer_name || customerName}*\n` +
         (amountPaid
-          ? `💵 Amount Collected: *₹${Number(amountPaid).toLocaleString('en-IN')}*\n`
+          ? ` Amount Collected: *₹${Number(amountPaid).toLocaleString('en-IN')}*\n`
           : '') +
-        `Status: Marked as FULLY collected ✅\n\n` +
-        `Logged to KRA 5 ✅`
+        `Status: Marked as FULLY collected \n\n` +
+        `Logged to KRA 5 `
       );
     }
   } catch (error) {
     console.error('handlePaymentUpdate error:', error.message);
-    return '❌ Could not update payment status. Please try again.';
+    return ' Could not update payment status. Please try again.';
   }
 }
 
@@ -375,7 +375,7 @@ async function getPaymentSummary(senderPhone) {
       .order('due_date', { ascending: true });
 
     if (!payments || payments.length === 0) {
-      return '✅ No pending payments tracked.';
+      return ' No pending payments tracked.';
     }
 
     const pending = payments.filter((p) => p.status === 'pending');
@@ -394,10 +394,10 @@ async function getPaymentSummary(senderPhone) {
       0,
     );
 
-    let msg = `💰 *KRA 5 - Payment Status*\n\n`;
+    let msg = ` *KRA 5 - Payment Status*\n\n`;
 
     if (overdue.length > 0) {
-      msg += `🔴 *Overdue (${overdue.length}):*\n`;
+      msg += ` *Overdue (${overdue.length}):*\n`;
       overdue.slice(0, 3).forEach((p) => {
         const days = Math.floor(
           (now - new Date(p.due_date)) / (1000 * 60 * 60 * 24),
@@ -408,7 +408,7 @@ async function getPaymentSummary(senderPhone) {
     }
 
     if (upcoming.length > 0) {
-      msg += `⚠️ *Due Soon (${upcoming.length}):*\n`;
+      msg += ` *Due Soon (${upcoming.length}):*\n`;
       upcoming.slice(0, 3).forEach((p) => {
         const days = Math.floor(
           (new Date(p.due_date) - now) / (1000 * 60 * 60 * 24),
@@ -418,13 +418,13 @@ async function getPaymentSummary(senderPhone) {
       msg += '\n';
     }
 
-    msg += `✅ Collected this month: ${collected.length}\n`;
-    msg += `💵 Total outstanding: ₹${Number(totalOutstanding).toLocaleString('en-IN')}`;
+    msg += ` Collected this month: ${collected.length}\n`;
+    msg += ` Total outstanding: ₹${Number(totalOutstanding).toLocaleString('en-IN')}`;
 
     return msg;
   } catch (error) {
     console.error('getPaymentSummary error:', error.message);
-    return '❌ Could not fetch payment status.';
+    return ' Could not fetch payment status.';
   }
 }
 

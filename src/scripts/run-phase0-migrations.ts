@@ -13,7 +13,7 @@ async function applyMigrations() {
 
   if (!connectionString) {
     console.error(
-      '❌ FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
+      ' FAILED: Neither DIRECT_URL nor DATABASE_URL is set in .env',
     );
     process.exit(1);
   }
@@ -26,14 +26,14 @@ async function applyMigrations() {
 
   try {
     await client.connect();
-    console.log('✅ Connected to database successfully.');
+    console.log(' Connected to database successfully.');
 
     const sqlFilePath = path.resolve(
       process.cwd(),
       'supabase-phase0-migrations.sql',
     );
     if (!fs.existsSync(sqlFilePath)) {
-      console.error(`❌ Migration file not found at ${sqlFilePath}`);
+      console.error(` Migration file not found at ${sqlFilePath}`);
       process.exit(1);
     }
 
@@ -42,9 +42,9 @@ async function applyMigrations() {
 
     await client.query(sql);
 
-    console.log('✅ SUCCESS: Phase 0 migrations applied successfully!');
+    console.log(' SUCCESS: Phase 0 migrations applied successfully!');
   } catch (err: any) {
-    console.error('❌ Migration Execution Error:', err.message || err);
+    console.error(' Migration Execution Error:', err.message || err);
     process.exit(1);
   } finally {
     await client.end();

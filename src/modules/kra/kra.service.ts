@@ -1205,10 +1205,10 @@ export class KraService {
           0;
         const statusStr =
           d.stage === 'won'
-            ? 'Won 🎉'
+            ? 'Won '
             : d.stage === 'lost'
-              ? 'Lost ❌'
-              : 'In Pipeline 📄';
+              ? 'Lost '
+              : 'In Pipeline ';
         const amountStr =
           d.stage === 'won' && d.total_amount
             ? `₹${Number(d.total_amount).toLocaleString('en-IN')}`
@@ -1219,7 +1219,7 @@ export class KraService {
             : d.stage === 'won'
               ? d.po_number
                 ? `PO: ${d.po_number}`
-                : 'Order Confirmed 🎉'
+                : 'Order Confirmed '
               : '-';
 
         return {
@@ -1373,15 +1373,15 @@ export class KraService {
             const statusMatch = l.description?.match(/Status:\s*(\w+)/);
             const parsedStatus = statusMatch ? statusMatch[1] : l.kra_type;
             const statusLabels: Record<string, string> = {
-              reviewing_quotation: 'Reviewing Quotation 📄',
-              awaiting_decision: 'Awaiting Decision ⏳',
-              reorder_confirmed: 'Reorder Confirmed ✅',
-              price_negotiation: 'Price Negotiation 💬',
-              site_visit_pending: 'Site Visit Pending 🏭',
-              payment_pending: 'Payment Pending 💰',
-              routine_checkin: 'Routine Check-in 📞',
-              customer_churned: 'Flagged Churned 📉',
-              customer_retention: 'Follow-up Logged 📋',
+              reviewing_quotation: 'Reviewing Quotation ',
+              awaiting_decision: 'Awaiting Decision ',
+              reorder_confirmed: 'Reorder Confirmed ',
+              price_negotiation: 'Price Negotiation ',
+              site_visit_pending: 'Site Visit Pending ',
+              payment_pending: 'Payment Pending ',
+              routine_checkin: 'Routine Check-in ',
+              customer_churned: 'Flagged Churned ',
+              customer_retention: 'Follow-up Logged ',
             };
             // Parse next followup date from description
             const nextFUMatch = l.description?.match(
@@ -1397,7 +1397,7 @@ export class KraService {
               remarks:
                 statusLabels[parsedStatus] ||
                 parsedStatus ||
-                'Follow-up Logged 📋',
+                'Follow-up Logged ',
               next_followup: nextFUDate,
               date: new Date(l.created_at),
             };
@@ -1405,16 +1405,16 @@ export class KraService {
         // followup_tasks rows — always use these (most up-to-date)
         ...kra3Followups.map((f) => {
           const statusLabels: Record<string, string> = {
-            reviewing_quotation: 'Reviewing Quotation 📄',
-            awaiting_decision: 'Awaiting Decision ⏳',
-            reorder_confirmed: 'Reorder Confirmed ✅',
-            reorder_expected: 'Reorder Expected 🔥',
-            price_negotiation: 'Price Negotiation 💬',
-            site_visit_pending: 'Site Visit Pending 🏭',
-            payment_pending: 'Payment Pending 💰',
-            routine_checkin: 'Routine Check-in 📞',
-            pending: 'Pending Follow-up ⏳',
-            churned: 'Flagged Churned 📉',
+            reviewing_quotation: 'Reviewing Quotation ',
+            awaiting_decision: 'Awaiting Decision ',
+            reorder_confirmed: 'Reorder Confirmed ',
+            reorder_expected: 'Reorder Expected ',
+            price_negotiation: 'Price Negotiation ',
+            site_visit_pending: 'Site Visit Pending ',
+            payment_pending: 'Payment Pending ',
+            routine_checkin: 'Routine Check-in ',
+            pending: 'Pending Follow-up ',
+            churned: 'Flagged Churned ',
           };
           const statusKey = f.followup_status || f.status || 'pending';
           return {
@@ -1423,7 +1423,7 @@ export class KraService {
             quantity: '-', // follow-ups are not orders — never show '1 Order'
             remarks:
               statusLabels[statusKey] ||
-              `Follow-up #${f.follow_up_count || 1} 📋`,
+              `Follow-up #${f.follow_up_count || 1} `,
             next_followup: f.next_followup_date
               ? new Date(f.next_followup_date).toLocaleDateString('en-IN')
               : f.due_date
@@ -1459,7 +1459,7 @@ export class KraService {
               ? `${rc.avg_order_qty_mt} MT`
               : '-',
             next_followup_date: nextDate,
-            remarks: 'Active Account — Follow-up Scheduled 📋',
+            remarks: 'Active Account — Follow-up Scheduled ',
           };
         });
       }
@@ -1478,11 +1478,11 @@ export class KraService {
             'Product Requirement';
           const status = isDeal
             ? item.stage === 'won'
-              ? 'Won 🎉'
+              ? 'Won '
               : item.stage === 'lost'
-                ? 'Lost ❌'
-                : 'Pending ⏳'
-            : 'Pending ⏳';
+                ? 'Lost '
+                : 'Pending '
+            : 'Pending ';
 
           return {
             sr_no: index + 1,
@@ -1497,8 +1497,8 @@ export class KraService {
             reason_loss_pending:
               item.lost_reason ||
               (item.stage === 'won'
-                ? 'Order Confirmed 🎉'
-                : 'Under Negotiation ⏳'),
+                ? 'Order Confirmed '
+                : 'Under Negotiation '),
           };
         },
       );
@@ -1550,11 +1550,11 @@ export class KraService {
               ? `₹${Number(p.outstanding).toLocaleString('en-IN')}`
               : '₹0',
           remarks: isFullyCollected
-            ? 'Fully Collected 🎉'
+            ? 'Fully Collected '
             : p.status === 'pending'
-              ? 'Pending Collection ⏳'
+              ? 'Pending Collection '
               : p.status === 'partial'
-                ? 'Partial Payment Pending 💳'
+                ? 'Partial Payment Pending '
                 : p.status || 'In Progress',
         };
       });
@@ -1596,7 +1596,7 @@ export class KraService {
               customer_name: log.customer_name || '-',
               channel: 'WhatsApp Bot → Zoho Bigin CRM',
               logged_status:
-                log.sync_status === 'success' ? 'Synced ✅' : 'Sync Failed ⚠️',
+                log.sync_status === 'success' ? 'Synced ' : 'Sync Failed ',
               remarks: log.summary || log.description || '-',
             }))
           : safeKraLogs.map((l, index) => ({
@@ -1609,7 +1609,7 @@ export class KraService {
                 'CRM Activity',
               customer_name: l.customer_name || '-',
               channel: 'WhatsApp Bot → Zoho Bigin CRM',
-              logged_status: 'Synced ✅',
+              logged_status: 'Synced ',
               remarks: l.description || 'Logged via WhatsApp Bot',
             }));
 
@@ -1676,10 +1676,10 @@ export class KraService {
           status:
             c.status === 'resolved'
               ? resolutionHrs <= 48
-                ? 'Closed ✅'
-                : 'Closed (SLA Breached ⚠️)'
+                ? 'Closed '
+                : 'Closed (SLA Breached )'
               : c.escalated
-                ? 'Pending (Escalated 🔴)'
+                ? 'Pending (Escalated )'
                 : 'Pending',
         };
       });

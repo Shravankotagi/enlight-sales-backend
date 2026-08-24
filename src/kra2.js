@@ -94,16 +94,16 @@ async function logNewCustomer(deal, senderPhone) {
     // Send notification to salesperson
     const message =
       `🆕 *KRA 2 - New Customer Detected!*\n\n` +
-      `🏢 ${deal.customer_name}\n` +
-      `📋 Type: ${deal.inquiry_type}\n` +
+      ` ${deal.customer_name}\n` +
+      ` Type: ${deal.inquiry_type}\n` +
       (deal.total_amount
-        ? `💰 Value: ₹${Number(deal.total_amount).toLocaleString('en-IN')}\n`
+        ? ` Value: ₹${Number(deal.total_amount).toLocaleString('en-IN')}\n`
         : '') +
-      `\n📊 *${monthName} Progress*\n` +
+      `\n *${monthName} Progress*\n` +
       `New customers: ${count}/3\n` +
       (remaining > 0
         ? `${remaining} more needed to meet target`
-        : `✅ Monthly target achieved!`);
+        : ` Monthly target achieved!`);
 
     await sendTextMessage(senderPhone, message);
     return count;
@@ -131,12 +131,10 @@ async function getNewCustomerSummary(senderPhone) {
     const remaining = Math.max(0, 3 - count);
 
     let msg =
-      `👥 *KRA 2 - New Customers*\n` +
+      ` *KRA 2 - New Customers*\n` +
       `${monthName} ${year}\n\n` +
       `Acquired: ${count}/3\n` +
-      (remaining > 0
-        ? `⚠️ ${remaining} more needed\n`
-        : `✅ Target achieved!\n`);
+      (remaining > 0 ? ` ${remaining} more needed\n` : ` Target achieved!\n`);
 
     if (logs && logs.length > 0) {
       msg += `\nNew customers this month:\n`;
@@ -148,7 +146,7 @@ async function getNewCustomerSummary(senderPhone) {
     return msg;
   } catch (error) {
     console.error('getNewCustomerSummary error:', error.message);
-    return '❌ Could not fetch KRA 2 data.';
+    return ' Could not fetch KRA 2 data.';
   }
 }
 
@@ -164,7 +162,7 @@ async function handleNewCustomerAnnouncement(customerName, senderPhone) {
   const supabase = getSupabase();
   try {
     if (!customerName) {
-      return `⚠️ Could not detect a customer name in your message. Please mention the customer name clearly.\n\nExample: _"New customer acquired: ABC Industries"_`;
+      return ` Could not detect a customer name in your message. Please mention the customer name clearly.\n\nExample: _"New customer acquired: ABC Industries"_`;
     }
 
     // Check if already logged this customer in KRA 2
@@ -176,7 +174,7 @@ async function handleNewCustomerAnnouncement(customerName, senderPhone) {
       .ilike('customer_name', `%${customerName}%`);
 
     if (existingLogs && existingLogs.length > 0) {
-      return `ℹ️ *Already Logged*\n\n${customerName} was already recorded as a new customer acquisition for you this month.`;
+      return `ℹ *Already Logged*\n\n${customerName} was already recorded as a new customer acquisition for you this month.`;
     }
 
     // Log to KRA 2
@@ -207,16 +205,16 @@ async function handleNewCustomerAnnouncement(customerName, senderPhone) {
 
     return (
       `🆕 *KRA 2 - New Customer Logged!*\n\n` +
-      `🏢 Customer: *${customerName}*\n` +
-      `✅ Recorded as new customer acquisition\n\n` +
-      `📊 *${monthName} ${year} Progress*\n` +
+      ` Customer: *${customerName}*\n` +
+      ` Recorded as new customer acquisition\n\n` +
+      ` *${monthName} ${year} Progress*\n` +
       `New customers: ${count}/3\n` +
       (remaining > 0
-        ? `⚠️ ${remaining} more needed to meet target`
-        : `✅ Monthly target achieved!`)
+        ? ` ${remaining} more needed to meet target`
+        : ` Monthly target achieved!`)
     );
   } catch (error) {
     console.error('handleNewCustomerAnnouncement error:', error.message);
-    return '❌ Could not log new customer. Please try again.';
+    return ' Could not log new customer. Please try again.';
   }
 }

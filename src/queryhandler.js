@@ -439,7 +439,7 @@ async function getSalesThisMonth(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📊 *Team Sales Summary - ${monthName} ${year}*\n\n📋 No sales data found. You currently have no salespersons assigned to your team.`;
+      return ` *Team Sales Summary - ${monthName} ${year}*\n\n No sales data found. You currently have no salespersons assigned to your team.`;
     }
 
     // Match Dashboard logic: includes deals created in month OR won in month
@@ -484,21 +484,21 @@ async function getSalesThisMonth(scopeOrPhone, text = '') {
           : 'Sales Summary';
 
     return (
-      `📊 *${title} - ${monthName} ${year}*\n\n` +
-      `🏆 *Won Sales Achievement:*\n` +
+      ` *${title} - ${monthName} ${year}*\n\n` +
+      ` *Won Sales Achievement:*\n` +
       `• Won Revenue: *${formatINR(wonRevenue)}*\n` +
       `• Won Orders: *${wonDealsCount}*\n` +
       (wonTonnage > 0
         ? `• Delivered Volume: *${wonTonnage.toLocaleString('en-IN')} MT*\n`
         : '') +
-      `\n📋 *Pipeline Activity:*\n` +
+      `\n *Pipeline Activity:*\n` +
       `• Deals Created: ${totalCreatedDeals}\n` +
       `• Total Pipeline Value: ${formatINR(totalPipelineValue)}\n\n` +
       `_Data from Enlight Sales OS_`
     );
   } catch (error) {
     console.error('getSalesThisMonth error:', error);
-    return '❌ Could not fetch sales data. Please try again.';
+    return ' Could not fetch sales data. Please try again.';
   }
 }
 
@@ -511,7 +511,7 @@ async function getPendingDeals(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '✅ No pending deals found. You currently have no salespersons assigned to your team.';
+      return ' No pending deals found. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -527,7 +527,7 @@ async function getPendingDeals(scopeOrPhone) {
     if (error) throw error;
 
     if (!deals || deals.length === 0) {
-      return '✅ No pending deals right now!';
+      return ' No pending deals right now!';
     }
 
     const dealList = deals
@@ -547,10 +547,10 @@ async function getPendingDeals(scopeOrPhone) {
           ? 'Team Pending Deals'
           : 'Pending Deals';
 
-    return `📋 *${title} (${deals.length})*\n\n${dealList}\n\n_Showing latest 10_`;
+    return ` *${title} (${deals.length})*\n\n${dealList}\n\n_Showing latest 10_`;
   } catch (error) {
     console.error('getPendingDeals error:', error);
-    return '❌ Could not fetch pending deals.';
+    return ' Could not fetch pending deals.';
   }
 }
 
@@ -655,7 +655,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📥 *Team Inquiries - ${monthName} ${year}*\n\n0 inquiries found. You currently have no salespersons assigned to your team.`;
+      return ` *Team Inquiries - ${monthName} ${year}*\n\n0 inquiries found. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -702,7 +702,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
           : 'My Inquiries';
 
     if (totalCount === 0) {
-      return `📥 *${title} - ${monthName} ${year}*\n\nWe haven't received any product inquiries yet for ${monthName} ${year}.`;
+      return ` *${title} - ${monthName} ${year}*\n\nWe haven't received any product inquiries yet for ${monthName} ${year}.`;
     }
 
     const lower = (text || '').toLowerCase();
@@ -723,12 +723,12 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
 
     if (isChannelBreakdownQuery) {
       return (
-        `📥 *${title} by Source Channel - ${monthName} ${year}*\n\n` +
+        ` *${title} by Source Channel - ${monthName} ${year}*\n\n` +
         `Total inquiries received: *${inqWord(totalCount)}*\n\n` +
-        `📊 *Source Channel Breakdown:*\n` +
+        ` *Source Channel Breakdown:*\n` +
         `• WhatsApp Entry: *${inqWord(channelBreakdown['WhatsApp Entry'])}*\n` +
         `• Dashboard Entry: *${inqWord(channelBreakdown['Dashboard Entry'])}*\n\n` +
-        `💰 *Total: ${inqWord(totalCount)}*\n\n` +
+        ` *Total: ${inqWord(totalCount)}*\n\n` +
         `_Directly synced with Enlight Sales OS Inquiries_`
       );
     }
@@ -743,12 +743,12 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         lower.includes('kitni'))
     ) {
       return (
-        `📥 *${title} - In Review (${monthName} ${year})*\n\n` +
+        ` *${title} - In Review (${monthName} ${year})*\n\n` +
         `You currently have *${reviewCount} inquiries in review / pending* out of *${inqWord(totalCount)}* received this month.\n\n` +
-        `📊 *Inquiry Status Breakdown:*\n` +
+        ` *Inquiry Status Breakdown:*\n` +
         `• In Review / Pending: *${reviewCount}*\n` +
         `• Processed / Confirmed: *${processedCount}*\n\n` +
-        `💡 _Tip: Say "List pending inquiries" to inspect pending items or review on the dashboard._`
+        ` _Tip: Say "List pending inquiries" to inspect pending items or review on the dashboard._`
       );
     }
 
@@ -762,9 +762,9 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         lower.includes('kitni'))
     ) {
       return (
-        `📥 *${title} - Processed Inquiries (${monthName} ${year})*\n\n` +
-        `*${processedCount} inquiries* have been successfully processed and confirmed out of *${inqWord(totalCount)}* this month. 🎉\n\n` +
-        `📊 *Inquiry Status Breakdown:*\n` +
+        ` *${title} - Processed Inquiries (${monthName} ${year})*\n\n` +
+        `*${processedCount} inquiries* have been successfully processed and confirmed out of *${inqWord(totalCount)}* this month. \n\n` +
+        ` *Inquiry Status Breakdown:*\n` +
         `• Processed / Confirmed: *${processedCount}*\n` +
         `• In Review / Pending: *${reviewCount}*`
       );
@@ -779,9 +779,9 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
       lower.includes('total tons')
     ) {
       return (
-        `📥 *${title} - Total Inquiry Tonnage (${monthName} ${year})*\n\n` +
+        ` *${title} - Total Inquiry Tonnage (${monthName} ${year})*\n\n` +
         `Total volume across all inquiries this month is *${totalTonnage.toLocaleString('en-IN')} MT* across *${inqWord(totalCount)}*.\n\n` +
-        `📊 *Inquiry Breakdown:*\n` +
+        ` *Inquiry Breakdown:*\n` +
         `• Total Inquiries: *${totalCount}*\n` +
         `• Processed: *${processedCount}*\n` +
         `• In Review: *${reviewCount}*\n` +
@@ -791,22 +791,22 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
 
     // General inquiry breakdown & summary
     return (
-      `📥 *${title} - ${monthName} ${year}*\n\n` +
+      ` *${title} - ${monthName} ${year}*\n\n` +
       `We've received *${inqWord(totalCount)}* this month! That's a great volume of customer demand.\n\n` +
-      `📊 *Inquiry Status Breakdown:*\n` +
+      ` *Inquiry Status Breakdown:*\n` +
       `• Processed: *${processedCount}*\n` +
       `• In Review: *${reviewCount}*\n` +
       (totalTonnage > 0
         ? `• Total Volume: *${totalTonnage.toLocaleString('en-IN')} MT*\n\n`
         : '\n') +
-      `📱 *Source Channel Breakdown:*\n` +
+      ` *Source Channel Breakdown:*\n` +
       `• WhatsApp Entry: *${channelBreakdown['WhatsApp Entry']}*\n` +
       `• Dashboard Entry: *${channelBreakdown['Dashboard Entry']}*\n\n` +
       `_Directly synced with Enlight Sales OS Inquiries_`
     );
   } catch (error) {
     console.error('getInquiriesThisMonth error:', error);
-    return '❌ Could not fetch inquiry count.';
+    return ' Could not fetch inquiry count.';
   }
 }
 
@@ -819,7 +819,7 @@ async function getPendingInquiries(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '✅ No inquiries pending review. You currently have no salespersons assigned to your team.';
+      return ' No inquiries pending review. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -835,7 +835,7 @@ async function getPendingInquiries(scopeOrPhone) {
     if (error) throw error;
 
     if (!inquiries || inquiries.length === 0) {
-      return '✅ No inquiries pending review!';
+      return ' No inquiries pending review!';
     }
 
     const list = inquiries
@@ -855,10 +855,10 @@ async function getPendingInquiries(scopeOrPhone) {
           ? 'Team Inquiries Needing Review'
           : 'Inquiries Needing Review';
 
-    return `⚠️ *${title} (${inquiries.length})*\n\n${list}`;
+    return ` *${title} (${inquiries.length})*\n\n${list}`;
   } catch (error) {
     console.error('getPendingInquiries error:', error);
-    return '❌ Could not fetch inquiries.';
+    return ' Could not fetch inquiries.';
   }
 }
 
@@ -872,7 +872,7 @@ async function getDealsThisWeek(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '📋 No deals logged this week. You currently have no salespersons assigned to your team.';
+      return ' No deals logged this week. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -888,7 +888,7 @@ async function getDealsThisWeek(scopeOrPhone) {
     if (error) throw error;
 
     if (!deals || deals.length === 0) {
-      return '📋 No deals logged this week yet.';
+      return ' No deals logged this week yet.';
     }
 
     const totalAmount = deals.reduce(
@@ -912,12 +912,12 @@ async function getDealsThisWeek(scopeOrPhone) {
           : "This Week's Deals";
 
     return (
-      `📊 *${title} (${deals.length})*\n\n${list}\n\n` +
-      `💰 *Total: ${formatINR(totalAmount)}*`
+      ` *${title} (${deals.length})*\n\n${list}\n\n` +
+      ` *Total: ${formatINR(totalAmount)}*`
     );
   } catch (error) {
     console.error('getDealsThisWeek error:', error);
-    return '❌ Could not fetch this week deals.';
+    return ' Could not fetch this week deals.';
   }
 }
 
@@ -931,7 +931,7 @@ async function getKRAStatus(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `🎯 *Team KRA Status - ${monthName} ${year}*\n\n📋 You currently have no salespersons assigned to your team. Contact an administrator to assign sales team members.`;
+      return ` *Team KRA Status - ${monthName} ${year}*\n\n You currently have no salespersons assigned to your team. Contact an administrator to assign sales team members.`;
     }
 
     let dealsQuery = supabase
@@ -1131,30 +1131,30 @@ async function getKRAStatus(scopeOrPhone, text = '') {
           : 'Performance Scorecard';
 
     return (
-      `🎯 *${title} - ${monthName} ${year}*\n\n` +
-      `📋 *Sales Achievement Card*\n` +
+      ` *${title} - ${monthName} ${year}*\n\n` +
+      ` *Sales Achievement Card*\n` +
       `   Won Revenue: *${formatINR(wonValue)}* | Orders: *${wonCount}*` +
       (wonTonnage > 0
         ? ` | Volume: *${wonTonnage.toLocaleString('en-IN')} MT*`
         : '') +
       `\n\n` +
-      `👥 *New Customer Acquisition Card*\n` +
+      ` *New Customer Acquisition Card*\n` +
       `   Acquired: *${newCustomersCount}/3* new customers\n\n` +
-      `🔄 *Customer Retention Card*\n` +
+      ` *Customer Retention Card*\n` +
       `   Active Accounts: *${uniqueRecurringWithOrder}/${recurring.length}* (${retentionRate}%)\n\n` +
-      `📈 *Enquiry Conversion Card*\n` +
+      ` *Enquiry Conversion Card*\n` +
       `   Inquiries: *${totalDealsCount}* | Won: *${wonCount}* | Rate: *${conversionRate}%*\n\n` +
-      `💵 *Payment Collection Card*\n` +
+      ` *Payment Collection Card*\n` +
       `   Collected: *${formatINR(totalCollected)}* | Outstanding: *${formatINR(totalOutstanding)}*\n\n` +
-      `⚠️ *Customer Complaints Card*\n` +
+      ` *Customer Complaints Card*\n` +
       `   Total Logged: *${complaints.length}* | Open: *${openComplaints.length}*\n\n` +
-      `📍 *Customer Visits Card*\n` +
+      ` *Customer Visits Card*\n` +
       `   Total Visits: *${totalVisits}* (Target: 10/wk)\n\n` +
       `_Full live metrics verified with Enlight Sales OS Dashboard_`
     );
   } catch (error) {
     console.error('getKRAStatus error:', error);
-    return '❌ Could not fetch KRA status.';
+    return ' Could not fetch KRA status.';
   }
 }
 
@@ -1169,7 +1169,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📋 No won deals found for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
+      return ` No won deals found for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1185,7 +1185,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return `📋 No won deals found for ${monthName} ${year}.`;
+      return ` No won deals found for ${monthName} ${year}.`;
     }
 
     let srNo = 1;
@@ -1195,7 +1195,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
       const poStr = deal.po_number ? ` (PO: ${deal.po_number})` : '';
       if (items.length === 0) {
         lines.push(
-          `${srNo++}. *${deal.customer_name}*${poStr}\n   💰 Value: ${formatINR(deal.total_amount)}`,
+          `${srNo++}. *${deal.customer_name}*${poStr}\n    Value: ${formatINR(deal.total_amount)}`,
         );
       } else {
         const itemLines = items
@@ -1207,7 +1207,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
           )
           .join('\n');
         lines.push(
-          `${srNo++}. *${deal.customer_name}*${poStr}\n${itemLines}\n   💰 *Total: ${formatINR(deal.total_amount)}*`,
+          `${srNo++}. *${deal.customer_name}*${poStr}\n${itemLines}\n    *Total: ${formatINR(deal.total_amount)}*`,
         );
       }
     }
@@ -1230,16 +1230,16 @@ async function getWonCustomers(scopeOrPhone, text = '') {
           : 'Won Deals';
 
     return (
-      `🏆 *${title} — ${monthName} ${year}* (${deals.length} won orders)\n\n` +
+      ` *${title} — ${monthName} ${year}* (${deals.length} won orders)\n\n` +
       lines.join('\n\n') +
-      `\n\n💰 *Total Won Revenue: ${formatINR(totalValue)}*` +
+      `\n\n *Total Won Revenue: ${formatINR(totalValue)}*` +
       (totalTonnage > 0
-        ? `\n📦 *Total Volume: ${totalTonnage.toLocaleString('en-IN')} MT*`
+        ? `\n *Total Volume: ${totalTonnage.toLocaleString('en-IN')} MT*`
         : '')
     );
   } catch (err) {
     console.error('getWonCustomers error:', err.message);
-    return '❌ Could not fetch won customers.';
+    return ' Could not fetch won customers.';
   }
 }
 
@@ -1253,7 +1253,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '✅ No active deals in pipeline. You currently have no salespersons assigned to your team.';
+      return ' No active deals in pipeline. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -1267,7 +1267,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return '✅ No active deals in pipeline right now.';
+      return ' No active deals in pipeline right now.';
     }
 
     const lines = deals.map((d, i) => {
@@ -1276,7 +1276,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
           (it) => `     • ${it.sku_text || 'Item'}: ${it.quantity} ${it.unit}`,
         )
         .join('\n');
-      return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n   💰 ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
+      return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n    ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
     });
 
     const title = scope.targetRepName
@@ -1287,10 +1287,10 @@ async function getActiveDealsDetail(scopeOrPhone) {
           ? 'Team Active Pipeline Deals'
           : 'Active Pipeline Deals';
 
-    return `📋 *${title} (${deals.length})*\n\n` + lines.join('\n\n');
+    return ` *${title} (${deals.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getActiveDealsDetail error:', err.message);
-    return '❌ Could not fetch active deals.';
+    return ' Could not fetch active deals.';
   }
 }
 
@@ -1304,7 +1304,7 @@ async function getCustomerList(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '👥 No customers registered under your assigned sales team yet.';
+      return ' No customers registered under your assigned sales team yet.';
     }
 
     let query = supabase
@@ -1325,15 +1325,15 @@ async function getCustomerList(scopeOrPhone) {
 
     if (!customers || customers.length === 0) {
       return scope.isManager
-        ? '👥 No customers registered under your assigned sales team yet.'
-        : '📋 No customers registered under your account yet.';
+        ? ' No customers registered under your assigned sales team yet.'
+        : ' No customers registered under your account yet.';
     }
 
     const lines = customers.map(
       (c, i) =>
         `${i + 1}. *${c.customer_name}*\n` +
-        `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.customer_address || 'N/A'} | 📱 ${c.customer_phone || 'N/A'}` +
-        (c.customer_gst ? `\n   🧾 GST: ${c.customer_gst}` : ''),
+        `    ${c.contact_person || 'N/A'} |  ${c.customer_address || 'N/A'} |  ${c.customer_phone || 'N/A'}` +
+        (c.customer_gst ? `\n    GST: ${c.customer_gst}` : ''),
     );
 
     const title = scope.targetRepName
@@ -1344,16 +1344,16 @@ async function getCustomerList(scopeOrPhone) {
           ? 'Team Customer List'
           : 'Your Customer List';
 
-    return `👥 *${title} (${customers.length})*\n\n` + lines.join('\n\n');
+    return ` *${title} (${customers.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getCustomerList error:', err.message);
-    return '❌ Could not fetch customer list.';
+    return ' Could not fetch customer list.';
   }
 }
 
 /** Active rate sheet information */
 async function getRateSheet() {
-  return `💹 *Metal Pricing Policy*\n\nRates and pricing are provided directly by the Salesperson for each specific inquiry or order.\n\nTo log an inquiry with pricing, send:\n👉 \`[Customer] [Qty MT] [Product] rate [Price] Delivery [Location]\`\n_Example: Supreme Steel 20 MT HR Coil rate 52000 Delivery Pune_`;
+  return ` *Metal Pricing Policy*\n\nRates and pricing are provided directly by the Salesperson for each specific inquiry or order.\n\nTo log an inquiry with pricing, send:\n \`[Customer] [Qty MT] [Product] rate [Price] Delivery [Location]\`\n_Example: Supreme Steel 20 MT HR Coil rate 52000 Delivery Pune_`;
 }
 
 /** Customer visits list */
@@ -1367,7 +1367,7 @@ async function getVisitList(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📍 No visits logged for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
+      return ` No visits logged for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1381,16 +1381,16 @@ async function getVisitList(scopeOrPhone, text = '') {
     const { data: visits } = await query;
 
     if (!visits || visits.length === 0) {
-      return `📍 No visits logged for ${monthName} ${year}.`;
+      return ` No visits logged for ${monthName} ${year}.`;
     }
 
     const lines = visits.map(
       (v, i) =>
         `${i + 1}. *${v.customer_name || 'Customer'}*\n` +
-        `   📅 ${new Date(v.visited_at).toLocaleDateString('en-IN')}\n` +
-        (v.person_met ? `   👤 Contact: ${v.person_met}\n` : '') +
-        (v.customer_address ? `   📍 Location: ${v.customer_address}\n` : '') +
-        `   📝 Remarks: ${v.remarks || 'Visit completed'}`,
+        `    ${new Date(v.visited_at).toLocaleDateString('en-IN')}\n` +
+        (v.person_met ? `    Contact: ${v.person_met}\n` : '') +
+        (v.customer_address ? `    Location: ${v.customer_address}\n` : '') +
+        `    Remarks: ${v.remarks || 'Visit completed'}`,
     );
 
     const title = scope.targetRepName
@@ -1402,12 +1402,12 @@ async function getVisitList(scopeOrPhone, text = '') {
           : 'Customer Visits';
 
     return (
-      `📍 *${title} — ${monthName} ${year}* (${visits.length} visits)\n\n` +
+      ` *${title} — ${monthName} ${year}* (${visits.length} visits)\n\n` +
       lines.join('\n\n')
     );
   } catch (err) {
     console.error('getVisitList error:', err.message);
-    return '❌ Could not fetch visit list.';
+    return ' Could not fetch visit list.';
   }
 }
 
@@ -1421,7 +1421,7 @@ async function getVisitSummary(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📊 *Customer Visits Card (Team) - ${monthName} ${year}*\n\nNo visits logged. You currently have no salespersons assigned to your team.`;
+      return ` *Customer Visits Card (Team) - ${monthName} ${year}*\n\nNo visits logged. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1435,7 +1435,7 @@ async function getVisitSummary(scopeOrPhone, text = '') {
     const { data: visits } = await query;
 
     if (!visits || visits.length === 0) {
-      return `📊 *Customer Visits Card - ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
+      return ` *Customer Visits Card - ${monthName} ${year}*\n\nNo visits logged this month yet.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
     }
 
     const visitList = visits
@@ -1455,14 +1455,14 @@ async function getVisitSummary(scopeOrPhone, text = '') {
           : 'Customer Visits Card';
 
     return (
-      `📊 *${title} - ${monthName} ${year}*\n\n` +
+      ` *${title} - ${monthName} ${year}*\n\n` +
       `Total visits: ${visits.length}\n\n` +
       `Recent visits:\n${visitList}\n\n` +
       `_Target: 10 visits/week, 3 field days/week_`
     );
   } catch (error) {
     console.error('getVisitSummary error:', error);
-    return '❌ Could not fetch visit summary.';
+    return ' Could not fetch visit summary.';
   }
 }
 
@@ -1476,7 +1476,7 @@ async function getInactiveCustomers(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '⚠️ No customer data found. You currently have no salespersons assigned to your team.';
+      return ' No customer data found. You currently have no salespersons assigned to your team.';
     }
 
     let custQuery = supabase
@@ -1507,7 +1507,7 @@ async function getInactiveCustomers(scopeOrPhone) {
     ]);
 
     if (!customers || customers.length === 0) {
-      return '📋 No registered recurring customers found.';
+      return ' No registered recurring customers found.';
     }
 
     const now = new Date();
@@ -1546,7 +1546,7 @@ async function getInactiveCustomers(scopeOrPhone) {
     }
 
     if (inactiveList.length === 0) {
-      return '✅ All customers are active and ordering regularly (no churn risk > 60 days)!';
+      return ' All customers are active and ordering regularly (no churn risk > 60 days)!';
     }
 
     const lines = inactiveList
@@ -1554,8 +1554,8 @@ async function getInactiveCustomers(scopeOrPhone) {
       .map(
         (c, i) =>
           `${i + 1}. *${c.name}*\n` +
-          `   ⏳ Last Order: ${c.daysSince} (${c.lastDateStr})\n` +
-          `   👤 Contact: ${c.contact || 'N/A'} | 📱 ${c.phone || 'N/A'}`,
+          `    Last Order: ${c.daysSince} (${c.lastDateStr})\n` +
+          `    Contact: ${c.contact || 'N/A'} |  ${c.phone || 'N/A'}`,
       );
 
     const title = scope.targetRepName
@@ -1567,13 +1567,13 @@ async function getInactiveCustomers(scopeOrPhone) {
           : 'Inactive Customers (Churn Risk)';
 
     return (
-      `⚠️ *${title} (${inactiveList.length} accounts)*\n\n` +
+      ` *${title} (${inactiveList.length} accounts)*\n\n` +
       lines.join('\n\n') +
       `\n\n_Reach out under Customer Retention Card to re-engage these accounts!_`
     );
   } catch (err) {
     console.error('getInactiveCustomers error:', err.message);
-    return '❌ Could not fetch inactive customers.';
+    return ' Could not fetch inactive customers.';
   }
 }
 
@@ -1587,7 +1587,7 @@ async function getReorderQueue(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '📋 No reorder queue data. You currently have no salespersons assigned to your team.';
+      return ' No reorder queue data. You currently have no salespersons assigned to your team.';
     }
 
     let taskQuery = supabase
@@ -1605,7 +1605,7 @@ async function getReorderQueue(scopeOrPhone) {
     const { data: tasks } = await taskQuery;
 
     if (!tasks || tasks.length === 0) {
-      return '✅ No open reorder tasks right now. Log follow-ups to add to reorder queue!';
+      return ' No open reorder tasks right now. Log follow-ups to add to reorder queue!';
     }
 
     const lines = tasks.map((t, i) => {
@@ -1614,8 +1614,8 @@ async function getReorderQueue(scopeOrPhone) {
         : 'This week';
       return (
         `${i + 1}. *${t.customer_name}*\n` +
-        `   📅 Follow-up Due: ${dueStr}\n` +
-        `   📝 Notes: ${t.notes || t.remarks || 'Reorder expected'}`
+        `    Follow-up Due: ${dueStr}\n` +
+        `    Notes: ${t.notes || t.remarks || 'Reorder expected'}`
       );
     });
 
@@ -1627,10 +1627,10 @@ async function getReorderQueue(scopeOrPhone) {
           ? 'Team Reorder Queue'
           : 'Reorder Queue';
 
-    return `🔄 *${title} (${tasks.length})*\n\n` + lines.join('\n\n');
+    return ` *${title} (${tasks.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getReorderQueue error:', err.message);
-    return '❌ Could not fetch reorder queue.';
+    return ' Could not fetch reorder queue.';
   }
 }
 
@@ -1644,7 +1644,7 @@ async function getPaymentAging(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return '💰 No outstanding payments found. You currently have no salespersons assigned to your team.';
+      return ' No outstanding payments found. You currently have no salespersons assigned to your team.';
     }
 
     let ptQuery = supabase
@@ -1690,7 +1690,7 @@ async function getPaymentAging(scopeOrPhone) {
             const overdue = daysLeft < 0;
             dueDisplay = due.toLocaleDateString('en-IN');
             overdueStr = overdue
-              ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
+              ? `  (${Math.abs(daysLeft)}d overdue)`
               : ` (${daysLeft}d left)`;
           }
         }
@@ -1716,14 +1716,14 @@ async function getPaymentAging(scopeOrPhone) {
             : 'Outstanding Payments';
 
       return (
-        `💰 *${title} (${ptRecords.length})*\n\n` +
+        ` *${title} (${ptRecords.length})*\n\n` +
         rows.join('\n\n') +
-        `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
+        `\n\n *Total Outstanding: ${formatINR(totalOutstanding)}*`
       );
     }
 
     if (!deals || deals.length === 0) {
-      return '✅ No outstanding payments! All collections up to date.';
+      return ' No outstanding payments! All collections up to date.';
     }
 
     rows = deals.map((d, i) => {
@@ -1737,7 +1737,7 @@ async function getPaymentAging(scopeOrPhone) {
         const overdue = daysLeft < 0;
         dueDisplay = due.toLocaleDateString('en-IN');
         overdueStr = overdue
-          ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
+          ? `  (${Math.abs(daysLeft)}d overdue)`
           : ` (${daysLeft}d left)`;
       }
       return (
@@ -1760,13 +1760,13 @@ async function getPaymentAging(scopeOrPhone) {
           : 'Outstanding Payments';
 
     return (
-      `💰 *${title} (${deals.length})*\n\n` +
+      ` *${title} (${deals.length})*\n\n` +
       rows.join('\n\n') +
-      `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
+      `\n\n *Total Outstanding: ${formatINR(totalOutstanding)}*`
     );
   } catch (err) {
     console.error('getPaymentAging error:', err.message);
-    return '❌ Could not fetch payment aging.';
+    return ' Could not fetch payment aging.';
   }
 }
 
@@ -1781,7 +1781,7 @@ async function getLostDeals(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `✅ No lost deals found in ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
+      return ` No lost deals found in ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1796,7 +1796,7 @@ async function getLostDeals(scopeOrPhone, text = '') {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return `✅ No lost deals in ${monthName} ${year}.`;
+      return ` No lost deals in ${monthName} ${year}.`;
     }
 
     const lines = deals.map(
@@ -1817,13 +1817,13 @@ async function getLostDeals(scopeOrPhone, text = '') {
           : 'Lost Deals';
 
     return (
-      `❌ *${title} — ${monthName} ${year}* (${deals.length})\n\n` +
+      ` *${title} — ${monthName} ${year}* (${deals.length})\n\n` +
       lines.join('\n\n') +
-      `\n\n📉 *Total Lost Value: ${formatINR(totalLost)}*`
+      `\n\n *Total Lost Value: ${formatINR(totalLost)}*`
     );
   } catch (err) {
     console.error('getLostDeals error:', err.message);
-    return '❌ Could not fetch lost deals.';
+    return ' Could not fetch lost deals.';
   }
 }
 
@@ -1834,7 +1834,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `🔍 *Customer 360*\n\nNo records found. You currently have no salespersons assigned to your team.`;
+      return ` *Customer 360*\n\nNo records found. You currently have no salespersons assigned to your team.`;
     }
 
     if (!customerName) {
@@ -1849,7 +1849,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     }
 
     if (!customerName || customerName.length < 2) {
-      return `❓ *Please specify the customer name.*\n\nExample: _"Customer 360 for Supreme Steel"_`;
+      return ` *Please specify the customer name.*\n\nExample: _"Customer 360 for Supreme Steel"_`;
     }
 
     // 1. Fetch profile
@@ -1902,7 +1902,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
         : scope.isManager
           ? 'assigned team'
           : 'salesperson account';
-      return `🔍 *Customer 360 - ${customerName}*\n\nNo matching records found for "${customerName}" under your ${scopeLabel}.`;
+      return ` *Customer 360 - ${customerName}*\n\nNo matching records found for "${customerName}" under your ${scopeLabel}.`;
     }
 
     const officialName =
@@ -1949,16 +1949,16 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     }
 
     return (
-      `🏢 *Customer 360 Overview: ${officialName}*\n\n` +
-      `📞 *Phone:* ${phone}\n` +
-      `📋 *GST:* ${gst}\n` +
-      `📍 *Address:* ${address}\n\n` +
-      `📦 *Recent Deals:*\n${dealsSection}\n\n` +
-      `💰 *Payment Status:*\n${paySection}`
+      ` *Customer 360 Overview: ${officialName}*\n\n` +
+      ` *Phone:* ${phone}\n` +
+      ` *GST:* ${gst}\n` +
+      ` *Address:* ${address}\n\n` +
+      ` *Recent Deals:*\n${dealsSection}\n\n` +
+      ` *Payment Status:*\n${paySection}`
     );
   } catch (err) {
     console.error('getCustomer360 error:', err.message);
-    return `❌ Could not fetch Customer 360 for ${customerName || 'customer'}.`;
+    return ` Could not fetch Customer 360 for ${customerName || 'customer'}.`;
   }
 }
 
@@ -1997,16 +1997,16 @@ async function getKnowledgeBaseAnswer(senderPhone, queryText) {
     }
 
     if (!chunks || chunks.length === 0) {
-      return `📚 *Knowledge Base*\n\nI couldn't find specific company policy documentation for "${queryText}". Please check with your sales manager or operations lead.`;
+      return ` *Knowledge Base*\n\nI couldn't find specific company policy documentation for "${queryText}". Please check with your sales manager or operations lead.`;
     }
 
     const topChunk = chunks[0];
     const sourceTitle = topChunk.title || 'Company Policy';
 
-    return `📚 *Enlight Metals Knowledge Base*\n\n${topChunk.content.trim()}\n\n📄 _Source: ${sourceTitle}_`;
+    return ` *Enlight Metals Knowledge Base*\n\n${topChunk.content.trim()}\n\n _Source: ${sourceTitle}_`;
   } catch (err) {
     console.error('getKnowledgeBaseAnswer error:', err.message);
-    return `⚠️ Could not search company knowledge base: ${err.message}`;
+    return ` Could not search company knowledge base: ${err.message}`;
   }
 }
 
@@ -2036,7 +2036,7 @@ async function getReorderQueue(senderPhone) {
 
     const { data: accounts, error } = await query;
     if (error || !accounts || accounts.length === 0) {
-      return `🔄 *Reorder Queue*\n\nNo recurring customers currently flagged for reorder under your account.`;
+      return ` *Reorder Queue*\n\nNo recurring customers currently flagged for reorder under your account.`;
     }
 
     const list = accounts
@@ -2044,14 +2044,14 @@ async function getReorderQueue(senderPhone) {
         const lastDate = a.last_order_date
           ? new Date(a.last_order_date).toLocaleDateString('en-IN')
           : 'N/A';
-        return `${i + 1}. *${a.customer_name}*\n   📞 ${a.customer_phone || 'N/A'} | Last Order: ${lastDate}\n   Frequency: Every ${a.avg_order_frequency_days || 30} days`;
+        return `${i + 1}. *${a.customer_name}*\n    ${a.customer_phone || 'N/A'} | Last Order: ${lastDate}\n   Frequency: Every ${a.avg_order_frequency_days || 30} days`;
       })
       .join('\n\n');
 
-    return `🔄 *Recurring Customers Due for Reorder (${accounts.length})*\n\n${list}\n\n_Tip: Reach out to these clients to secure repeat orders this week._`;
+    return ` *Recurring Customers Due for Reorder (${accounts.length})*\n\n${list}\n\n_Tip: Reach out to these clients to secure repeat orders this week._`;
   } catch (err) {
     console.error('getReorderQueue error:', err.message);
-    return `❌ Could not fetch reorder queue.`;
+    return ` Could not fetch reorder queue.`;
   }
 }
 
@@ -2074,7 +2074,7 @@ async function getChurnRadar(senderPhone) {
 
     const { data: accounts, error } = await query;
     if (error || !accounts || accounts.length === 0) {
-      return `⚠️ *Churn Radar*\n\nNo accounts currently flagged at churn risk under your account.`;
+      return ` *Churn Radar*\n\nNo accounts currently flagged at churn risk under your account.`;
     }
 
     const now = Date.now();
@@ -2087,7 +2087,7 @@ async function getChurnRadar(senderPhone) {
     });
 
     if (atRisk.length === 0) {
-      return `✅ *Churn Radar*\n\nAll your recurring accounts are ordering within their healthy schedule!`;
+      return ` *Churn Radar*\n\nAll your recurring accounts are ordering within their healthy schedule!`;
     }
 
     const list = atRisk
@@ -2099,10 +2099,10 @@ async function getChurnRadar(senderPhone) {
       })
       .join('\n\n');
 
-    return `🚨 *Churn Risk Accounts (${atRisk.length})*\n\n${list}\n\n_Action: Schedule immediate retention visits/calls._`;
+    return ` *Churn Risk Accounts (${atRisk.length})*\n\n${list}\n\n_Action: Schedule immediate retention visits/calls._`;
   } catch (err) {
     console.error('getChurnRadar error:', err.message);
-    return `❌ Could not fetch churn radar.`;
+    return ` Could not fetch churn radar.`;
   }
 }
 
@@ -2290,7 +2290,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📋 *Order Listing*\n\nNo orders found. You currently have no salespersons assigned to your team.`;
+      return ` *Order Listing*\n\nNo orders found. You currently have no salespersons assigned to your team.`;
     }
 
     const filters = await extractOrderFilters(text);
@@ -2459,9 +2459,9 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
 
     if (!deals || deals.length === 0) {
       return (
-        `📋 *No Matching Orders Found*\n\n` +
+        ` *No Matching Orders Found*\n\n` +
         `No orders found matching your criteria${headerTag}.\n\n` +
-        `💡 *Tip*: Try broadening your search or check deal status on Enlight Sales OS.`
+        ` *Tip*: Try broadening your search or check deal status on Enlight Sales OS.`
       );
     }
 
@@ -2488,11 +2488,11 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
             return `${name}${qty ? ` (${qty}${rate ? ` ${rate}` : ''})` : ''}`;
           })
           .slice(0, 2);
-        itemsSummary = `   📦 Items: ${itemLines.join(', ')}${items.length > 2 ? ` (+${items.length - 2} more)` : ''}\n`;
+        itemsSummary = `    Items: ${itemLines.join(', ')}${items.length > 2 ? ` (+${items.length - 2} more)` : ''}\n`;
       }
 
       const locStr = d.delivery_location
-        ? `   📍 Location: *${d.delivery_location}*\n`
+        ? `    Location: *${d.delivery_location}*\n`
         : '';
       const dateStr = d.created_at
         ? new Date(d.created_at).toLocaleDateString('en-IN', {
@@ -2505,7 +2505,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
       const repName = phoneToName[d.salesperson_phone];
       const repStr =
         (scope.isAdmin || scope.isManager) && repName
-          ? `   👤 Salesperson: *${repName}*\n`
+          ? `    Salesperson: *${repName}*\n`
           : '';
 
       return (
@@ -2514,7 +2514,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
         locStr +
         itemsSummary +
         repStr +
-        `   📅 Date: ${dateStr}`
+        `    Date: ${dateStr}`
       );
     });
 
@@ -2538,19 +2538,19 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
           : 'My Orders';
 
     return (
-      `📋 *${title}* (${deals.length} found)${headerTag}\n\n` +
+      ` *${title}* (${deals.length} found)${headerTag}\n\n` +
       orderCards.join('\n\n') +
       (deals.length > 10
         ? `\n\n_Showing top 10 of ${deals.length} orders_`
         : '') +
-      `\n\n📊 *Summary:* Total Value: *${formatINR(totalMatchingValue)}*` +
+      `\n\n *Summary:* Total Value: *${formatINR(totalMatchingValue)}*` +
       (totalMatchingTonnage > 0
         ? ` | Volume: *${totalMatchingTonnage.toLocaleString('en-IN')} MT*`
         : '')
     );
   } catch (err) {
     console.error('getFilteredOrders error:', err);
-    return `❌ Could not fetch orders: ${err.message}`;
+    return ` Could not fetch orders: ${err.message}`;
   }
 }
 
@@ -2573,7 +2573,7 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
       const dashboardUrl =
         process.env.DASHBOARD_URL ||
         'https://enlight-sales-frontend.vercel.app';
-      return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+      return ` *Enlight Sales OS Portal*\n\n ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
     }
     case 'order_list':
     case 'filtered_orders':
@@ -2675,7 +2675,7 @@ async function handleQuery(text, senderPhone) {
     if (!isSelf) {
       if (userScope.role === 'salesperson') {
         // Salesperson asking about another salesperson -> BLOCK
-        return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or details of other salespeople. You can only query your own performance reports.`;
+        return ` *Access Denied*\n\nYou are not authorized to view the performance or details of other salespeople. You can only query your own performance reports.`;
       }
 
       if (userScope.isManager) {
@@ -2685,7 +2685,7 @@ async function handleQuery(text, senderPhone) {
         );
 
         if (!isAssigned) {
-          return `⚠️ *Access Denied*\n\nSalesperson *${matchedEmp.name}* is not assigned to your team. You can only view data for salespersons assigned under your management.`;
+          return ` *Access Denied*\n\nSalesperson *${matchedEmp.name}* is not assigned to your team. You can only view data for salespersons assigned under your management.`;
         }
 
         // Assigned -> allow and scope query to this specific rep
@@ -2719,13 +2719,13 @@ async function handleQuery(text, senderPhone) {
           'https://enlight-sales-frontend.vercel.app';
         if (userScope.isAdmin) {
           return (
-            `🔗 *This action requires Dashboard access.*\n\n` +
+            ` *This action requires Dashboard access.*\n\n` +
             `Admin operations like rate sheet management, pricing configuration, product analysis, and CRM admin tasks are available directly on the portal:\n\n` +
-            `👉 ${dashboardUrl}\n\n` +
+            ` ${dashboardUrl}\n\n` +
             `Log in with your admin credentials to proceed.`
           );
         }
-        return `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to deals, customers, payments, visits, KRA performance, and steel rates.`;
+        return ` *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to deals, customers, payments, visits, KRA performance, and steel rates.`;
       }
       if (classification.category !== 'general') {
         return await routeToHandler(
@@ -2973,7 +2973,7 @@ async function handleQuery(text, senderPhone) {
   ) {
     const dashboardUrl =
       process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
-    return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+    return ` *Enlight Sales OS Portal*\n\n ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
   }
 
   // 6. Final fallback: route to conversational assistant

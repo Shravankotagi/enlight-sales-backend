@@ -862,30 +862,30 @@ async function updateCustomerProfileRecord(
       customer: updatedRecord,
       assignedRepName,
       message:
-        `✅ *Customer Profile Updated!*\n\n` +
-        `🏢 Company: *${updatedRecord.customer_name}*\n` +
+        ` *Customer Profile Updated!*\n\n` +
+        ` Company: *${updatedRecord.customer_name}*\n` +
         (updates.order_frequency_days
-          ? `📅 Order Frequency: *Every ${updatedRecord.avg_order_frequency_days} days*\n`
+          ? ` Order Frequency: *Every ${updatedRecord.avg_order_frequency_days} days*\n`
           : '') +
         (updatedRecord.contact_person
-          ? `👤 Contact: *${updatedRecord.contact_person}*\n`
+          ? ` Contact: *${updatedRecord.contact_person}*\n`
           : '') +
         (updatedRecord.customer_phone
-          ? `📱 Phone: *${updatedRecord.customer_phone}*\n`
+          ? ` Phone: *${updatedRecord.customer_phone}*\n`
           : '') +
         (updatedRecord.customer_address
-          ? `📍 Location: *${updatedRecord.customer_address}*\n`
+          ? ` Location: *${updatedRecord.customer_address}*\n`
           : '') +
         (assignedRepName
-          ? `💼 Assigned Salesperson: *${assignedRepName}*\n`
+          ? ` Assigned Salesperson: *${assignedRepName}*\n`
           : '') +
-        `\n_Updated live on Enlight Sales OS Dashboard!_ ✅`,
+        `\n_Updated live on Enlight Sales OS Dashboard!_ `,
     };
   } catch (err) {
     console.error('updateCustomerProfileRecord error:', err.message);
     return {
       success: false,
-      message: `❌ Could not update customer: ${err.message}`,
+      message: ` Could not update customer: ${err.message}`,
     };
   }
 }
@@ -921,14 +921,14 @@ async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
 
     const customer = data[0];
     const missing = [];
-    if (!customer.customer_phone) missing.push('• 📱 *Mobile Number*');
-    if (!customer.contact_person) missing.push('• 👤 *Contact Person / Owner*');
-    if (!customer.customer_address) missing.push('• 📍 *City / Location*');
-    if (!customer.customer_gst) missing.push('• 🧾 *GSTIN* (optional)');
+    if (!customer.customer_phone) missing.push('•  *Mobile Number*');
+    if (!customer.contact_person) missing.push('•  *Contact Person / Owner*');
+    if (!customer.customer_address) missing.push('•  *City / Location*');
+    if (!customer.customer_gst) missing.push('•  *GSTIN* (optional)');
 
     if (missing.length > 0) {
       return (
-        `\n\n📌 *Missing profile details for ${customerName}:*\n` +
+        `\n\n *Missing profile details for ${customerName}:*\n` +
         missing.join('\n') +
         `\n\n_(You can update these details anytime by simply replying in your own words, e.g. "Supreme Steel phone is 9876543210 owner Mr. Kapoor" or "Supreme location is Nashik")_`
       );
