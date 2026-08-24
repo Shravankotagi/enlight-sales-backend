@@ -53,6 +53,8 @@ export class InquiriesController {
   async getReviewQueue(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -64,13 +66,15 @@ export class InquiriesController {
       return [];
     }
 
-    return this.inquiriesService.findReviewQueue(phones || undefined);
+    return this.inquiriesService.findReviewQueue(phones || undefined, from, to);
   }
 
   @Get('stats')
   async getStats(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -81,16 +85,16 @@ export class InquiriesController {
     if (Array.isArray(phones) && phones.length === 0) {
       return {
         total: 0,
-        new: 0,
-        processing: 0,
-        quotation_sent: 0,
-        order_won: 0,
-        lost: 0,
-        review_needed: 0,
+        pending: 0,
+        processed: 0,
+        review: 0,
+        by_channel: {
+          whatsapp: 0,
+        },
       };
     }
 
-    return this.inquiriesService.getStats(phones || undefined);
+    return this.inquiriesService.getStats(phones || undefined, from, to);
   }
 
   @Get(':id')

@@ -590,7 +590,11 @@ export class InquiriesService {
     }
   }
 
-  async findReviewQueue(salespersonPhones?: string[] | string) {
+  async findReviewQueue(
+    salespersonPhones?: string[] | string,
+    from?: string,
+    to?: string,
+  ) {
     try {
       if (Array.isArray(salespersonPhones) && salespersonPhones.length === 0) {
         return [];
@@ -601,6 +605,15 @@ export class InquiriesService {
         .select('*')
         .in('status', ['review', 'pending', 'new', 'draft'])
         .order('created_at', { ascending: false });
+
+      if (from) {
+        const fromDate = from.includes('T') ? from : `${from}T00:00:00.000Z`;
+        query = query.gte('created_at', fromDate);
+      }
+      if (to) {
+        const toDate = to.includes('T') ? to : `${to}T23:59:59.999Z`;
+        query = query.lte('created_at', toDate);
+      }
 
       if (salespersonPhones) {
         const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
@@ -721,7 +734,11 @@ export class InquiriesService {
     }
   }
 
-  async getStats(salespersonPhones?: string[] | string) {
+  async getStats(
+    salespersonPhones?: string[] | string,
+    from?: string,
+    to?: string,
+  ) {
     try {
       if (
         salespersonPhones &&
@@ -744,6 +761,15 @@ export class InquiriesService {
         .select(
           'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json',
         );
+
+      if (from) {
+        const fromDate = from.includes('T') ? from : `${from}T00:00:00.000Z`;
+        query = query.gte('created_at', fromDate);
+      }
+      if (to) {
+        const toDate = to.includes('T') ? to : `${to}T23:59:59.999Z`;
+        query = query.lte('created_at', toDate);
+      }
 
       const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
       if (orFilter) {
