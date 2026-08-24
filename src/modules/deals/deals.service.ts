@@ -202,6 +202,15 @@ export class DealsService {
 
           if (matched && matched.media_urls) {
             data.media_urls = matched.media_urls;
+            if (!data.inquiry_id && matched.id) {
+              data.inquiry_id = matched.id;
+              // Persist link back to deals table asynchronously
+              this.supabase
+                .from('deals')
+                .update({ inquiry_id: matched.id })
+                .eq('id', id)
+                .then(() => {});
+            }
           }
         }
       }
@@ -511,31 +520,39 @@ export class DealsService {
       const deliveryLocation = data.delivery_location || '';
       const paymentTerms = data.payment_terms || '';
 
-      // 1. If media_urls are provided without inquiry_id, save attachment in inquiries table so it's permanently stored & viewable
+      // 1. If media_urls are provided, save or update attachment in inquiries table so it's permanently stored & viewable
       let inquiryId = data.inquiry_id || null;
-      if (
-        !inquiryId &&
-        Array.isArray(data.media_urls) &&
-        data.media_urls.length > 0
-      ) {
+      if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
         try {
-          const { data: newInq } = await this.supabase
-            .from('inquiries')
-            .insert({
-              source_channel: 'purchase_order',
-              raw_text: `[PO Document Attached: ${poNumber}] ${customerName} - Original PO Document`,
-              media_urls: data.media_urls,
-              customer_name: customerName,
-              customer_phone: customerPhone,
-              salesperson_phone: phone,
-              status: 'confirmed',
-              inquiry_type: 'purchase_order',
-              created_at: nowIso,
-            })
-            .select()
-            .single();
-          if (newInq) {
-            inquiryId = newInq.id;
+          if (inquiryId) {
+            await this.supabase
+              .from('inquiries')
+              .update({
+                media_urls: data.media_urls,
+                status: 'confirmed',
+              })
+              .eq('id', inquiryId);
+          } else {
+            const { data: newInq, error: inqErr } = await this.supabase
+              .from('inquiries')
+              .insert({
+                source_channel: 'purchase_order',
+                raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
+                media_urls: data.media_urls,
+                sender_name: customerName,
+                sender_phone: customerPhone,
+                salesperson_phone: phone,
+                status: 'confirmed',
+                inquiry_type: 'purchase_order',
+                created_at: nowIso,
+              })
+              .select()
+              .single();
+            if (newInq) {
+              inquiryId = newInq.id;
+            } else if (inqErr) {
+              this.logger.error('Error inserting PO media inquiry:', inqErr);
+            }
           }
         } catch (inqErr: any) {
           this.logger.warn(

@@ -1051,6 +1051,7 @@ export class InquiriesService {
               '',
             line_items:
               aiExtractionJson?.line_items || aiExtractionJson?.lineItems || [],
+            media_urls: created.media_urls || payload.media_urls || [],
             overall_confidence: 0.98,
           },
           salespersonPhone,
