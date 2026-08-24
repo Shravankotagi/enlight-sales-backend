@@ -1264,28 +1264,62 @@ export class InquiriesService {
     accessiblePhones?: string[] | null,
   ) {
     try {
-      // 1. Fetch inquiry
-      const { data: inquiry, error: inqErr } = await this.supabase
+      // 1. Fetch inquiry or deal record
+      let inquiry: any = null;
+      let isDealRecord = false;
+      const { data: inqData } = await this.supabase
         .from('inquiries')
         .select('*')
         .eq('id', id)
         .single();
+      inquiry = inqData;
 
-      if (inqErr || !inquiry) {
-        throw new NotFoundException('Inquiry not found');
+      if (!inquiry) {
+        const { data: dealData } = await this.supabase
+          .from('deals')
+          .select('*, deal_items(*)')
+          .eq('id', id)
+          .single();
+        if (dealData) {
+          isDealRecord = true;
+          inquiry = {
+            id: dealData.id,
+            customer_name: dealData.customer_name,
+            customer_phone: dealData.customer_phone,
+            salesperson_phone: dealData.salesperson_phone,
+            delivery_location: dealData.delivery_location,
+            payment_terms: dealData.payment_terms,
+            ai_extraction_json: {
+              customer_name: dealData.customer_name,
+              po_number: dealData.po_number,
+              delivery_location: dealData.delivery_location,
+              payment_terms: dealData.payment_terms,
+              line_items: dealData.deal_items,
+            },
+          };
+        }
+      }
+
+      if (!inquiry) {
+        throw new NotFoundException('Inquiry or Order record not found');
       }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
         const inqPhone = inquiry.salesperson_phone || inquiry.sender_phone;
-        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+        if (inqPhone && !phoneInList(inqPhone, accessiblePhones)) {
           throw new ForbiddenException(
-            'Access Denied: You do not have permission to send quotations for this inquiry.',
+            'Access Denied: You do not have permission to send quotations for this record.',
           );
         }
       }
 
-      let customerEmail =
-        payload.customer_email || inquiry.customer_email || '';
+      let customerEmail = (
+        payload.customer_email ||
+        inquiry.customer_email ||
+        ''
+      )
+        .trim()
+        .toLowerCase();
       if (
         !customerEmail ||
         customerEmail.includes('example.com') ||
@@ -1307,7 +1341,18 @@ export class InquiriesService {
 
       if (resendApiKey) {
         try {
-          const qRefNum = `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          const isOrderDoc = Boolean(
+            details.isOrder ||
+              details.poNumber ||
+              (inquiry.ai_extraction_json as any)?.po_number,
+          );
+          const poRefNum =
+            details.poNumber ||
+            (inquiry.ai_extraction_json as any)?.po_number ||
+            `PO-${Math.floor(1000 + Math.random() * 9000)}`;
+          const qRefNum = isOrderDoc
+            ? poRefNum
+            : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
 
           // Pull actual inquiry data — payload.details first, then inquiry's ai_extraction_json
@@ -1353,22 +1398,41 @@ export class InquiriesService {
               .join(' ')
               .trim() || 'Steel Material';
 
-          // Professional Plain Text Email Body — all real inquiry data, no hardcoded values
+          const lineItemsList =
+            Array.isArray(details.lineItems) && details.lineItems.length > 0
+              ? details.lineItems
+              : aiJson.line_items || [];
+
+          let itemsSummary = '';
+          if (Array.isArray(lineItemsList) && lineItemsList.length > 0) {
+            itemsSummary = lineItemsList
+              .map((item: any, idx: number) => {
+                const spec = item.dimensions ? ` (${item.dimensions})` : '';
+                return `  ${idx + 1}. ${item.sku_text || 'Material'}${spec} - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(item.rate || 0).toLocaleString('en-IN')}/unit = Rs. ${Number(item.amount || 0).toLocaleString('en-IN')}`;
+              })
+              .join('\n');
+          } else {
+            itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
+          }
+
+          // Professional Plain Text Email Body — all real inquiry/order data
           const textContent = `Dear ${customerName},
 
-Thank you for contacting Enlight Metals Private Limited regarding your recent metal product requirement.
+Thank you for partnering with Enlight Metals Private Limited.
 
-Please find attached our official Commercial Price Quotation (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms for your inquiry.
+Please find attached our official ${isOrderDoc ? 'Purchase Order Quotation & Audit' : 'Commercial Price Quotation'} (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
 
-Quotation Summary:
+${isOrderDoc ? 'Order / Quotation Summary:' : 'Quotation Summary:'}
 - Reference Number: ${qRefNum}
 - Issue Date: ${todayDateStr}
-- Item / Specification: ${specText}
-${quantityTons > 0 ? `- Total Quantity: ${quantityTons} MT\n` : ''}- Product Amount (Base): Rs. ${baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As per inquiry'}
-- GST (18%): Rs. ${baseAmt > 0 ? gstAmt.toLocaleString('en-IN') : 'As applicable'}
-- Grand Total (incl. GST): Rs. ${baseAmt > 0 ? grandTotal.toLocaleString('en-IN') : 'To be confirmed'}
-${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}
-${deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''}The attached PDF document contains our official pricing structure and complete commercial terms. Should you have any questions or wish to proceed with order confirmation, please reply directly to this email or contact your Enlight Metals account representative.
+- Items & Specifications:
+${itemsSummary}
+- Subtotal (Base Amount): Rs. ${baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'}
+- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+- Grand Total (incl. GST): Rs. ${grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 'To be confirmed'}
+${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}${deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''}
+The attached PDF document contains our official pricing structure and complete commercial terms.
 
 Warm regards,
 
@@ -1400,6 +1464,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
             paymentTerms,
             deliveryLocation: deliveryLoc,
             totalAmount: baseAmt,
+            lineItems: lineItemsList,
           };
 
           const pdfBuffer = payload.pdf_base64
@@ -1417,6 +1482,10 @@ MIDC Industrial Zone, Mumbai - 400001`;
               ? 'onboarding@resend.dev'
               : `Enlight Metals <${fromEmail}>`;
 
+          const docSubject = isOrderDoc
+            ? `Official Purchase Order Quotation ${qRefNum} - ${customerName}`
+            : `Official Commercial Quotation ${qRefNum} - ${customerName}`;
+
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -1426,11 +1495,11 @@ MIDC Industrial Zone, Mumbai - 400001`;
             body: JSON.stringify({
               from: fromAddress,
               to: [customerEmail],
-              subject: `Official Commercial Quotation ${qRefNum} - ${customerName}`,
+              subject: docSubject,
               text: textContent,
               attachments: [
                 {
-                  filename: `Official_Quotation_${qRefNum}.pdf`,
+                  filename: `${isOrderDoc ? 'PO_Quotation' : 'Official_Quotation'}_${qRefNum.replace(/[/\\?%*:|"<>]/g, '_')}.pdf`,
                   content: pdfBase64,
                 },
               ],
@@ -1454,20 +1523,22 @@ MIDC Industrial Zone, Mumbai - 400001`;
           'Quotation generated & recorded! Add RESEND_API_KEY in backend .env to dispatch live emails.';
       }
 
-      // Update inquiry status to quoted
-      await this.supabase
-        .from('inquiries')
-        .update({ status: 'quoted' })
-        .eq('id', id);
+      // Update inquiry status to quoted if it is an inquiry record
+      if (!isDealRecord) {
+        await this.supabase
+          .from('inquiries')
+          .update({ status: 'quoted' })
+          .eq('id', id);
 
-      // Automatically sync to pipeline / deals table with stage 'quoted'
-      try {
-        await this.syncInquiryToDeal(id, 'quoted', payload.details);
-      } catch (syncErr: any) {
-        this.logger.warn(
-          'Non-blocking pipeline sync notice:',
-          syncErr?.message,
-        );
+        // Automatically sync to pipeline / deals table with stage 'quoted'
+        try {
+          await this.syncInquiryToDeal(id, 'quoted', payload.details);
+        } catch (syncErr: any) {
+          this.logger.warn(
+            'Non-blocking pipeline sync notice:',
+            syncErr?.message,
+          );
+        }
       }
 
       // Log to kra_logs (KRA 1 - Quotation Generated & Sent)
