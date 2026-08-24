@@ -197,7 +197,7 @@ export class CustomersService {
 
       let dealsQuery = this.supabase
         .from('deals')
-        .select('customer_name, created_at, won_at, stage')
+        .select('customer_name, customer_phone, created_at, won_at, stage')
         .order('created_at', { ascending: false });
 
       if (salespersonPhone) {
@@ -207,15 +207,94 @@ export class CustomersService {
         if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
       }
 
-      const { data: allDeals } = await dealsQuery;
-      const safeAllDeals = allDeals || [];
+      let visitsQuery = this.supabase
+        .from('customer_visits')
+        .select(
+          'customer_name, person_met, contact_phone, created_at, visited_at',
+        )
+        .order('visited_at', { ascending: false });
 
-      const results = (customers || []).map((customer) => {
-        const custKey = (customer.customer_name || '').toLowerCase().trim();
+      if (salespersonPhone) {
+        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
+      }
+
+      const [{ data: allDeals }, { data: allVisits }] = await Promise.all([
+        dealsQuery,
+        visitsQuery,
+      ]);
+      const safeAllDeals = allDeals || [];
+      const safeAllVisits = allVisits || [];
+
+      const normalize = (str?: string) =>
+        (str || '')
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]/g, '');
+
+      // Existing customer normalized name set
+      const existingNameSet = new Set(
+        (customers || []).map((c) => normalize(c.customer_name)),
+      );
+
+      // Synthesize missing customer profiles from deals and visits
+      const extraCustomersMap = new Map<string, any>();
+
+      for (const deal of safeAllDeals) {
+        if (!deal.customer_name || !deal.customer_name.trim()) continue;
+        const norm = normalize(deal.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-deal-${norm}`,
+            customer_name: deal.customer_name.trim(),
+            contact_person: null,
+            customer_phone: deal.customer_phone || null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: deal.created_at,
+          });
+        }
+      }
+
+      for (const visit of safeAllVisits) {
+        if (!visit.customer_name || !visit.customer_name.trim()) continue;
+        const norm = normalize(visit.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-visit-${norm}`,
+            customer_name: visit.customer_name.trim(),
+            contact_person: visit.person_met || null,
+            customer_phone: visit.contact_phone || null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: visit.visited_at || visit.created_at,
+          });
+        }
+      }
+
+      const combinedCustomers = [
+        ...(customers || []),
+        ...Array.from(extraCustomersMap.values()),
+      ];
+
+      const results = combinedCustomers.map((customer) => {
+        const custKeyNorm = normalize(customer.customer_name);
         const customerWonDeals = safeAllDeals.filter((d) => {
           if (d.stage !== 'won') return false;
-          const dKey = (d.customer_name || '').toLowerCase().trim();
-          return dKey.includes(custKey) || custKey.includes(dKey);
+          const dKeyNorm = normalize(d.customer_name);
+          return dKeyNorm === custKeyNorm;
         });
 
         const latestWonDeal =
