@@ -1360,14 +1360,12 @@ export class InquiriesService {
 
       if (resendApiKey) {
         try {
-          const isOrderDoc = Boolean(
-            details.isOrder ||
-              details.poNumber ||
-              (inquiry.ai_extraction_json as any)?.po_number,
-          );
+          const isOrderDoc = Boolean(details.isOrder || isDealRecord);
           const poRefNum =
             details.poNumber ||
-            (inquiry.ai_extraction_json as any)?.po_number ||
+            (isDealRecord
+              ? (inquiry.ai_extraction_json as any)?.po_number
+              : null) ||
             `PO-${Math.floor(1000 + Math.random() * 9000)}`;
           const qRefNum = isOrderDoc
             ? poRefNum
@@ -1489,47 +1487,26 @@ MIDC Industrial Zone, Mumbai - 400001`;
           const attachments: Array<{ filename: string; content: string }> = [];
           const sanitizedRef = qRefNum.replace(/[/\\?%*:|"<>]/g, '_');
 
-          // Check if an original PO document is available
-          const rawMedia =
-            Array.isArray(details.media_urls) && details.media_urls.length > 0
-              ? details.media_urls[0]
-              : Array.isArray(inquiry?.media_urls) &&
-                  inquiry.media_urls.length > 0
-                ? inquiry.media_urls[0]
-                : null;
+          if (isOrderDoc) {
+            // FOR ORDERS: Attach original client PO document if available, or generate official PO PDF
+            const rawMedia =
+              Array.isArray(details.media_urls) && details.media_urls.length > 0
+                ? details.media_urls[0]
+                : Array.isArray(inquiry?.media_urls) &&
+                    inquiry.media_urls.length > 0
+                  ? inquiry.media_urls[0]
+                  : null;
 
-          let hasOriginalDoc = false;
-          if (rawMedia && typeof rawMedia === 'string') {
-            if (rawMedia.startsWith('data:')) {
-              const matches = rawMedia.match(/^data:([^;]+);base64,(.+)$/s);
-              if (matches) {
-                const mime = matches[1];
-                const base64Data = matches[2];
-                let ext = '.pdf';
-                if (mime.includes('png')) ext = '.png';
-                else if (mime.includes('jpeg') || mime.includes('jpg'))
-                  ext = '.jpg';
-
-                attachments.push({
-                  filename: `Original_PO_${sanitizedRef}${ext}`,
-                  content: base64Data,
-                });
-                hasOriginalDoc = true;
-              }
-            } else if (rawMedia.startsWith('http')) {
-              try {
-                const docFetch = await fetch(rawMedia);
-                if (docFetch.ok) {
-                  const arrBuf = await docFetch.arrayBuffer();
-                  const base64Data = Buffer.from(arrBuf).toString('base64');
-                  const contentType =
-                    docFetch.headers.get('content-type') || '';
+            let hasOriginalDoc = false;
+            if (rawMedia && typeof rawMedia === 'string') {
+              if (rawMedia.startsWith('data:')) {
+                const matches = rawMedia.match(/^data:([^;]+);base64,(.+)$/s);
+                if (matches) {
+                  const mime = matches[1];
+                  const base64Data = matches[2];
                   let ext = '.pdf';
-                  if (contentType.includes('png')) ext = '.png';
-                  else if (
-                    contentType.includes('jpeg') ||
-                    contentType.includes('jpg')
-                  )
+                  if (mime.includes('png')) ext = '.png';
+                  else if (mime.includes('jpeg') || mime.includes('jpg'))
                     ext = '.jpg';
 
                   attachments.push({
@@ -1538,17 +1515,54 @@ MIDC Industrial Zone, Mumbai - 400001`;
                   });
                   hasOriginalDoc = true;
                 }
-              } catch (fetchErr) {
-                this.logger.warn(
-                  'Failed to fetch remote original media:',
-                  fetchErr,
-                );
+              } else if (rawMedia.startsWith('http')) {
+                try {
+                  const docFetch = await fetch(rawMedia);
+                  if (docFetch.ok) {
+                    const arrBuf = await docFetch.arrayBuffer();
+                    const base64Data = Buffer.from(arrBuf).toString('base64');
+                    const contentType =
+                      docFetch.headers.get('content-type') || '';
+                    let ext = '.pdf';
+                    if (contentType.includes('png')) ext = '.png';
+                    else if (
+                      contentType.includes('jpeg') ||
+                      contentType.includes('jpg')
+                    )
+                      ext = '.jpg';
+
+                    attachments.push({
+                      filename: `Original_PO_${sanitizedRef}${ext}`,
+                      content: base64Data,
+                    });
+                    hasOriginalDoc = true;
+                  }
+                } catch (fetchErr) {
+                  this.logger.warn(
+                    'Failed to fetch remote original media:',
+                    fetchErr,
+                  );
+                }
               }
             }
-          }
 
-          // If no original document was attached or if explicit pdf_base64 was provided, generate official PDF document
-          if (!hasOriginalDoc || payload.pdf_base64) {
+            if (!hasOriginalDoc || payload.pdf_base64) {
+              const pdfBuffer = payload.pdf_base64
+                ? Buffer.from(payload.pdf_base64, 'base64')
+                : await this.generatePdfKitBuffer(
+                    qRefNum,
+                    customerName,
+                    customerEmail,
+                    pdfDetails,
+                  );
+              const pdfBase64 = pdfBuffer.toString('base64');
+              attachments.push({
+                filename: `Official_PO_${sanitizedRef}.pdf`,
+                content: pdfBase64,
+              });
+            }
+          } else {
+            // FOR INQUIRIES: ALWAYS generate and attach the official Enlight Metals Quotation PDF!
             const pdfBuffer = payload.pdf_base64
               ? Buffer.from(payload.pdf_base64, 'base64')
               : await this.generatePdfKitBuffer(
@@ -1559,7 +1573,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
                 );
             const pdfBase64 = pdfBuffer.toString('base64');
             attachments.push({
-              filename: `${isOrderDoc ? 'Official_PO' : 'Official_Quotation'}_${sanitizedRef}.pdf`,
+              filename: `Quotation_${sanitizedRef}.pdf`,
               content: pdfBase64,
             });
           }
