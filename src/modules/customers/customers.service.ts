@@ -67,23 +67,41 @@ export class CustomersService {
 
   async findOne(id: string, salespersonPhone?: string[] | string) {
     try {
-      const { data: customer, error } = await this.supabase
-        .from('recurring_customers')
-        .select('*')
-        .eq('id', id)
-        .single();
-      if (error || !customer) {
-        throw new NotFoundException('Customer not found');
+      let customer: any = null;
+      if (id.startsWith('virtual-')) {
+        const namePart = id.replace(/^(virtual-deal-|virtual-visit-)/, '');
+        const { data: found } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .ilike('customer_name', `%${namePart}%`)
+          .limit(1);
+        if (found && found.length > 0) {
+          customer = found[0];
+        } else {
+          customer = {
+            id,
+            customer_name: namePart,
+            avg_order_frequency_days: 30,
+            is_active: true,
+          };
+        }
+      } else {
+        const { data: found, error } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (error || !found) {
+          throw new NotFoundException('Customer not found');
+        }
+        customer = found;
       }
 
-      if (salespersonPhone) {
+      if (salespersonPhone && customer.assigned_salesperson_phone) {
         const allowedList = Array.isArray(salespersonPhone)
           ? salespersonPhone
           : [salespersonPhone];
-        if (
-          !customer.assigned_salesperson_phone ||
-          !phoneInList(customer.assigned_salesperson_phone, allowedList)
-        ) {
+        if (!phoneInList(customer.assigned_salesperson_phone, allowedList)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to view this customer.',
           );

@@ -77,8 +77,8 @@ export class DealsService {
       const lightweightDeals = (data || []).map((d: any) => {
         const hasMedia = Boolean(
           d.inquiry_id ||
-            d.po_number ||
-            (Array.isArray(d.media_urls) && d.media_urls.length > 0),
+          d.po_number ||
+          (Array.isArray(d.media_urls) && d.media_urls.length > 0),
         );
         return {
           ...d,
@@ -325,6 +325,15 @@ export class DealsService {
             created_at: new Date().toISOString(),
           });
         }
+
+        await this.syncCustomerFromOrder(
+          data.customer_name,
+          data.customer_phone,
+          data.won_at || new Date().toISOString(),
+          data.salesperson_phone,
+          data.customer_gst,
+          data.contact_person,
+        );
       }
 
       // Trigger background sync to Zoho Bigin so Web App updates reflect in Bigin immediately
@@ -437,6 +446,17 @@ export class DealsService {
         if (itemsError) {
           this.logger.error('Error inserting deal items:', itemsError);
         }
+      }
+
+      if (deal) {
+        await this.syncCustomerFromOrder(
+          deal.customer_name,
+          deal.customer_phone,
+          deal.created_at,
+          deal.salesperson_phone,
+          deal.customer_gst,
+          deal.contact_person,
+        );
       }
 
       return deal;
@@ -754,13 +774,14 @@ export class DealsService {
           .ilike('customer_name', `%${customerName}%`)
           .eq('status', 'pending');
 
-        await this.supabase
-          .from('recurring_customers')
-          .update({
-            last_order_date: poDate || nowIso.split('T')[0],
-            updated_at: nowIso,
-          })
-          .ilike('customer_name', `%${customerName}%`);
+        await this.syncCustomerFromOrder(
+          customerName,
+          customerPhone,
+          poDate || nowIso,
+          phone,
+          null,
+          null,
+        );
       } catch (fErr: any) {
         this.logger.warn(
           'Non-blocking follow-up resolution notice:',
@@ -837,6 +858,64 @@ export class DealsService {
     } catch (error) {
       this.logger.error(`Error deleting deal ${id}:`, error);
       throw error;
+    }
+  }
+
+  private async syncCustomerFromOrder(
+    customerName?: string | null,
+    customerPhone?: string | null,
+    orderDate?: string | null,
+    salespersonPhone?: string | null,
+    customerGst?: string | null,
+    contactPerson?: string | null,
+  ) {
+    if (!customerName || !customerName.trim()) return;
+    const cleanName = customerName.trim();
+    const orderDateIso = orderDate || new Date().toISOString();
+
+    try {
+      const { data: existing } = await this.supabase
+        .from('recurring_customers')
+        .select('id, last_order_date')
+        .ilike('customer_name', cleanName)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        const cust = existing[0];
+        const newDate = new Date(orderDateIso);
+        const oldDate = cust.last_order_date
+          ? new Date(cust.last_order_date)
+          : null;
+
+        if (!oldDate || newDate >= oldDate) {
+          await this.supabase
+            .from('recurring_customers')
+            .update({
+              last_order_date: orderDateIso,
+              ...(customerPhone ? { customer_phone: customerPhone } : {}),
+              ...(customerGst ? { customer_gst: customerGst } : {}),
+              ...(contactPerson ? { contact_person: contactPerson } : {}),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', cust.id);
+        }
+      } else {
+        await this.supabase.from('recurring_customers').insert({
+          customer_name: cleanName,
+          customer_phone: customerPhone || null,
+          customer_gst: customerGst || null,
+          contact_person: contactPerson || null,
+          last_order_date: orderDateIso,
+          avg_order_frequency_days: 30,
+          is_active: true,
+          assigned_salesperson_phone: salespersonPhone || null,
+          created_at: new Date().toISOString(),
+        });
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to sync customer '${cleanName}' from order: ${err?.message}`,
+      );
     }
   }
 }
