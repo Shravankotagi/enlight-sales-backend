@@ -1682,7 +1682,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
     }
     const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     try {
       const response = await axios.post(url, {
@@ -1690,13 +1690,13 @@ MIDC Industrial Zone, Mumbai - 400001`;
           {
             parts: [
               {
-                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": null,
+  "customer_name": "The buyer / client company issuing this inquiry (from the top letterhead / header banner or explicit 'Customer/Buyer' section). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
   "customer_phone": "phone number if present else null",
   "customer_email": "email if present else null",
-  "customer_gst": "GST number if present else null",
+  "customer_gst": "GST number of the customer if present else null",
   "customer_address": "company address if present else null",
   "delivery_location": "full delivery address / location as stated in document e.g. MIDC Industrial Area, Nashik, Maharashtra - 422010",
   "payment_terms": "payment terms e.g. 30 Days Credit or 45 Days Credit",
@@ -1707,7 +1707,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
   "line_items": [
     {
       "sku_text": "full material description e.g. MS Sheet 5MM THK E250",
-      "dimensions": "specs e.g. 1250 x 2500",
+      "dimensions": "specs / dimensions e.g. 1250 x 2500",
       "quantity": numeric_quantity,
       "unit": "exact unit stated e.g. Nos, MT, Kg, Pcs, Sheets",
       "rate": numeric_rate_or_0,
@@ -1721,13 +1721,13 @@ MIDC Industrial Zone, Mumbai - 400001`;
 }
 
 CRITICAL EXTRACTION RULES:
-1. COMPANY NAME (STRICT):
-- Extract "customer_name" ONLY if it is explicitly stated as the formal buyer/customer company name in a formal document letterhead, header banner, or explicit "Customer Name:" / "Buyer:" field.
-- If the document is an email inquiry or letter signed off with a name/entity at the bottom (e.g. "Thanks & Regards, Rajesh Kumar, Sunrise Traders" or "From: ...@sunrisetraders.in"), leave "customer_name" as null or "" (empty string).
-- NEVER guess, infer, or populate "customer_name" from email sign-offs, email signatures, email headers (From: ...), email addresses, or footers.
+1. SUPPLIER vs BUYER IDENTIFICATION (STRICT):
+- The recipient/supplier is 'Enlight Metals Private Limited'. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
+- The 'customer_name' is the issuing client/buyer company whose name appears at the top header, letterhead, or logo banner (e.g. 'DYNAMIC ENGINEERING WORKS PVT. LTD.', 'APEX STRUCTURAL & STEEL WORKS PVT. LTD.', 'RATHI INFRASTRUCTURE PROJECTS LTD.', 'KIRLOSKAR FABRICATION SYSTEMS LTD.').
+- If no company name exists on the letterhead, extract the company from the sign-off or leave null.
 
 2. LINE ITEMS vs ADDITIONAL NOTES (STRICT):
-- Line items: Every product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
+- Line items: Every distinct product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
 - Additional notes: Must ONLY contain non-product contextual remarks such as delivery timeline requirements (e.g. "Delivery within 10 days of order confirmation"), preferred make, special conditions, or contact details.
 - Product rows / line items MUST NEVER appear in "additional_notes".
 
