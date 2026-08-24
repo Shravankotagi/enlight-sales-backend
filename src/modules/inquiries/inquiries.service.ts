@@ -326,6 +326,7 @@ function resolveInquiryEntities(
   item: any,
   dealByInqId?: Map<string, string>,
   dealByName?: Map<string, string>,
+  empPhoneMap?: Map<string, string>,
 ) {
   const aiJson = (item.ai_extraction_json as any) || {};
   const senderName = item.sender_name || '';
@@ -396,13 +397,34 @@ function resolveInquiryEntities(
     ? String(rawCustomerPhone).trim()
     : '';
 
+  // 3. Resolve Salesperson Name
+  const phone = (item.salesperson_phone || item.sender_phone || '').replace(
+    /\D/g,
+    '',
+  );
+  const p10 = phone.slice(-10);
+  const resolvedSalesperson =
+    (p10 && empPhoneMap?.get(p10)) ||
+    (phone && empPhoneMap?.get(phone)) ||
+    (item.salesperson_name && item.salesperson_name !== 'Sales Representative'
+      ? item.salesperson_name
+      : null) ||
+    (item.assigned_salesperson_name ? item.assigned_salesperson_name : null) ||
+    aiJson.salesperson_name ||
+    aiJson.salespersonName ||
+    (isSenderSalesperson && senderName ? senderName : null) ||
+    (item.sender_name &&
+    !item.sender_name.toLowerCase().includes('unknown') &&
+    !item.sender_name.toLowerCase().includes('customer')
+      ? item.sender_name
+      : null) ||
+    'Max';
+
   return {
     customer_name: extractedCustomerName,
     customer_phone: extractedCustomerPhone || '',
-    salesperson_name:
-      isSenderSalesperson && senderName
-        ? senderName
-        : item.salesperson_name || 'Sales Representative',
+    salesperson_name: resolvedSalesperson,
+    assigned_salesperson_name: resolvedSalesperson,
     salesperson_phone: item.salesperson_phone || item.sender_phone || '',
   };
 }
@@ -485,6 +507,20 @@ export class InquiriesService {
         }
       });
 
+      // Fetch employees to accurately resolve salesperson names
+      const { data: employees } = await this.supabase
+        .from('employees')
+        .select('name, phone');
+
+      const empPhoneMap = new Map<string, string>();
+      employees?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
+        }
+      });
+
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
 
@@ -497,7 +533,12 @@ export class InquiriesService {
           item.source_channel === 'whatsapp' ||
           item.source_channel === 'whatsapp_image';
 
-        const entities = resolveInquiryEntities(item, dealByInqId, dealByName);
+        const entities = resolveInquiryEntities(
+          item,
+          dealByInqId,
+          dealByName,
+          empPhoneMap,
+        );
 
         // Sanitize media_urls: keep lightweight HTTP URLs, replace large base64 data with 'attached_document'
         const cleanMedia = (item.media_urls || [])
@@ -577,7 +618,25 @@ export class InquiriesService {
           }
         });
 
-        const entities = resolveInquiryEntities(data, dealByInqId, dealByName);
+        const { data: employees } = await this.supabase
+          .from('employees')
+          .select('name, phone');
+
+        const empPhoneMap = new Map<string, string>();
+        employees?.forEach((e: any) => {
+          if (e.name && e.phone) {
+            const clean = String(e.phone).replace(/\D/g, '');
+            empPhoneMap.set(clean, e.name);
+            empPhoneMap.set(clean.slice(-10), e.name);
+          }
+        });
+
+        const entities = resolveInquiryEntities(
+          data,
+          dealByInqId,
+          dealByName,
+          empPhoneMap,
+        );
         return {
           ...data,
           ...entities,
@@ -641,8 +700,26 @@ export class InquiriesService {
         }
       });
 
+      const { data: employees } = await this.supabase
+        .from('employees')
+        .select('name, phone');
+
+      const empPhoneMap = new Map<string, string>();
+      employees?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
+        }
+      });
+
       return (data || []).map((row: any) => {
-        const entities = resolveInquiryEntities(row, dealByInqId, dealByName);
+        const entities = resolveInquiryEntities(
+          row,
+          dealByInqId,
+          dealByName,
+          empPhoneMap,
+        );
         const hasMedia = Boolean(
           row.media_urls &&
             Array.isArray(row.media_urls) &&
