@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  Res,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -150,5 +151,17 @@ export class InquiriesController {
   @Post('parse-text')
   async parseText(@Body() body: { text: string }) {
     return this.inquiriesService.parseTextWithGemini(body.text);
+  }
+
+  @Post('generate-pdf')
+  async generatePdf(@Body() body: any, @Res() res: any) {
+    const buffer = await this.inquiriesService.generateQuotationPdfBuffer(body);
+    const filename = `${body.piNumber || 'Quotation'}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    return res.end(buffer);
   }
 }

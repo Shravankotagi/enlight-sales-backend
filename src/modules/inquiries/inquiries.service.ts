@@ -1935,6 +1935,22 @@ ${rawText}`,
     return 'Maharashtra (27)';
   }
 
+  async generateQuotationPdfBuffer(body: any): Promise<Buffer> {
+    const qRefNum =
+      body.piNumber ||
+      body.qRefNum ||
+      `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const customerName =
+      body.companyName || body.customerName || 'Valued Customer';
+    const customerEmail = body.customerEmail || 'accounts@enlightmetals.com';
+    return this.generatePdfKitBuffer(
+      qRefNum,
+      customerName,
+      customerEmail,
+      body,
+    );
+  }
+
   async generatePdfKitBuffer(
     qRefNum: string,
     customerName: string,
