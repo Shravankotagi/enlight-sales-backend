@@ -2344,6 +2344,34 @@ export class KraService {
 
     if (error) throw error;
 
+    if (data.customer_name && data.customer_name.trim()) {
+      try {
+        const cName = data.customer_name.trim();
+        const { data: existing } = await this.supabase
+          .from('recurring_customers')
+          .select('id')
+          .ilike('customer_name', cName)
+          .limit(1);
+
+        if (!existing || existing.length === 0) {
+          await this.supabase.from('recurring_customers').insert({
+            customer_name: cName,
+            contact_person: data.person_met || null,
+            customer_phone: data.contact_phone || data.contact_no || null,
+            address: data.location || data.city || null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            assigned_salesperson_phone: salespersonPhone || null,
+            created_at: visited_at,
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Non-blocking customer sync on visit create: ${err?.message}`,
+        );
+      }
+    }
+
     // Log to kra_logs (KRA 9)
     try {
       const now = new Date(visited_at);

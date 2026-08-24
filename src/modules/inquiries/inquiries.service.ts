@@ -722,8 +722,8 @@ export class InquiriesService {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-            Array.isArray(row.media_urls) &&
-            row.media_urls.length > 0,
+          Array.isArray(row.media_urls) &&
+          row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -985,6 +985,32 @@ export class InquiriesService {
       throw error;
     }
 
+    if (finalCustomerName && finalCustomerName !== 'Customer') {
+      try {
+        const { data: existing } = await this.supabase
+          .from('recurring_customers')
+          .select('id')
+          .ilike('customer_name', finalCustomerName.trim())
+          .limit(1);
+
+        if (!existing || existing.length === 0) {
+          await this.supabase.from('recurring_customers').insert({
+            customer_name: finalCustomerName.trim(),
+            customer_phone: customerPhone || data.sender_phone || null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            assigned_salesperson_phone:
+              salespersonPhone || data.salesperson_phone || null,
+            created_at: nowIso,
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Non-blocking customer sync on inquiry create: ${err?.message}`,
+        );
+      }
+    }
+
     // DETECT if this is a PO document (has a real po_number in data or ai_extraction_json)
     const poNumber =
       data.po_number ||
@@ -993,9 +1019,9 @@ export class InquiriesService {
 
     const isPoDocument = Boolean(
       poNumber &&
-        poNumber !== 'null' &&
-        poNumber !== 'None' &&
-        String(poNumber).trim().length > 2,
+      poNumber !== 'null' &&
+      poNumber !== 'None' &&
+      String(poNumber).trim().length > 2,
     );
 
     if (isPoDocument) {

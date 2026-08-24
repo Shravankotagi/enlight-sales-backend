@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -114,5 +115,10 @@ export class CustomersController {
       id,
       phones === null ? undefined : phones,
     );
+  }
+
+  @Patch(':id')
+  async update(@Param('id') id: string, @Body() body: any) {
+    return this.customersService.updateCustomer(id, body);
   }
 }
