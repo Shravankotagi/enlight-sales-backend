@@ -520,7 +520,7 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
   try {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
 
-    // 1. Fast exact match at SQL level
+    // 1. Strict Exact match at SQL level (case-insensitive, no substring / wildcards)
     let exactQuery = supabase
       .from('recurring_customers')
       .select('customer_name')
@@ -546,112 +546,25 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
       return exactRows[0].customer_name;
     }
 
-    // 2. Substring candidate retrieval (scoped, max 15)
-    let subQuery = supabase
-      .from('recurring_customers')
-      .select('customer_name')
-      .eq('is_active', true)
-      .ilike('customer_name', `%${clean}%`)
-      .limit(15);
-
-    if (scope.phones !== null) {
-      if (scope.phones.length === 1) {
-        subQuery = subQuery.eq('assigned_salesperson_phone', scope.phones[0]);
-      } else if (scope.phones.length > 1) {
-        subQuery = subQuery.in('assigned_salesperson_phone', scope.phones);
-      }
-    }
-
-    let { data: candidateRows } = await subQuery;
-
-    // If Admin and not found in rep scope, try company-wide
-    if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
-      const { data: adminSub } = await supabase
+    // 2. If Admin, check company-wide exact match
+    if (scope.isAdmin) {
+      const { data: adminExact } = await supabase
         .from('recurring_customers')
         .select('customer_name')
         .eq('is_active', true)
-        .ilike('customer_name', `%${clean}%`)
-        .limit(15);
-      candidateRows = adminSub;
-    }
-
-    // 3. Word token candidate retrieval for typos or word order differences (max 20 candidates)
-    if (!candidateRows || candidateRows.length === 0) {
-      const stopWords = [
-        'pvt',
-        'ltd',
-        'steel',
-        'company',
-        'corp',
-        'enterprises',
-        'private',
-        'limited',
-        'industries',
-        'works',
-      ];
-      const words = clean
-        .split(/\s+/)
-        .filter((w) => w.length > 2 && !stopWords.includes(w.toLowerCase()));
-
-      if (words.length > 0) {
-        const orTokens = words
-          .map((w) => `customer_name.ilike.%${w}%`)
-          .join(',');
-        let wordQuery = supabase
-          .from('recurring_customers')
-          .select('customer_name')
-          .eq('is_active', true)
-          .or(orTokens)
-          .limit(20);
-
-        if (scope.phones !== null) {
-          if (scope.phones.length === 1) {
-            wordQuery = wordQuery.eq(
-              'assigned_salesperson_phone',
-              scope.phones[0],
-            );
-          } else if (scope.phones.length > 1) {
-            wordQuery = wordQuery.in(
-              'assigned_salesperson_phone',
-              scope.phones,
-            );
-          }
-        }
-
-        const { data: wordRows } = await wordQuery;
-        candidateRows = wordRows;
-
-        if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
-          const { data: adminWordRows } = await supabase
-            .from('recurring_customers')
-            .select('customer_name')
-            .eq('is_active', true)
-            .or(orTokens)
-            .limit(20);
-          candidateRows = adminWordRows;
-        }
+        .ilike('customer_name', clean)
+        .limit(1);
+      if (adminExact && adminExact.length > 0) {
+        return adminExact[0].customer_name;
       }
     }
 
-    if (!candidateRows || candidateRows.length === 0) return null;
-
-    const customerList = Array.from(
-      new Set(candidateRows.map((c) => c.customer_name)),
-    );
-
-    // Exact match in candidates
-    const exactMatch = customerList.find(
-      (c) => c.toLowerCase().trim() === clean.toLowerCase(),
-    );
-    if (exactMatch) return exactMatch;
-
-    // Fuzzy match with Gemini only across targeted candidates (max 20)
-    const fuzzyMatch = await fuzzyMatchCustomer(clean, customerList);
-    if (fuzzyMatch) return fuzzyMatch;
+    // Zero tolerance for fuzzy / partial / substring match: return null if no exact match found
+    return null;
   } catch (err) {
     console.error('verifyAndGetCustomerName error:', err.message);
+    return null;
   }
-  return null;
 }
 
 /**
