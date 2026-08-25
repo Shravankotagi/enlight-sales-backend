@@ -251,6 +251,50 @@ function extractCleanCustomerName(rawText: string): string | null {
   return null;
 }
 
+function extractCleanDeliveryLocation(rawText?: string, aiJson?: any): string {
+  const json = aiJson || {};
+  let fromJson = json.delivery_location || json.deliveryLocation || '';
+  if (fromJson && typeof fromJson === 'string') {
+    fromJson = fromJson.replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '').trim();
+  }
+
+  let fromText = '';
+  if (rawText && typeof rawText === 'string') {
+    // 1. Line-by-line match for bullet or key-value format (handles WhatsApp bot & email formats)
+    const lineMatch =
+      rawText.match(
+        /(?:^[•\-\*]?\s*(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^\n\r]+)/im,
+      ) ||
+      rawText.match(
+        /(?:(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^\n\r]+)/i,
+      );
+    if (lineMatch && lineMatch[1].trim().length > 2) {
+      fromText = lineMatch[1].replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '').trim();
+    }
+
+    // 2. Multiline block fallback
+    if (!fromText) {
+      const blockMatch =
+        rawText.match(
+          /(?:delivery\s*(?:address|location)?|delivered\s*to|deliver\s*to|site\s*(?:address|location)?|destination|dispatch\s*to)\s*[:=-]?\s*([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s*(?:payment\s*terms?|payment|terms?|rate|price|qty|quantity|make|brand|notes?|email|contact|phone|before|by|on\s+\d|gst\b)|\n{2,}|$)/i,
+        ) ||
+        rawText.match(
+          /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|location|destination)\s+([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s+before|\s+by|\s+on|\s+within|$)/i,
+        );
+      if (blockMatch && blockMatch[1].trim().length > 2) {
+        fromText = blockMatch[1]
+          .replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '')
+          .trim();
+      }
+    }
+  }
+
+  if (fromText && fromText.length > fromJson.length) {
+    return fromText;
+  }
+  return fromJson || fromText || '';
+}
+
 function isGenuineInquiry(item: any): boolean {
   if (!item) return false;
   const rawText = (item.raw_text || '').trim();
@@ -437,12 +481,20 @@ function resolveInquiryEntities(
       : null) ||
     'Max';
 
+  const extractedDeliveryLocation = extractCleanDeliveryLocation(
+    item.raw_text,
+    aiJson,
+  );
+
   return {
     customer_name: extractedCustomerName,
     customer_phone: extractedCustomerPhone || '',
     salesperson_name: resolvedSalesperson,
     assigned_salesperson_name: resolvedSalesperson,
     salesperson_phone: item.salesperson_phone || item.sender_phone || '',
+    delivery_location:
+      extractedDeliveryLocation || item.delivery_location || '',
+    deliveryLocation: extractedDeliveryLocation || item.delivery_location || '',
   };
 }
 
@@ -573,6 +625,10 @@ export class InquiriesService {
           if (cleanAiJson.media_urls) delete cleanAiJson.media_urls;
           if (cleanAiJson.image_base64) delete cleanAiJson.image_base64;
           if (cleanAiJson.file_base64) delete cleanAiJson.file_base64;
+          if (entities.delivery_location) {
+            cleanAiJson.delivery_location = entities.delivery_location;
+            cleanAiJson.deliveryLocation = entities.delivery_location;
+          }
         }
 
         return {
@@ -1151,6 +1207,7 @@ export class InquiriesService {
       const salespersonPhone =
         inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';
       const deliveryLocation =
+        extractCleanDeliveryLocation(inquiry.raw_text, details) ||
         details.deliveryLocation ||
         details.delivery_location ||
         aiJson.deliveryLocation ||
