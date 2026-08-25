@@ -29,7 +29,7 @@ export class DealsService {
         .from('deals')
         .select(
           `
-          *,
+          id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*)
         `,
         )
@@ -94,11 +94,7 @@ export class DealsService {
           }
         }
 
-        const hasMedia = Boolean(
-          d.inquiry_id ||
-            d.po_number ||
-            (Array.isArray(d.media_urls) && d.media_urls.length > 0),
-        );
+        const hasMedia = Boolean(d.inquiry_id);
         return {
           ...d,
           total_amount: computedTotal > 0 ? computedTotal : null,
@@ -136,7 +132,7 @@ export class DealsService {
         }
       }
 
-      // Enrich with media_urls from inquiries if available
+      // Enrich with media_urls on-demand for this single deal
       if (data) {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
@@ -162,12 +158,10 @@ export class DealsService {
         if (!hasValidMedia) {
           const { data: allMediaInqs } = await this.supabase
             .from('inquiries')
-            .select(
-              'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
-            )
+            .select('id, sender_name, raw_text, created_at')
             .not('media_urls', 'is', null)
             .order('created_at', { ascending: false })
-            .limit(100);
+            .limit(50);
 
           const dName = (data.customer_name || '').toLowerCase().trim();
           const dPo = (data.po_number || '').toLowerCase().trim();
@@ -189,29 +183,10 @@ export class DealsService {
             );
 
           const matched = (allMediaInqs || []).find((mi: any) => {
-            if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
-              return false;
             const sName = (mi.sender_name || '').toLowerCase().trim();
-            const custJsonName = (
-              mi.ai_extraction_json?.customer?.name ||
-              mi.ai_extraction_json?.companyName ||
-              ''
-            )
-              .toLowerCase()
-              .trim();
             const rawTxt = (mi.raw_text || '').toLowerCase();
-            const poJson = (mi.ai_extraction_json?.po_number || '')
-              .toLowerCase()
-              .trim();
 
-            if (dPo && poJson && (poJson.includes(dPo) || dPo.includes(poJson)))
-              return true;
             if (dPo && rawTxt && rawTxt.includes(dPo)) return true;
-            if (
-              custJsonName &&
-              (custJsonName.includes(dName) || dName.includes(custJsonName))
-            )
-              return true;
             if (sName && (sName.includes(dName) || dName.includes(sName)))
               return true;
             if (dWords.length > 0 && dWords.some((w) => rawTxt.includes(w)))
@@ -220,9 +195,16 @@ export class DealsService {
             return false;
           });
 
-          if (matched && matched.media_urls) {
-            data.media_urls = matched.media_urls;
-            if (!data.inquiry_id && matched.id) {
+          if (matched && matched.id) {
+            const { data: matchedInq } = await this.supabase
+              .from('inquiries')
+              .select('media_urls')
+              .eq('id', matched.id)
+              .single();
+            if (matchedInq && matchedInq.media_urls) {
+              data.media_urls = matchedInq.media_urls;
+            }
+            if (!data.inquiry_id) {
               data.inquiry_id = matched.id;
               // Persist link back to deals table asynchronously
               this.supabase
