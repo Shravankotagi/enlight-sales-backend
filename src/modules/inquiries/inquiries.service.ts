@@ -929,11 +929,22 @@ export class InquiriesService {
         .single();
       if (error) throw error;
 
-      // Automatically sync to pipeline / deals
-      if (status === 'quoted') {
+      // Automatically sync to pipeline / deals with strict status-to-stage mapping
+      if (status === 'quoted' || status === 'quotation_sent') {
         await this.syncInquiryToDeal(id, 'quoted', details);
+      } else if (
+        status === 'confirmed' ||
+        status === 'saved' ||
+        status === 'processed'
+      ) {
+        await this.syncInquiryToDeal(id, 'qualified', details);
+      } else if (
+        status === 'review' ||
+        status === 'needs_review' ||
+        status === 'pending'
+      ) {
+        await this.syncInquiryToDeal(id, 'new_inquiry', details);
       } else {
-        // Keep deal in new_inquiry (New Deals) or its existing pipeline stage
         await this.syncInquiryToDeal(id, undefined, details);
       }
 
@@ -1588,7 +1599,7 @@ Thank you for partnering with Enlight Metals Private Limited.
 
 Please find attached our official ${isOrderDoc ? 'Purchase Order Quotation & Audit' : 'Commercial Price Quotation'} (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
 
-${isOrderDoc ? 'Order / Quotation Summary:' : 'Quotation Summary:'}
+${isOrderDoc ? 'PO Order' : 'Summary:'}
 - Reference Number: ${qRefNum}
 - Issue Date: ${todayDateStr}
 - Items & Specifications:
