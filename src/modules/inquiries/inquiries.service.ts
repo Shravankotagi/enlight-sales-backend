@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -853,6 +854,52 @@ export class InquiriesService {
         if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to update this inquiry.',
+          );
+        }
+      }
+
+      // Backend Save Gate: Cannot transition to confirmed or quoted if any line item has Rate <= 0 or Quantity <= 0
+      if (status === 'confirmed' || status === 'quoted') {
+        const lineItems = details?.lineItems || details?.line_items || [];
+        if (!Array.isArray(lineItems) || lineItems.length === 0) {
+          throw new BadRequestException(
+            'Cannot save inquiry: At least one line item is required.',
+          );
+        }
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          if (!item.sku_text || !item.sku_text.trim()) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Description is required for Item #${i + 1}.`,
+            );
+          }
+          if (
+            item.quantity === null ||
+            item.quantity === undefined ||
+            item.quantity === '' ||
+            Number(item.quantity) <= 0 ||
+            isNaN(Number(item.quantity))
+          ) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Quantity must be greater than 0 for Item #${i + 1}.`,
+            );
+          }
+          if (
+            item.rate === null ||
+            item.rate === undefined ||
+            item.rate === '' ||
+            item.rate === 0 ||
+            Number(item.rate) <= 0 ||
+            isNaN(Number(item.rate))
+          ) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Rate (₹) is required and must be greater than 0 for Item #${i + 1}.`,
+            );
+          }
+        }
+        if (!details?.companyName && !details?.customer_name) {
+          throw new BadRequestException(
+            'Cannot save inquiry: Company Name is required.',
           );
         }
       }
