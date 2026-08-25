@@ -615,7 +615,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, media_urls',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
         )
         .order('created_at', { ascending: false });
 
@@ -688,7 +688,6 @@ export class InquiriesService implements OnModuleInit {
       // Clean list with accurate customer and salesperson entities and lightweight media indicators
       const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
-          (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp' ||
@@ -700,15 +699,6 @@ export class InquiriesService implements OnModuleInit {
           dealByName,
           empPhoneMap,
         );
-
-        // Sanitize media_urls: keep lightweight HTTP URLs, replace large base64 data with 'attached_document'
-        const cleanMedia = (item.media_urls || [])
-          .map((m: any) =>
-            typeof m === 'string' && m.startsWith('http')
-              ? m
-              : 'attached_document',
-          )
-          .filter(Boolean);
 
         // Strip duplicate nested base64 data from ai_extraction_json for high performance list transfer
         let cleanAiJson = item.ai_extraction_json;
@@ -728,12 +718,7 @@ export class InquiriesService implements OnModuleInit {
           ...entities,
           ai_extraction_json: cleanAiJson,
           has_media: hasAttachment,
-          media_urls:
-            cleanMedia.length > 0
-              ? cleanMedia
-              : hasAttachment
-                ? ['attached_document']
-                : [],
+          media_urls: hasAttachment ? ['attached_document'] : [],
         };
       });
 
