@@ -252,47 +252,60 @@ function extractCleanCustomerName(rawText: string): string | null {
 }
 
 function extractCleanDeliveryLocation(rawText?: string, aiJson?: any): string {
+  const sanitize = (str: string): string => {
+    if (!str) return '';
+    let clean = str.replace(/^[•\-\*:\s|]+|[•\-\*:\s|]+$/g, '').trim();
+    if (clean.includes('|')) clean = clean.split('|')[0].trim();
+    clean = clean
+      .replace(
+        /\s*(?:payment\s*terms?|payment|terms?|make|brand|preferred\s*make|notes?|remarks?|email|contact|phone)\s*[:=-].*$/i,
+        '',
+      )
+      .trim();
+    return clean.replace(/^[•\-\*:\s|]+|[•\-\*:\s|]+$/g, '').trim();
+  };
+
   const json = aiJson || {};
-  let fromJson = json.delivery_location || json.deliveryLocation || '';
-  if (fromJson && typeof fromJson === 'string') {
-    fromJson = fromJson.replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '').trim();
-  }
+  const fromJson = sanitize(
+    json.delivery_location || json.deliveryLocation || '',
+  );
 
   let fromText = '';
   if (rawText && typeof rawText === 'string') {
-    // 1. Line-by-line match for bullet or key-value format (handles WhatsApp bot & email formats)
+    // 1. Line-by-line match for bullet or key-value format (stops strictly at pipe, newline, or next field)
     const lineMatch =
       rawText.match(
-        /(?:^[•\-\*]?\s*(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^\n\r]+)/im,
+        /(?:^[•\-\*]?\s*(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^|\n\r]+)/im,
       ) ||
       rawText.match(
-        /(?:(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^\n\r]+)/i,
+        /(?:(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^|\n\r]+)/i,
       );
     if (lineMatch && lineMatch[1].trim().length > 2) {
-      fromText = lineMatch[1].replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '').trim();
+      fromText = sanitize(lineMatch[1]);
     }
 
     // 2. Multiline block fallback
     if (!fromText) {
       const blockMatch =
         rawText.match(
-          /(?:delivery\s*(?:address|location)?|delivered\s*to|deliver\s*to|site\s*(?:address|location)?|destination|dispatch\s*to)\s*[:=-]?\s*([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s*(?:payment\s*terms?|payment|terms?|rate|price|qty|quantity|make|brand|notes?|email|contact|phone|before|by|on\s+\d|gst\b)|\n{2,}|$)/i,
+          /(?:delivery\s*(?:address|location)?|delivered\s*to|deliver\s*to|site\s*(?:address|location)?|destination|dispatch\s*to)\s*[:=-]?\s*([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s*(?:\||;|\n{2,}|payment\s*terms?|payment|terms?|rate|price|qty|quantity|make|brand|notes?|email|contact|phone|before|by|on\s+\d|gst\b)|$)/i,
         ) ||
         rawText.match(
-          /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|location|destination)\s+([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s+before|\s+by|\s+on|\s+within|$)/i,
+          /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|location|destination)\s+([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s+before|\s+by|\s+on|\s+within|\||$)/i,
         );
       if (blockMatch && blockMatch[1].trim().length > 2) {
-        fromText = blockMatch[1]
-          .replace(/^[•\-\*:\s]+|[•\-\*:\s]+$/g, '')
-          .trim();
+        fromText = sanitize(blockMatch[1]);
       }
     }
   }
 
+  let finalLoc = fromJson;
   if (fromText && fromText.length > fromJson.length) {
-    return fromText;
+    finalLoc = fromText;
+  } else if (!finalLoc) {
+    finalLoc = fromText;
   }
-  return fromJson || fromText || '';
+  return sanitize(finalLoc);
 }
 
 function isGenuineInquiry(item: any): boolean {
