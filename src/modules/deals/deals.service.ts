@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
@@ -266,7 +267,7 @@ export class DealsService {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, salesperson_phone')
+        .select('id, salesperson_phone, stage')
         .eq('id', id)
         .single();
       if (fetchErr || !existingDeal) {
@@ -282,6 +283,24 @@ export class DealsService {
             'Access Denied: You do not have permission to update this deal.',
           );
         }
+      }
+
+      const currentStage = (existingDeal.stage || 'new_inquiry')
+        .toLowerCase()
+        .trim();
+      const targetStage = (stage || '').toLowerCase().trim();
+
+      // Rule: Gated stage transitions:
+      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' or 'lost'.
+      if (
+        (currentStage === 'new_inquiry' ||
+          currentStage === 'review' ||
+          !existingDeal.stage) &&
+        (targetStage === 'won' || targetStage === 'lost')
+      ) {
+        throw new BadRequestException(
+          `Cannot mark deal as ${targetStage.toUpperCase()} from '${currentStage}' stage. The deal must first be Qualified or Quoted.`,
+        );
       }
 
       const updateData: any = { stage };
