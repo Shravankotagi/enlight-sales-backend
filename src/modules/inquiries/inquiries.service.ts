@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -513,7 +514,7 @@ function resolveInquiryEntities(
 }
 
 @Injectable()
-export class InquiriesService {
+export class InquiriesService implements OnModuleInit {
   private readonly logger = new Logger(InquiriesService.name);
 
   constructor(
@@ -523,6 +524,78 @@ export class InquiriesService {
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
+  }
+
+  async onModuleInit() {
+    this.backfillInquiryDealStages().catch((err) => {
+      this.logger.warn('Initial deal stage backfill notice:', err?.message);
+    });
+  }
+
+  async backfillInquiryDealStages() {
+    try {
+      const { data: inquiries } = await this.supabase
+        .from('inquiries')
+        .select('*');
+      const { data: deals } = await this.supabase.from('deals').select('*');
+      if (!inquiries || !deals) return;
+
+      for (const inq of inquiries) {
+        const ai = inq.ai_extraction_json || {};
+        const custName = (
+          inq.customer_name ||
+          ai.companyName ||
+          ai.customer_name ||
+          inq.sender_name ||
+          ''
+        ).trim();
+        let deal = deals.find((d: any) => d.inquiry_id === inq.id);
+        if (!deal && custName) {
+          deal = deals.find(
+            (d: any) =>
+              (d.customer_name || '').toLowerCase().trim() ===
+              custName.toLowerCase().trim(),
+          );
+        }
+        if (!deal) continue;
+
+        const currentStage = (deal.stage || '').toLowerCase().trim();
+        if (
+          currentStage === 'won' ||
+          currentStage === 'lost' ||
+          currentStage === 'negotiation'
+        ) {
+          continue;
+        }
+
+        let targetStage = 'new_inquiry';
+        const inqStatus = (inq.status || '').toLowerCase().trim();
+        if (inqStatus === 'quoted' || inqStatus === 'quotation_sent') {
+          targetStage = 'quoted';
+        } else if (
+          inqStatus === 'confirmed' ||
+          inqStatus === 'saved' ||
+          inqStatus === 'processed'
+        ) {
+          targetStage = 'qualified';
+        } else if (
+          inqStatus === 'review' ||
+          inqStatus === 'needs_review' ||
+          inqStatus === 'pending'
+        ) {
+          targetStage = 'new_inquiry';
+        }
+
+        if (currentStage !== targetStage) {
+          await this.supabase
+            .from('deals')
+            .update({ stage: targetStage })
+            .eq('id', deal.id);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn('Error in backfillInquiryDealStages:', err?.message);
+    }
   }
 
   async findAll(filters?: {
@@ -1374,7 +1447,6 @@ export class InquiriesService {
             total_amount:
               grandTotal !== null && grandTotal > 0 ? grandTotal : null,
             status: 'auto_created',
-            updated_at: new Date().toISOString(),
           })
           .eq('id', dealId);
       } else {
