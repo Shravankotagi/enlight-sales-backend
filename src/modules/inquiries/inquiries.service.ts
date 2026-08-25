@@ -527,9 +527,7 @@ export class InquiriesService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    this.backfillInquiryDealStages().catch((err) => {
-      this.logger.warn('Initial deal stage backfill notice:', err?.message);
-    });
+    // Keep server startup fast and lightweight
   }
 
   async backfillInquiryDealStages() {
