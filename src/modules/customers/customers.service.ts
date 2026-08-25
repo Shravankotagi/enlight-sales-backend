@@ -67,23 +67,41 @@ export class CustomersService {
 
   async findOne(id: string, salespersonPhone?: string[] | string) {
     try {
-      const { data: customer, error } = await this.supabase
-        .from('recurring_customers')
-        .select('*')
-        .eq('id', id)
-        .single();
-      if (error || !customer) {
-        throw new NotFoundException('Customer not found');
+      let customer: any = null;
+      if (id.startsWith('virtual-')) {
+        const namePart = id.replace(/^(virtual-deal-|virtual-visit-)/, '');
+        const { data: found } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .ilike('customer_name', `%${namePart}%`)
+          .limit(1);
+        if (found && found.length > 0) {
+          customer = found[0];
+        } else {
+          customer = {
+            id,
+            customer_name: namePart,
+            avg_order_frequency_days: 30,
+            is_active: true,
+          };
+        }
+      } else {
+        const { data: found, error } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (error || !found) {
+          throw new NotFoundException('Customer not found');
+        }
+        customer = found;
       }
 
-      if (salespersonPhone) {
+      if (salespersonPhone && customer.assigned_salesperson_phone) {
         const allowedList = Array.isArray(salespersonPhone)
           ? salespersonPhone
           : [salespersonPhone];
-        if (
-          !customer.assigned_salesperson_phone ||
-          !phoneInList(customer.assigned_salesperson_phone, allowedList)
-        ) {
+        if (!phoneInList(customer.assigned_salesperson_phone, allowedList)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to view this customer.',
           );
@@ -134,18 +152,33 @@ export class CustomersService {
         .ilike('customer_name', `%${customer.customer_name}%`)
         .order('reported_at', { ascending: false });
 
-      const [dealsRes, visitsRes, paymentsRes, complaintsRes] =
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('*')
+        .ilike('customer_name', `%${customer.customer_name}%`)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (salespersonPhone) {
+        const inquiriesOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (inquiriesOr) inquiriesQuery = inquiriesQuery.or(inquiriesOr);
+      }
+
+      const [dealsRes, visitsRes, paymentsRes, complaintsRes, inquiriesRes] =
         await Promise.all([
           dealsQuery,
           visitsQuery,
           paymentsQuery,
           complaintsQuery,
+          inquiriesQuery,
         ]);
 
       const deals = dealsRes.data || [];
       const visits = visitsRes.data || [];
       const payments = paymentsRes.data || [];
       const complaints = complaintsRes.data || [];
+      const inquiries = inquiriesRes.data || [];
 
       const wonDeals = deals.filter((d) => d.stage === 'won');
       const latestWonDeal = wonDeals.length > 0 ? wonDeals[0] : null;
@@ -153,13 +186,32 @@ export class CustomersService {
         ? latestWonDeal.won_at || latestWonDeal.created_at
         : customer.last_order_date || null;
 
+      // Trailing 12 Month Revenue & Tier Calculation
+      const now = new Date();
+      const t12mCutoff = new Date(
+        now.getTime() - 365 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const t12mRevenue = wonDeals
+        .filter((d) => (d.won_at || d.created_at) >= t12mCutoff)
+        .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
+
+      let tier = 'C';
+      if (t12mRevenue >= 1000000) {
+        tier = 'A';
+      } else if (t12mRevenue >= 200000) {
+        tier = 'B';
+      }
+
       return {
         ...customer,
         last_order_date: effectiveLastOrderDate,
+        t12m_revenue: t12mRevenue,
+        tier,
         deals,
         visits,
         payments,
         complaints,
+        inquiries,
       };
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
@@ -189,15 +241,10 @@ export class CustomersService {
       if (error) throw error;
 
       const now = new Date();
-      const monthStart = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        1,
-      ).toISOString();
 
       let dealsQuery = this.supabase
         .from('deals')
-        .select('customer_name, created_at, won_at, stage')
+        .select('customer_name, customer_phone, created_at, won_at, stage')
         .order('created_at', { ascending: false });
 
       if (salespersonPhone) {
@@ -207,15 +254,174 @@ export class CustomersService {
         if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
       }
 
-      const { data: allDeals } = await dealsQuery;
-      const safeAllDeals = allDeals || [];
+      let visitsQuery = this.supabase
+        .from('customer_visits')
+        .select(
+          'customer_name, person_met, contact_phone, created_at, visited_at',
+        )
+        .order('visited_at', { ascending: false });
 
-      const results = (customers || []).map((customer) => {
-        const custKey = (customer.customer_name || '').toLowerCase().trim();
+      if (salespersonPhone) {
+        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
+      }
+
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('customer_name, contact_phone, created_at')
+        .order('created_at', { ascending: false });
+
+      if (salespersonPhone) {
+        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
+      }
+
+      const complaintsQuery = this.supabase
+        .from('complaints')
+        .select('customer_name, created_at, reported_at');
+
+      let paymentsQuery = this.supabase
+        .from('payment_tracking')
+        .select('customer_name, status, pending_amount, outstanding, due_date');
+
+      if (salespersonPhone) {
+        const payOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (payOr) paymentsQuery = paymentsQuery.or(payOr);
+      }
+
+      const [
+        { data: allDeals },
+        { data: allVisits },
+        { data: allInquiries },
+        { data: allComplaints },
+        { data: allPayments },
+      ] = await Promise.all([
+        dealsQuery,
+        visitsQuery,
+        inquiriesQuery,
+        complaintsQuery,
+        paymentsQuery,
+      ]);
+
+      const safeAllDeals = allDeals || [];
+      const safeAllVisits = allVisits || [];
+      const safeAllInquiries = allInquiries || [];
+      const safeAllComplaints = allComplaints || [];
+      const safeAllPayments = allPayments || [];
+
+      const normalize = (str?: string) =>
+        (str || '')
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]/g, '');
+
+      const existingNameSet = new Set(
+        (customers || []).map((c) => normalize(c.customer_name)),
+      );
+
+      const extraCustomersMap = new Map<string, any>();
+
+      for (const deal of safeAllDeals) {
+        if (!deal.customer_name || !deal.customer_name.trim()) continue;
+        const norm = normalize(deal.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-deal-${norm}`,
+            customer_name: deal.customer_name.trim(),
+            contact_person: null,
+            customer_phone: deal.customer_phone || null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: deal.created_at,
+          });
+        }
+      }
+
+      for (const visit of safeAllVisits) {
+        if (!visit.customer_name || !visit.customer_name.trim()) continue;
+        const norm = normalize(visit.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-visit-${norm}`,
+            customer_name: visit.customer_name.trim(),
+            contact_person: visit.person_met || null,
+            customer_phone: visit.contact_phone || null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: visit.visited_at || visit.created_at,
+          });
+        }
+      }
+
+      for (const inq of safeAllInquiries) {
+        if (!inq.customer_name || !inq.customer_name.trim()) continue;
+        const norm = normalize(inq.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-inquiry-${norm}`,
+            customer_name: inq.customer_name.trim(),
+            contact_person: null,
+            customer_phone: inq.contact_phone || null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: inq.created_at,
+          });
+        }
+      }
+
+      for (const comp of safeAllComplaints) {
+        if (!comp.customer_name || !comp.customer_name.trim()) continue;
+        const norm = normalize(comp.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-complaint-${norm}`,
+            customer_name: comp.customer_name.trim(),
+            contact_person: null,
+            customer_phone: null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: comp.reported_at || comp.created_at,
+          });
+        }
+      }
+
+      const combinedCustomers = [
+        ...(customers || []),
+        ...Array.from(extraCustomersMap.values()),
+      ];
+
+      const results = combinedCustomers.map((customer) => {
+        const custKeyNorm = normalize(customer.customer_name);
         const customerWonDeals = safeAllDeals.filter((d) => {
           if (d.stage !== 'won') return false;
-          const dKey = (d.customer_name || '').toLowerCase().trim();
-          return dKey.includes(custKey) || custKey.includes(dKey);
+          const dKeyNorm = normalize(d.customer_name);
+          return dKeyNorm === custKeyNorm;
         });
 
         const latestWonDeal =
@@ -237,11 +443,6 @@ export class CustomersService {
             )
           : null;
 
-        const hasOrderThisMonth = customerWonDeals.some(
-          (d) =>
-            d.created_at >= monthStart || (d.won_at && d.won_at >= monthStart),
-        );
-
         const daysSinceCreated = customer.created_at
           ? Math.floor(
               (now.getTime() - new Date(customer.created_at).getTime()) /
@@ -249,31 +450,43 @@ export class CustomersService {
             )
           : 0;
 
-        const avgFreq = customer.avg_order_frequency_days || 30;
-
-        let churnRisk = 'low';
-        if (!hasOrderThisMonth) {
-          if (daysSinceOrder !== null) {
-            if (daysSinceOrder > avgFreq + 15) {
-              churnRisk = 'high';
-            } else if (daysSinceOrder > avgFreq) {
-              churnRisk = 'medium';
-            }
+        // Health Status Classification
+        let churnRisk = 'active'; // Active <= 35 days 🟢
+        if (daysSinceOrder !== null) {
+          if (daysSinceOrder > 45) {
+            churnRisk = 'churning'; // Churning > 45 days 🔴
+          } else if (daysSinceOrder >= 35) {
+            churnRisk = 'at_risk'; // At Risk 35-45 days 🟡
           } else {
-            // Newly onboarded customers (within 30 days) are New Prospects -> Low Risk
-            // Registered > 30 days ago without any order -> High Risk
-            if (daysSinceCreated > 30) {
-              churnRisk = 'high';
-            } else {
-              churnRisk = 'low';
-            }
+            churnRisk = 'active';
           }
+        } else {
+          if (daysSinceCreated > 45) {
+            churnRisk = 'churning';
+          } else if (daysSinceCreated >= 35) {
+            churnRisk = 'at_risk';
+          } else {
+            churnRisk = 'active';
+          }
+        }
+
+        // Check Overdue Payment for Credit Watch ⚠️
+        const hasCreditWatch = safeAllPayments.some((p) => {
+          const pNorm = normalize(p.customer_name);
+          if (pNorm !== custKeyNorm) return false;
+          const pending = Number(p.pending_amount || p.outstanding || 0);
+          const isOverdue =
+            p.due_date && new Date(p.due_date) < now && pending > 0;
+          return p.status === 'overdue' || isOverdue;
+        });
+
+        if (hasCreditWatch) {
+          churnRisk = 'credit_watch';
         }
 
         return {
           ...customer,
           last_order_date: effectiveLastOrderStr,
-          has_order_this_month: hasOrderThisMonth,
           days_since_order: daysSinceOrder,
           churn_risk: churnRisk,
         };
@@ -281,14 +494,74 @@ export class CustomersService {
 
       return results.sort((a, b) => {
         const riskOrder: Record<string, number> = {
-          high: 0,
-          medium: 1,
-          low: 2,
+          credit_watch: 0,
+          churning: 1,
+          at_risk: 2,
+          active: 3,
         };
-        return (riskOrder[a.churn_risk] ?? 2) - (riskOrder[b.churn_risk] ?? 2);
+        return (riskOrder[a.churn_risk] ?? 3) - (riskOrder[b.churn_risk] ?? 3);
       });
     } catch (error) {
       this.logger.error('Error in getChurnRisk:', error);
+      throw error;
+    }
+  }
+
+  async updateCustomer(id: string, data: any) {
+    try {
+      const updatePayload: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (data.customer_name !== undefined)
+        updatePayload.customer_name = data.customer_name.trim();
+      if (data.contact_person !== undefined)
+        updatePayload.contact_person = data.contact_person;
+      if (data.customer_phone !== undefined)
+        updatePayload.customer_phone = data.customer_phone;
+      if (data.customer_gst !== undefined)
+        updatePayload.customer_gst = data.customer_gst;
+      if (data.address !== undefined) updatePayload.address = data.address;
+      if (data.avg_order_frequency_days !== undefined)
+        updatePayload.avg_order_frequency_days = Number(
+          data.avg_order_frequency_days,
+        );
+      if (data.assigned_salesperson_phone !== undefined)
+        updatePayload.assigned_salesperson_phone =
+          data.assigned_salesperson_phone;
+      if (data.churn_risk !== undefined)
+        updatePayload.churn_risk = data.churn_risk;
+
+      if (id.startsWith('virtual-')) {
+        const namePart =
+          data.customer_name ||
+          id.replace(
+            /^(virtual-deal-|virtual-visit-|virtual-inquiry-|virtual-complaint-)/,
+            '',
+          );
+        const { data: created, error } = await this.supabase
+          .from('recurring_customers')
+          .insert({
+            customer_name: namePart,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            ...updatePayload,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        return created;
+      }
+
+      const { data: updated, error } = await this.supabase
+        .from('recurring_customers')
+        .update(updatePayload)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return updated;
+    } catch (error) {
+      this.logger.error(`Error updating customer ${id}:`, error);
       throw error;
     }
   }
