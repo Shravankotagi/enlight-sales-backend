@@ -534,10 +534,10 @@ export class InquiriesService implements OnModuleInit {
 
   async backfillInquiryDealStages() {
     try {
-      const { data: inquiries } = await this.supabase
-        .from('inquiries')
-        .select('*');
-      const { data: deals } = await this.supabase.from('deals').select('*');
+      const [{ data: inquiries }, { data: deals }] = await Promise.all([
+        this.supabase.from('inquiries').select('*'),
+        this.supabase.from('deals').select('*'),
+      ]);
       if (!inquiries || !deals) return;
 
       for (const inq of inquiries) {
@@ -644,10 +644,22 @@ export class InquiriesService implements OnModuleInit {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Fetch deals to associate real customer_phone from the database
-      const { data: deals } = await this.supabase
-        .from('deals')
-        .select('inquiry_id, customer_name, customer_phone');
+      // Extract inquiry IDs to scope the deals query efficiently
+      const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
+
+      // Concurrently fetch deals and employees in parallel using Promise.all
+      const [dealsRes, employeesRes] = await Promise.all([
+        inquiryIds.length > 0
+          ? this.supabase
+              .from('deals')
+              .select('inquiry_id, customer_name, customer_phone')
+              .in('inquiry_id', inquiryIds)
+          : Promise.resolve({ data: [] }),
+        this.supabase.from('employees').select('name, phone'),
+      ]);
+
+      const deals = dealsRes.data || [];
+      const employees = employeesRes.data || [];
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
@@ -662,11 +674,6 @@ export class InquiriesService implements OnModuleInit {
           );
         }
       });
-
-      // Fetch employees to accurately resolve salesperson names
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone');
 
       const empPhoneMap = new Map<string, string>();
       employees?.forEach((e: any) => {
@@ -760,9 +767,16 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (data) {
-        const { data: deals } = await this.supabase
-          .from('deals')
-          .select('inquiry_id, customer_name, customer_phone');
+        const [dealsRes, employeesRes] = await Promise.all([
+          this.supabase
+            .from('deals')
+            .select('inquiry_id, customer_name, customer_phone')
+            .eq('inquiry_id', id),
+          this.supabase.from('employees').select('name, phone'),
+        ]);
+
+        const deals = dealsRes.data || [];
+        const employees = employeesRes.data || [];
 
         const dealByInqId = new Map<string, string>();
         const dealByName = new Map<string, string>();
@@ -777,10 +791,6 @@ export class InquiriesService implements OnModuleInit {
             );
           }
         });
-
-        const { data: employees } = await this.supabase
-          .from('employees')
-          .select('name, phone');
 
         const empPhoneMap = new Map<string, string>();
         employees?.forEach((e: any) => {
