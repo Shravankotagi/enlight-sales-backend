@@ -7,12 +7,16 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private activityLogsService: ActivityLogsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -454,6 +458,20 @@ export class DealsService {
         this.logger.error('Bigin auto-sync notice:', err.message),
       );
 
+      // Non-blocking activity log
+      try {
+        const custName = data?.customer_name || 'Customer';
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: data?.salesperson_phone || null,
+          description: `Order for ${custName} updated to ${stage}`,
+          module: 'Orders',
+          customer_name: custName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStage for id ${id}:`, error);
@@ -563,6 +581,24 @@ export class DealsService {
           deal.customer_gst,
           deal.contact_person,
         );
+
+        // Non-blocking activity log
+        try {
+          const cust = deal.customer_name || 'Customer';
+          const poStr = deal.po_number ? ` (PO: ${deal.po_number})` : '';
+          this.activityLogsService.logActivity({
+            salesperson_name: 'Sales Team',
+            salesperson_phone: deal.salesperson_phone || null,
+            description: `New order created for ${cust}${poStr}`,
+            module: 'Orders',
+            customer_name: cust,
+          });
+        } catch (actErr: any) {
+          this.logger.warn(
+            'Non-blocking activity log notice:',
+            actErr?.message,
+          );
+        }
       }
 
       return deal;
@@ -900,6 +936,20 @@ export class DealsService {
           'Non-blocking follow-up resolution notice:',
           fErr?.message,
         );
+      }
+
+      // Non-blocking activity log
+      try {
+        const poStr = poNumber ? ` (PO: ${poNumber})` : '';
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: phone || null,
+          description: `New order created for ${customerName}${poStr}`,
+          module: 'Orders',
+          customer_name: customerName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
       }
 
       return savedDeal;
