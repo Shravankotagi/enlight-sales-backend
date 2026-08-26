@@ -2194,9 +2194,9 @@ ${rawText}`,
           size: 'A4',
           margin: 40,
           info: {
-            Title: `Proforma Invoice - ${qRefNum}`,
+            Title: `Invoice - ${qRefNum}`,
             Author: 'Enlight Metals Private Limited',
-            Subject: `Proforma Invoice for ${customerName}`,
+            Subject: `Invoice for ${customerName}`,
           },
         });
 
@@ -2236,16 +2236,6 @@ ${rawText}`,
             month: '2-digit',
             year: 'numeric',
           });
-
-        const piNumber =
-          details?.piNumber ||
-          (details?.poNumber ? details.poNumber : null) ||
-          (qRefNum.startsWith('PI-')
-            ? qRefNum
-            : `PI-${qRefNum
-                .replace(/^QT-2026-/, '')
-                .replace(/^QT-/, '')
-                .padStart(5, '0')}`);
 
         const salesperson =
           details?.salespersonName ||
@@ -2360,19 +2350,6 @@ ${rawText}`,
         leftHeaderY += 12;
 
         // Top Right Proforma Invoice Header
-        doc
-          .fillColor('#1E293B')
-          .font(fontBold)
-          .fontSize(24)
-          .text('Proforma Invoice', 280, 40, { width: 275.28, align: 'right' });
-        doc
-          .fillColor('#334155')
-          .font(fontRegular)
-          .fontSize(9.5)
-          .text(`PI Number# ${piNumber}`, 280, 72, {
-            width: 275.28,
-            align: 'right',
-          });
 
         // 2. Bill To, Ship To & Supply Section (Left) / Order Date & Salesperson (Right)
         let currY = Math.max(leftHeaderY + 22, 205);
