@@ -24,6 +24,7 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
+import { ActivityLogsModule } from './modules/activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
     OtpModule,
     PricingModule,
     ChatbotModule,
+    ActivityLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

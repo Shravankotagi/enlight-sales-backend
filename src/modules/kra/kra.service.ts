@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -97,7 +98,10 @@ function isProductInquiry(inquiry: any): boolean {
 export class KraService {
   private readonly logger = new Logger(KraService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private activityLogsService: ActivityLogsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -2117,6 +2121,19 @@ export class KraService {
       );
     }
 
+    // Log to activity_logs
+    try {
+      this.activityLogsService.logActivity({
+        salesperson_name: 'Sales Team',
+        salesperson_phone: salespersonPhone || null,
+        description: `New complaint logged for ${data.customer_name || 'Customer'}`,
+        module: 'Complaints',
+        customer_name: data.customer_name || 'Customer',
+      });
+    } catch (actErr: any) {
+      this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+    }
+
     return created;
   }
 
@@ -2174,6 +2191,22 @@ export class KraService {
       .single();
 
     if (error) throw error;
+
+    // Log to activity_logs
+    try {
+      if (data.status === 'resolved' || updateData.status === 'resolved') {
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: updated?.reported_by || null,
+          description: `Complaint resolved for ${updated?.customer_name || 'Customer'}`,
+          module: 'Complaints',
+          customer_name: updated?.customer_name || 'Customer',
+        });
+      }
+    } catch (actErr: any) {
+      this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+    }
+
     return updated;
   }
 
@@ -2440,6 +2473,29 @@ export class KraService {
           fErr?.message,
         );
       }
+    }
+
+    // Log to activity_logs
+    try {
+      this.activityLogsService.logActivity({
+        salesperson_name: 'Sales Team',
+        salesperson_phone: salespersonPhone || null,
+        description: `Site visit logged for ${data.customer_name} at ${data.location || data.city || data.customer_address || 'Client Site'}`,
+        module: 'Visits',
+        customer_name: data.customer_name,
+      });
+
+      if (data.followup_date || data.follow_up_date) {
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: salespersonPhone || null,
+          description: `Follow-up scheduled with ${data.customer_name} for ${data.followup_date || data.follow_up_date}`,
+          module: 'Visits',
+          customer_name: data.customer_name,
+        });
+      }
+    } catch (actErr: any) {
+      this.logger.warn('Non-blocking activity log notice:', actErr?.message);
     }
 
     return created;

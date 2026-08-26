@@ -48,6 +48,7 @@ function getAssetFontPath(fontFilename: string): string | null {
 }
 
 import { DealsService } from '../deals/deals.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
   calculateQuotationBreakdown,
   formatIndianCurrency,
@@ -520,6 +521,7 @@ export class InquiriesService implements OnModuleInit {
   constructor(
     private supabaseService: SupabaseService,
     private dealsService: DealsService,
+    private activityLogsService: ActivityLogsService,
   ) {}
 
   private get supabase() {
@@ -1014,6 +1016,26 @@ export class InquiriesService implements OnModuleInit {
         await this.syncInquiryToDeal(id, undefined, details);
       }
 
+      // Non-blocking activity log
+      try {
+        const custName =
+          (data as any)?.customer_name ||
+          (data?.ai_extraction_json as any)?.companyName ||
+          (data?.ai_extraction_json as any)?.customer_name ||
+          data?.sender_name ||
+          'Customer';
+        this.activityLogsService.logActivity({
+          salesperson_name:
+            (data as any)?.assigned_salesperson_name || 'Sales Team',
+          salesperson_phone: (data as any)?.salesperson_phone || null,
+          description: `Inquiry status for ${custName} updated to ${status}`,
+          module: 'Inquiries',
+          customer_name: custName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      }
+
       return data;
     } catch (error) {
       this.logger.error(`Error in updateStatus for id ${id}:`, error);
@@ -1242,6 +1264,29 @@ export class InquiriesService implements OnModuleInit {
       });
     } catch (kraErr: any) {
       this.logger.warn('Non-blocking kra_logs insert notice:', kraErr?.message);
+    }
+
+    // Log to activity_logs
+    try {
+      const channelLabel =
+        payload.source_channel === 'whatsapp_text'
+          ? 'WhatsApp'
+          : payload.source_channel === 'whatsapp_image'
+            ? 'WhatsApp Image'
+            : payload.source_channel === 'purchase_order'
+              ? 'WhatsApp PO'
+              : 'Dashboard';
+      this.activityLogsService.logActivity({
+        salesperson_name:
+          (created as any)?.assigned_salesperson_name || 'Sales Team',
+        salesperson_phone:
+          salespersonPhone || created.salesperson_phone || null,
+        description: `New inquiry received from ${finalCustomerName} via ${channelLabel}`,
+        module: 'Inquiries',
+        customer_name: finalCustomerName,
+      });
+    } catch (actErr: any) {
+      this.logger.warn('Non-blocking activity log notice:', actErr?.message);
     }
 
     return created;
@@ -1809,6 +1854,22 @@ MIDC Industrial Zone, Mumbai - 400001`;
         });
       } catch (kraErr: any) {
         this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
+      }
+
+      // Log to activity_logs
+      try {
+        this.activityLogsService.logActivity({
+          salesperson_name:
+            (inquiry as any)?.assigned_salesperson_name ||
+            (inquiry as any)?.salesperson_name ||
+            'Sales Team',
+          salesperson_phone: inquiry.salesperson_phone || null,
+          description: `Quotation sent to ${customerName}`,
+          module: 'Inquiries',
+          customer_name: customerName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
       }
 
       return {
