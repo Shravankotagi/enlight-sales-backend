@@ -30,6 +30,8 @@ export class ActivityLogsService {
         description: data.description,
         module: data.module,
         customer_name: data.customer_name || null,
+        source: 'system',
+        action_type: 'activity',
       };
 
       Promise.resolve(this.supabase.from('activity_logs').insert(payload))
@@ -70,17 +72,34 @@ export class ActivityLogsService {
         .order('timestamp', { ascending: false });
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        const phoneFilter = accessiblePhones
-          .map((p) => `salesperson_phone.ilike.%${p}%`)
-          .join(',');
-        q = q.or(`${phoneFilter},salesperson_phone.is.null`);
+        const parts: string[] = [];
+        for (const phone of accessiblePhones) {
+          if (!phone || typeof phone !== 'string') continue;
+          const clean = phone.replace(/\D/g, '');
+          const p10 = clean.slice(-10);
+          if (!p10) continue;
+          const p12 = '91' + p10;
+          parts.push(
+            `salesperson_phone.ilike.%${p10}%`,
+            `salesperson_phone.ilike.%${p12}%`,
+          );
+        }
+        if (parts.length > 0) {
+          q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
+        }
       }
 
       if (query.from) {
-        q = q.gte('timestamp', query.from);
+        const fromIso = query.from.includes('T')
+          ? query.from
+          : `${query.from}T00:00:00.000Z`;
+        q = q.gte('timestamp', fromIso);
       }
       if (query.to) {
-        q = q.lte('timestamp', query.to);
+        const toIso = query.to.includes('T')
+          ? query.to
+          : `${query.to}T23:59:59.999Z`;
+        q = q.lte('timestamp', toIso);
       }
 
       if (query.module && query.module !== 'All' && query.module !== 'all') {
