@@ -42,7 +42,12 @@ export class DealsController {
       return [];
     }
 
-    const data = await this.dealsService.findAll({ stage, from, to });
+    const data = await this.dealsService.findAll({
+      stage,
+      from,
+      to,
+      salesperson_phone: salespersonPhoneOverride,
+    });
 
     if (phones) {
       return data.filter((d: any) => phoneInList(d.salesperson_phone, phones));
