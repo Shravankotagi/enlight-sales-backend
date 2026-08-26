@@ -709,7 +709,6 @@ export class DealsService {
             payment_terms: paymentTerms || existingDeal.payment_terms,
             inquiry_type: 'purchase_order',
             status: 'auto_created',
-            updated_at: nowIso,
           })
           .eq('id', dealId)
           .select()
