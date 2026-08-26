@@ -57,19 +57,25 @@ export class DealsService {
         const fromIso = filters.from.includes('T')
           ? filters.from
           : `${filters.from}T00:00:00.000Z`;
-        const fromDateOnly = filters.from.split('T')[0];
-        query = query.or(
-          `won_at.gte.${fromIso},created_at.gte.${fromIso},po_date.gte.${fromDateOnly}`,
-        );
+        if (filters?.stage === 'won') {
+          query = query.or(
+            `won_at.gte.${fromIso},and(won_at.is.null,created_at.gte.${fromIso})`,
+          );
+        } else {
+          query = query.gte('created_at', fromIso);
+        }
       }
       if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
-        const toDateOnly = filters.to.split('T')[0];
-        query = query.or(
-          `won_at.lte.${toEnd},created_at.lte.${toEnd},po_date.lte.${toDateOnly}`,
-        );
+        if (filters?.stage === 'won') {
+          query = query.or(
+            `won_at.lte.${toEnd},and(won_at.is.null,created_at.lte.${toEnd})`,
+          );
+        } else {
+          query = query.lte('created_at', toEnd);
+        }
       }
 
       const { data, error } = await query;

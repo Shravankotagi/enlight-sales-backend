@@ -80,7 +80,11 @@ export class DealsController {
       }));
     }
 
-    const deals = await this.dealsService.findAll({ from, to });
+    const deals = await this.dealsService.findAll({
+      from,
+      to,
+      salesperson_phone: salespersonPhoneOverride,
+    });
     const filtered = phones
       ? deals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
       : deals;
@@ -127,7 +131,11 @@ export class DealsController {
       };
     }
 
-    const deals = await this.dealsService.findAll({ from, to });
+    const deals = await this.dealsService.findAll({
+      from,
+      to,
+      salesperson_phone: salespersonPhoneOverride,
+    });
     const activeDeals = deals.filter(
       (d: any) => !['won', 'lost'].includes(d.stage),
     );
