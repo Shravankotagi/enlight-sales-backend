@@ -33,7 +33,10 @@ export class DealsService {
           deal_items (*)
         `,
         )
-        .order('created_at', { ascending: false });
+        .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
+          ascending: false,
+          nullsFirst: false,
+        });
 
       if (filters?.stage) {
         if (filters.stage === 'new_inquiry') {
@@ -676,8 +679,8 @@ export class DealsService {
           existingDeal = d[0];
           dealId = existingDeal.id;
         }
-      } else if (customerName) {
-        // Find most recent active deal in pipeline for this customer
+      } else if (data.auto_link_pipeline && customerName) {
+        // Only auto-link to open pipeline deal if explicitly requested
         const { data: d } = await this.supabase
           .from('deals')
           .select('*')
