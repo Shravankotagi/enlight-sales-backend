@@ -125,4 +125,29 @@ export class ReportsController {
       to,
     );
   }
+
+  // GET /reports/overview (Consolidated high-speed endpoint for single-trip report loading)
+  @Get('overview')
+  async getOverview(
+    @CurrentEmployee() employee: any,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.reportsService.getOverviewReport(
+      month ? parseInt(month) : undefined,
+      year ? parseInt(year) : undefined,
+      phones === null ? undefined : phones,
+      from,
+      to,
+    );
+  }
 }
