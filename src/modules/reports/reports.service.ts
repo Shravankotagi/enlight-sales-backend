@@ -97,12 +97,16 @@ export class ReportsService {
         };
       }
 
+      const fromDateOnly = start.split('T')[0];
+      const toDateOnly = end.split('T')[0];
+
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
-        .neq('inquiry_type', 'unknown')
         .or(
-          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(created_at.gte.${start},created_at.lte.${end})`,
         );
       let inquiriesQuery = this.supabase
         .from('inquiries')
@@ -202,12 +206,12 @@ export class ReportsService {
           deals_won: wonDeals.length,
           deals_lost: lostDeals.length,
           deals_pending: pendingDeals.length,
-          total_deals: deals.length,
+          total_deals: inquiries.length > 0 ? inquiries.length : deals.length,
           conversion_rate:
-            deals.length > 0
-              ? Math.round((wonDeals.length / deals.length) * 100)
-              : inquiries.length > 0
-                ? Math.round((wonDeals.length / inquiries.length) * 100)
+            inquiries.length > 0
+              ? Math.round((wonDeals.length / inquiries.length) * 100)
+              : deals.length > 0
+                ? Math.round((wonDeals.length / deals.length) * 100)
                 : 0,
           total_inquiries: inquiries.length,
         },
