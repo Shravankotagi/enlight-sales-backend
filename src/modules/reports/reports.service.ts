@@ -640,6 +640,7 @@ export class ReportsService {
             acc[sku] = {
               sku_text: sku,
               grade: item.grade,
+              dimensions: item.dimensions || '',
               total_quantity: 0,
               total_value: 0,
               deal_count: 0,
@@ -649,6 +650,9 @@ export class ReportsService {
           acc[sku].total_quantity += Number(item.quantity) || 0;
           acc[sku].total_value += Number(item.amount) || 0;
           acc[sku].deal_count++;
+          if (!acc[sku].dimensions && item.dimensions) {
+            acc[sku].dimensions = item.dimensions;
+          }
           return acc;
         },
         {} as Record<string, any>,
