@@ -592,15 +592,20 @@ export class ReportsService {
         };
       }
 
+      const fromDateOnly = start.split('T')[0];
+      const toDateOnly = end.split('T')[0];
+
       let dealsQuery = this.supabase
         .from('deals')
         .select(
-          'id, created_at, won_at, stage, salesperson_phone, inquiry_type',
+          'id, created_at, won_at, stage, salesperson_phone, inquiry_type, po_date',
         )
         .neq('inquiry_type', 'unknown')
         .eq('stage', 'won')
         .or(
-          `and(created_at.gte.${start},created_at.lte.${end}),and(won_at.gte.${start},won_at.lte.${end})`,
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(won_at.is.null,created_at.gte.${start},created_at.lte.${end})`,
         );
 
       if (salespersonPhone) {
