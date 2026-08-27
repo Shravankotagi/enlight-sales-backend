@@ -592,33 +592,43 @@ export class ReportsService {
         };
       }
 
-      let itemsQuery = this.supabase
-        .from('deal_items')
+      let dealsQuery = this.supabase
+        .from('deals')
         .select(
-          '*, deals!inner(created_at, won_at, stage, salesperson_phone, inquiry_type)',
+          'id, created_at, won_at, stage, salesperson_phone, inquiry_type',
         )
-        .neq('deals.inquiry_type', 'unknown')
-        .eq('deals.stage', 'won');
+        .neq('inquiry_type', 'unknown')
+        .eq('stage', 'won')
+        .or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(won_at.gte.${start},won_at.lte.${end})`,
+        );
 
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
-          'deals.salesperson_phone',
+          'salesperson_phone',
         ]);
-        if (orFilter) itemsQuery = itemsQuery.or(orFilter);
+        if (orFilter) dealsQuery = dealsQuery.or(orFilter);
       }
 
-      const { data: items, error } = await itemsQuery;
+      const { data: wonDeals, error: dealsErr } = await dealsQuery;
+      if (dealsErr) throw dealsErr;
 
-      if (error) throw error;
+      const dealIds = (wonDeals || []).map((d: any) => d.id);
+      if (dealIds.length === 0) {
+        return {
+          period: { month: monthName, year: y },
+          skus: [],
+        };
+      }
 
-      const validItems = (items || []).filter((item: any) => {
-        const d = item.deals;
-        if (!d) return false;
-        const dealDate = d.won_at || d.created_at;
-        return dealDate >= start && dealDate <= end;
-      });
+      const { data: items, error: itemsErr } = await this.supabase
+        .from('deal_items')
+        .select('*')
+        .in('deal_id', dealIds);
 
-      const bysku = validItems.reduce(
+      if (itemsErr) throw itemsErr;
+
+      const bysku = (items || []).reduce(
         (acc, item) => {
           const sku = item.sku_text || 'Unknown';
           if (!acc[sku]) {
@@ -628,11 +638,11 @@ export class ReportsService {
               total_quantity: 0,
               total_value: 0,
               deal_count: 0,
-              unit: item.unit,
+              unit: item.unit || 'MT',
             };
           }
-          acc[sku].total_quantity += item.quantity || 0;
-          acc[sku].total_value += item.amount || 0;
+          acc[sku].total_quantity += Number(item.quantity) || 0;
+          acc[sku].total_value += Number(item.amount) || 0;
           acc[sku].deal_count++;
           return acc;
         },
