@@ -495,7 +495,6 @@ export class ReportsService {
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
-        .neq('inquiry_type', 'unknown')
         .or(
           `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
         );
@@ -526,7 +525,10 @@ export class ReportsService {
               d.stage === 'new_inquiry' ||
               d.stage === 'new_deals' ||
               d.stage === 'new' ||
-              d.stage === 'inquiry'
+              d.stage === 'inquiry' ||
+              d.stage === 'review' ||
+              d.stage === 'lead' ||
+              !d.stage
             );
           }
           return d.stage === key;
@@ -853,8 +855,11 @@ export class ReportsService {
         const stageDeals = deals.filter((d: any) => {
           if (key === 'new_deals') {
             return (
+              d.stage === 'new_inquiry' ||
               d.stage === 'new_deals' ||
               d.stage === 'new' ||
+              d.stage === 'inquiry' ||
+              d.stage === 'review' ||
               d.stage === 'lead' ||
               !d.stage
             );
