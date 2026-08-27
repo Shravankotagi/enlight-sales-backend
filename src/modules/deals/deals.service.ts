@@ -449,7 +449,7 @@ export class DealsService {
       // Trigger background sync to Zoho Bigin so Web App updates reflect in Bigin immediately
       const botUrl =
         process.env.BOT_SERVICE_URL ||
-        'https://enlight-sales-bot-production-3e03.up.railway.app';
+        'https://enlight-sales-bot-production.up.railway.app';
       fetch(`${botUrl}/webhook/admin/bigin-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
