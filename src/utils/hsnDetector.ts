@@ -615,5 +615,6 @@ export function detectHsnCode(
     return '72193390';
   }
 
-  return '72083840';
+  // Unknown product -> leave blank
+  return '';
 }
