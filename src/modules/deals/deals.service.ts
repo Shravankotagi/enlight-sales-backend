@@ -700,56 +700,69 @@ export class DealsService {
       const deliveryLocation = data.delivery_location || '';
       const paymentTerms = data.payment_terms || '';
 
-      // 1. If media_urls are provided, save or update attachment in inquiries table so it's permanently stored & viewable
-      let inquiryId = data.inquiry_id || null;
+      // 1. Search for existing deal to update and mark WON
+      let dealId = data.deal_id || null;
+      let existingDeal: any = null;
+
+      if (dealId) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('id', dealId)
+          .single();
+        if (d) existingDeal = d;
+      } else if (data.inquiry_id) {
+        const { data: d } = await this.supabase
+          .from('deals')
+          .select('*')
+          .eq('inquiry_id', data.inquiry_id)
+          .limit(1);
+        if (d && d.length > 0) {
+          existingDeal = d[0];
+          dealId = existingDeal.id;
+        }
+      }
+
+      // Auto-link to open pipeline deal for this customer
+      if (!existingDeal && customerName) {
+        const { data: openDeals } = await this.supabase
+          .from('deals')
+          .select('*')
+          .ilike('customer_name', customerName)
+          .not('stage', 'in', '("won","lost")')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (openDeals && openDeals.length > 0) {
+          existingDeal = openDeals[0];
+          dealId = existingDeal.id;
+        }
+      }
+
+      // 2. Resolve inquiry ID from deal or payload
+      let inquiryId =
+        data.inquiry_id || (existingDeal ? existingDeal.inquiry_id : null);
       const targetSourceChannel = data.source_channel || 'web_dashboard';
 
-      if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
-        try {
-          if (inquiryId) {
-            await this.supabase
-              .from('inquiries')
-              .update({
-                media_urls: data.media_urls,
-                status: 'confirmed',
-                source_channel: targetSourceChannel,
-              })
-              .eq('id', inquiryId);
-          } else {
-            const { data: newInq, error: inqErr } = await this.supabase
-              .from('inquiries')
-              .insert({
-                source_channel: targetSourceChannel,
-                raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
-                media_urls: data.media_urls,
-                sender_name: customerName,
-                sender_phone: customerPhone,
-                salesperson_phone: phone,
-                status: 'confirmed',
-                inquiry_type: 'purchase_order',
-                created_at: nowIso,
-              })
-              .select()
-              .single();
-            if (newInq) {
-              inquiryId = newInq.id;
-            } else if (inqErr) {
-              this.logger.error('Error inserting PO media inquiry:', inqErr);
-            }
-          }
-        } catch (inqErr: any) {
-          this.logger.warn(
-            'Non-blocking inquiry media save notice:',
-            inqErr?.message,
-          );
+      if (inquiryId) {
+        const inqUpdates: any = {
+          status: 'confirmed',
+          inquiry_type: 'purchase_order',
+        };
+        if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
+          inqUpdates.media_urls = data.media_urls;
         }
-      } else if (!inquiryId) {
+        await this.supabase
+          .from('inquiries')
+          .update(inqUpdates)
+          .eq('id', inquiryId);
+      } else if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
         try {
           const { data: newInq } = await this.supabase
             .from('inquiries')
             .insert({
               source_channel: targetSourceChannel,
-              raw_text: `[Dashboard Order: ${poNumber}] ${customerName || 'Customer'}`,
+              raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
+              media_urls: data.media_urls,
               sender_name: customerName,
               sender_phone: customerPhone,
               salesperson_phone: phone,
@@ -764,45 +777,9 @@ export class DealsService {
           }
         } catch (inqErr: any) {
           this.logger.warn(
-            'Non-blocking manual order inquiry create notice:',
+            'Non-blocking inquiry media save notice:',
             inqErr?.message,
           );
-        }
-      }
-
-      // 2. Try to find existing deal to update
-      let dealId = data.deal_id || null;
-      let existingDeal: any = null;
-
-      if (dealId) {
-        const { data: d } = await this.supabase
-          .from('deals')
-          .select('*')
-          .eq('id', dealId)
-          .single();
-        if (d) existingDeal = d;
-      } else if (inquiryId) {
-        const { data: d } = await this.supabase
-          .from('deals')
-          .select('*')
-          .eq('inquiry_id', inquiryId)
-          .limit(1);
-        if (d && d.length > 0) {
-          existingDeal = d[0];
-          dealId = existingDeal.id;
-        }
-      } else if (data.auto_link_pipeline && customerName) {
-        // Only auto-link to open pipeline deal if explicitly requested
-        const { data: d } = await this.supabase
-          .from('deals')
-          .select('*')
-          .ilike('customer_name', customerName)
-          .not('stage', 'in', '("won","lost")')
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (d && d.length > 0) {
-          existingDeal = d[0];
-          dealId = existingDeal.id;
         }
       }
 
