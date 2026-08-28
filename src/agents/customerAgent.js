@@ -27,7 +27,7 @@ You are the Specialized Customer Onboarding AI Agent (KRA 2) for Enlight Metals.
 Your job is to parse salesperson new customer acquisition reports.
 
 The salesperson message may be informal, in Hinglish, or missing expected keywords.
-Understand the meaning and context — do not look for specific words.
+Understand the meaning and context - do not look for specific words.
 
 Input message can be English, Hindi, or Hinglish.
 
@@ -179,7 +179,7 @@ async function processCustomerMessage(text, senderPhone) {
         );
       }
 
-      return ` *Customer Agent — Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
+      return ` *Customer Agent - Company Name Missing*\n\nPlease specify the *New Customer/Company Name* to log it under KRA 2.\nExample: _"New customer Mehta Industries owner Mr Mehta phone 9812345678 Pune"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -233,7 +233,7 @@ async function processCustomerMessage(text, senderPhone) {
         })
         .eq('id', record.id);
     } else {
-      // officialCustomerName was null — do a direct fuzzy search as fallback
+      // officialCustomerName was null - do a direct fuzzy search as fallback
       // This catches typo variations ("Mehta Engg" vs "Mehta Engineering")
       const { data: fuzzyMatch } = await supabase
         .from('recurring_customers')
@@ -245,7 +245,7 @@ async function processCustomerMessage(text, senderPhone) {
         .limit(1);
 
       if (fuzzyMatch && fuzzyMatch.length > 0) {
-        // Existing customer found via fuzzy match — update, don't insert
+        // Existing customer found via fuzzy match - update, don't insert
         const record = fuzzyMatch[0];
         isNewAcquisition = false;
         await supabase
@@ -285,11 +285,11 @@ async function processCustomerMessage(text, senderPhone) {
             : '') +
           (data.phone ? `Phone updated to: *${data.phone}*\n` : '') +
           (data.city ? `City updated to: *${data.city}*\n` : '') +
-          `\n_Profile updated — KRA 2 not re-counted to avoid duplicates._` +
+          `\n_Profile updated - KRA 2 not re-counted to avoid duplicates._` +
           promptSuffix
         );
       } else {
-        // Genuinely brand new customer — use ensureCustomerRecord to prevent race condition duplicates
+        // Genuinely brand new customer - use ensureCustomerRecord to prevent race condition duplicates
         const { ensureCustomerRecord } = require('../supabase');
         await ensureCustomerRecord(customerName, senderPhone, {
           customer_phone: data.phone || null,

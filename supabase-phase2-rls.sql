@@ -1,4 +1,4 @@
--- Enlight Sales OS Chatbot — Phase 2 Row-Level Security (RLS) Migration
+-- Enlight Sales OS Chatbot - Phase 2 Row-Level Security (RLS) Migration
 -- Enables Row-Level Security on operational tables and defines policies for salesperson, manager, and admin roles.
 
 -- 1. Enable RLS on deals

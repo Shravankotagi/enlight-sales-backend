@@ -152,7 +152,7 @@ export function calculateSubtotal(lineItems: LineItemInput[]): number {
 }
 
 /**
- * Strict Forward GST calculation: always forward on line amount — never reverse calculated.
+ * Strict Forward GST calculation: always forward on line amount - never reverse calculated.
  */
 export function calculateGst(
   baseAmount: number,

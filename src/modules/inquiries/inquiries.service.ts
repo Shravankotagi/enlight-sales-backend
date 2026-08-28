@@ -1575,7 +1575,7 @@ export class InquiriesService implements OnModuleInit {
             : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
 
-          // Pull actual inquiry data — payload.details first, then inquiry's ai_extraction_json
+          // Pull actual inquiry data - payload.details first, then inquiry's ai_extraction_json
           const aiJson = (inquiry.ai_extraction_json as any) || {};
           const productType = details.productType || aiJson.productType || '';
           const productForm = details.productForm || aiJson.productForm || '';
@@ -1635,7 +1635,7 @@ export class InquiriesService implements OnModuleInit {
             itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
           }
 
-          // Professional Plain Text Email Body — all real inquiry/order data
+          // Professional Plain Text Email Body - all real inquiry/order data
           const textContent = `Dear ${customerName},
 
 Thank you for partnering with Enlight Metals Private Limited.
@@ -2042,7 +2042,7 @@ Return ONLY the JSON.`,
 
 CRITICAL RULES:
 1. MULTIPLE LINE ITEMS: NEVER merge, collapse, or summarize multiple distinct products into one line item! Every distinct product with its own thickness, grade, spec, or quantity (e.g. "CR 1mm (300 nos), CR 1.2mm (200 nos), HR 1.6mm (200 nos)") MUST produce its own separate line item object in the line_items array.
-2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" — NEVER convert to MT).
+2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" - NEVER convert to MT).
 3. PAYMENT TERMS: Always extract payment terms if mentioned in the text (e.g., "30 days", "30 days credit", "100% advance", "45 days"). Never drop payment terms.
 4. FULL DELIVERY ADDRESS: Always extract the complete, full delivery address and location exactly as provided in the inquiry (including plot, gat, street, MIDC/industrial area, city, district, state, and pin code). Never truncate or shorten address details.
 

@@ -1,5 +1,5 @@
 /**
- * biginSyncAgent.js — KRA 6 CRM Compliance Engine
+ * biginSyncAgent.js - KRA 6 CRM Compliance Engine
  *
  * Syncs meaningful business summaries to Zoho Bigin CRM.
  * Records every sync to crm_sync_log and kra_logs in Supabase for full audit trail.
@@ -224,7 +224,7 @@ function buildDealSummary(data, salespersonName) {
     visits.forEach((v) => {
       timeline.push(
         ` Visit: ${new Date(v.visited_at).toLocaleDateString('en-IN')}` +
-          (v.person_met ? ` — Met ${v.person_met}` : ''),
+          (v.person_met ? ` - Met ${v.person_met}` : ''),
       );
     });
   }
@@ -232,7 +232,7 @@ function buildDealSummary(data, salespersonName) {
     followups.forEach((f) => {
       timeline.push(
         ` Follow-up: ${new Date(f.created_at).toLocaleDateString('en-IN')}` +
-          (f.followup_status ? ` — ${f.followup_status}` : ''),
+          (f.followup_status ? ` - ${f.followup_status}` : ''),
       );
     });
   }
@@ -243,7 +243,7 @@ function buildDealSummary(data, salespersonName) {
     timeline.push(
       ` Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
         (deal.lost_reason || deal.loss_reason
-          ? ` — Reason: ${deal.lost_reason || deal.loss_reason}`
+          ? ` - Reason: ${deal.lost_reason || deal.loss_reason}`
           : ''),
     );
   }
@@ -260,7 +260,7 @@ function buildDealSummary(data, salespersonName) {
     : '';
 
   return [
-    ` DEAL SUMMARY — ${deal.customer_name}`,
+    ` DEAL SUMMARY - ${deal.customer_name}`,
     `Salesperson: ${salespersonName}`,
     `Status: ${deal.stage?.toUpperCase()}`,
     deal.po_number ? `PO Number: ${deal.po_number}` : '',
@@ -307,7 +307,7 @@ function buildVisitSummary(data, salespersonName) {
   };
 
   return [
-    ` VISIT SUMMARY — ${customerName}`,
+    ` VISIT SUMMARY - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Location: ${city || 'Not specified'}`,
@@ -321,7 +321,7 @@ function buildVisitSummary(data, salespersonName) {
     materialRequirement ? ` Requirement: ${materialRequirement}` : '',
     followUpAction ? ` Follow-up Action: ${followUpAction}` : '',
     '',
-    `Logged via Enlight Sales Bot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
+    `Logged via Enlight Sales Bot - ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -344,7 +344,7 @@ function buildPaymentSummary(data, salespersonName) {
   };
 
   return [
-    ` PAYMENT UPDATE — ${customerName}`,
+    ` PAYMENT UPDATE - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Type: ${typeLabel[paymentType] || paymentType || 'Payment'}`,
@@ -355,9 +355,9 @@ function buildPaymentSummary(data, salespersonName) {
     amountPending > 0
       ? `Outstanding Balance: ₹${Number(amountPending).toLocaleString('en-IN')}`
       : '',
-    isFullPayment ? ' FULLY SETTLED — No outstanding balance' : '',
+    isFullPayment ? ' FULLY SETTLED - No outstanding balance' : '',
     '',
-    `Logged via Enlight Sales Bot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
+    `Logged via Enlight Sales Bot - ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -377,10 +377,10 @@ function buildComplaintSummary(data, salespersonName) {
     const slaStatus =
       resolutionTimeHrs <= 48
         ? `Within SLA  (${resolutionTimeHrs}h)`
-        : `SLA Breached  (${resolutionTimeHrs}h — target: 48h)`;
+        : `SLA Breached  (${resolutionTimeHrs}h - target: 48h)`;
 
     return [
-      ` COMPLAINT RESOLVED — ${customerName}`,
+      ` COMPLAINT RESOLVED - ${customerName}`,
       `Salesperson: ${salespersonName}`,
       `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
       affectedProduct ? `Product: ${affectedProduct}` : '',
@@ -393,7 +393,7 @@ function buildComplaintSummary(data, salespersonName) {
   }
 
   return [
-    ` COMPLAINT REPORTED — ${customerName}`,
+    ` COMPLAINT REPORTED - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     affectedProduct ? `Product Affected: ${affectedProduct}` : '',
@@ -408,7 +408,7 @@ function buildComplaintSummary(data, salespersonName) {
 function buildCustomerSummary(data, salespersonName) {
   const { customerName, phone, gst, city, contactPerson } = data;
   return [
-    ` NEW CUSTOMER — ${customerName}`,
+    ` NEW CUSTOMER - ${customerName}`,
     `Onboarded by: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     contactPerson ? `Contact Person: ${contactPerson}` : '',
@@ -530,7 +530,7 @@ async function upsertContact(profile, salespersonName, token) {
   };
 
   if (existingId) {
-    // UPDATE existing — this fixes blank fields on old contacts
+    // UPDATE existing - this fixes blank fields on old contacts
     try {
       await axios.put(`${ZOHO_BIGIN_BASE}/Contacts/${existingId}`, payload, {
         headers: zohoHeaders(token),
@@ -662,7 +662,7 @@ async function upsertDeal(
       ? `${dealItems[0].sku_text}${dealItems[0].quantity ? ` (${dealItems[0].quantity} ${dealItems[0].unit || 'MT'})` : ''}`
       : 'Metal Deal';
   const shortId = dbDealId ? ` [#${dbDealId.substring(0, 6)}]` : '';
-  const dealName = `${name} — ${primaryItem}${shortId}`.trim();
+  const dealName = `${name} - ${primaryItem}${shortId}`.trim();
 
   const existing = await findDeal(dealName, biginDealId, token);
 
@@ -670,7 +670,7 @@ async function upsertDeal(
   const layoutId = layoutObj?.id || '1384628000000000173';
   const layoutName = layoutObj?.name || 'Sales Pipeline';
 
-  // Build payload — only include valid fields accepted by Bigin API
+  // Build payload - only include valid fields accepted by Bigin API
   const dealPayload = {
     Deal_Name: dealName,
     Stage: STAGE_MAP[stage] || 'Qualification',
@@ -756,7 +756,7 @@ async function addNote(
 ) {
   if (!parentId) {
     console.warn(
-      `[BiginSync] addNote skipped — no parentId for ${parentModule}`,
+      `[BiginSync] addNote skipped - no parentId for ${parentModule}`,
     );
     return null;
   }
@@ -845,7 +845,7 @@ async function logKRA6Event({
 // ── Main Sync Entry Point ─────────────────────────────────────────────────────
 
 /**
- * syncActivity — call from any agent after successful DB write.
+ * syncActivity - call from any agent after successful DB write.
  */
 async function syncActivity(activityType, data) {
   setImmediate(async () => {
@@ -874,7 +874,7 @@ async function syncActivity(activityType, data) {
     // Guard: skip if Zoho not configured
     if (!process.env.ZOHO_REFRESH_TOKEN || !process.env.ZOHO_CLIENT_ID) {
       console.log(
-        '[BiginSync] Zoho credentials not configured — logging local KRA 6 event',
+        '[BiginSync] Zoho credentials not configured - logging local KRA 6 event',
       );
       summary = `Local CRM record created for ${customerName} (${normalizedType})`;
 
@@ -952,14 +952,14 @@ async function syncActivity(activityType, data) {
                 {
                   parentId: zohoDealId,
                   parentModule: 'Deals',
-                  noteTitle: `${normalizedType === 'deal_won' ? ' Deal Closed Won' : ' Deal Closed Lost'} — ${new Date().toLocaleDateString('en-IN')}`,
+                  noteTitle: `${normalizedType === 'deal_won' ? ' Deal Closed Won' : ' Deal Closed Lost'} - ${new Date().toLocaleDateString('en-IN')}`,
                   noteContent: summary,
                 },
                 token,
               );
             }
           } else {
-            summary = `Deal ${normalizedType === 'deal_won' ? 'won' : 'lost'} for ${customerName} — ₹${Number(data.amount || 0).toLocaleString('en-IN')}`;
+            summary = `Deal ${normalizedType === 'deal_won' ? 'won' : 'lost'} for ${customerName} - ₹${Number(data.amount || 0).toLocaleString('en-IN')}`;
           }
 
           await logKRA6Event({
@@ -988,7 +988,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: existingDeal.id,
                 parentModule: 'Deals',
-                noteTitle: `Stage Update — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `Stage Update - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1025,7 +1025,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: `Field Visit — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `Field Visit - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1050,7 +1050,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: existingDeal.id,
                 parentModule: 'Deals',
-                noteTitle: `Payment Update — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `Payment Update - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1060,7 +1060,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: `Payment Update — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `Payment Update - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1091,7 +1091,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: ` Complaint Reported — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: ` Complaint Reported - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1118,7 +1118,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: ` Complaint Resolved — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: ` Complaint Resolved - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1142,7 +1142,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: `New Customer Onboarded — ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `New Customer Onboarded - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1332,7 +1332,7 @@ async function syncAllDatabaseToBigin() {
           .join('\n');
 
         const summary = [
-          ` DEAL SUMMARY — ${custName}`,
+          ` DEAL SUMMARY - ${custName}`,
           `Status: ${(deal.stage || 'NEW_INQUIRY').toUpperCase()}`,
           deal.po_number ? `PO Number: ${deal.po_number}` : '',
           ' LINE ITEMS',
@@ -1367,7 +1367,7 @@ async function syncAllDatabaseToBigin() {
               {
                 parentId: dealId,
                 parentModule: 'Deals',
-                noteTitle: `${deal.stage === 'won' ? ' Deal Closed Won' : ' Deal Closed Lost'} — ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
+                noteTitle: `${deal.stage === 'won' ? ' Deal Closed Won' : ' Deal Closed Lost'} - ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1489,7 +1489,7 @@ async function pullBiginToDatabase() {
         const custName =
           d.Contact_Name?.name ||
           d.Account_Name?.name ||
-          dealName.split('—')[0].trim();
+          dealName.split('-')[0].trim();
         if (!custName) continue;
 
         const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';

@@ -1376,7 +1376,7 @@ export class KraService {
       );
 
       const combinedKRA3 = [
-        // kra_logs rows — only include if no richer followup_task exists for same customer
+        // kra_logs rows - only include if no richer followup_task exists for same customer
         ...kra3Logs
           .filter(
             (l) =>
@@ -1409,7 +1409,7 @@ export class KraService {
               details: l.description
                 ? l.description.split('Notes:').pop()?.trim() || l.description
                 : 'Follow-up logged',
-              quantity: l.value ? `${l.value} MT` : '-', // blank — not an order
+              quantity: l.value ? `${l.value} MT` : '-', // blank - not an order
               remarks:
                 statusLabels[parsedStatus] ||
                 parsedStatus ||
@@ -1418,7 +1418,7 @@ export class KraService {
               date: new Date(l.created_at),
             };
           }),
-        // followup_tasks rows — always use these (most up-to-date)
+        // followup_tasks rows - always use these (most up-to-date)
         ...kra3Followups.map((f) => {
           const statusLabels: Record<string, string> = {
             reviewing_quotation: 'Reviewing Quotation ',
@@ -1436,7 +1436,7 @@ export class KraService {
           return {
             customer_name: f.customer_name || 'Recurring Customer',
             details: f.resolution_notes || 'Scheduled Retention Follow-up',
-            quantity: '-', // follow-ups are not orders — never show '1 Order'
+            quantity: '-', // follow-ups are not orders - never show '1 Order'
             remarks:
               statusLabels[statusKey] ||
               `Follow-up #${f.follow_up_count || 1} `,
@@ -1475,7 +1475,7 @@ export class KraService {
               ? `${rc.avg_order_qty_mt} MT`
               : '-',
             next_followup_date: nextDate,
-            remarks: 'Active Account — Follow-up Scheduled ',
+            remarks: 'Active Account - Follow-up Scheduled ',
           };
         });
       }
@@ -1763,7 +1763,7 @@ export class KraService {
           return sum + qtyMT;
         }, 0);
 
-      // Distinct customer count for KRA 2 — matches bot's getMonthlyOnboardCount distinct Set logic
+      // Distinct customer count for KRA 2 - matches bot's getMonthlyOnboardCount distinct Set logic
       const kra2DistinctCount = new Set(
         kra2Rows.map((r) => (r.company_name || '').toLowerCase().trim()),
       ).size;
@@ -2437,7 +2437,7 @@ export class KraService {
       );
     }
 
-    // Schedule Condition 2 — Visit Interest Follow-up Task
+    // Schedule Condition 2 - Visit Interest Follow-up Task
     if (
       data.outcome === 'positive' &&
       (data.follow_up_action ||

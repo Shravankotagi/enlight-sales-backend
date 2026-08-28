@@ -62,7 +62,7 @@ export class DealsService {
         );
       }
       if (filters?.from && filters?.to) {
-        // Each date field is tested as a complete [from, to] pair — prevents
+        // Each date field is tested as a complete [from, to] pair - prevents
         // cross-column mismatches (e.g. created_at >= from AND won_at <= to).
         const fromIso = filters.from.includes('T')
           ? filters.from
