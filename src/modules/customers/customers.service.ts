@@ -671,16 +671,20 @@ export class CustomersService {
       let query = this.supabase
         .from('deals')
         .select(
-          'id, deal_number, lost_reason, total_amount, customer_name, created_at',
+          'id, lost_reason, total_amount, customer_name, created_at, salesperson_phone',
         )
         .eq('stage', 'lost')
-        .gte('created_at', threeMonthsAgo);
+        .gte('created_at', threeMonthsAgo)
+        .order('created_at', { ascending: false });
 
       let logsQuery = this.supabase
         .from('kra_logs')
-        .select('*')
+        .select(
+          'id, customer_name, value, description, created_at, salesperson_phone',
+        )
         .eq('kra_type', 'deal_lost')
-        .gte('created_at', threeMonthsAgo);
+        .gte('created_at', threeMonthsAgo)
+        .order('created_at', { ascending: false });
 
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
@@ -699,13 +703,14 @@ export class CustomersService {
 
       const primaryLostDeals = (lostDeals || []).map((d) => ({
         id: d.id,
-        deal_number:
-          d.deal_number ||
-          (d.id ? `DEAL-${d.id.substring(0, 6).toUpperCase()}` : undefined),
-        customer_name: d.customer_name,
+        deal_number: d.id
+          ? `DEAL-${d.id.substring(0, 6).toUpperCase()}`
+          : undefined,
+        customer_name: d.customer_name || 'Unnamed Account',
         lost_reason: d.lost_reason || 'Not specified',
-        total_amount: d.total_amount || 0,
+        total_amount: Number(d.total_amount) || 0,
         created_at: d.created_at,
+        salesperson_phone: d.salesperson_phone,
       }));
 
       // Add kra_logs ONLY if no corresponding deal exists for that customer & amount (prevents double-counting)
@@ -725,14 +730,16 @@ export class CustomersService {
         })
         .map((l) => ({
           id: l.id,
-          deal_number: undefined,
-          customer_name: l.customer_name,
+          deal_number: l.id
+            ? `LOG-${l.id.substring(0, 6).toUpperCase()}`
+            : undefined,
+          customer_name: l.customer_name || 'Unnamed Account',
           lost_reason:
             l.description?.match(/Reason:\s*([^|]+)/)?.[1]?.trim() ||
-            l.notes ||
             'Price / Commercials',
-          total_amount: l.value || 0,
+          total_amount: Number(l.value) || 0,
           created_at: l.created_at,
+          salesperson_phone: l.salesperson_phone,
         }));
 
       // Deduplicate log records by customer + date (within 60 seconds) or exact amount
@@ -762,6 +769,11 @@ export class CustomersService {
         }
       }
 
+      combinedLosses.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+
       const byReason = combinedLosses.reduce((acc: any, deal: any) => {
         const reason = deal.lost_reason || 'Unknown';
         if (!acc[reason]) acc[reason] = { count: 0, value: 0 };
@@ -779,7 +791,8 @@ export class CustomersService {
         by_reason: Object.entries(byReason)
           .map(([reason, data]: [string, any]) => ({ reason, ...data }))
           .sort((a, b) => b.count - a.count),
-        recent_losses: combinedLosses.slice(0, 5),
+        recent_losses: combinedLosses,
+        deals: combinedLosses,
       };
     } catch (error) {
       this.logger.error('Error in getLossAnalytics:', error);
