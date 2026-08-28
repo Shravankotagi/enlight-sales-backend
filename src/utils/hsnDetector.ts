@@ -352,8 +352,21 @@ export const MASTER_PRODUCTS_CATALOG: MasterProductItem[] = [
 function extractThickness(str?: string): number | null {
   if (!str || typeof str !== 'string') return null;
   if (/>1(?:\.0+)?\s*mm/i.test(str)) return 1.5;
+
+  const mThk = str.match(/(\d+(?:\.\d+)?)\s*(?:mm\s*thk|thk|thick|gauge|g\b)/i);
+  if (mThk) return parseFloat(mThk[1]);
+
+  const nums = str.match(/\d+(?:\.\d+)?/g);
+  if (nums && nums.length > 1) {
+    const floatNums = nums.map((n) => parseFloat(n));
+    const candidates = floatNums.filter((n) => n > 0 && n <= 50);
+    if (candidates.length > 0) {
+      return Math.min(...candidates);
+    }
+  }
+
   const m =
-    str.match(/(\d+(?:\.\d+)?)\s*(?:mm|thk|thick|gauge|g\b)/i) ||
+    str.match(/(\d+(?:\.\d+)?)\s*(?:mm)/i) ||
     str.match(/\b(\d+(?:\.\d+)?)\s*x\s*\d+/i) ||
     str.match(/x\s*(\d+(?:\.\d+)?)$/i);
   if (m) return parseFloat(m[1]);
@@ -371,6 +384,14 @@ function extractHeight(str?: string): number | null {
   return null;
 }
 
+function normalizeText(text?: string): string {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[._\-\/]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function detectHsnCode(
   productName: string,
   dimensions?: string,
@@ -380,53 +401,43 @@ export function detectHsnCode(
   const combined = `${pName} ${dStr}`.trim();
   if (!combined) return '72083840';
 
+  const normCombined = normalizeText(combined);
+
   const t = extractThickness(dimensions) || extractThickness(productName);
 
   // --- Priority 1: Value Added Products ---
-  if (
-    /\b(?:gi\s*)?earthing\s*strip\b|\bearthing\b/i.test(combined) ||
-    /\bearthing\b/i.test(pName)
-  ) {
+  if (/\bearthing\b/i.test(normCombined)) {
     return '73082019';
   }
 
-  if (
-    /\bsolar\s*(?:mounting)?\s*structure\b|\bsolar\b|\bz\s*purlin\b|\bhat\s*section\b/i.test(
-      combined,
-    ) ||
-    /\bsolar\b/i.test(pName)
-  ) {
+  if (/\bsolar\b|\bz\s*purlin\b|\bhat\s*section\b/i.test(normCombined)) {
     return '73089090';
   }
 
-  if (/\bcable\s*tray\b/i.test(combined)) {
+  if (/\bcable\s*tray\b/i.test(normCombined)) {
     return '73089090';
   }
 
-  if (/\bslotted\s*angle\b/i.test(combined) || /\bslotted\b/i.test(pName)) {
+  if (/\bslotted\s*angle\b|\bslotted\b/i.test(normCombined)) {
     return '72169930';
   }
 
   // --- Priority 2: Pipes and Tubes ---
-  if (
-    /\bsquare\s*(?:pipe|tube|tubing)\b|\bshs\b/i.test(combined) ||
-    /\bsquare\s*pipe\b/i.test(pName)
-  ) {
+  if (/\bsquare\s*(?:pipe|tube|tubing)\b|\bshs\b/i.test(normCombined)) {
     return '73063090';
   }
 
   if (
     /\brectangular\s*(?:pipe|tube|tubing)\b|\brhs\b|\bbox\s*(?:pipe|section)\b/i.test(
-      combined,
-    ) ||
-    /\brectangular\s*(?:pipe|tube)\b/i.test(pName)
+      normCombined,
+    )
   ) {
     return '73063090';
   }
 
   if (
     /\bround\s*pipe\b|\berw\s*pipe\b|\bseamless\s*pipe\b|\bms\s*pipe\b|\bpipe\b|\btube\b/i.test(
-      combined,
+      normCombined,
     )
   ) {
     return '73063090';
@@ -434,120 +445,103 @@ export function detectHsnCode(
 
   // --- Priority 3: Structural Steel ---
   if (
-    /\bround\s*bar\b|\bms\s*round\s*bar\b|\bbright\s*bar\b|\bround\s*rod\b|\bms\s*rod\b/i.test(
-      combined,
+    /\bround\s*bar\b|\bbright\s*bar\b|\bround\s*rod\b|\bms\s*rod\b/i.test(
+      normCombined,
     )
   ) {
     return '72149990';
   }
 
   if (
-    /\bflat\s*bar\b|\bms\s*flat\s*bar\b|\bms\s*flat\b|\bflats\b|\bpatti\b|\bflat\b/i.test(
-      combined,
-    ) ||
-    /\bflat\b/i.test(pName)
+    /\bflat\s*bar\b|\bms\s*flat\b|\bflats\b|\bpatti\b/i.test(normCombined) ||
+    (/\bflat\b/i.test(normCombined) && !/\bflat\s*steel\b/i.test(normCombined))
   ) {
     return '72111410';
   }
 
-  if (
-    /\bsquare\s*bar\b|\bms\s*square\s*bar\b|\bsq\s*bar\b|\bsquare\s*rod\b/i.test(
-      combined,
-    )
-  ) {
+  if (/\bsquare\s*bar\b|\bsq\s*bar\b|\bsquare\s*rod\b/i.test(normCombined)) {
     return '72149990';
   }
 
   if (
-    /\btmt\b|\brebar\b|\breinforcement\b|\bfe\s*500\b|\bfe\s*550\b|\bfe\s*500d\b|\bfe\s*550d\b|\bsariya\b/i.test(
-      combined,
+    /\btmt\b|\brebar\b|\breinforcement\b|\bfe\s*500\b|\bfe\s*550\b|\bsariya\b/i.test(
+      normCombined,
     )
   ) {
     return '72142090';
   }
 
-  if (/\bangle\b|\bisa\b|\bl-angle\b/i.test(combined)) {
+  if (/\bangle\b|\bisa\b|\bl\s*angle\b/i.test(normCombined)) {
     const h = extractHeight(dimensions) || extractHeight(productName);
     if (h !== null && h >= 80) return '72162200';
     return '72162100';
   }
 
   if (
-    /\bchannel\b|\bismc\b|\bisjc\b|\bispc\b|\bc-channel\b|\bu-channel\b/i.test(
-      combined,
+    /\bchannel\b|\bismc\b|\bisjc\b|\bispc\b|\bc\s*channel\b|\bu\s*channel\b/i.test(
+      normCombined,
     )
   ) {
     return '72163100';
   }
 
   if (
-    /\bbeam\b|\bismb\b|\bisnb\b|\bjoist\b|\bi-beam\b|\bh-beam\b|\bnpb\b|\bwfb\b|\buc\s*column\b|\bub\s*beam\b/i.test(
-      combined,
+    /\bbeam\b|\bismb\b|\bisnb\b|\bjoist\b|\bi\s*beam\b|\bh\s*beam\b|\bnpb\b|\bwfb\b|\buc\s*column\b|\bub\s*beam\b/i.test(
+      normCombined,
     )
   ) {
     return '72163200';
   }
 
   // --- Priority 4: Flat Steel ---
-  if (/\bchequered\s*coil\b|\bcheckered\s*coil\b/i.test(combined)) {
+  // Chequered
+  if (/\bchequered\b|\bcheckered\b/i.test(normCombined)) {
     return '72081000';
   }
 
-  if (/\bchequered\b|\bcheckered\b/i.test(combined)) {
-    return '72081000';
-  }
-
-  if (/\bgalvalume\s*coil\b|\bgl\s*coil\b/i.test(combined)) {
+  // Galvalume
+  if (/\bgalvalume\b|\bgl\s*coil\b|\bgl\s*sheet\b/i.test(normCombined)) {
     return '72106100';
   }
 
-  if (/\bgalvalume\s*sheet\b|\bgalvalume\b|\bgl\s*sheet\b/i.test(combined)) {
-    return '72106100';
-  }
-
-  if (
-    /\bgp\s*coil\b|\bgalvanized\s*plain\s*coil\b|\bgi\s*coil\b/i.test(combined)
-  ) {
+  // Galvanized (GP / GI)
+  if (/\bgp\b|\bgi\b|\bgalvanized\b|\bgalvanised\b/i.test(normCombined)) {
     return '72104900';
   }
 
+  // HRPO / Pickled & Oiled / Pickled Coil / H.R. Pickled Coil
   if (
-    /\bgp\s*sheet\b|\bgalvanized\s*plain\s*sheet\b|\bgi\s*sheet\b|\bgalvanized\b|\bgalvanised\b/i.test(
-      combined,
-    )
+    /\bhrpo\b|\bpickled\b|\bpickled\s*(?:and|&)?\s*oiled\b/i.test(
+      normCombined,
+    ) ||
+    /\bh\s*r\s*p\s*o\b/i.test(normCombined) ||
+    (/\bh\s*r\b/i.test(normCombined) && /\bpickled\b/i.test(normCombined))
   ) {
-    return '72104900';
-  }
-
-  // HRPO
-  if (
-    /\bhrpo\s*coil\b|\bpickled\s*(?:&|and)\s*oiled\s*coil\b/i.test(combined)
-  ) {
+    const isSheet = /\bsheet\b/i.test(normCombined);
+    if (isSheet) {
+      return '72082590';
+    }
+    // Coil (or default HRPO coil)
     if (t !== null) {
       if (t >= 1.6 && t < 3.0) return '72083940';
       if (t >= 3.0 && t < 4.75) return '72083840';
       if (t >= 4.75) return '72082590';
     }
-    return '72082590';
+    return '72083940';
   }
 
-  if (
-    /\bhrpo\s*sheet\b|\bpickled\s*(?:&|and)\s*oiled\s*sheet\b/i.test(combined)
-  ) {
-    return '72082590';
-  }
-
-  if (/\bhrpo\b/i.test(combined)) {
-    if (t !== null && t < 3.0) return '72083940';
-    if (t !== null && t < 4.75) return '72083840';
-    return '72082590';
-  }
-
-  // CR Coil
-  if (
-    /\bcr\s*coil\b|\bcold\s*rolled\s*coil\b|\bcrca\s*coil\b/i.test(combined) ||
-    (/\bcr\b|\bcold\s*rolled\b/i.test(pName) && /\bcoil\b/i.test(pName))
-  ) {
+  // CR / CRCA / Cold Rolled
+  if (/\bcr\b|\bcrca\b|\bcold\s*rolled\b/i.test(normCombined)) {
+    const isSheet = /\bsheet\b/i.test(normCombined);
+    if (isSheet) {
+      if (t !== null) {
+        if (t < 0.5) return '72092820';
+        if (t <= 1.0) return '72092720';
+        return '72092620';
+      }
+      return '72092720';
+    }
+    // Coil
     if (t !== null) {
       if (t < 0.5) return '72091890';
       if (t <= 1.0) return '72091790';
@@ -556,25 +550,11 @@ export function detectHsnCode(
     return '72091790';
   }
 
-  // CR Sheet
-  if (
-    /\bcr\s*sheet\b|\bcold\s*rolled\s*sheet\b|\bcrca\s*sheet\b|\bcr\b|\bcrca\b|\bcold\s*rolled\b/i.test(
-      combined,
-    )
-  ) {
-    if (t !== null) {
-      if (t < 0.5) return '72092820';
-      if (t <= 1.0) return '72092720';
-      return '72092620';
-    }
-    return '72092720';
-  }
-
   // HR Plate
   if (
-    /\bhr\s*plate\b|\bhot\s*rolled\s*plate\b|\bms\s*plate\b|\bplate\b/i.test(
-      combined,
-    )
+    /\bplate\b/i.test(normCombined) &&
+    (/\bhr\b|\bhot\s*rolled\b|\bms\b/i.test(normCombined) ||
+      normCombined.includes('plate'))
   ) {
     if (t !== null && t < 12.0) return '72083730';
     return '72085110';
@@ -582,7 +562,9 @@ export function detectHsnCode(
 
   // HR Sheet
   if (
-    /\bhr\s*sheet\b|\bhot\s*rolled\s*sheet\b|\bms\s*sheet\b/i.test(combined)
+    /\bsheet\b/i.test(normCombined) &&
+    (/\bhr\b|\bhot\s*rolled\b|\bms\b/i.test(normCombined) ||
+      normCombined.includes('sheet'))
   ) {
     if (t !== null) {
       if (t < 3.0) return '72083930';
@@ -592,12 +574,8 @@ export function detectHsnCode(
     return '72083830';
   }
 
-  // HR Coil / Hot Rolled Coil
-  if (
-    /\bhr\s*coil\b|\bhot\s*rolled\s*coil\b|\bhr\b|\bhot\s*rolled\b/i.test(
-      combined,
-    )
-  ) {
+  // HR Coil / Hot Rolled Coil / HR / Hot Rolled
+  if (/\bhr\b|\bhot\s*rolled\b/i.test(normCombined)) {
     if (t !== null) {
       if (t < 3.0) return '72083940';
       if (t < 4.75) return '72083840';
@@ -607,14 +585,9 @@ export function detectHsnCode(
   }
 
   // Stainless Steel
-  if (
-    /\bstainless\b|\bss\s*(?:sheet|coil|plate|pipe|bar|304|316)\b/i.test(
-      combined,
-    )
-  ) {
+  if (/\bstainless\b|\bss\b/i.test(normCombined)) {
     return '72193390';
   }
 
-  // Unknown product -> leave blank
-  return '';
+  return '72083840';
 }
