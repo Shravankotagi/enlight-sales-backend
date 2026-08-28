@@ -53,6 +53,7 @@ import {
   calculateQuotationBreakdown,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
+import { detectHsnCode } from '../../utils/hsnDetector';
 
 function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
@@ -877,8 +878,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-          Array.isArray(row.media_urls) &&
-          row.media_urls.length > 0,
+            Array.isArray(row.media_urls) &&
+            row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -2454,7 +2455,17 @@ ${rawText}`,
                         .filter(Boolean)
                         .join(' ')
                         .trim() || undefined,
-                    hsn_code: '72083730',
+                    hsn_code: detectHsnCode(
+                      details.productType || 'HR - COIL / SHEET',
+                      [
+                        details.thickness,
+                        details.width ? `x ${details.width}` : '',
+                        details.length ? `x ${details.length}` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                        .trim() || undefined,
+                    ),
                     quantity: Number(details.quantityTons || 0),
                     unit: 'MT',
                     rate: Number(details.unitPrice || 0),
@@ -2470,7 +2481,13 @@ ${rawText}`,
             'HR - COIL / SHEET'
           ).toUpperCase(),
           dimensions: item.dimensions || undefined,
-          hsn_code: item.hsn_code || item.hsn || '72083730',
+          hsn_code:
+            item.hsn_code ||
+            item.hsn ||
+            detectHsnCode(
+              item.sku_text || item.description || item.productType || '',
+              item.dimensions,
+            ),
           quantity: Number(item.quantity || 0),
           unit: item.unit || 'MT',
           rate: Number(item.rate || item.unitPrice || 0),
@@ -2556,10 +2573,15 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(item.hsn_code || '72083730', 278, rowY + 9, {
-              width: 62,
-              align: 'center',
-            });
+            .text(
+              item.hsn_code || detectHsnCode(item.sku_text, item.dimensions),
+              278,
+              rowY + 9,
+              {
+                width: 62,
+                align: 'center',
+              },
+            );
 
           // Qty
           doc

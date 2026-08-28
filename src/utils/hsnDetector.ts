@@ -351,6 +351,7 @@ export const MASTER_PRODUCTS_CATALOG: MasterProductItem[] = [
 
 function extractThickness(str?: string): number | null {
   if (!str || typeof str !== 'string') return null;
+  if (/>1(?:\.0+)?\s*mm/i.test(str)) return 1.5;
   const m =
     str.match(/(\d+(?:\.\d+)?)\s*(?:mm|thk|thick|gauge|g\b)/i) ||
     str.match(/\b(\d+(?:\.\d+)?)\s*x\s*\d+/i) ||
@@ -361,6 +362,8 @@ function extractThickness(str?: string): number | null {
 
 function extractHeight(str?: string): number | null {
   if (!str || typeof str !== 'string') return null;
+  if (/<80\s*mm/i.test(str)) return 50;
+  if (/(?:>=|≥|above)\s*80\s*mm/i.test(str)) return 100;
   const m =
     str.match(/(?:isa\s*|angle\s*)?(\d+)\s*x\s*(\d+)/i) ||
     str.match(/(\d+)\s*mm/i);
@@ -372,16 +375,151 @@ export function detectHsnCode(
   productName: string,
   dimensions?: string,
 ): string {
-  const combined = `${productName || ''} ${dimensions || ''}`
-    .toLowerCase()
-    .trim();
+  const pName = (productName || '').toLowerCase().trim();
+  const dStr = (dimensions || '').toLowerCase().trim();
+  const combined = `${pName} ${dStr}`.trim();
   if (!combined) return '72083840';
 
   const t = extractThickness(dimensions) || extractThickness(productName);
 
-  // --- Flat Steel ---
+  // --- Priority 1: Value Added Products ---
+  if (
+    /\b(?:gi\s*)?earthing\s*strip\b|\bearthing\b/i.test(combined) ||
+    /\bearthing\b/i.test(pName)
+  ) {
+    return '73082019';
+  }
 
-  // HRPO Coil
+  if (
+    /\bsolar\s*(?:mounting)?\s*structure\b|\bsolar\b|\bz\s*purlin\b|\bhat\s*section\b/i.test(
+      combined,
+    ) ||
+    /\bsolar\b/i.test(pName)
+  ) {
+    return '73089090';
+  }
+
+  if (/\bcable\s*tray\b/i.test(combined)) {
+    return '73089090';
+  }
+
+  if (/\bslotted\s*angle\b/i.test(combined) || /\bslotted\b/i.test(pName)) {
+    return '72169930';
+  }
+
+  // --- Priority 2: Pipes and Tubes ---
+  if (
+    /\bsquare\s*(?:pipe|tube|tubing)\b|\bshs\b/i.test(combined) ||
+    /\bsquare\s*pipe\b/i.test(pName)
+  ) {
+    return '73063090';
+  }
+
+  if (
+    /\brectangular\s*(?:pipe|tube|tubing)\b|\brhs\b|\bbox\s*(?:pipe|section)\b/i.test(
+      combined,
+    ) ||
+    /\brectangular\s*(?:pipe|tube)\b/i.test(pName)
+  ) {
+    return '73063090';
+  }
+
+  if (
+    /\bround\s*pipe\b|\berw\s*pipe\b|\bseamless\s*pipe\b|\bms\s*pipe\b|\bpipe\b|\btube\b/i.test(
+      combined,
+    )
+  ) {
+    return '73063090';
+  }
+
+  // --- Priority 3: Structural Steel ---
+  if (
+    /\bround\s*bar\b|\bms\s*round\s*bar\b|\bbright\s*bar\b|\bround\s*rod\b|\bms\s*rod\b/i.test(
+      combined,
+    )
+  ) {
+    return '72149990';
+  }
+
+  if (
+    /\bflat\s*bar\b|\bms\s*flat\s*bar\b|\bms\s*flat\b|\bflats\b|\bpatti\b|\bflat\b/i.test(
+      combined,
+    ) ||
+    /\bflat\b/i.test(pName)
+  ) {
+    return '72111410';
+  }
+
+  if (
+    /\bsquare\s*bar\b|\bms\s*square\s*bar\b|\bsq\s*bar\b|\bsquare\s*rod\b/i.test(
+      combined,
+    )
+  ) {
+    return '72149990';
+  }
+
+  if (
+    /\btmt\b|\brebar\b|\breinforcement\b|\bfe\s*500\b|\bfe\s*550\b|\bfe\s*500d\b|\bfe\s*550d\b|\bsariya\b/i.test(
+      combined,
+    )
+  ) {
+    return '72142090';
+  }
+
+  if (/\bangle\b|\bisa\b|\bl-angle\b/i.test(combined)) {
+    const h = extractHeight(dimensions) || extractHeight(productName);
+    if (h !== null && h >= 80) return '72162200';
+    return '72162100';
+  }
+
+  if (
+    /\bchannel\b|\bismc\b|\bisjc\b|\bispc\b|\bc-channel\b|\bu-channel\b/i.test(
+      combined,
+    )
+  ) {
+    return '72163100';
+  }
+
+  if (
+    /\bbeam\b|\bismb\b|\bisnb\b|\bjoist\b|\bi-beam\b|\bh-beam\b|\bnpb\b|\bwfb\b|\buc\s*column\b|\bub\s*beam\b/i.test(
+      combined,
+    )
+  ) {
+    return '72163200';
+  }
+
+  // --- Priority 4: Flat Steel ---
+  if (/\bchequered\s*coil\b|\bcheckered\s*coil\b/i.test(combined)) {
+    return '72081000';
+  }
+
+  if (/\bchequered\b|\bcheckered\b/i.test(combined)) {
+    return '72081000';
+  }
+
+  if (/\bgalvalume\s*coil\b|\bgl\s*coil\b/i.test(combined)) {
+    return '72106100';
+  }
+
+  if (/\bgalvalume\s*sheet\b|\bgalvalume\b|\bgl\s*sheet\b/i.test(combined)) {
+    return '72106100';
+  }
+
+  if (
+    /\bgp\s*coil\b|\bgalvanized\s*plain\s*coil\b|\bgi\s*coil\b/i.test(combined)
+  ) {
+    return '72104900';
+  }
+
+  if (
+    /\bgp\s*sheet\b|\bgalvanized\s*plain\s*sheet\b|\bgi\s*sheet\b|\bgalvanized\b|\bgalvanised\b/i.test(
+      combined,
+    )
+  ) {
+    return '72104900';
+  }
+
+  // HRPO
   if (
     /\bhrpo\s*coil\b|\bpickled\s*(?:&|and)\s*oiled\s*coil\b/i.test(combined)
   ) {
@@ -393,18 +531,43 @@ export function detectHsnCode(
     return '72082590';
   }
 
-  // HRPO Sheet
   if (
     /\bhrpo\s*sheet\b|\bpickled\s*(?:&|and)\s*oiled\s*sheet\b/i.test(combined)
   ) {
     return '72082590';
   }
 
-  // Generic HRPO
   if (/\bhrpo\b/i.test(combined)) {
     if (t !== null && t < 3.0) return '72083940';
     if (t !== null && t < 4.75) return '72083840';
     return '72082590';
+  }
+
+  // CR Coil
+  if (
+    /\bcr\s*coil\b|\bcold\s*rolled\s*coil\b|\bcrca\s*coil\b/i.test(combined) ||
+    (/\bcr\b|\bcold\s*rolled\b/i.test(pName) && /\bcoil\b/i.test(pName))
+  ) {
+    if (t !== null) {
+      if (t < 0.5) return '72091890';
+      if (t <= 1.0) return '72091790';
+      return '72091690';
+    }
+    return '72091790';
+  }
+
+  // CR Sheet
+  if (
+    /\bcr\s*sheet\b|\bcold\s*rolled\s*sheet\b|\bcrca\s*sheet\b|\bcr\b|\bcrca\b|\bcold\s*rolled\b/i.test(
+      combined,
+    )
+  ) {
+    if (t !== null) {
+      if (t < 0.5) return '72092820';
+      if (t <= 1.0) return '72092720';
+      return '72092620';
+    }
+    return '72092720';
   }
 
   // HR Plate
@@ -441,182 +604,6 @@ export function detectHsnCode(
       return '72083740';
     }
     return '72083840';
-  }
-
-  // CR Coil
-  if (
-    /\bcr\s*coil\b|\bcold\s*rolled\s*coil\b|\bcrca\s*coil\b/i.test(combined)
-  ) {
-    if (t !== null) {
-      if (t < 0.5) return '72091890';
-      if (t <= 1.0) return '72091790';
-      return '72091690';
-    }
-    return '72091790';
-  }
-
-  // CR Sheet
-  if (
-    /\bcr\s*sheet\b|\bcold\s*rolled\s*sheet\b|\bcrca\s*sheet\b|\bcr\b|\bcrca\b|\bcold\s*rolled\b/i.test(
-      combined,
-    )
-  ) {
-    if (t !== null) {
-      if (t < 0.5) return '72092820';
-      if (t <= 1.0) return '72092720';
-      return '72092620';
-    }
-    return '72092720';
-  }
-
-  // GP Coil
-  if (
-    /\bgp\s*coil\b|\bgalvanized\s*plain\s*coil\b|\bgi\s*coil\b/i.test(combined)
-  ) {
-    return '72104900';
-  }
-
-  // GP Sheet / GI Sheet
-  if (
-    /\bgp\s*sheet\b|\bgalvanized\s*plain\s*sheet\b|\bgi\s*sheet\b|\bgalvanized\b|\bgalvanised\b/i.test(
-      combined,
-    )
-  ) {
-    return '72104900';
-  }
-
-  // Galvalume Coil
-  if (/\bgalvalume\s*coil\b|\bgl\s*coil\b/i.test(combined)) {
-    return '72106100';
-  }
-
-  // Galvalume Sheet
-  if (/\bgalvalume\s*sheet\b|\bgalvalume\b|\bgl\s*sheet\b/i.test(combined)) {
-    return '72106100';
-  }
-
-  // Chequered Coil
-  if (/\bchequered\s*coil\b|\bcheckered\s*coil\b/i.test(combined)) {
-    return '72081000';
-  }
-
-  // Chequered Sheet / Chequered Plate
-  if (/\bchequered\b|\bcheckered\b/i.test(combined)) {
-    return '72081000';
-  }
-
-  // --- Structural Steel ---
-
-  // MS Round Bar
-  if (
-    /\bround\s*bar\b|\bms\s*round\s*bar\b|\bbright\s*bar\b|\bround\s*rod\b|\bms\s*rod\b/i.test(
-      combined,
-    )
-  ) {
-    return '72149990';
-  }
-
-  // MS Flat Bar
-  if (
-    /\bflat\s*bar\b|\bms\s*flat\s*bar\b|\bms\s*flat\b|\bflats\b|\bpatti\b|\bflat\b/i.test(
-      combined,
-    )
-  ) {
-    return '72111410';
-  }
-
-  // MS Square Bar
-  if (
-    /\bsquare\s*bar\b|\bms\s*square\s*bar\b|\bsq\s*bar\b|\bsquare\s*rod\b/i.test(
-      combined,
-    )
-  ) {
-    return '72149990';
-  }
-
-  // TMT Bar
-  if (
-    /\btmt\b|\brebar\b|\breinforcement\b|\bfe\s*500\b|\bfe\s*550\b|\bfe\s*500d\b|\bfe\s*550d\b|\bsariya\b/i.test(
-      combined,
-    )
-  ) {
-    return '72142090';
-  }
-
-  // Slotted Angle (Check before generic MS Angle)
-  if (/\bslotted\s*angle\b/i.test(combined)) {
-    return '72169930';
-  }
-
-  // MS Angle
-  if (/\bangle\b|\bisa\b|\bl-angle\b/i.test(combined)) {
-    const h = extractHeight(dimensions) || extractHeight(productName);
-    if (h !== null && h >= 80) return '72162200';
-    return '72162100';
-  }
-
-  // MS Channel
-  if (
-    /\bchannel\b|\bismc\b|\bisjc\b|\bispc\b|\bc-channel\b|\bu-channel\b/i.test(
-      combined,
-    )
-  ) {
-    return '72163100';
-  }
-
-  // MS Beam
-  if (
-    /\bbeam\b|\bismb\b|\bisnb\b|\bjoist\b|\bi-beam\b|\bh-beam\b|\bnpb\b|\bwfb\b|\buc\s*column\b|\bub\s*beam\b/i.test(
-      combined,
-    )
-  ) {
-    return '72163200';
-  }
-
-  // --- Pipes and Tubes ---
-
-  // MS Square Pipe
-  if (/\bsquare\s*(?:pipe|tube|tubing)\b|\bshs\b/i.test(combined)) {
-    return '73063090';
-  }
-
-  // MS Rectangular Tube / Pipe
-  if (
-    /\brectangular\s*(?:pipe|tube|tubing)\b|\brhs\b|\bbox\s*(?:pipe|section)\b/i.test(
-      combined,
-    )
-  ) {
-    return '73063090';
-  }
-
-  // MS Round Pipe / Pipes
-  if (
-    /\bpipe\b|\btube\b|\berw\b|\bseamless\b|\bms\s*pipe\b|\bround\s*pipe\b/i.test(
-      combined,
-    )
-  ) {
-    return '73063090';
-  }
-
-  // --- Value Added Products ---
-
-  // Solar Mounting Structure
-  if (
-    /\bsolar\b|\bmounting\s*structure\b|\bpurlin\b|\bz\s*purlin\b|\bhat\s*section\b/i.test(
-      combined,
-    )
-  ) {
-    return '73089090';
-  }
-
-  // Cable Tray (Perforated / Ladder)
-  if (/\bcable\s*tray\b/i.test(combined)) {
-    return '73089090';
-  }
-
-  // GI Earthing Strip
-  if (/\bearthing\s*strip\b|\bearthing\b|\bgi\s*strip\b/i.test(combined)) {
-    return '73082019';
   }
 
   // Stainless Steel
