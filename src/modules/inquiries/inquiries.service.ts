@@ -51,6 +51,7 @@ import { DealsService } from '../deals/deals.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
   calculateQuotationBreakdown,
+  calculateTotalTonnageMt,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
 import { detectHsnCode } from '../../utils/hsnDetector';
@@ -2498,19 +2499,7 @@ ${rawText}`,
           ),
         }));
 
-        const totalQuantity = lineItems.reduce(
-          (s: number, i: any) => s + (Number(i.quantity) || 0),
-          0,
-        );
-        const distinctUnits = Array.from(
-          new Set(lineItems.map((i: any) => i.unit || 'MT')),
-        );
-        const primaryUnit =
-          distinctUnits.length === 1
-            ? distinctUnits[0]
-            : distinctUnits.length === 0
-              ? 'MT'
-              : 'units';
+        const totalTonnage = calculateTotalTonnageMt(lineItems);
         const computedSubtotal =
           lineItems.reduce(
             (s: number, i: any) => s + (Number(i.amount) || 0),
@@ -2643,7 +2632,7 @@ ${rawText}`,
           .text('Items in Total ', leftX, summaryY, { continued: true })
           .font(fontBold)
           .fillColor('#0F172A')
-          .text(`${formatIndianCurrency(totalQuantity, true)} ${primaryUnit}`);
+          .text(totalTonnage.formattedText);
 
         if (paymentTerms) {
           doc
