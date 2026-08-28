@@ -34,7 +34,8 @@ export class DealsService {
         .select(
           `
           id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
-          deal_items (*)
+          deal_items (*),
+          inquiries (source_channel, inquiry_type)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
