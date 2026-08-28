@@ -280,9 +280,16 @@ export class CustomersService {
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
       }
 
-      const complaintsQuery = this.supabase
+      let complaintsQuery = this.supabase
         .from('complaints')
         .select('customer_name, created_at, reported_at');
+
+      if (salespersonPhone) {
+        const compOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (compOr) complaintsQuery = complaintsQuery.or(compOr);
+      }
 
       let paymentsQuery = this.supabase
         .from('payment_tracking')
@@ -507,8 +514,43 @@ export class CustomersService {
     }
   }
 
-  async updateCustomer(id: string, data: any) {
+  async updateCustomer(
+    id: string,
+    data: any,
+    accessiblePhones?: string[] | null,
+  ) {
     try {
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        if (!id.startsWith('virtual-')) {
+          const { data: existingCust } = await this.supabase
+            .from('recurring_customers')
+            .select('id, assigned_salesperson_phone')
+            .eq('id', id)
+            .single();
+
+          if (
+            existingCust?.assigned_salesperson_phone &&
+            !phoneInList(
+              existingCust.assigned_salesperson_phone,
+              accessiblePhones,
+            )
+          ) {
+            throw new ForbiddenException(
+              'Access Denied: You do not have permission to update this customer.',
+            );
+          }
+        }
+
+        if (
+          data.assigned_salesperson_phone &&
+          !phoneInList(data.assigned_salesperson_phone, accessiblePhones)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You cannot assign customers outside your authorized scope.',
+          );
+        }
+      }
+
       const updatePayload: any = {
         updated_at: new Date().toISOString(),
       };

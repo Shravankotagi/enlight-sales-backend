@@ -9,6 +9,27 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
+function buildMultiFieldOrFilter(
+  salespersonPhones?: string[] | string,
+  fieldNames: string[] = ['salesperson_phone'],
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    for (const field of fieldNames) {
+      parts.push(`${field}.eq.${p10}`, `${field}.eq.${p12}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
@@ -24,11 +45,18 @@ export class DealsService {
 
   async findAll(filters?: {
     stage?: string;
-    salesperson_phone?: string;
+    salesperson_phone?: string[] | string;
     from?: string;
     to?: string;
   }) {
     try {
+      if (
+        Array.isArray(filters?.salesperson_phone) &&
+        filters.salesperson_phone.length === 0
+      ) {
+        return [];
+      }
+
       let query = this.supabase
         .from('deals')
         .select(
@@ -54,12 +82,10 @@ export class DealsService {
       }
 
       if (filters?.salesperson_phone) {
-        const cleanDigits = filters.salesperson_phone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
+        const orFilter = buildMultiFieldOrFilter(filters.salesperson_phone, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) query = query.or(orFilter);
       }
       if (filters?.from && filters?.to) {
         // Each date field is tested as a complete [from, to] pair - prevents
