@@ -1894,17 +1894,42 @@ MIDC Industrial Zone, Mumbai - 400001`;
         'GEMINI_PAID_API_KEY is not configured in backend environment variables',
       );
     }
-    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    let cleanBase64 = fileBase64;
+    let detectedMime = mimeType;
 
-    try {
-      const response = await axios.post(url, {
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+    // 1. Extract data URI header if present (e.g. data:application/pdf;base64,...)
+    const headerMatch = fileBase64.match(/^data:([^;]+);base64,(.+)$/s);
+    if (headerMatch) {
+      if (
+        !detectedMime ||
+        detectedMime === 'application/octet-stream' ||
+        detectedMime === 'image/jpeg'
+      ) {
+        detectedMime = headerMatch[1];
+      }
+      cleanBase64 = headerMatch[2];
+    } else {
+      cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
+    }
+
+    // 2. Binary magic bytes auto-detection for 100% fail-safe MIME typing
+    const prefix = cleanBase64.slice(0, 16);
+    if (prefix.startsWith('JVBERi')) {
+      detectedMime = 'application/pdf';
+    } else if (prefix.startsWith('iVBORw')) {
+      detectedMime = 'image/png';
+    } else if (prefix.startsWith('/9j/')) {
+      detectedMime = 'image/jpeg';
+    } else if (prefix.startsWith('UklGR')) {
+      detectedMime = 'image/webp';
+    }
+
+    if (!detectedMime) {
+      detectedMime = 'application/pdf';
+    }
+
+    const promptText = `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
   "customer_name": "The buyer / client company issuing this inquiry (from the top letterhead / header banner or explicit 'Customer/Buyer' section). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
@@ -1949,54 +1974,76 @@ CRITICAL EXTRACTION RULES:
 - Keep exact units (Nos, MT, Kg, Pcs, Sheets). Never convert or fabricate units.
 - Extract complete payment terms (e.g. "30 Days Credit") and full delivery location (e.g. "MIDC Industrial Area, Nashik, Maharashtra - 422010").
 
-Return ONLY the JSON.`,
-              },
-              {
-                inline_data: {
-                  mime_type: mimeType || 'image/jpeg',
-                  data: cleanBase64,
-                },
-              },
-            ],
-          },
-        ],
-      });
+Return ONLY the JSON.`;
 
-      const text =
-        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      let parsed: any = null;
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ];
+
+    let lastError: any = null;
+    for (const model of candidateModels) {
       try {
-        const cleanJsonStr = text
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-        parsed = JSON.parse(cleanJsonStr);
-      } catch {
-        const firstOpen = text.indexOf('{');
-        const lastClose = text.lastIndexOf('}');
-        if (firstOpen !== -1 && lastClose > firstOpen) {
-          parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const response = await axios.post(url, {
+          contents: [
+            {
+              parts: [
+                {
+                  text: promptText,
+                },
+                {
+                  inline_data: {
+                    mime_type: detectedMime,
+                    data: cleanBase64,
+                  },
+                },
+              ],
+            },
+          ],
+        });
+
+        const text =
+          response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        let parsed: any = null;
+        try {
+          const cleanJsonStr = text
+            .replace(/```json/gi, '')
+            .replace(/```/g, '')
+            .trim();
+          parsed = JSON.parse(cleanJsonStr);
+        } catch {
+          const firstOpen = text.indexOf('{');
+          const lastClose = text.lastIndexOf('}');
+          if (firstOpen !== -1 && lastClose > firstOpen) {
+            parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+          }
         }
-      }
 
-      if (!parsed) {
-        throw new Error('Failed to parse structured JSON from Gemini response');
+        if (parsed) {
+          return {
+            success: true,
+            data: parsed,
+          };
+        }
+      } catch (err: any) {
+        lastError = err;
+        this.logger.warn(
+          `Gemini OCR parsing attempt with model ${model} failed:`,
+          err?.response?.data || err.message,
+        );
       }
-
-      return {
-        success: true,
-        data: parsed,
-      };
-    } catch (err: any) {
-      this.logger.error(
-        'Gemini vision document extraction failed:',
-        err?.response?.data || err.message,
-      );
-      return {
-        success: false,
-        error: err.message,
-      };
     }
+
+    this.logger.error(
+      'All Gemini OCR model attempts failed:',
+      lastError?.response?.data || lastError?.message,
+    );
+    return {
+      success: false,
+      error: lastError?.message || 'Failed to extract PO details from document',
+    };
   }
 
   async parseTextWithGemini(rawText: string) {
