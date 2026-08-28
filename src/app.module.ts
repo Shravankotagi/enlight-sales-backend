@@ -25,6 +25,7 @@ import { OtpModule } from './modules/otp/otp.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { ActivityLogsModule } from './modules/activity-logs/activity-logs.module';
+import { ProductsModule } from './modules/products/products.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ActivityLogsModule } from './modules/activity-logs/activity-logs.module
     PricingModule,
     ChatbotModule,
     ActivityLogsModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
