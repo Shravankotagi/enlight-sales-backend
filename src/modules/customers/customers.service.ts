@@ -585,55 +585,99 @@ export class CustomersService {
         if (orFilter) query = query.or(orFilter);
       }
 
-      const { data: customers, error } = await query;
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('customer_name, won_at, created_at, salesperson_phone')
+        .eq('stage', 'won')
+        .order('created_at', { ascending: false });
+
+      if (salespersonPhone) {
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
+      }
+
+      const [{ data: customers, error }, { data: allWonDeals }] =
+        await Promise.all([query, dealsQuery]);
       if (error) throw error;
 
-      const reorderList = (
-        await Promise.all(
-          (customers || []).map(async (customer: any) => {
-            const { data: deals } = await this.supabase
-              .from('deals')
-              .select('created_at, won_at')
-              .ilike('customer_name', `%${customer.customer_name}%`)
-              .eq('stage', 'won')
-              .order('created_at', { ascending: false })
-              .limit(1);
+      const safeWonDeals = allWonDeals || [];
+      const normalize = (str?: string) =>
+        (str || '')
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]/g, '');
 
-            const latestWonDeal = deals && deals.length > 0 ? deals[0] : null;
-            const effectiveLastOrderStr = latestWonDeal
-              ? latestWonDeal.won_at || latestWonDeal.created_at
-              : customer.last_order_date || null;
+      const existingNameSet = new Set(
+        (customers || []).map((c) => normalize(c.customer_name)),
+      );
 
-            const lastOrder = effectiveLastOrderStr
-              ? new Date(effectiveLastOrderStr)
-              : null;
-            const avgFrequency = customer.avg_order_frequency_days || 30;
-            const predictedDate = lastOrder
-              ? new Date(
-                  lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000,
-                )
-              : null;
-            const daysUntilReorder = predictedDate
-              ? Math.floor(
-                  (predictedDate.getTime() - now.getTime()) /
-                    (1000 * 60 * 60 * 24),
-                )
-              : null;
+      const extraCustomersMap = new Map<string, any>();
+      for (const deal of safeWonDeals) {
+        if (!deal.customer_name || !deal.customer_name.trim()) continue;
+        const norm = normalize(deal.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-reorder-${norm}`,
+            customer_name: deal.customer_name.trim(),
+            contact_person: null,
+            customer_phone: null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: deal.created_at,
+          });
+        }
+      }
 
-            return {
-              ...customer,
-              last_order_date: effectiveLastOrderStr,
-              predicted_reorder_date: predictedDate?.toISOString() || null,
-              days_until_reorder: daysUntilReorder,
-              is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
-              is_due_soon:
-                daysUntilReorder !== null &&
-                daysUntilReorder >= 0 &&
-                daysUntilReorder <= 7,
-            };
-          }),
-        )
-      )
+      const combinedCustomers = [
+        ...(customers || []),
+        ...Array.from(extraCustomersMap.values()),
+      ];
+
+      const reorderList = combinedCustomers
+        .map((customer: any) => {
+          const custKeyNorm = normalize(customer.customer_name);
+          const matchingDeals = safeWonDeals.filter(
+            (d) => normalize(d.customer_name) === custKeyNorm,
+          );
+          const latestWonDeal =
+            matchingDeals.length > 0 ? matchingDeals[0] : null;
+          const effectiveLastOrderStr = latestWonDeal
+            ? latestWonDeal.won_at || latestWonDeal.created_at
+            : customer.last_order_date || null;
+
+          const lastOrder = effectiveLastOrderStr
+            ? new Date(effectiveLastOrderStr)
+            : null;
+          const avgFrequency = Number(customer.avg_order_frequency_days) || 30;
+          const predictedDate = lastOrder
+            ? new Date(lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000)
+            : null;
+          const daysUntilReorder = predictedDate
+            ? Math.floor(
+                (predictedDate.getTime() - now.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              )
+            : null;
+
+          return {
+            ...customer,
+            last_order_date: effectiveLastOrderStr,
+            predicted_reorder_date: predictedDate?.toISOString() || null,
+            days_until_reorder: daysUntilReorder,
+            is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
+            is_due_soon:
+              daysUntilReorder !== null &&
+              daysUntilReorder >= 0 &&
+              daysUntilReorder <= 7,
+          };
+        })
         .filter(
           (c: any) =>
             c.days_until_reorder !== null && c.days_until_reorder <= 14,
