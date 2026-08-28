@@ -676,6 +676,8 @@ export class DealsService {
 
       // 1. If media_urls are provided, save or update attachment in inquiries table so it's permanently stored & viewable
       let inquiryId = data.inquiry_id || null;
+      const targetSourceChannel = data.source_channel || 'web_dashboard';
+
       if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
         try {
           if (inquiryId) {
@@ -684,13 +686,14 @@ export class DealsService {
               .update({
                 media_urls: data.media_urls,
                 status: 'confirmed',
+                source_channel: targetSourceChannel,
               })
               .eq('id', inquiryId);
           } else {
             const { data: newInq, error: inqErr } = await this.supabase
               .from('inquiries')
               .insert({
-                source_channel: 'purchase_order',
+                source_channel: targetSourceChannel,
                 raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
                 media_urls: data.media_urls,
                 sender_name: customerName,
@@ -711,6 +714,31 @@ export class DealsService {
         } catch (inqErr: any) {
           this.logger.warn(
             'Non-blocking inquiry media save notice:',
+            inqErr?.message,
+          );
+        }
+      } else if (!inquiryId) {
+        try {
+          const { data: newInq } = await this.supabase
+            .from('inquiries')
+            .insert({
+              source_channel: targetSourceChannel,
+              raw_text: `[Dashboard Order: ${poNumber}] ${customerName || 'Customer'}`,
+              sender_name: customerName,
+              sender_phone: customerPhone,
+              salesperson_phone: phone,
+              status: 'confirmed',
+              inquiry_type: 'purchase_order',
+              created_at: nowIso,
+            })
+            .select()
+            .single();
+          if (newInq) {
+            inquiryId = newInq.id;
+          }
+        } catch (inqErr: any) {
+          this.logger.warn(
+            'Non-blocking manual order inquiry create notice:',
             inqErr?.message,
           );
         }
