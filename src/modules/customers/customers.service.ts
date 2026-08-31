@@ -28,6 +28,80 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+function cleanLegalSuffixes(str?: string): string {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(
+      /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|co\s+limited|llp|limited|pvt|ltd|inc|corp|co|corporation)\b/gi,
+      '',
+    )
+    .replace(/[^a-z0-9]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanPhone(p?: string): string {
+  if (!p) return '';
+  const digits = String(p).replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+function isCustomerMatch(
+  custName?: string,
+  custPhone?: string,
+  targetName?: string,
+  targetPhone?: string,
+): boolean {
+  const cp = cleanPhone(custPhone);
+  const tp = cleanPhone(targetPhone);
+  if (cp && tp && cp === tp) {
+    return true;
+  }
+
+  const cClean = cleanLegalSuffixes(custName);
+  const tClean = cleanLegalSuffixes(targetName);
+
+  if (!cClean || !tClean) return false;
+  if (cClean === tClean) return true;
+
+  const genericWords = new Set([
+    'steel',
+    'metals',
+    'traders',
+    'industries',
+    'engineering',
+    'enterprises',
+    'enterprise',
+    'infra',
+    'works',
+    'projects',
+    'systems',
+  ]);
+
+  if (cClean.length >= 4 && tClean.length >= 4) {
+    if (cClean.startsWith(tClean) || tClean.startsWith(cClean)) {
+      return true;
+    }
+
+    const cWords = cClean
+      .split(' ')
+      .filter((w) => w.length > 2 && !genericWords.has(w));
+    const tWords = tClean
+      .split(' ')
+      .filter((w) => w.length > 2 && !genericWords.has(w));
+
+    if (cWords.length > 0 && tWords.length > 0) {
+      const matchesAllC = cWords.every((w) => tWords.includes(w));
+      const matchesAllT = tWords.every((w) => cWords.includes(w));
+      if (matchesAllC || matchesAllT) return true;
+    }
+  }
+
+  return false;
+}
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
@@ -180,11 +254,40 @@ export class CustomersService {
       const complaints = complaintsRes.data || [];
       const inquiries = inquiriesRes.data || [];
 
-      const wonDeals = deals.filter((d) => d.stage === 'won');
+      const wonDeals = deals.filter(
+        (d) =>
+          d.stage === 'won' ||
+          d.stage === 'order' ||
+          Boolean(d.po_number) ||
+          d.inquiry_type === 'purchase_order',
+      );
       const latestWonDeal = wonDeals.length > 0 ? wonDeals[0] : null;
       const effectiveLastOrderDate = latestWonDeal
         ? latestWonDeal.won_at || latestWonDeal.created_at
         : customer.last_order_date || null;
+
+      // Calculate lifetime value with deal_items fallback
+      const lifetimeValue = wonDeals.reduce((sum, d) => {
+        let amt = Number(d.total_amount || 0);
+        if (
+          amt <= 0 &&
+          Array.isArray(d.deal_items) &&
+          d.deal_items.length > 0
+        ) {
+          amt = d.deal_items.reduce(
+            (s: number, i: any) =>
+              s +
+              (Number(i.amount) || Number(i.rate) * Number(i.quantity) || 0),
+            0,
+          );
+        }
+        return sum + amt;
+      }, 0);
+
+      const openComplaints = complaints.filter((c) => {
+        const st = (c.status || '').toLowerCase();
+        return st !== 'resolved' && st !== 'closed';
+      }).length;
 
       // Trailing 12 Month Revenue & Tier Calculation
       const now = new Date();
@@ -196,16 +299,36 @@ export class CustomersService {
         .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
 
       let tier = 'C';
-      if (t12mRevenue >= 1000000) {
+      if (t12mRevenue >= 1000000 || lifetimeValue >= 1000000) {
         tier = 'A';
-      } else if (t12mRevenue >= 200000) {
+      } else if (t12mRevenue >= 200000 || lifetimeValue >= 100000) {
         tier = 'B';
+      }
+
+      let segment = 'new';
+      const explicitSegment = (customer.segment || '').toLowerCase();
+      if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
+        segment = explicitSegment;
+      } else if (lifetimeValue >= 1000000 || wonDeals.length >= 5) {
+        segment = 'key_account';
+      } else if (
+        wonDeals.length >= 2 ||
+        (lifetimeValue >= 100000 && lifetimeValue < 1000000)
+      ) {
+        segment = 'growth';
+      } else {
+        segment = 'new';
       }
 
       return {
         ...customer,
         last_order_date: effectiveLastOrderDate,
         t12m_revenue: t12mRevenue,
+        lifetime_value: lifetimeValue,
+        total_orders: wonDeals.length,
+        open_complaints: openComplaints,
+        total_complaints: complaints.length,
+        segment,
         tier,
         deals,
         visits,
@@ -242,105 +365,92 @@ export class CustomersService {
 
       const now = new Date();
 
-      let dealsQuery = this.supabase
+      const dealsQuery = this.supabase
         .from('deals')
-        .select('customer_name, customer_phone, created_at, won_at, stage')
+        .select(
+          'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity)',
+        )
         .order('created_at', { ascending: false });
 
-      if (salespersonPhone) {
-        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
-      }
-
-      let visitsQuery = this.supabase
+      const visitsQuery = this.supabase
         .from('customer_visits')
         .select(
-          'customer_name, person_met, contact_phone, created_at, visited_at',
+          'customer_name, person_met, contact_no, visited_at, salesperson_phone',
         )
         .order('visited_at', { ascending: false });
 
-      if (salespersonPhone) {
-        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
-      }
-
-      let inquiriesQuery = this.supabase
+      const inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('customer_name, contact_phone, created_at')
+        .select('sender_name, sender_phone, created_at, salesperson_phone')
         .order('created_at', { ascending: false });
-
-      if (salespersonPhone) {
-        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
-      }
 
       const complaintsQuery = this.supabase
         .from('complaints')
-        .select('customer_name, created_at, reported_at');
-
-      let paymentsQuery = this.supabase
-        .from('payment_tracking')
-        .select('customer_name, status, pending_amount, outstanding, due_date');
-
-      if (salespersonPhone) {
-        const payOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (payOr) paymentsQuery = paymentsQuery.or(payOr);
-      }
+        .select(
+          'id, customer_name, status, reported_at, complaint_type, reported_by',
+        );
 
       const [
-        { data: allDeals },
-        { data: allVisits },
-        { data: allInquiries },
-        { data: allComplaints },
-        { data: allPayments },
+        { data: allDeals, error: dealsErr },
+        { data: allVisits, error: visitsErr },
+        { data: allInquiries, error: inqErr },
+        { data: allComplaints, error: compErr },
       ] = await Promise.all([
         dealsQuery,
         visitsQuery,
         inquiriesQuery,
         complaintsQuery,
-        paymentsQuery,
       ]);
+
+      if (dealsErr) this.logger.warn('Deals query error:', dealsErr);
+      if (visitsErr) this.logger.warn('Visits query error:', visitsErr);
+      if (inqErr) this.logger.warn('Inquiries query error:', inqErr);
+      if (compErr) this.logger.warn('Complaints query error:', compErr);
 
       const safeAllDeals = allDeals || [];
       const safeAllVisits = allVisits || [];
       const safeAllInquiries = allInquiries || [];
       const safeAllComplaints = allComplaints || [];
-      const safeAllPayments = allPayments || [];
-
-      const normalize = (str?: string) =>
-        (str || '')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]/g, '');
-
-      const existingNameSet = new Set(
-        (customers || []).map((c) => normalize(c.customer_name)),
-      );
 
       const extraCustomersMap = new Map<string, any>();
 
+      const customerExists = (name?: string, phone?: string) => {
+        if (!name && !phone) return true;
+        const inDb = (customers || []).some((c) =>
+          isCustomerMatch(c.customer_name, c.customer_phone, name, phone),
+        );
+        if (inDb) return true;
+        for (const ec of extraCustomersMap.values()) {
+          if (isCustomerMatch(ec.customer_name, ec.customer_phone, name, phone))
+            return true;
+        }
+        return false;
+      };
+
+      const spPhonesList = salespersonPhone
+        ? Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone]
+        : null;
+
+      const matchesSpPhone = (repPhone?: string) => {
+        if (!spPhonesList) return true;
+        if (!repPhone) return false;
+        return phoneInList(repPhone, spPhonesList);
+      };
+
       for (const deal of safeAllDeals) {
         if (!deal.customer_name || !deal.customer_name.trim()) continue;
-        const norm = normalize(deal.customer_name);
-        if (
-          norm &&
-          !existingNameSet.has(norm) &&
-          !extraCustomersMap.has(norm)
-        ) {
-          extraCustomersMap.set(norm, {
-            id: `virtual-deal-${norm}`,
+        if (!matchesSpPhone(deal.salesperson_phone)) continue;
+        if (!customerExists(deal.customer_name, deal.customer_phone)) {
+          const norm = cleanLegalSuffixes(deal.customer_name);
+          extraCustomersMap.set(norm || deal.customer_name, {
+            id: `virtual-deal-${norm || deal.customer_name}`,
             customer_name: deal.customer_name.trim(),
             contact_person: null,
             customer_phone: deal.customer_phone || null,
             customer_gst: null,
+            assigned_salesperson_phone: deal.salesperson_phone || null,
             avg_order_frequency_days: 30,
             is_active: true,
             created_at: deal.created_at,
@@ -350,39 +460,35 @@ export class CustomersService {
 
       for (const visit of safeAllVisits) {
         if (!visit.customer_name || !visit.customer_name.trim()) continue;
-        const norm = normalize(visit.customer_name);
-        if (
-          norm &&
-          !existingNameSet.has(norm) &&
-          !extraCustomersMap.has(norm)
-        ) {
-          extraCustomersMap.set(norm, {
-            id: `virtual-visit-${norm}`,
+        if (!matchesSpPhone(visit.salesperson_phone)) continue;
+        if (!customerExists(visit.customer_name, visit.contact_no)) {
+          const norm = cleanLegalSuffixes(visit.customer_name);
+          extraCustomersMap.set(norm || visit.customer_name, {
+            id: `virtual-visit-${norm || visit.customer_name}`,
             customer_name: visit.customer_name.trim(),
             contact_person: visit.person_met || null,
-            customer_phone: visit.contact_phone || null,
+            customer_phone: visit.contact_no || null,
             customer_gst: null,
+            assigned_salesperson_phone: visit.salesperson_phone || null,
             avg_order_frequency_days: 30,
             is_active: true,
-            created_at: visit.visited_at || visit.created_at,
+            created_at: visit.visited_at,
           });
         }
       }
 
       for (const inq of safeAllInquiries) {
-        if (!inq.customer_name || !inq.customer_name.trim()) continue;
-        const norm = normalize(inq.customer_name);
-        if (
-          norm &&
-          !existingNameSet.has(norm) &&
-          !extraCustomersMap.has(norm)
-        ) {
-          extraCustomersMap.set(norm, {
-            id: `virtual-inquiry-${norm}`,
-            customer_name: inq.customer_name.trim(),
+        if (!inq.sender_name || !inq.sender_name.trim()) continue;
+        if (!matchesSpPhone(inq.salesperson_phone)) continue;
+        if (!customerExists(inq.sender_name, inq.sender_phone)) {
+          const norm = cleanLegalSuffixes(inq.sender_name);
+          extraCustomersMap.set(norm || inq.sender_name, {
+            id: `virtual-inquiry-${norm || inq.sender_name}`,
+            customer_name: inq.sender_name.trim(),
             contact_person: null,
-            customer_phone: inq.contact_phone || null,
+            customer_phone: inq.sender_phone || null,
             customer_gst: null,
+            assigned_salesperson_phone: inq.salesperson_phone || null,
             avg_order_frequency_days: 30,
             is_active: true,
             created_at: inq.created_at,
@@ -392,21 +498,19 @@ export class CustomersService {
 
       for (const comp of safeAllComplaints) {
         if (!comp.customer_name || !comp.customer_name.trim()) continue;
-        const norm = normalize(comp.customer_name);
-        if (
-          norm &&
-          !existingNameSet.has(norm) &&
-          !extraCustomersMap.has(norm)
-        ) {
-          extraCustomersMap.set(norm, {
-            id: `virtual-complaint-${norm}`,
+        if (!matchesSpPhone(comp.reported_by)) continue;
+        if (!customerExists(comp.customer_name, null)) {
+          const norm = cleanLegalSuffixes(comp.customer_name);
+          extraCustomersMap.set(norm || comp.customer_name, {
+            id: `virtual-complaint-${norm || comp.customer_name}`,
             customer_name: comp.customer_name.trim(),
             contact_person: null,
             customer_phone: null,
             customer_gst: null,
+            assigned_salesperson_phone: comp.reported_by || null,
             avg_order_frequency_days: 30,
             is_active: true,
-            created_at: comp.reported_at || comp.created_at,
+            created_at: comp.reported_at,
           });
         }
       }
@@ -417,11 +521,20 @@ export class CustomersService {
       ];
 
       const results = combinedCustomers.map((customer) => {
-        const custKeyNorm = normalize(customer.customer_name);
+        // Robust Matching for Deals
         const customerWonDeals = safeAllDeals.filter((d) => {
-          if (d.stage !== 'won') return false;
-          const dKeyNorm = normalize(d.customer_name);
-          return dKeyNorm === custKeyNorm;
+          const isWon =
+            d.stage === 'won' ||
+            d.stage === 'order' ||
+            Boolean(d.po_number) ||
+            d.inquiry_type === 'purchase_order';
+          if (!isWon) return false;
+          return isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            d.customer_name,
+            d.customer_phone,
+          );
         });
 
         const latestWonDeal =
@@ -450,13 +563,13 @@ export class CustomersService {
             )
           : 0;
 
-        // Health Status Classification
-        let churnRisk = 'active'; // Active <= 35 days 🟢
+        // Health Status Classification (Active <= 35d, At Risk 35-45d, Churning > 45d)
+        let churnRisk = 'active';
         if (daysSinceOrder !== null) {
           if (daysSinceOrder > 45) {
-            churnRisk = 'churning'; // Churning > 45 days 🔴
+            churnRisk = 'churning';
           } else if (daysSinceOrder >= 35) {
-            churnRisk = 'at_risk'; // At Risk 35-45 days 🟡
+            churnRisk = 'at_risk';
           } else {
             churnRisk = 'active';
           }
@@ -470,18 +583,53 @@ export class CustomersService {
           }
         }
 
-        // Check Overdue Payment for Credit Watch ⚠️
-        const hasCreditWatch = safeAllPayments.some((p) => {
-          const pNorm = normalize(p.customer_name);
-          if (pNorm !== custKeyNorm) return false;
-          const pending = Number(p.pending_amount || p.outstanding || 0);
-          const isOverdue =
-            p.due_date && new Date(p.due_date) < now && pending > 0;
-          return p.status === 'overdue' || isOverdue;
-        });
+        // Metrics: Orders & Lifetime Value (including deal_items fallback)
+        const totalOrders = customerWonDeals.length;
+        const lifetimeValue = customerWonDeals.reduce((sum, d) => {
+          let amt = Number(d.total_amount || 0);
+          if (
+            amt <= 0 &&
+            Array.isArray(d.deal_items) &&
+            d.deal_items.length > 0
+          ) {
+            amt = d.deal_items.reduce(
+              (s: number, i: any) =>
+                s +
+                (Number(i.amount) || Number(i.rate) * Number(i.quantity) || 0),
+              0,
+            );
+          }
+          return sum + amt;
+        }, 0);
 
-        if (hasCreditWatch) {
-          churnRisk = 'credit_watch';
+        // Metrics: Complaints & Open Issues
+        const customerComplaints = safeAllComplaints.filter((c) =>
+          isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            c.customer_name,
+            null,
+          ),
+        );
+        const openComplaints = customerComplaints.filter((c) => {
+          const st = (c.status || '').toLowerCase();
+          return st !== 'resolved' && st !== 'closed';
+        }).length;
+
+        // Segment Classification: Key Account, Growth, New
+        let segment = 'new';
+        const explicitSegment = (customer.segment || '').toLowerCase();
+        if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
+          segment = explicitSegment;
+        } else if (lifetimeValue >= 1000000 || totalOrders >= 5) {
+          segment = 'key_account';
+        } else if (
+          totalOrders >= 2 ||
+          (lifetimeValue >= 100000 && lifetimeValue < 1000000)
+        ) {
+          segment = 'growth';
+        } else {
+          segment = 'new';
         }
 
         return {
@@ -489,17 +637,22 @@ export class CustomersService {
           last_order_date: effectiveLastOrderStr,
           days_since_order: daysSinceOrder,
           churn_risk: churnRisk,
+          total_orders: totalOrders,
+          lifetime_value: lifetimeValue,
+          open_complaints: openComplaints,
+          total_complaints: customerComplaints.length,
+          segment,
+          avg_order_frequency_days: customer.avg_order_frequency_days || 30,
         };
       });
 
       return results.sort((a, b) => {
         const riskOrder: Record<string, number> = {
-          credit_watch: 0,
-          churning: 1,
-          at_risk: 2,
-          active: 3,
+          churning: 0,
+          at_risk: 1,
+          active: 2,
         };
-        return (riskOrder[a.churn_risk] ?? 3) - (riskOrder[b.churn_risk] ?? 3);
+        return (riskOrder[a.churn_risk] ?? 2) - (riskOrder[b.churn_risk] ?? 2);
       });
     } catch (error) {
       this.logger.error('Error in getChurnRisk:', error);
@@ -530,6 +683,7 @@ export class CustomersService {
           data.assigned_salesperson_phone;
       if (data.churn_risk !== undefined)
         updatePayload.churn_risk = data.churn_risk;
+      if (data.segment !== undefined) updatePayload.segment = data.segment;
 
       if (id.startsWith('virtual-')) {
         const namePart =
