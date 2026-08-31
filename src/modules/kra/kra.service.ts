@@ -2381,13 +2381,7 @@ export class KraService {
       const c = customerMap.get((v.customer_name || '').toLowerCase().trim());
       const rawRemarks = v.remarks || '';
       const phone =
-        v.contact_no ||
-        v.contact_phone ||
-        v.phone ||
-        v.customer_phone ||
-        c?.customer_phone ||
-        c?.phone ||
-        '-';
+        v.contact_no || v.contact_phone || v.phone || v.customer_phone || '-';
       const loc =
         v.customer_address ||
         v.location ||
