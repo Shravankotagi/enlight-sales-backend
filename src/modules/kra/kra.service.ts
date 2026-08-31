@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
@@ -1999,7 +2000,7 @@ export class KraService {
     let query = this.supabase
       .from('complaints')
       .select('*')
-      .order('reported_at', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (salespersonPhone) {
       const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -2010,11 +2011,11 @@ export class KraService {
 
     if (from) {
       const fromIso = from.includes('T') ? from : `${from}T00:00:00.000Z`;
-      query = query.gte('reported_at', fromIso);
+      query = query.gte('created_at', fromIso);
     }
     if (to) {
       const toIso = to.includes('T') ? to : `${to}T23:59:59.999Z`;
-      query = query.lte('reported_at', toIso);
+      query = query.lte('created_at', toIso);
     }
 
     const { data, error } = await query;
@@ -2040,28 +2041,53 @@ export class KraService {
         const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
         return {
           ...c,
+          created_at: c.created_at || c.reported_at,
+          reported_at: c.reported_at || c.created_at,
+          product_name:
+            c.product_name || c.affected_product || 'General Material',
           salesperson_name:
             empMap.get(cleanRep) || c.reported_by || 'Web Admin',
         };
       });
     } catch {
-      return complaintsList;
+      return complaintsList.map((c) => ({
+        ...c,
+        created_at: c.created_at || c.reported_at,
+        reported_at: c.reported_at || c.created_at,
+        product_name:
+          c.product_name || c.affected_product || 'General Material',
+      }));
     }
   }
 
   async createComplaint(data: any, salespersonPhone?: string) {
-    const reported_at = new Date().toISOString();
+    const nowIso = new Date().toISOString();
     const sla_due_at = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+
+    let cleanDesc = data.description || '';
+    let extractedProduct =
+      data.product_name || data.affected_product || data.product || null;
+    if (cleanDesc.startsWith('[Product:')) {
+      const match = cleanDesc.match(/^\[Product:\s*([^\]]+)\]\s*(.*)$/);
+      if (match) {
+        if (!extractedProduct) extractedProduct = match[1].trim();
+        cleanDesc = match[2].trim() || cleanDesc;
+      }
+    }
 
     const payload: Record<string, any> = {
       customer_name: data.customer_name,
-      affected_product:
-        data.affected_product || data.product || 'General Material',
+      deal_id: data.deal_id || null,
+      po_number: data.po_number || null,
+      product_name: extractedProduct || 'General Material',
+      affected_product: extractedProduct || 'General Material',
       complaint_type: data.complaint_type || 'Quality Defect',
-      description: data.description || '',
+      description: cleanDesc,
       status: data.status || 'reported',
+      corrective_action: data.corrective_action || null,
       resolution_notes: data.resolution_notes || null,
-      reported_at,
+      reported_at: nowIso,
+      created_at: nowIso,
       sla_due_at,
       reported_by: salespersonPhone || 'Web Admin',
     };
@@ -2082,6 +2108,7 @@ export class KraService {
         description: payload.description,
         status: payload.status,
         reported_at: payload.reported_at,
+        created_at: payload.created_at,
         reported_by: payload.reported_by,
       };
       const { data: fallbackData, error: fallbackError } = await this.supabase
@@ -2103,16 +2130,16 @@ export class KraService {
 
     // Log to kra_logs (KRA 8)
     try {
-      const now = new Date(reported_at);
+      const now = new Date(nowIso);
       await this.supabase.from('kra_logs').insert({
         kra_number: 8,
         kra_type: 'complaint_logged',
-        description: `Logged complaint: ${data.complaint_type} for ${data.affected_product || 'product'}`,
+        description: `Logged complaint: ${data.complaint_type} for ${payload.product_name}`,
         salesperson_phone: salespersonPhone || '910000000000',
         customer_name: data.customer_name,
         month: now.getMonth() + 1,
         year: now.getFullYear(),
-        created_at: reported_at,
+        created_at: nowIso,
       });
     } catch (kraErr: any) {
       this.logger.warn(
@@ -2126,7 +2153,7 @@ export class KraService {
       this.activityLogsService.logActivity({
         salesperson_name: 'Sales Team',
         salesperson_phone: salespersonPhone || null,
-        description: `New complaint logged for ${data.customer_name || 'Customer'}`,
+        description: `New complaint logged for ${data.customer_name || 'Customer'}${payload.deal_id ? ` (Deal: ${payload.deal_id})` : ''}`,
         module: 'Complaints',
         customer_name: data.customer_name || 'Customer',
       });
@@ -2144,7 +2171,7 @@ export class KraService {
   ) {
     const { data: existingComplaint, error: fetchErr } = await this.supabase
       .from('complaints')
-      .select('id, reported_by, status')
+      .select('id, reported_by, status, resolution_notes')
       .eq('id', id)
       .single();
     if (fetchErr || !existingComplaint) {
@@ -2165,17 +2192,44 @@ export class KraService {
     const updateData: Record<string, any> = {};
     if (data.customer_name !== undefined)
       updateData.customer_name = data.customer_name;
-    if (data.affected_product !== undefined)
-      updateData.affected_product = data.affected_product;
+    if (data.deal_id !== undefined) updateData.deal_id = data.deal_id || null;
+    if (data.po_number !== undefined)
+      updateData.po_number = data.po_number || null;
+    if (
+      data.product_name !== undefined ||
+      data.affected_product !== undefined
+    ) {
+      const prod = data.product_name || data.affected_product;
+      updateData.product_name = prod;
+      updateData.affected_product = prod;
+    }
     if (data.complaint_type !== undefined)
       updateData.complaint_type = data.complaint_type;
-    if (data.description !== undefined)
-      updateData.description = data.description;
+    if (data.description !== undefined) {
+      let d = data.description;
+      if (d && d.startsWith('[Product:')) {
+        const match = d.match(/^\[Product:\s*([^\]]+)\]\s*(.*)$/);
+        if (match) d = match[2].trim() || d;
+      }
+      updateData.description = d;
+    }
+    if (data.corrective_action !== undefined)
+      updateData.corrective_action = data.corrective_action;
     if (data.status !== undefined) {
       updateData.status = data.status;
       if (data.status === 'resolved') {
+        const notes = (
+          data.resolution_notes ||
+          existingComplaint.resolution_notes ||
+          ''
+        ).trim();
+        if (!notes) {
+          throw new BadRequestException(
+            'Resolution notes are required before marking complaint as resolved.',
+          );
+        }
         updateData.resolved_at = new Date().toISOString();
-      } else if (data.status === 'reported') {
+      } else if (data.status === 'reported' || data.status === 'reopened') {
         updateData.resolved_at = null;
       }
     }
