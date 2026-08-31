@@ -746,7 +746,6 @@ export class DealsService {
       if (inquiryId) {
         const inqUpdates: any = {
           status: 'confirmed',
-          inquiry_type: 'purchase_order',
         };
         if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
           inqUpdates.media_urls = data.media_urls;
@@ -767,7 +766,7 @@ export class DealsService {
               sender_phone: customerPhone,
               salesperson_phone: phone,
               status: 'confirmed',
-              inquiry_type: 'purchase_order',
+              inquiry_type: 'inquiry',
               created_at: nowIso,
             })
             .select()
