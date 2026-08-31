@@ -118,7 +118,18 @@ export class CustomersController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() body: any) {
-    return this.customersService.updateCustomer(id, body);
+  async update(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+
+    return this.customersService.updateCustomer(
+      id,
+      body,
+      phones === null ? undefined : phones,
+    );
   }
 }

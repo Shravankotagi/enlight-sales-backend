@@ -43,23 +43,40 @@ function cleanPhone(p?: string): string {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
+function areNamesCompatible(n1?: string, n2?: string): boolean {
+  const c1 = cleanLegalSuffixes(n1);
+  const c2 = cleanLegalSuffixes(n2);
+  if (!c1 || !c2) return true;
+  if (c1 === c2) return true;
+  if (c1.startsWith(c2) || c2.startsWith(c1)) return true;
+  const w1 = c1.split(' ').filter((w) => w.length > 2);
+  const w2 = c2.split(' ').filter((w) => w.length > 2);
+  if (w1.length > 0 && w2.length > 0) {
+    if (w1.every((w) => w2.includes(w)) || w2.every((w) => w1.includes(w))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isCustomerMatch(
   custName?: string,
   custPhone?: string,
   targetName?: string,
   targetPhone?: string,
 ): boolean {
-  const cp = cleanPhone(custPhone);
-  const tp = cleanPhone(targetPhone);
-  if (cp && tp && cp === tp) {
-    return true;
-  }
-
   const cClean = cleanLegalSuffixes(custName);
   const tClean = cleanLegalSuffixes(targetName);
 
-  if (!cClean || !tClean) return false;
-  if (cClean === tClean) return true;
+  if (cClean && tClean && cClean === tClean) return true;
+  if (
+    cClean &&
+    tClean &&
+    (cClean.startsWith(tClean) || tClean.startsWith(cClean)) &&
+    Math.min(cClean.length, tClean.length) >= 4
+  ) {
+    return true;
+  }
 
   const genericWords = new Set([
     'steel',
@@ -75,11 +92,7 @@ function isCustomerMatch(
     'systems',
   ]);
 
-  if (cClean.length >= 4 && tClean.length >= 4) {
-    if (cClean.startsWith(tClean) || tClean.startsWith(cClean)) {
-      return true;
-    }
-
+  if (cClean && tClean && cClean.length >= 4 && tClean.length >= 4) {
     const cWords = cClean
       .split(' ')
       .filter((w) => w.length > 2 && !genericWords.has(w));
@@ -91,6 +104,14 @@ function isCustomerMatch(
       const matchesAllC = cWords.every((w) => tWords.includes(w));
       const matchesAllT = tWords.every((w) => cWords.includes(w));
       if (matchesAllC || matchesAllT) return true;
+    }
+  }
+
+  const cp = cleanPhone(custPhone);
+  const tp = cleanPhone(targetPhone);
+  if (cp && tp && cp === tp) {
+    if (areNamesCompatible(custName, targetName)) {
+      return true;
     }
   }
 
@@ -190,24 +211,13 @@ export class CustomersService {
         }
       }
 
-      if (salespersonPhone && customer.assigned_salesperson_phone) {
-        const allowedList = Array.isArray(salespersonPhone)
-          ? salespersonPhone
-          : [salespersonPhone];
-        if (!phoneInList(customer.assigned_salesperson_phone, allowedList)) {
-          throw new ForbiddenException(
-            'Access Denied: You do not have permission to view this customer.',
-          );
-        }
-      }
-
-      // Query related collections
-      const dealsQuery = this.supabase
+      // Query related collections scoped to salesperson
+      let dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
         .order('created_at', { ascending: false });
 
-      const visitsQuery = this.supabase
+      let visitsQuery = this.supabase
         .from('customer_visits')
         .select('*')
         .order('visited_at', { ascending: false });
@@ -217,24 +227,60 @@ export class CustomersService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      const complaintsQuery = this.supabase
+      let complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
         .order('reported_at', { ascending: false });
 
-      const inquiriesQuery = this.supabase
+      let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
         .order('created_at', { ascending: false });
 
-      const [dealsRes, visitsRes, paymentsRes, complaintsRes, inquiriesRes] =
-        await Promise.all([
-          dealsQuery,
-          visitsQuery,
-          paymentsQuery,
-          complaintsQuery,
-          inquiriesQuery,
+      if (salespersonPhone) {
+        const spFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
         ]);
+        if (spFilter) {
+          dealsQuery = dealsQuery.or(spFilter);
+          visitsQuery = visitsQuery.or(spFilter);
+          inquiriesQuery = inquiriesQuery.or(spFilter);
+        }
+        const compFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (compFilter) {
+          complaintsQuery = complaintsQuery.or(compFilter);
+        }
+      }
+
+      const [
+        dealsRes,
+        visitsRes,
+        paymentsRes,
+        complaintsRes,
+        inquiriesRes,
+        empsRes,
+      ] = await Promise.all([
+        dealsQuery,
+        visitsQuery,
+        paymentsQuery,
+        complaintsQuery,
+        inquiriesQuery,
+        this.supabase.from('employees').select('name, phone'),
+      ]);
+
+      const empMap = new Map<string, string>();
+      (empsRes.data || []).forEach((e) => {
+        if (e.phone && e.name) {
+          empMap.set(cleanPhone(e.phone), e.name);
+        }
+      });
+
+      const assignedSpClean = cleanPhone(customer.assigned_salesperson_phone);
+      const assignedSalespersonName = assignedSpClean
+        ? empMap.get(assignedSpClean) || null
+        : null;
 
       const allDeals = dealsRes.data || [];
       const allVisits = visitsRes.data || [];
@@ -242,7 +288,7 @@ export class CustomersService {
       const allComplaints = complaintsRes.data || [];
       const allInquiries = inquiriesRes.data || [];
 
-      // Match related items using smart matcher
+      // Match related items using safe matcher
       const deals = allDeals.filter((d) =>
         isCustomerMatch(
           customer.customer_name,
@@ -287,6 +333,28 @@ export class CustomersService {
           inq.sender_phone,
         ),
       );
+
+      if (salespersonPhone) {
+        const allowedList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+
+        const isAssigned =
+          customer.assigned_salesperson_phone &&
+          phoneInList(customer.assigned_salesperson_phone, allowedList);
+
+        const hasHandledActivity =
+          deals.length > 0 ||
+          visits.length > 0 ||
+          inquiries.length > 0 ||
+          complaints.length > 0;
+
+        if (!isAssigned && !hasHandledActivity) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this customer.',
+          );
+        }
+      }
 
       const wonDeals = deals.filter(
         (d) =>
@@ -432,6 +500,7 @@ export class CustomersService {
 
       return {
         ...customer,
+        assigned_salesperson_name: assignedSalespersonName,
         last_order_date: effectiveLastOrderDate,
         days_since_order: daysSinceOrder,
         churn_risk: churnRisk,
@@ -486,42 +555,68 @@ export class CustomersService {
 
       const now = new Date();
 
-      const dealsQuery = this.supabase
+      let dealsQuery = this.supabase
         .from('deals')
         .select(
           'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity)',
         )
         .order('created_at', { ascending: false });
 
-      const visitsQuery = this.supabase
+      let visitsQuery = this.supabase
         .from('customer_visits')
         .select(
           'customer_name, person_met, contact_no, visited_at, salesperson_phone',
         )
         .order('visited_at', { ascending: false });
 
-      const inquiriesQuery = this.supabase
+      let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('sender_name, sender_phone, created_at, salesperson_phone')
         .order('created_at', { ascending: false });
 
-      const complaintsQuery = this.supabase
+      let complaintsQuery = this.supabase
         .from('complaints')
         .select(
           'id, customer_name, status, reported_at, complaint_type, reported_by',
         );
+
+      if (salespersonPhone) {
+        const spFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (spFilter) {
+          dealsQuery = dealsQuery.or(spFilter);
+          visitsQuery = visitsQuery.or(spFilter);
+          inquiriesQuery = inquiriesQuery.or(spFilter);
+        }
+        const compFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (compFilter) {
+          complaintsQuery = complaintsQuery.or(compFilter);
+        }
+      }
 
       const [
         { data: allDeals, error: dealsErr },
         { data: allVisits, error: visitsErr },
         { data: allInquiries, error: inqErr },
         { data: allComplaints, error: compErr },
+        { data: allEmps },
       ] = await Promise.all([
         dealsQuery,
         visitsQuery,
         inquiriesQuery,
         complaintsQuery,
+        this.supabase.from('employees').select('name, phone'),
       ]);
+
+      const empMap = new Map<string, string>();
+      (allEmps || []).forEach((e) => {
+        if (e.phone && e.name) {
+          empMap.set(cleanPhone(e.phone), e.name);
+        }
+      });
 
       if (dealsErr) this.logger.warn('Deals query error:', dealsErr);
       if (visitsErr) this.logger.warn('Visits query error:', visitsErr);
@@ -535,15 +630,32 @@ export class CustomersService {
 
       const extraCustomersMap = new Map<string, any>();
 
-      const customerExists = (name?: string, phone?: string) => {
+      const customerExistsForRep = (
+        name?: string,
+        phone?: string,
+        repPhone?: string,
+      ) => {
         if (!name && !phone) return true;
-        const inDb = (customers || []).some((c) =>
-          isCustomerMatch(c.customer_name, c.customer_phone, name, phone),
-        );
+        const cleanRep = cleanPhone(repPhone);
+        const inDb = (customers || []).some((c) => {
+          const cRep = cleanPhone(c.assigned_salesperson_phone);
+          if (cRep && cleanRep && cRep !== cleanRep) return false;
+          return isCustomerMatch(
+            c.customer_name,
+            c.customer_phone,
+            name,
+            phone,
+          );
+        });
         if (inDb) return true;
         for (const ec of extraCustomersMap.values()) {
-          if (isCustomerMatch(ec.customer_name, ec.customer_phone, name, phone))
+          const ecRep = cleanPhone(ec.assigned_salesperson_phone);
+          if (ecRep && cleanRep && ecRep !== cleanRep) continue;
+          if (
+            isCustomerMatch(ec.customer_name, ec.customer_phone, name, phone)
+          ) {
             return true;
+          }
         }
         return false;
       };
@@ -563,9 +675,16 @@ export class CustomersService {
       for (const deal of safeAllDeals) {
         if (!deal.customer_name || !deal.customer_name.trim()) continue;
         if (!matchesSpPhone(deal.salesperson_phone)) continue;
-        if (!customerExists(deal.customer_name, deal.customer_phone)) {
+        if (
+          !customerExistsForRep(
+            deal.customer_name,
+            deal.customer_phone,
+            deal.salesperson_phone,
+          )
+        ) {
           const norm = cleanLegalSuffixes(deal.customer_name);
-          extraCustomersMap.set(norm || deal.customer_name, {
+          const repKey = cleanPhone(deal.salesperson_phone);
+          extraCustomersMap.set(`${repKey}-${norm || deal.customer_name}`, {
             id: `virtual-deal-${norm || deal.customer_name}`,
             customer_name: deal.customer_name.trim(),
             contact_person: null,
@@ -582,9 +701,16 @@ export class CustomersService {
       for (const visit of safeAllVisits) {
         if (!visit.customer_name || !visit.customer_name.trim()) continue;
         if (!matchesSpPhone(visit.salesperson_phone)) continue;
-        if (!customerExists(visit.customer_name, visit.contact_no)) {
+        if (
+          !customerExistsForRep(
+            visit.customer_name,
+            visit.contact_no,
+            visit.salesperson_phone,
+          )
+        ) {
           const norm = cleanLegalSuffixes(visit.customer_name);
-          extraCustomersMap.set(norm || visit.customer_name, {
+          const repKey = cleanPhone(visit.salesperson_phone);
+          extraCustomersMap.set(`${repKey}-${norm || visit.customer_name}`, {
             id: `virtual-visit-${norm || visit.customer_name}`,
             customer_name: visit.customer_name.trim(),
             contact_person: visit.person_met || null,
@@ -601,9 +727,16 @@ export class CustomersService {
       for (const inq of safeAllInquiries) {
         if (!inq.sender_name || !inq.sender_name.trim()) continue;
         if (!matchesSpPhone(inq.salesperson_phone)) continue;
-        if (!customerExists(inq.sender_name, inq.sender_phone)) {
+        if (
+          !customerExistsForRep(
+            inq.sender_name,
+            inq.sender_phone,
+            inq.salesperson_phone,
+          )
+        ) {
           const norm = cleanLegalSuffixes(inq.sender_name);
-          extraCustomersMap.set(norm || inq.sender_name, {
+          const repKey = cleanPhone(inq.salesperson_phone);
+          extraCustomersMap.set(`${repKey}-${norm || inq.sender_name}`, {
             id: `virtual-inquiry-${norm || inq.sender_name}`,
             customer_name: inq.sender_name.trim(),
             contact_person: null,
@@ -620,9 +753,10 @@ export class CustomersService {
       for (const comp of safeAllComplaints) {
         if (!comp.customer_name || !comp.customer_name.trim()) continue;
         if (!matchesSpPhone(comp.reported_by)) continue;
-        if (!customerExists(comp.customer_name, null)) {
+        if (!customerExistsForRep(comp.customer_name, null, comp.reported_by)) {
           const norm = cleanLegalSuffixes(comp.customer_name);
-          extraCustomersMap.set(norm || comp.customer_name, {
+          const repKey = cleanPhone(comp.reported_by);
+          extraCustomersMap.set(`${repKey}-${norm || comp.customer_name}`, {
             id: `virtual-complaint-${norm || comp.customer_name}`,
             customer_name: comp.customer_name.trim(),
             contact_person: null,
@@ -641,8 +775,12 @@ export class CustomersService {
         ...Array.from(extraCustomersMap.values()),
       ];
 
-      const results = combinedCustomers.map((customer) => {
-        // Robust Matching for Deals
+      const results: any[] = [];
+
+      for (const customer of combinedCustomers) {
+        const repPhone = cleanPhone(customer.assigned_salesperson_phone);
+
+        // Safe matching for Won Deals
         const customerWonDeals = safeAllDeals.filter((d) => {
           const isWon =
             d.stage === 'won' ||
@@ -650,6 +788,9 @@ export class CustomersService {
             Boolean(d.po_number) ||
             d.inquiry_type === 'purchase_order';
           if (!isWon) return false;
+          if (repPhone && cleanPhone(d.salesperson_phone) !== repPhone) {
+            return false;
+          }
           return isCustomerMatch(
             customer.customer_name,
             customer.customer_phone,
@@ -657,6 +798,63 @@ export class CustomersService {
             d.customer_phone,
           );
         });
+
+        // Safe matching for Complaints
+        const customerComplaints = safeAllComplaints.filter((c) => {
+          if (repPhone && cleanPhone(c.reported_by) !== repPhone) {
+            return false;
+          }
+          return isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            c.customer_name,
+            null,
+          );
+        });
+
+        // Safe matching for Visits
+        const customerVisits = safeAllVisits.filter((v) => {
+          if (repPhone && cleanPhone(v.salesperson_phone) !== repPhone) {
+            return false;
+          }
+          return isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            v.customer_name,
+            v.contact_no,
+          );
+        });
+
+        // Safe matching for Inquiries
+        const customerInquiries = safeAllInquiries.filter((i) => {
+          if (repPhone && cleanPhone(i.salesperson_phone) !== repPhone) {
+            return false;
+          }
+          return isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            i.sender_name,
+            i.sender_phone,
+          );
+        });
+
+        const totalActivityCount =
+          customerWonDeals.length +
+          customerComplaints.length +
+          customerVisits.length +
+          customerInquiries.length;
+
+        // Omit ghost seed records that have 0 activity for this salesperson/scope
+        const isVirtual = String(customer.id || '').startsWith('virtual-');
+        if (
+          !isVirtual &&
+          totalActivityCount === 0 &&
+          !customer.contact_person &&
+          !customer.notes &&
+          !customer.customer_gst
+        ) {
+          continue;
+        }
 
         const latestWonDeal =
           customerWonDeals.length > 0 ? customerWonDeals[0] : null;
@@ -723,15 +921,6 @@ export class CustomersService {
           return sum + amt;
         }, 0);
 
-        // Metrics: Complaints & Open Issues
-        const customerComplaints = safeAllComplaints.filter((c) =>
-          isCustomerMatch(
-            customer.customer_name,
-            customer.customer_phone,
-            c.customer_name,
-            null,
-          ),
-        );
         const openComplaints = customerComplaints.filter((c) => {
           const st = (c.status || '').toLowerCase();
           return st !== 'resolved' && st !== 'closed';
@@ -753,8 +942,11 @@ export class CustomersService {
           segment = 'new';
         }
 
-        return {
+        const repName = repPhone ? empMap.get(repPhone) || null : null;
+
+        results.push({
           ...customer,
+          assigned_salesperson_name: repName,
           last_order_date: effectiveLastOrderStr,
           days_since_order: daysSinceOrder,
           churn_risk: churnRisk,
@@ -762,10 +954,12 @@ export class CustomersService {
           lifetime_value: lifetimeValue,
           open_complaints: openComplaints,
           total_complaints: customerComplaints.length,
+          total_visits: customerVisits.length,
+          total_inquiries: customerInquiries.length,
           segment,
           avg_order_frequency_days: customer.avg_order_frequency_days || 30,
-        };
-      });
+        });
+      }
 
       return results.sort((a, b) => {
         const riskOrder: Record<string, number> = {
@@ -781,8 +975,13 @@ export class CustomersService {
     }
   }
 
-  async updateCustomer(id: string, data: any) {
+  async updateCustomer(
+    id: string,
+    data: any,
+    salespersonPhone?: string[] | string,
+  ) {
     try {
+      const decodedId = decodeURIComponent(id || '').trim();
       const updatePayload: any = {
         updated_at: new Date().toISOString(),
       };
@@ -806,10 +1005,10 @@ export class CustomersService {
         updatePayload.churn_risk = data.churn_risk;
       if (data.segment !== undefined) updatePayload.segment = data.segment;
 
-      if (id.startsWith('virtual-')) {
+      if (decodedId.startsWith('virtual-')) {
         const namePart =
           data.customer_name ||
-          id.replace(
+          decodedId.replace(
             /^(virtual-deal-|virtual-visit-|virtual-inquiry-|virtual-complaint-)/,
             '',
           );
@@ -827,10 +1026,31 @@ export class CustomersService {
         return created;
       }
 
+      if (salespersonPhone) {
+        const allowedList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        const { data: existing } = await this.supabase
+          .from('recurring_customers')
+          .select('assigned_salesperson_phone')
+          .eq('id', decodedId)
+          .single();
+
+        if (
+          existing &&
+          existing.assigned_salesperson_phone &&
+          !phoneInList(existing.assigned_salesperson_phone, allowedList)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this customer.',
+          );
+        }
+      }
+
       const { data: updated, error } = await this.supabase
         .from('recurring_customers')
         .update(updatePayload)
-        .eq('id', id)
+        .eq('id', decodedId)
         .select()
         .single();
       if (error) throw error;
