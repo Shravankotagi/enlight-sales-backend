@@ -54,7 +54,7 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 }
 
 CRITICAL EXTRACTION RULES & CONTEXT DISAMBIGUATION:
-1. CUSTOMER NAME: Extract the customer/company name requesting the product (e.g. from "Traders Pvt Ltd..." -> customer_name is "Traders Pvt Ltd"). If no company is explicitly mentioned, customer_name MUST be null. NEVER output the salesperson's name as customer_name.
+1. CUSTOMER NAME: Extract the customer/company name requesting the product VERBATIM from the current message only (e.g. from "Steel Industries\nEmail:..." -> customer_name is "Steel Industries"). NEVER complete, guess, fuzzy match, or carry forward any company name from previous conversations or memory. If the message says "Steel Industries", customer_name is "Steel Industries", NOT "Mahalaxmi Steel Industries". NEVER output the salesperson's name as customer_name.
 2. CONTACT PERSON: Extract the contact person, owner, or proprietor name if explicitly provided (e.g. from "Contact Person: Rajesh Mehta" -> contact_person is "Rajesh Mehta"). NEVER output the salesperson's name.
 3. MULTIPLE LINE ITEMS: If the message lists multiple products (e.g. "CR 1mm 1250x2500 - 300 nos, CR 1.2mm 1250x2500 - 200 nos, HR 1.6mm 1250x2500 - 200 nos"), extract each as a SEPARATE object in the line_items array with its own product name, dimensions, quantity, and unit.
 4. SPECIFICATIONS: Extract thickness and full dimensions explicitly stated (e.g. "1mm 1250x2500" -> dimensions: "1mm 1250x2500"). NEVER drop dimensions.
@@ -595,6 +595,7 @@ function getDealCode(deal) {
  */
 async function getAllOpenDealsForCustomer(customerName, senderPhone) {
   if (!customerName) return [];
+  const cleanName = customerName.trim();
   const { getAccessibleSalespersonPhonesForBot } = require('../supabase');
   const scope = senderPhone
     ? await getAccessibleSalespersonPhonesForBot(senderPhone)
@@ -603,7 +604,7 @@ async function getAllOpenDealsForCustomer(customerName, senderPhone) {
   let query = supabase
     .from('deals')
     .select('*, deal_items(*)')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', cleanName)
     .not('stage', 'in', '("won","lost")')
     .order('created_at', { ascending: false });
 
@@ -626,10 +627,12 @@ async function getAllOpenDealsForCustomer(customerName, senderPhone) {
  * Priority: salesperson's own deals → active stages first → most recent.
  */
 async function findBestDeal(customerName, senderPhone) {
+  if (!customerName) return null;
+  const cleanName = customerName.trim();
   const { data: ownActive } = await supabase
     .from('deals')
     .select('*')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', cleanName)
     .eq('salesperson_phone', senderPhone)
     .not('stage', 'in', '("won","lost")')
     .order('created_at', { ascending: false })
@@ -640,7 +643,7 @@ async function findBestDeal(customerName, senderPhone) {
   const { data: ownAny } = await supabase
     .from('deals')
     .select('*')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', cleanName)
     .eq('salesperson_phone', senderPhone)
     .order('created_at', { ascending: false })
     .limit(1);
@@ -671,12 +674,13 @@ async function getDealAmountFromItems(dealId) {
  * Checks if KRA 1 was already logged for a specific deal.
  */
 async function isKRA1AlreadyLogged(senderPhone, customerName) {
+  if (!customerName) return false;
   const { data } = await supabase
     .from('kra_logs')
     .select('id')
     .eq('salesperson_phone', senderPhone)
     .eq('kra_number', 1)
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', customerName.trim())
     .limit(1);
 
   return data && data.length > 0;
@@ -740,7 +744,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           .replace(/\s+/g, ' ');
         const textLower = textClean.toLowerCase();
 
-        // Extract customer name (supports structured "Company Name: ..." as well as inline text)
+        // Extract customer name (supports structured "Company Name: ..." as well as inline text and header line)
         let ruleCustomer = null;
         const structComp = textRaw.match(
           /(?:company\s+name|customer\s+name|client\s+name)\s*:\s*([^\n\r]+)/i,
@@ -748,38 +752,57 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         if (structComp) {
           ruleCustomer = structComp[1].trim().replace(/^['"]|['"]$/g, '');
         } else {
-          const reqMatch =
-            textClean.match(
-              /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars)|\s+requires|\s+needs|\s+before|\.|$)/i,
-            ) ||
-            textClean.match(
-              /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
-            ) ||
-            textClean.match(
-              /\b(?:mark|move|update|set|change)\s+([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
-            ) ||
-            textClean.match(
-              /^(?!new\b|log\b|create\b|add\b)([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
-            ) ||
-            textClean.match(
-              /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
-            );
-          if (reqMatch) {
-            const cand = reqMatch[1].trim();
-            if (
-              ![
-                'new',
-                'log',
-                'create',
-                'add',
-                'a',
-                'the',
-                'customer',
-                'unknown',
-                'max',
-              ].includes(cand.toLowerCase())
-            ) {
-              ruleCustomer = cand;
+          const lines = textRaw
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean);
+          const firstLine = lines[0] || '';
+          if (
+            firstLine &&
+            !/^(hi|hello|hey|deal|inquiry|update|stage|order|mark|please|dear|sales)\b/i.test(
+              firstLine,
+            ) &&
+            firstLine.length <= 50 &&
+            lines.length > 1 &&
+            /email:|delivery:|payment:|make:|1\)|2\)|hr\s*coil|cr\s*sheet|ms\s*sheet|chequered|@/i.test(
+              textRaw,
+            )
+          ) {
+            ruleCustomer = firstLine;
+          } else {
+            const reqMatch =
+              textClean.match(
+                /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars)|\s+requires|\s+needs|\s+before|\.|$)/i,
+              ) ||
+              textClean.match(
+                /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
+              ) ||
+              textClean.match(
+                /\b(?:mark|move|update|set|change)\s+([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
+              ) ||
+              textClean.match(
+                /^(?!new\b|log\b|create\b|add\b)([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
+              ) ||
+              textClean.match(
+                /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
+              );
+            if (reqMatch) {
+              const cand = reqMatch[1].trim();
+              if (
+                ![
+                  'new',
+                  'log',
+                  'create',
+                  'add',
+                  'a',
+                  'the',
+                  'customer',
+                  'unknown',
+                  'max',
+                ].includes(cand.toLowerCase())
+              ) {
+                ruleCustomer = cand;
+              }
             }
           }
         }
@@ -1095,6 +1118,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     const isNewReqMessage =
       /\b(need|requires|required|want|order|inquiry|rfq|new deal)\b/i.test(
         textLower,
+      ) ||
+      /\b(email:|delivery:|payment|cr\s*sheet|hr\s*coil|chequered|plate|mt\b|tons?\b|1\)|2\))/i.test(
+        textLower,
       );
 
     if (customerName && isNewReqMessage && !overrideData) {
@@ -1110,6 +1136,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     }
 
     if (!customerName || customerName.length < 2) {
+      // Only reuse active session for follow-up status updates, NEVER for new inquiries/requirements
       if (!isNewReqMessage) {
         const { getActiveSession } = require('../supabase');
         const activeCust = await getActiveSession(senderPhone);
@@ -1137,16 +1164,17 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       return ` Which customer is this inquiry for? Please reply with the customer/company name (e.g. _"Inquiry for ABC Steel"_).`;
     }
 
+    // Exact match only against database — if not found, use verbatim name from message
     const officialCustomerName = await verifyAndGetCustomerName(
       customerName,
       senderPhone,
     );
-    const finalCustomerName = officialCustomerName || customerName;
+    const finalCustomerName = (officialCustomerName || customerName).trim();
 
     const { data: custRecord } = await supabase
       .from('recurring_customers')
       .select('customer_phone')
-      .ilike('customer_name', `%${finalCustomerName}%`)
+      .ilike('customer_name', finalCustomerName)
       .limit(1);
     let actualCustomerPhone =
       custRecord && custRecord.length > 0

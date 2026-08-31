@@ -3,15 +3,20 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private activityLogsService: ActivityLogsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -28,11 +33,14 @@ export class DealsService {
         .from('deals')
         .select(
           `
-          *,
+          id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*)
         `,
         )
-        .order('created_at', { ascending: false });
+        .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
+          ascending: false,
+          nullsFirst: false,
+        });
 
       if (filters?.stage) {
         if (filters.stage === 'new_inquiry') {
@@ -52,36 +60,78 @@ export class DealsService {
           `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
         );
       }
-      if (filters?.from) {
+      if (filters?.from && filters?.to) {
+        // Each date field is tested as a complete [from, to] pair — prevents
+        // cross-column mismatches (e.g. created_at >= from AND won_at <= to).
+        const fromIso = filters.from.includes('T')
+          ? filters.from
+          : `${filters.from}T00:00:00.000Z`;
+        const toEnd = filters.to.includes('T')
+          ? filters.to
+          : `${filters.to}T23:59:59.999Z`;
+        const fromDateOnly = filters.from.split('T')[0];
+        const toDateOnly = filters.to.split('T')[0];
+        if (filters?.stage === 'won') {
+          query = query.or(
+            `and(won_at.gte.${fromIso},won_at.lte.${toEnd}),` +
+              `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+              `and(won_at.is.null,created_at.gte.${fromIso},created_at.lte.${toEnd})`,
+          );
+        } else {
+          query = query.gte('created_at', fromIso).lte('created_at', toEnd);
+        }
+      } else if (filters?.from) {
         const fromIso = filters.from.includes('T')
           ? filters.from
           : `${filters.from}T00:00:00.000Z`;
         const fromDateOnly = filters.from.split('T')[0];
-        query = query.or(
-          `won_at.gte.${fromIso},created_at.gte.${fromIso},po_date.gte.${fromDateOnly}`,
-        );
-      }
-      if (filters?.to) {
+        if (filters?.stage === 'won') {
+          query = query.or(
+            `won_at.gte.${fromIso},po_date.gte.${fromDateOnly},and(won_at.is.null,created_at.gte.${fromIso})`,
+          );
+        } else {
+          query = query.gte('created_at', fromIso);
+        }
+      } else if (filters?.to) {
         const toEnd = filters.to.includes('T')
           ? filters.to
           : `${filters.to}T23:59:59.999Z`;
         const toDateOnly = filters.to.split('T')[0];
-        query = query.or(
-          `won_at.lte.${toEnd},created_at.lte.${toEnd},po_date.lte.${toDateOnly}`,
-        );
+        if (filters?.stage === 'won') {
+          query = query.or(
+            `won_at.lte.${toEnd},po_date.lte.${toDateOnly},and(won_at.is.null,created_at.lte.${toEnd})`,
+          );
+        } else {
+          query = query.lte('created_at', toEnd);
+        }
       }
 
       const { data, error } = await query;
       if (error) throw error;
 
       const lightweightDeals = (data || []).map((d: any) => {
-        const hasMedia = Boolean(
-          d.inquiry_id ||
-          d.po_number ||
-          (Array.isArray(d.media_urls) && d.media_urls.length > 0),
-        );
+        let computedTotal = Number(d.total_amount) || 0;
+        if (
+          computedTotal <= 0 &&
+          Array.isArray(d.deal_items) &&
+          d.deal_items.length > 0
+        ) {
+          const subtotal = d.deal_items.reduce((s: number, i: any) => {
+            const amt =
+              Number(i.amount) ||
+              (Number(i.quantity) || 0) *
+                (Number(i.rate || i.quoted_price || i.price_per_mt) || 0);
+            return s + amt;
+          }, 0);
+          if (subtotal > 0) {
+            computedTotal = subtotal + Math.round(subtotal * 0.18);
+          }
+        }
+
+        const hasMedia = Boolean(d.inquiry_id);
         return {
           ...d,
+          total_amount: computedTotal > 0 ? computedTotal : null,
           has_media: hasMedia,
           media_urls: hasMedia ? ['attached_document'] : [],
         };
@@ -116,7 +166,7 @@ export class DealsService {
         }
       }
 
-      // Enrich with media_urls from inquiries if available
+      // Enrich with media_urls on-demand for this single deal
       if (data) {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
@@ -142,12 +192,10 @@ export class DealsService {
         if (!hasValidMedia) {
           const { data: allMediaInqs } = await this.supabase
             .from('inquiries')
-            .select(
-              'id, sender_name, media_urls, raw_text, ai_extraction_json, created_at',
-            )
+            .select('id, sender_name, raw_text, created_at')
             .not('media_urls', 'is', null)
             .order('created_at', { ascending: false })
-            .limit(100);
+            .limit(50);
 
           const dName = (data.customer_name || '').toLowerCase().trim();
           const dPo = (data.po_number || '').toLowerCase().trim();
@@ -169,29 +217,10 @@ export class DealsService {
             );
 
           const matched = (allMediaInqs || []).find((mi: any) => {
-            if (!Array.isArray(mi.media_urls) || mi.media_urls.length === 0)
-              return false;
             const sName = (mi.sender_name || '').toLowerCase().trim();
-            const custJsonName = (
-              mi.ai_extraction_json?.customer?.name ||
-              mi.ai_extraction_json?.companyName ||
-              ''
-            )
-              .toLowerCase()
-              .trim();
             const rawTxt = (mi.raw_text || '').toLowerCase();
-            const poJson = (mi.ai_extraction_json?.po_number || '')
-              .toLowerCase()
-              .trim();
 
-            if (dPo && poJson && (poJson.includes(dPo) || dPo.includes(poJson)))
-              return true;
             if (dPo && rawTxt && rawTxt.includes(dPo)) return true;
-            if (
-              custJsonName &&
-              (custJsonName.includes(dName) || dName.includes(custJsonName))
-            )
-              return true;
             if (sName && (sName.includes(dName) || dName.includes(sName)))
               return true;
             if (dWords.length > 0 && dWords.some((w) => rawTxt.includes(w)))
@@ -200,9 +229,16 @@ export class DealsService {
             return false;
           });
 
-          if (matched && matched.media_urls) {
-            data.media_urls = matched.media_urls;
-            if (!data.inquiry_id && matched.id) {
+          if (matched && matched.id) {
+            const { data: matchedInq } = await this.supabase
+              .from('inquiries')
+              .select('media_urls')
+              .eq('id', matched.id)
+              .single();
+            if (matchedInq && matchedInq.media_urls) {
+              data.media_urls = matchedInq.media_urls;
+            }
+            if (!data.inquiry_id) {
               data.inquiry_id = matched.id;
               // Persist link back to deals table asynchronously
               this.supabase
@@ -247,7 +283,7 @@ export class DealsService {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, salesperson_phone')
+        .select('id, salesperson_phone, stage')
         .eq('id', id)
         .single();
       if (fetchErr || !existingDeal) {
@@ -263,6 +299,24 @@ export class DealsService {
             'Access Denied: You do not have permission to update this deal.',
           );
         }
+      }
+
+      const currentStage = (existingDeal.stage || 'new_inquiry')
+        .toLowerCase()
+        .trim();
+      const targetStage = (stage || '').toLowerCase().trim();
+
+      // Rule: Gated stage transitions:
+      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' or 'lost'.
+      if (
+        (currentStage === 'new_inquiry' ||
+          currentStage === 'review' ||
+          !existingDeal.stage) &&
+        (targetStage === 'won' || targetStage === 'lost')
+      ) {
+        throw new BadRequestException(
+          `Cannot mark deal as ${targetStage.toUpperCase()} from '${currentStage}' stage. The deal must first be Qualified or Quoted.`,
+        );
       }
 
       const updateData: any = { stage };
@@ -281,6 +335,34 @@ export class DealsService {
         .select()
         .single();
       if (error) throw error;
+
+      // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
+      let effectiveTotal = Number(data?.total_amount) || 0;
+      if (stage === 'won') {
+        if (effectiveTotal <= 0) {
+          const { data: items } = await this.supabase
+            .from('deal_items')
+            .select('*')
+            .eq('deal_id', id);
+          if (items && items.length > 0) {
+            const subtotal = items.reduce((s: number, i: any) => {
+              const amt =
+                Number(i.amount) ||
+                (Number(i.quantity) || 0) *
+                  (Number(i.rate || i.quoted_price || i.price_per_mt) || 0);
+              return s + amt;
+            }, 0);
+            if (subtotal > 0) {
+              effectiveTotal = subtotal + Math.round(subtotal * 0.18);
+              await this.supabase
+                .from('deals')
+                .update({ total_amount: effectiveTotal })
+                .eq('id', id);
+              data.total_amount = effectiveTotal;
+            }
+          }
+        }
+      }
 
       // Automatically create or update payment tracking record when a deal is marked WON
       if (stage === 'won' && data) {
@@ -313,8 +395,8 @@ export class DealsService {
           await this.supabase
             .from('payment_tracking')
             .update({
-              total_deal_amount: data.total_amount || 0,
-              pending_amount: data.total_amount || 0,
+              total_deal_amount: effectiveTotal || data.total_amount || 0,
+              pending_amount: effectiveTotal || data.total_amount || 0,
               due_date: dueDateStr,
               deal_id: data.id,
               salesperson_phone: data.salesperson_phone || null,
@@ -325,14 +407,33 @@ export class DealsService {
           await this.supabase.from('payment_tracking').insert({
             deal_id: data.id,
             customer_name: data.customer_name,
-            total_deal_amount: data.total_amount || 0,
+            total_deal_amount: effectiveTotal || data.total_amount || 0,
             paid_amount: 0,
-            pending_amount: data.total_amount || 0,
+            pending_amount: effectiveTotal || data.total_amount || 0,
             status: 'pending',
             due_date: dueDateStr,
             salesperson_phone: data.salesperson_phone || null,
             created_at: new Date().toISOString(),
           });
+        }
+
+        // Log to kra_logs for KRA 1 (Sales Achievement)
+        try {
+          const now = new Date();
+          const nowIso = now.toISOString();
+          await this.supabase.from('kra_logs').insert({
+            kra_number: 1,
+            kra_type: 'deal_won',
+            description: `Deal Won: ${data.customer_name} (₹${(effectiveTotal || 0).toLocaleString('en-IN')})`,
+            salesperson_phone: data.salesperson_phone || null,
+            customer_name: data.customer_name,
+            value: effectiveTotal || 0,
+            month: now.getMonth() + 1,
+            year: now.getFullYear(),
+            created_at: nowIso,
+          });
+        } catch (kraErr: any) {
+          this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
         }
 
         await this.syncCustomerFromOrder(
@@ -356,6 +457,20 @@ export class DealsService {
       }).catch((err) =>
         this.logger.error('Bigin auto-sync notice:', err.message),
       );
+
+      // Non-blocking activity log
+      try {
+        const custName = data?.customer_name || 'Customer';
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: data?.salesperson_phone || null,
+          description: `Order for ${custName} updated to ${stage}`,
+          module: 'Orders',
+          customer_name: custName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      }
 
       return data;
     } catch (error) {
@@ -466,6 +581,24 @@ export class DealsService {
           deal.customer_gst,
           deal.contact_person,
         );
+
+        // Non-blocking activity log
+        try {
+          const cust = deal.customer_name || 'Customer';
+          const poStr = deal.po_number ? ` (PO: ${deal.po_number})` : '';
+          this.activityLogsService.logActivity({
+            salesperson_name: 'Sales Team',
+            salesperson_phone: deal.salesperson_phone || null,
+            description: `New order created for ${cust}${poStr}`,
+            module: 'Orders',
+            customer_name: cust,
+          });
+        } catch (actErr: any) {
+          this.logger.warn(
+            'Non-blocking activity log notice:',
+            actErr?.message,
+          );
+        }
       }
 
       return deal;
@@ -603,8 +736,8 @@ export class DealsService {
           existingDeal = d[0];
           dealId = existingDeal.id;
         }
-      } else if (customerName) {
-        // Find most recent active deal in pipeline for this customer
+      } else if (data.auto_link_pipeline && customerName) {
+        // Only auto-link to open pipeline deal if explicitly requested
         const { data: d } = await this.supabase
           .from('deals')
           .select('*')
@@ -636,7 +769,6 @@ export class DealsService {
             payment_terms: paymentTerms || existingDeal.payment_terms,
             inquiry_type: 'purchase_order',
             status: 'auto_created',
-            updated_at: nowIso,
           })
           .eq('id', dealId)
           .select()
@@ -804,6 +936,20 @@ export class DealsService {
           'Non-blocking follow-up resolution notice:',
           fErr?.message,
         );
+      }
+
+      // Non-blocking activity log
+      try {
+        const poStr = poNumber ? ` (PO: ${poNumber})` : '';
+        this.activityLogsService.logActivity({
+          salesperson_name: 'Sales Team',
+          salesperson_phone: phone || null,
+          description: `New order created for ${customerName}${poStr}`,
+          module: 'Orders',
+          customer_name: customerName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
       }
 
       return savedDeal;

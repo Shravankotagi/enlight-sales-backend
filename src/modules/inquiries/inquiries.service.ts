@@ -3,6 +3,8 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -46,8 +48,8 @@ function getAssetFontPath(fontFilename: string): string | null {
 }
 
 import { DealsService } from '../deals/deals.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
-  calculateSubtotal,
   calculateQuotationBreakdown,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
@@ -252,6 +254,63 @@ function extractCleanCustomerName(rawText: string): string | null {
   return null;
 }
 
+function extractCleanDeliveryLocation(rawText?: string, aiJson?: any): string {
+  const sanitize = (str: string): string => {
+    if (!str) return '';
+    let clean = str.replace(/^[•\-\*:\s|]+|[•\-\*:\s|]+$/g, '').trim();
+    if (clean.includes('|')) clean = clean.split('|')[0].trim();
+    clean = clean
+      .replace(
+        /\s*(?:payment\s*terms?|payment|terms?|make|brand|preferred\s*make|notes?|remarks?|email|contact|phone)\s*[:=-].*$/i,
+        '',
+      )
+      .trim();
+    return clean.replace(/^[•\-\*:\s|]+|[•\-\*:\s|]+$/g, '').trim();
+  };
+
+  const json = aiJson || {};
+  const fromJson = sanitize(
+    json.delivery_location || json.deliveryLocation || '',
+  );
+
+  let fromText = '';
+  if (rawText && typeof rawText === 'string') {
+    // 1. Line-by-line match for bullet or key-value format (stops strictly at pipe, newline, or next field)
+    const lineMatch =
+      rawText.match(
+        /(?:^[•\-\*]?\s*(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^|\n\r]+)/im,
+      ) ||
+      rawText.match(
+        /(?:(?:delivery\s*(?:location|address)?|delivered\s*to|dispatch\s*to|site\s*(?:location|address)?|destination)\s*[:=-]\s*)([^|\n\r]+)/i,
+      );
+    if (lineMatch && lineMatch[1].trim().length > 2) {
+      fromText = sanitize(lineMatch[1]);
+    }
+
+    // 2. Multiline block fallback
+    if (!fromText) {
+      const blockMatch =
+        rawText.match(
+          /(?:delivery\s*(?:address|location)?|delivered\s*to|deliver\s*to|site\s*(?:address|location)?|destination|dispatch\s*to)\s*[:=-]?\s*([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s*(?:\||;|\n{2,}|payment\s*terms?|payment|terms?|rate|price|qty|quantity|make|brand|notes?|email|contact|phone|before|by|on\s+\d|gst\b)|$)/i,
+        ) ||
+        rawText.match(
+          /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|location|destination)\s+([A-Za-z0-9\s,./#&'\"()\-]+?)(?:\s+before|\s+by|\s+on|\s+within|\||$)/i,
+        );
+      if (blockMatch && blockMatch[1].trim().length > 2) {
+        fromText = sanitize(blockMatch[1]);
+      }
+    }
+  }
+
+  let finalLoc = fromJson;
+  if (fromText && fromText.length > fromJson.length) {
+    finalLoc = fromText;
+  } else if (!finalLoc) {
+    finalLoc = fromText;
+  }
+  return sanitize(finalLoc);
+}
+
 function isGenuineInquiry(item: any): boolean {
   if (!item) return false;
   const rawText = (item.raw_text || '').trim();
@@ -438,26 +497,105 @@ function resolveInquiryEntities(
       : null) ||
     'Max';
 
+  const extractedDeliveryLocation = extractCleanDeliveryLocation(
+    item.raw_text,
+    aiJson,
+  );
+
   return {
     customer_name: extractedCustomerName,
     customer_phone: extractedCustomerPhone || '',
     salesperson_name: resolvedSalesperson,
     assigned_salesperson_name: resolvedSalesperson,
     salesperson_phone: item.salesperson_phone || item.sender_phone || '',
+    delivery_location:
+      extractedDeliveryLocation || item.delivery_location || '',
+    deliveryLocation: extractedDeliveryLocation || item.delivery_location || '',
   };
 }
 
 @Injectable()
-export class InquiriesService {
+export class InquiriesService implements OnModuleInit {
   private readonly logger = new Logger(InquiriesService.name);
 
   constructor(
     private supabaseService: SupabaseService,
     private dealsService: DealsService,
+    private activityLogsService: ActivityLogsService,
   ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
+  }
+
+  async onModuleInit() {
+    // Keep server startup fast and lightweight
+  }
+
+  async backfillInquiryDealStages() {
+    try {
+      const [{ data: inquiries }, { data: deals }] = await Promise.all([
+        this.supabase.from('inquiries').select('*'),
+        this.supabase.from('deals').select('*'),
+      ]);
+      if (!inquiries || !deals) return;
+
+      for (const inq of inquiries) {
+        const ai = inq.ai_extraction_json || {};
+        const custName = (
+          inq.customer_name ||
+          ai.companyName ||
+          ai.customer_name ||
+          inq.sender_name ||
+          ''
+        ).trim();
+        let deal = deals.find((d: any) => d.inquiry_id === inq.id);
+        if (!deal && custName) {
+          deal = deals.find(
+            (d: any) =>
+              (d.customer_name || '').toLowerCase().trim() ===
+              custName.toLowerCase().trim(),
+          );
+        }
+        if (!deal) continue;
+
+        const currentStage = (deal.stage || '').toLowerCase().trim();
+        if (
+          currentStage === 'won' ||
+          currentStage === 'lost' ||
+          currentStage === 'negotiation'
+        ) {
+          continue;
+        }
+
+        let targetStage = 'new_inquiry';
+        const inqStatus = (inq.status || '').toLowerCase().trim();
+        if (inqStatus === 'quoted' || inqStatus === 'quotation_sent') {
+          targetStage = 'quoted';
+        } else if (
+          inqStatus === 'confirmed' ||
+          inqStatus === 'saved' ||
+          inqStatus === 'processed'
+        ) {
+          targetStage = 'qualified';
+        } else if (
+          inqStatus === 'review' ||
+          inqStatus === 'needs_review' ||
+          inqStatus === 'pending'
+        ) {
+          targetStage = 'new_inquiry';
+        }
+
+        if (currentStage !== targetStage) {
+          await this.supabase
+            .from('deals')
+            .update({ stage: targetStage })
+            .eq('id', deal.id);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn('Error in backfillInquiryDealStages:', err?.message);
+    }
   }
 
   async findAll(filters?: {
@@ -479,7 +617,7 @@ export class InquiriesService {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, media_urls',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
         )
         .order('created_at', { ascending: false });
 
@@ -506,10 +644,22 @@ export class InquiriesService {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Fetch deals to associate real customer_phone from the database
-      const { data: deals } = await this.supabase
-        .from('deals')
-        .select('inquiry_id, customer_name, customer_phone');
+      // Extract inquiry IDs to scope the deals query efficiently
+      const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
+
+      // Concurrently fetch deals and employees in parallel using Promise.all
+      const [dealsRes, employeesRes] = await Promise.all([
+        inquiryIds.length > 0
+          ? this.supabase
+              .from('deals')
+              .select('inquiry_id, customer_name, customer_phone')
+              .in('inquiry_id', inquiryIds)
+          : Promise.resolve({ data: [] }),
+        this.supabase.from('employees').select('name, phone'),
+      ]);
+
+      const deals = dealsRes.data || [];
+      const employees = employeesRes.data || [];
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
@@ -524,11 +674,6 @@ export class InquiriesService {
           );
         }
       });
-
-      // Fetch employees to accurately resolve salesperson names
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone');
 
       const empPhoneMap = new Map<string, string>();
       employees?.forEach((e: any) => {
@@ -545,7 +690,6 @@ export class InquiriesService {
       // Clean list with accurate customer and salesperson entities and lightweight media indicators
       const lightweightData = genuineData.map((item: any) => {
         const hasAttachment =
-          (Array.isArray(item.media_urls) && item.media_urls.length > 0) ||
           item.raw_text?.includes('[Inquiry Attachment:') ||
           Boolean(item.ai_extraction_json) ||
           item.source_channel === 'whatsapp' ||
@@ -558,15 +702,6 @@ export class InquiriesService {
           empPhoneMap,
         );
 
-        // Sanitize media_urls: keep lightweight HTTP URLs, replace large base64 data with 'attached_document'
-        const cleanMedia = (item.media_urls || [])
-          .map((m: any) =>
-            typeof m === 'string' && m.startsWith('http')
-              ? m
-              : 'attached_document',
-          )
-          .filter(Boolean);
-
         // Strip duplicate nested base64 data from ai_extraction_json for high performance list transfer
         let cleanAiJson = item.ai_extraction_json;
         if (cleanAiJson && typeof cleanAiJson === 'object') {
@@ -574,6 +709,10 @@ export class InquiriesService {
           if (cleanAiJson.media_urls) delete cleanAiJson.media_urls;
           if (cleanAiJson.image_base64) delete cleanAiJson.image_base64;
           if (cleanAiJson.file_base64) delete cleanAiJson.file_base64;
+          if (entities.delivery_location) {
+            cleanAiJson.delivery_location = entities.delivery_location;
+            cleanAiJson.deliveryLocation = entities.delivery_location;
+          }
         }
 
         return {
@@ -581,12 +720,7 @@ export class InquiriesService {
           ...entities,
           ai_extraction_json: cleanAiJson,
           has_media: hasAttachment,
-          media_urls:
-            cleanMedia.length > 0
-              ? cleanMedia
-              : hasAttachment
-                ? ['attached_document']
-                : [],
+          media_urls: hasAttachment ? ['attached_document'] : [],
         };
       });
 
@@ -618,9 +752,16 @@ export class InquiriesService {
       }
 
       if (data) {
-        const { data: deals } = await this.supabase
-          .from('deals')
-          .select('inquiry_id, customer_name, customer_phone');
+        const [dealsRes, employeesRes] = await Promise.all([
+          this.supabase
+            .from('deals')
+            .select('inquiry_id, customer_name, customer_phone')
+            .eq('inquiry_id', id),
+          this.supabase.from('employees').select('name, phone'),
+        ]);
+
+        const deals = dealsRes.data || [];
+        const employees = employeesRes.data || [];
 
         const dealByInqId = new Map<string, string>();
         const dealByName = new Map<string, string>();
@@ -635,10 +776,6 @@ export class InquiriesService {
             );
           }
         });
-
-        const { data: employees } = await this.supabase
-          .from('employees')
-          .select('name, phone');
 
         const empPhoneMap = new Map<string, string>();
         employees?.forEach((e: any) => {
@@ -789,6 +926,52 @@ export class InquiriesService {
         }
       }
 
+      // Backend Save Gate: Cannot transition to confirmed or quoted if any line item has Rate <= 0 or Quantity <= 0
+      if (status === 'confirmed' || status === 'quoted') {
+        const lineItems = details?.lineItems || details?.line_items || [];
+        if (!Array.isArray(lineItems) || lineItems.length === 0) {
+          throw new BadRequestException(
+            'Cannot save inquiry: At least one line item is required.',
+          );
+        }
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          if (!item.sku_text || !item.sku_text.trim()) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Description is required for Item #${i + 1}.`,
+            );
+          }
+          if (
+            item.quantity === null ||
+            item.quantity === undefined ||
+            item.quantity === '' ||
+            Number(item.quantity) <= 0 ||
+            isNaN(Number(item.quantity))
+          ) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Quantity must be greater than 0 for Item #${i + 1}.`,
+            );
+          }
+          if (
+            item.rate === null ||
+            item.rate === undefined ||
+            item.rate === '' ||
+            item.rate === 0 ||
+            Number(item.rate) <= 0 ||
+            isNaN(Number(item.rate))
+          ) {
+            throw new BadRequestException(
+              `Cannot save inquiry: Rate (₹) is required and must be greater than 0 for Item #${i + 1}.`,
+            );
+          }
+        }
+        if (!details?.companyName && !details?.customer_name) {
+          throw new BadRequestException(
+            'Cannot save inquiry: Company Name is required.',
+          );
+        }
+      }
+
       const updatePayload: any = { status };
       if (details) {
         if (details.companyName)
@@ -814,12 +997,43 @@ export class InquiriesService {
         .single();
       if (error) throw error;
 
-      // Automatically sync to pipeline / deals
-      if (status === 'quoted') {
+      // Automatically sync to pipeline / deals with strict status-to-stage mapping
+      if (status === 'quoted' || status === 'quotation_sent') {
         await this.syncInquiryToDeal(id, 'quoted', details);
+      } else if (
+        status === 'confirmed' ||
+        status === 'saved' ||
+        status === 'processed'
+      ) {
+        await this.syncInquiryToDeal(id, 'qualified', details);
+      } else if (
+        status === 'review' ||
+        status === 'needs_review' ||
+        status === 'pending'
+      ) {
+        await this.syncInquiryToDeal(id, 'new_inquiry', details);
       } else {
-        // Keep deal in new_inquiry (New Deals) or its existing pipeline stage
         await this.syncInquiryToDeal(id, undefined, details);
+      }
+
+      // Non-blocking activity log
+      try {
+        const custName =
+          (data as any)?.customer_name ||
+          (data?.ai_extraction_json as any)?.companyName ||
+          (data?.ai_extraction_json as any)?.customer_name ||
+          data?.sender_name ||
+          'Customer';
+        this.activityLogsService.logActivity({
+          salesperson_name:
+            (data as any)?.assigned_salesperson_name || 'Sales Team',
+          salesperson_phone: (data as any)?.salesperson_phone || null,
+          description: `Inquiry status for ${custName} updated to ${status}`,
+          module: 'Inquiries',
+          customer_name: custName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
       }
 
       return data;
@@ -1029,79 +1243,11 @@ export class InquiriesService {
       }
     }
 
-    // DETECT if this is a PO document (has a real po_number in data or ai_extraction_json)
-    const poNumber =
-      data.po_number ||
-      aiExtractionJson?.po_number ||
-      aiExtractionJson?.poNumber;
-
-    const isPoDocument = Boolean(
-      poNumber &&
-      poNumber !== 'null' &&
-      poNumber !== 'None' &&
-      String(poNumber).trim().length > 2,
-    );
-
-    if (isPoDocument) {
-      // Route to processPo so it appears in Orders tab with stage 'won'
-      try {
-        await this.dealsService.processPo(
-          {
-            inquiry_id: created.id,
-            customer_name:
-              aiExtractionJson?.customer_name ||
-              aiExtractionJson?.customer?.name ||
-              aiExtractionJson?.companyName ||
-              customerName,
-            customer_phone:
-              aiExtractionJson?.customer_phone ||
-              aiExtractionJson?.customer?.phone ||
-              customerPhone ||
-              '',
-            po_number: String(poNumber).trim(),
-            po_date:
-              aiExtractionJson?.po_date ||
-              aiExtractionJson?.poDate ||
-              nowIso.split('T')[0],
-            total_amount:
-              aiExtractionJson?.total_amount ||
-              aiExtractionJson?.totalAmount ||
-              0,
-            delivery_location:
-              aiExtractionJson?.delivery_location ||
-              aiExtractionJson?.deliveryLocation ||
-              '',
-            payment_terms:
-              aiExtractionJson?.payment_terms ||
-              aiExtractionJson?.paymentTerms ||
-              '',
-            line_items:
-              aiExtractionJson?.line_items || aiExtractionJson?.lineItems || [],
-            media_urls: created.media_urls || payload.media_urls || [],
-            overall_confidence: 0.98,
-          },
-          salespersonPhone,
-        );
-
-        // Also update the inquiry status to confirmed
-        await this.supabase
-          .from('inquiries')
-          .update({ status: 'confirmed' })
-          .eq('id', created.id);
-      } catch (poErr: any) {
-        this.logger.warn('Non-blocking PO processing notice:', poErr?.message);
-      }
-    } else {
-      // Automatically sync new inquiry to Deals / Pipeline under 'new_inquiry'
-      try {
-        await this.syncInquiryToDeal(
-          created.id,
-          'new_inquiry',
-          aiExtractionJson,
-        );
-      } catch (dealErr: any) {
-        this.logger.warn('Non-blocking deal sync notice:', dealErr?.message);
-      }
+    // Automatically sync new inquiry to Deals / Pipeline under 'new_inquiry'
+    try {
+      await this.syncInquiryToDeal(created.id, 'new_inquiry', aiExtractionJson);
+    } catch (dealErr: any) {
+      this.logger.warn('Non-blocking deal sync notice:', dealErr?.message);
     }
 
     // Log to kra_logs (KRA 4) safely without blocking inquiry creation
@@ -1118,6 +1264,29 @@ export class InquiriesService {
       });
     } catch (kraErr: any) {
       this.logger.warn('Non-blocking kra_logs insert notice:', kraErr?.message);
+    }
+
+    // Log to activity_logs
+    try {
+      const channelLabel =
+        payload.source_channel === 'whatsapp_text'
+          ? 'WhatsApp'
+          : payload.source_channel === 'whatsapp_image'
+            ? 'WhatsApp Image'
+            : payload.source_channel === 'purchase_order'
+              ? 'WhatsApp PO'
+              : 'Dashboard';
+      this.activityLogsService.logActivity({
+        salesperson_name:
+          (created as any)?.assigned_salesperson_name || 'Sales Team',
+        salesperson_phone:
+          salespersonPhone || created.salesperson_phone || null,
+        description: `New inquiry received from ${finalCustomerName} via ${channelLabel}`,
+        module: 'Inquiries',
+        customer_name: finalCustomerName,
+      });
+    } catch (actErr: any) {
+      this.logger.warn('Non-blocking activity log notice:', actErr?.message);
     }
 
     return created;
@@ -1178,6 +1347,7 @@ export class InquiriesService {
       const salespersonPhone =
         inquiry.salesperson_phone || inquiry.sender_phone || '910000000000';
       const deliveryLocation =
+        extractCleanDeliveryLocation(inquiry.raw_text, details) ||
         details.deliveryLocation ||
         details.delivery_location ||
         aiJson.deliveryLocation ||
@@ -1199,20 +1369,29 @@ export class InquiriesService {
         aiJson.line_items ||
         [];
 
-      let totalAmount = Number(
-        details.totalAmount ||
-          details.total_amount ||
-          aiJson.totalAmount ||
-          aiJson.total_amount ||
-          0,
-      );
+      let subtotal = 0;
+      let hasValidRates = false;
 
-      if (
-        totalAmount <= 0 &&
-        Array.isArray(lineItemsSrc) &&
-        lineItemsSrc.length > 0
-      ) {
-        totalAmount = calculateSubtotal(lineItemsSrc);
+      if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) {
+        subtotal = lineItemsSrc.reduce((s: number, item: any) => {
+          const q = Number(item.quantity) || 0;
+          const r = Number(item.rate) || 0;
+          if (r > 0) hasValidRates = true;
+          const amt = Number(item.amount) || Math.round(q * r);
+          return s + amt;
+        }, 0);
+      }
+
+      let grandTotal: number | null = null;
+      if (hasValidRates && subtotal > 0) {
+        // Grand Total = Subtotal + 18% GST
+        const gst = Math.round(subtotal * 0.18);
+        grandTotal = subtotal + gst;
+      } else if (Number(details.grandTotal || details.grand_total || 0) > 0) {
+        grandTotal = Number(details.grandTotal || details.grand_total);
+      } else if (Number(details.totalAmount || details.total_amount || 0) > 0) {
+        const rawBase = Number(details.totalAmount || details.total_amount);
+        grandTotal = rawBase + Math.round(rawBase * 0.18);
       }
 
       // Check if a deal already exists for this inquiry
@@ -1235,9 +1414,9 @@ export class InquiriesService {
             salesperson_phone: salespersonPhone,
             delivery_location: deliveryLocation || undefined,
             payment_terms: paymentTerms || undefined,
-            total_amount: totalAmount > 0 ? totalAmount : undefined,
+            total_amount:
+              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
             status: 'auto_created',
-            updated_at: new Date().toISOString(),
           })
           .eq('id', dealId);
       } else {
@@ -1252,7 +1431,8 @@ export class InquiriesService {
             salesperson_phone: salespersonPhone,
             delivery_location: deliveryLocation || null,
             payment_terms: paymentTerms || null,
-            total_amount: totalAmount > 0 ? totalAmount : null,
+            total_amount:
+              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
             inquiry_type: inquiry.inquiry_type || 'Product Requirement',
             status: 'auto_created',
             overall_confidence: Number(inquiry.overall_confidence) || 0.95,
@@ -1461,7 +1641,7 @@ Thank you for partnering with Enlight Metals Private Limited.
 
 Please find attached our official ${isOrderDoc ? 'Purchase Order Quotation & Audit' : 'Commercial Price Quotation'} (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
 
-${isOrderDoc ? 'Order / Quotation Summary:' : 'Quotation Summary:'}
+${isOrderDoc ? 'PO Order' : 'Summary:'}
 - Reference Number: ${qRefNum}
 - Issue Date: ${todayDateStr}
 - Items & Specifications:
@@ -1627,7 +1807,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
           const resendData = await resendRes.json();
           if (resendRes.ok) {
             emailSent = true;
-            emailNotice = `Live email & PO Document (${qRefNum}) dispatched to ${customerEmail} via Resend!`;
+            emailNotice = `Live email & PO Document (${qRefNum}) dispatched to ${customerEmail} via Email!`;
           } else {
             this.logger.warn('Resend API call error:', resendData);
             emailNotice = `Resend Notice: ${resendData.message || 'Check recipient email or domain verification.'}`;
@@ -1676,6 +1856,22 @@ MIDC Industrial Zone, Mumbai - 400001`;
         this.logger.warn('Non-blocking KRA log notice:', kraErr?.message);
       }
 
+      // Log to activity_logs
+      try {
+        this.activityLogsService.logActivity({
+          salesperson_name:
+            (inquiry as any)?.assigned_salesperson_name ||
+            (inquiry as any)?.salesperson_name ||
+            'Sales Team',
+          salesperson_phone: inquiry.salesperson_phone || null,
+          description: `Quotation sent to ${customerName}`,
+          module: 'Inquiries',
+          customer_name: customerName,
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      }
+
       return {
         success: true,
         email_sent: emailSent,
@@ -1698,7 +1894,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
     }
     const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     try {
       const response = await axios.post(url, {
@@ -1706,13 +1902,13 @@ MIDC Industrial Zone, Mumbai - 400001`;
           {
             parts: [
               {
-                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": null,
+  "customer_name": "The buyer / client company issuing this inquiry (from the top letterhead / header banner or explicit 'Customer/Buyer' section). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
   "customer_phone": "phone number if present else null",
   "customer_email": "email if present else null",
-  "customer_gst": "GST number if present else null",
+  "customer_gst": "GST number of the customer if present else null",
   "customer_address": "company address if present else null",
   "delivery_location": "full delivery address / location as stated in document e.g. MIDC Industrial Area, Nashik, Maharashtra - 422010",
   "payment_terms": "payment terms e.g. 30 Days Credit or 45 Days Credit",
@@ -1723,7 +1919,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
   "line_items": [
     {
       "sku_text": "full material description e.g. MS Sheet 5MM THK E250",
-      "dimensions": "specs e.g. 1250 x 2500",
+      "dimensions": "specs / dimensions e.g. 1250 x 2500",
       "quantity": numeric_quantity,
       "unit": "exact unit stated e.g. Nos, MT, Kg, Pcs, Sheets",
       "rate": numeric_rate_or_0,
@@ -1737,13 +1933,13 @@ MIDC Industrial Zone, Mumbai - 400001`;
 }
 
 CRITICAL EXTRACTION RULES:
-1. COMPANY NAME (STRICT):
-- Extract "customer_name" ONLY if it is explicitly stated as the formal buyer/customer company name in a formal document letterhead, header banner, or explicit "Customer Name:" / "Buyer:" field.
-- If the document is an email inquiry or letter signed off with a name/entity at the bottom (e.g. "Thanks & Regards, Rajesh Kumar, Sunrise Traders" or "From: ...@sunrisetraders.in"), leave "customer_name" as null or "" (empty string).
-- NEVER guess, infer, or populate "customer_name" from email sign-offs, email signatures, email headers (From: ...), email addresses, or footers.
+1. SUPPLIER vs BUYER IDENTIFICATION (STRICT):
+- The recipient/supplier is 'Enlight Metals Private Limited'. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
+- The 'customer_name' is the issuing client/buyer company whose name appears at the top header, letterhead, or logo banner (e.g. 'DYNAMIC ENGINEERING WORKS PVT. LTD.', 'APEX STRUCTURAL & STEEL WORKS PVT. LTD.', 'RATHI INFRASTRUCTURE PROJECTS LTD.', 'KIRLOSKAR FABRICATION SYSTEMS LTD.').
+- If no company name exists on the letterhead, extract the company from the sign-off or leave null.
 
 2. LINE ITEMS vs ADDITIONAL NOTES (STRICT):
-- Line items: Every product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
+- Line items: Every distinct product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
 - Additional notes: Must ONLY contain non-product contextual remarks such as delivery timeline requirements (e.g. "Delivery within 10 days of order confirmation"), preferred make, special conditions, or contact details.
 - Product rows / line items MUST NEVER appear in "additional_notes".
 
@@ -1991,9 +2187,9 @@ ${rawText}`,
           size: 'A4',
           margin: 40,
           info: {
-            Title: `Proforma Invoice - ${qRefNum}`,
+            Title: `Invoice - ${qRefNum}`,
             Author: 'Enlight Metals Private Limited',
-            Subject: `Proforma Invoice for ${customerName}`,
+            Subject: `Invoice for ${customerName}`,
           },
         });
 
@@ -2033,16 +2229,6 @@ ${rawText}`,
             month: '2-digit',
             year: 'numeric',
           });
-
-        const piNumber =
-          details?.piNumber ||
-          (details?.poNumber ? details.poNumber : null) ||
-          (qRefNum.startsWith('PI-')
-            ? qRefNum
-            : `PI-${qRefNum
-                .replace(/^QT-2026-/, '')
-                .replace(/^QT-/, '')
-                .padStart(5, '0')}`);
 
         const salesperson =
           details?.salespersonName ||
@@ -2157,19 +2343,6 @@ ${rawText}`,
         leftHeaderY += 12;
 
         // Top Right Proforma Invoice Header
-        doc
-          .fillColor('#1E293B')
-          .font(fontBold)
-          .fontSize(24)
-          .text('Proforma Invoice', 280, 40, { width: 275.28, align: 'right' });
-        doc
-          .fillColor('#334155')
-          .font(fontRegular)
-          .fontSize(9.5)
-          .text(`PI Number# ${piNumber}`, 280, 72, {
-            width: 275.28,
-            align: 'right',
-          });
 
         // 2. Bill To, Ship To & Supply Section (Left) / Order Date & Salesperson (Right)
         let currY = Math.max(leftHeaderY + 22, 205);

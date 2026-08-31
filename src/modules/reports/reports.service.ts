@@ -97,12 +97,16 @@ export class ReportsService {
         };
       }
 
+      const fromDateOnly = start.split('T')[0];
+      const toDateOnly = end.split('T')[0];
+
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
-        .neq('inquiry_type', 'unknown')
         .or(
-          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(created_at.gte.${start},created_at.lte.${end})`,
         );
       let inquiriesQuery = this.supabase
         .from('inquiries')
@@ -202,12 +206,12 @@ export class ReportsService {
           deals_won: wonDeals.length,
           deals_lost: lostDeals.length,
           deals_pending: pendingDeals.length,
-          total_deals: deals.length,
+          total_deals: inquiries.length > 0 ? inquiries.length : deals.length,
           conversion_rate:
-            deals.length > 0
-              ? Math.round((wonDeals.length / deals.length) * 100)
-              : inquiries.length > 0
-                ? Math.round((wonDeals.length / inquiries.length) * 100)
+            inquiries.length > 0
+              ? Math.round((wonDeals.length / inquiries.length) * 100)
+              : deals.length > 0
+                ? Math.round((wonDeals.length / deals.length) * 100)
                 : 0,
           total_inquiries: inquiries.length,
         },
@@ -491,7 +495,6 @@ export class ReportsService {
       let dealsQuery = this.supabase
         .from('deals')
         .select('*')
-        .neq('inquiry_type', 'unknown')
         .or(
           `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
         );
@@ -522,7 +525,10 @@ export class ReportsService {
               d.stage === 'new_inquiry' ||
               d.stage === 'new_deals' ||
               d.stage === 'new' ||
-              d.stage === 'inquiry'
+              d.stage === 'inquiry' ||
+              d.stage === 'review' ||
+              d.stage === 'lead' ||
+              !d.stage
             );
           }
           return d.stage === key;
@@ -592,48 +598,67 @@ export class ReportsService {
         };
       }
 
-      let itemsQuery = this.supabase
-        .from('deal_items')
+      const fromDateOnly = start.split('T')[0];
+      const toDateOnly = end.split('T')[0];
+
+      let dealsQuery = this.supabase
+        .from('deals')
         .select(
-          '*, deals!inner(created_at, won_at, stage, salesperson_phone, inquiry_type)',
+          'id, created_at, won_at, stage, salesperson_phone, inquiry_type, po_date',
         )
-        .neq('deals.inquiry_type', 'unknown')
-        .eq('deals.stage', 'won');
+        .neq('inquiry_type', 'unknown')
+        .eq('stage', 'won')
+        .or(
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(won_at.is.null,created_at.gte.${start},created_at.lte.${end})`,
+        );
 
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
-          'deals.salesperson_phone',
+          'salesperson_phone',
         ]);
-        if (orFilter) itemsQuery = itemsQuery.or(orFilter);
+        if (orFilter) dealsQuery = dealsQuery.or(orFilter);
       }
 
-      const { data: items, error } = await itemsQuery;
+      const { data: wonDeals, error: dealsErr } = await dealsQuery;
+      if (dealsErr) throw dealsErr;
 
-      if (error) throw error;
+      const dealIds = (wonDeals || []).map((d: any) => d.id);
+      if (dealIds.length === 0) {
+        return {
+          period: { month: monthName, year: y },
+          skus: [],
+        };
+      }
 
-      const validItems = (items || []).filter((item: any) => {
-        const d = item.deals;
-        if (!d) return false;
-        const dealDate = d.won_at || d.created_at;
-        return dealDate >= start && dealDate <= end;
-      });
+      const { data: items, error: itemsErr } = await this.supabase
+        .from('deal_items')
+        .select('*')
+        .in('deal_id', dealIds);
 
-      const bysku = validItems.reduce(
+      if (itemsErr) throw itemsErr;
+
+      const bysku = (items || []).reduce(
         (acc, item) => {
           const sku = item.sku_text || 'Unknown';
           if (!acc[sku]) {
             acc[sku] = {
               sku_text: sku,
               grade: item.grade,
+              dimensions: item.dimensions || '',
               total_quantity: 0,
               total_value: 0,
               deal_count: 0,
-              unit: item.unit,
+              unit: item.unit || 'MT',
             };
           }
-          acc[sku].total_quantity += item.quantity || 0;
-          acc[sku].total_value += item.amount || 0;
+          acc[sku].total_quantity += Number(item.quantity) || 0;
+          acc[sku].total_value += Number(item.amount) || 0;
           acc[sku].deal_count++;
+          if (!acc[sku].dimensions && item.dimensions) {
+            acc[sku].dimensions = item.dimensions;
+          }
           return acc;
         },
         {} as Record<string, any>,
@@ -647,6 +672,277 @@ export class ReportsService {
       };
     } catch (error) {
       this.logger.error('Error in getSkuReport:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Consolidated high-speed overview report.
+   * Executes database fetches in a single parallel batch and computes all sections in one pass.
+   */
+  async getOverviewReport(
+    month?: number,
+    year?: number,
+    salespersonPhone?: string | string[],
+    from?: string,
+    to?: string,
+  ) {
+    try {
+      let start: string;
+      let end: string;
+      let monthName = '';
+      let y = year || new Date().getFullYear();
+
+      if (from && to) {
+        start = new Date(from).toISOString();
+        end = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+        monthName = 'Selected Range';
+      } else {
+        const range = this.getMonthRange(month, year);
+        start = range.start;
+        end = range.end;
+        monthName = range.monthName;
+        y = range.year;
+      }
+
+      if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
+        return {
+          period: { month: monthName, year: y },
+          summary: {
+            total_revenue: 0,
+            won_revenue: 0,
+            pipeline_value: 0,
+            total_value: 0,
+            won_value: 0,
+            won: 0,
+            deals_won: 0,
+            deals_lost: 0,
+            deals_pending: 0,
+            total_deals: 0,
+            conversion_rate: 0,
+            total_inquiries: 0,
+          },
+          funnel: [
+            { stage: 'new_deals', label: 'New Deals', count: 0, value: 0 },
+            { stage: 'qualified', label: 'Qualified', count: 0, value: 0 },
+            { stage: 'quoted', label: 'Quoted', count: 0, value: 0 },
+            { stage: 'negotiation', label: 'Negotiation', count: 0, value: 0 },
+            { stage: 'won', label: 'Won', count: 0, value: 0 },
+            { stage: 'lost', label: 'Lost', count: 0, value: 0 },
+          ],
+          by_customer: [],
+          by_type: [],
+          lost_reasons: {},
+          skus: [],
+          orders: [],
+        };
+      }
+
+      const fromDateOnly = start.split('T')[0];
+      const toDateOnly = end.split('T')[0];
+
+      // 1. Query all deals in period with nested deal_items
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('*, deal_items(*)')
+        .or(
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(created_at.gte.${start},created_at.lte.${end})`,
+        );
+
+      // 2. Query all inquiries in period
+      let inquiriesQuery = this.supabase
+        .from('inquiries')
+        .select('id, created_at, salesperson_phone')
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      if (salespersonPhone) {
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
+
+        const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
+      }
+
+      // Execute queries in parallel in ONE batch
+      const [dealsResult, inquiriesResult] = await Promise.all([
+        dealsQuery,
+        inquiriesQuery,
+      ]);
+
+      if (dealsResult.error) throw dealsResult.error;
+      if (inquiriesResult.error) throw inquiriesResult.error;
+
+      const deals = dealsResult.data || [];
+      const inquiries = inquiriesResult.data || [];
+
+      const wonDeals = deals.filter((d: any) => d.stage === 'won');
+      const lostDeals = deals.filter((d: any) => d.stage === 'lost');
+      const pendingDeals = deals.filter(
+        (d: any) => !['won', 'lost'].includes(d.stage),
+      );
+
+      const pipelineValue = pendingDeals.reduce(
+        (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
+        0,
+      );
+      const wonValue = wonDeals.reduce(
+        (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
+        0,
+      );
+      const totalValue = wonValue;
+
+      // Group deals by customer
+      const byCustomer = wonDeals.reduce(
+        (acc: any, deal: any) => {
+          const name = deal.customer_name || 'Unknown';
+          if (!acc[name]) {
+            acc[name] = { customer: name, deals: 0, value: 0 };
+          }
+          acc[name].deals++;
+          acc[name].value += Number(deal.total_amount) || 0;
+          return acc;
+        },
+        {} as Record<string, any>,
+      );
+
+      // Group by inquiry/product type
+      const byType = deals.reduce(
+        (acc: any, deal: any) => {
+          const type = deal.inquiry_type || 'other';
+          if (!acc[type]) {
+            acc[type] = { type, count: 0, value: 0 };
+          }
+          acc[type].count++;
+          acc[type].value += Number(deal.total_amount) || 0;
+          return acc;
+        },
+        {} as Record<string, any>,
+      );
+
+      // Lost reasons
+      const lostReasons = lostDeals.reduce(
+        (acc: any, deal: any) => {
+          const reason = deal.lost_reason || 'Not Specified';
+          if (!acc[reason]) {
+            acc[reason] = 0;
+          }
+          acc[reason]++;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
+
+      // Funnel stages
+      const stages = [
+        { key: 'new_deals', label: 'New Deals' },
+        { key: 'qualified', label: 'Qualified' },
+        { key: 'quoted', label: 'Quoted' },
+        { key: 'negotiation', label: 'Negotiation' },
+        { key: 'won', label: 'Won' },
+        { key: 'lost', label: 'Lost' },
+      ];
+
+      const funnel = stages.map(({ key, label }) => {
+        const stageDeals = deals.filter((d: any) => {
+          if (key === 'new_deals') {
+            return (
+              d.stage === 'new_inquiry' ||
+              d.stage === 'new_deals' ||
+              d.stage === 'new' ||
+              d.stage === 'inquiry' ||
+              d.stage === 'review' ||
+              d.stage === 'lead' ||
+              !d.stage
+            );
+          }
+          return d.stage === key;
+        });
+        const stageCount = stageDeals.length;
+        const stageValue = stageDeals.reduce(
+          (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
+          0,
+        );
+        return {
+          stage: key,
+          label,
+          count: stageCount,
+          value: stageValue,
+        };
+      });
+
+      // SKU Breakdown from won deal items
+      const wonDealItems = wonDeals.flatMap((d: any) => d.deal_items || []);
+      const bysku = wonDealItems.reduce(
+        (acc: any, item: any) => {
+          const sku = item.sku_text || 'Unknown';
+          if (!acc[sku]) {
+            acc[sku] = {
+              sku_text: sku,
+              grade: item.grade,
+              dimensions: item.dimensions || '',
+              total_quantity: 0,
+              total_value: 0,
+              deal_count: 0,
+              unit: item.unit || 'MT',
+            };
+          }
+          acc[sku].total_quantity += Number(item.quantity) || 0;
+          acc[sku].total_value += Number(item.amount) || 0;
+          acc[sku].deal_count++;
+          if (!acc[sku].dimensions && item.dimensions) {
+            acc[sku].dimensions = item.dimensions;
+          }
+          return acc;
+        },
+        {} as Record<string, any>,
+      );
+
+      const totalDealsCount =
+        inquiries.length > 0 ? inquiries.length : deals.length;
+      const conversionRate =
+        totalDealsCount > 0
+          ? Math.round((wonDeals.length / totalDealsCount) * 100)
+          : 0;
+
+      return {
+        period: { month: monthName, year: y },
+        summary: {
+          total_revenue: totalValue,
+          won_revenue: wonValue,
+          pipeline_value: pipelineValue,
+          total_value: pipelineValue > 0 ? pipelineValue : totalValue,
+          won_value: wonValue,
+          won: wonDeals.length,
+          deals_won: wonDeals.length,
+          deals_lost: lostDeals.length,
+          deals_pending: pendingDeals.length,
+          total_deals: totalDealsCount,
+          conversion_rate: conversionRate,
+          total_inquiries: inquiries.length,
+        },
+        funnel,
+        by_customer: Object.values(byCustomer).sort(
+          (a: any, b: any) => b.value - a.value,
+        ),
+        by_type: Object.values(byType),
+        lost_reasons: lostReasons,
+        skus: Object.values(bysku).sort(
+          (a: any, b: any) => b.total_value - a.total_value,
+        ),
+        orders: wonDeals,
+        inquiries_count: totalDealsCount,
+      };
+    } catch (error) {
+      this.logger.error('Error in getOverviewReport:', error);
       throw error;
     }
   }
