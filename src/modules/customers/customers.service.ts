@@ -43,6 +43,23 @@ function cleanPhone(p?: string): string {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
+function getDealTonnage(deal: any): number {
+  if (!deal) return 0;
+  if (Array.isArray(deal.deal_items) && deal.deal_items.length > 0) {
+    return deal.deal_items.reduce((sum: number, item: any) => {
+      const q = Number(item.quantity ?? item.quantity_mt ?? item.qty ?? 0) || 0;
+      const unit = (item.unit || 'MT').toUpperCase().trim();
+      return (
+        sum +
+        (unit === 'KG' || unit === 'KGS' || unit === 'KILOGRAM' ? q / 1000 : q)
+      );
+    }, 0);
+  }
+  const q = Number(deal.quantity ?? deal.quantity_mt ?? 0) || 0;
+  const unit = (deal.unit || 'MT').toUpperCase().trim();
+  return unit === 'KG' || unit === 'KGS' || unit === 'KILOGRAM' ? q / 1000 : q;
+}
+
 function areNamesCompatible(n1?: string, n2?: string): boolean {
   const c1 = cleanLegalSuffixes(n1);
   const c2 = cleanLegalSuffixes(n2);
@@ -437,6 +454,10 @@ export class CustomersService {
       }
 
       const totalOrders = wonDeals.length;
+      const totalTonnage =
+        Math.round(
+          wonDeals.reduce((sum, d) => sum + getDealTonnage(d), 0) * 1000,
+        ) / 1000;
       const avgOrderValue =
         totalOrders > 0 ? Math.round(lifetimeValue / totalOrders) : 0;
 
@@ -467,10 +488,10 @@ export class CustomersService {
       }
 
       const revenueSignal =
-        lifetimeValue >= 1000000
-          ? `High-Value Key Account with ₹${lifetimeValue.toLocaleString('en-IN')} in total revenue.`
-          : lifetimeValue >= 100000
-            ? `Growing Account with ₹${lifetimeValue.toLocaleString('en-IN')} total billing.`
+        totalTonnage >= 100
+          ? `High-Volume Key Account with ${totalTonnage.toLocaleString('en-IN')} MT total ordered tonnage.`
+          : totalTonnage >= 20
+            ? `Growing Account with ${totalTonnage.toLocaleString('en-IN')} MT total volume.`
             : `Emerging Account with ${totalOrders} order(s).`;
 
       const qualitySignal =
@@ -496,7 +517,7 @@ export class CustomersService {
           'Review upcoming quarterly tonnage requirements and offer customized payment & dispatch terms.';
       }
 
-      const executiveSummary = `${customer.customer_name} is currently ${churnRisk === 'active' ? 'actively engaged' : churnRisk === 'at_risk' ? 'at risk of order delay' : 'churning and overdue for re-order'} with ${totalOrders} confirmed order(s) totaling ₹${lifetimeValue.toLocaleString('en-IN')}. ${openComplaints > 0 ? `There are ${openComplaints} unresolved issue(s) requiring immediate rep attention.` : 'Account satisfaction remains steady with zero open tickets.'}`;
+      const executiveSummary = `${customer.customer_name} is currently ${churnRisk === 'active' ? 'actively engaged' : churnRisk === 'at_risk' ? 'at risk of order delay' : 'churning and overdue for re-order'} with ${totalOrders} confirmed order(s) totaling ${totalTonnage.toLocaleString('en-IN')} MT. ${openComplaints > 0 ? `There are ${openComplaints} unresolved issue(s) requiring immediate rep attention.` : 'Account satisfaction remains steady with zero open tickets.'}`;
 
       return {
         ...customer,
@@ -505,6 +526,7 @@ export class CustomersService {
         days_since_order: daysSinceOrder,
         churn_risk: churnRisk,
         total_orders: totalOrders,
+        total_tonnage: totalTonnage,
         lifetime_value: lifetimeValue,
         avg_order_value: avgOrderValue,
         t12m_revenue: t12mRevenue,
@@ -558,7 +580,7 @@ export class CustomersService {
       let dealsQuery = this.supabase
         .from('deals')
         .select(
-          'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity)',
+          'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity, unit)',
         )
         .order('created_at', { ascending: false });
 
@@ -902,8 +924,13 @@ export class CustomersService {
           }
         }
 
-        // Metrics: Orders & Lifetime Value (including deal_items fallback)
+        // Metrics: Orders, Total Tonnage & Lifetime Value (including deal_items fallback)
         const totalOrders = customerWonDeals.length;
+        const totalTonnage =
+          Math.round(
+            customerWonDeals.reduce((sum, d) => sum + getDealTonnage(d), 0) *
+              1000,
+          ) / 1000;
         const lifetimeValue = customerWonDeals.reduce((sum, d) => {
           let amt = Number(d.total_amount || 0);
           if (
@@ -931,10 +958,15 @@ export class CustomersService {
         const explicitSegment = (customer.segment || '').toLowerCase();
         if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
           segment = explicitSegment;
-        } else if (lifetimeValue >= 1000000 || totalOrders >= 5) {
+        } else if (
+          totalTonnage >= 100 ||
+          lifetimeValue >= 1000000 ||
+          totalOrders >= 5
+        ) {
           segment = 'key_account';
         } else if (
           totalOrders >= 2 ||
+          totalTonnage >= 20 ||
           (lifetimeValue >= 100000 && lifetimeValue < 1000000)
         ) {
           segment = 'growth';
@@ -951,6 +983,7 @@ export class CustomersService {
           days_since_order: daysSinceOrder,
           churn_risk: churnRisk,
           total_orders: totalOrders,
+          total_tonnage: totalTonnage,
           lifetime_value: lifetimeValue,
           open_complaints: openComplaints,
           total_complaints: customerComplaints.length,
