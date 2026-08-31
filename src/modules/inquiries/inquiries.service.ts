@@ -726,6 +726,14 @@ export class InquiriesService implements OnModuleInit {
         };
       });
 
+      // Strict backend sort guarantee: always newest first
+      lightweightData.sort((a: any, b: any) => {
+        const timeA = new Date(a.created_at || 0).getTime() || 0;
+        const timeB = new Date(b.created_at || 0).getTime() || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
+
       return lightweightData;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
@@ -870,7 +878,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      return (data || []).map((row: any) => {
+      const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
           row,
           dealByInqId,
@@ -896,6 +904,16 @@ export class InquiriesService implements OnModuleInit {
             : [],
         };
       });
+
+      // Strict backend sort guarantee: always newest first
+      reviewList.sort((a: any, b: any) => {
+        const timeA = new Date(a.created_at || 0).getTime() || 0;
+        const timeB = new Date(b.created_at || 0).getTime() || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
+
+      return reviewList;
     } catch (error) {
       this.logger.error('Error in findReviewQueue:', error);
       throw error;
