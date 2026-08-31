@@ -363,6 +363,31 @@ export class DealsService {
         .single();
       if (error) throw error;
 
+      // Sync linked inquiry status in 1-to-1 manner
+      if (data && data.inquiry_id) {
+        if (stage === 'lost') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'lost' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'won') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'confirmed' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'quoted') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'quoted' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'qualified') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'confirmed' })
+            .eq('id', data.inquiry_id);
+        }
+      }
+
       // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
       let effectiveTotal = Number(data?.total_amount) || 0;
       if (stage === 'won') {
