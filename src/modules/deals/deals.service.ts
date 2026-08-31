@@ -9,6 +9,27 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
+function buildMultiFieldOrFilter(
+  salespersonPhones?: string[] | string,
+  fieldNames: string[] = ['salesperson_phone'],
+): string | null {
+  if (!salespersonPhones) return null;
+  const list = Array.isArray(salespersonPhones)
+    ? salespersonPhones
+    : [salespersonPhones];
+  const parts: string[] = [];
+  for (const phone of list) {
+    if (!phone) continue;
+    const clean = phone.replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const p12 = '91' + p10;
+    for (const field of fieldNames) {
+      parts.push(`${field}.eq.${p10}`, `${field}.eq.${p12}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
@@ -24,17 +45,25 @@ export class DealsService {
 
   async findAll(filters?: {
     stage?: string;
-    salesperson_phone?: string;
+    salesperson_phone?: string[] | string;
     from?: string;
     to?: string;
   }) {
     try {
+      if (
+        Array.isArray(filters?.salesperson_phone) &&
+        filters.salesperson_phone.length === 0
+      ) {
+        return [];
+      }
+
       let query = this.supabase
         .from('deals')
         .select(
           `
           id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
-          deal_items (*)
+          deal_items (*),
+          inquiries (source_channel, inquiry_type)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -53,15 +82,13 @@ export class DealsService {
       }
 
       if (filters?.salesperson_phone) {
-        const cleanDigits = filters.salesperson_phone.replace(/\D/g, '');
-        const p10 = cleanDigits.slice(-10);
-        const p12 = '91' + p10;
-        query = query.or(
-          `salesperson_phone.eq.${p10},salesperson_phone.eq.${p12}`,
-        );
+        const orFilter = buildMultiFieldOrFilter(filters.salesperson_phone, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) query = query.or(orFilter);
       }
       if (filters?.from && filters?.to) {
-        // Each date field is tested as a complete [from, to] pair — prevents
+        // Each date field is tested as a complete [from, to] pair - prevents
         // cross-column mismatches (e.g. created_at >= from AND won_at <= to).
         const fromIso = filters.from.includes('T')
           ? filters.from
@@ -335,6 +362,31 @@ export class DealsService {
         .select()
         .single();
       if (error) throw error;
+
+      // Sync linked inquiry status in 1-to-1 manner
+      if (data && data.inquiry_id) {
+        if (stage === 'lost') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'lost' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'won') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'confirmed' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'quoted') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'quoted' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'qualified') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'confirmed' })
+            .eq('id', data.inquiry_id);
+        }
+      }
 
       // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
       let effectiveTotal = Number(data?.total_amount) || 0;
@@ -673,49 +725,7 @@ export class DealsService {
       const deliveryLocation = data.delivery_location || '';
       const paymentTerms = data.payment_terms || '';
 
-      // 1. If media_urls are provided, save or update attachment in inquiries table so it's permanently stored & viewable
-      let inquiryId = data.inquiry_id || null;
-      if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
-        try {
-          if (inquiryId) {
-            await this.supabase
-              .from('inquiries')
-              .update({
-                media_urls: data.media_urls,
-                status: 'confirmed',
-              })
-              .eq('id', inquiryId);
-          } else {
-            const { data: newInq, error: inqErr } = await this.supabase
-              .from('inquiries')
-              .insert({
-                source_channel: 'purchase_order',
-                raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
-                media_urls: data.media_urls,
-                sender_name: customerName,
-                sender_phone: customerPhone,
-                salesperson_phone: phone,
-                status: 'confirmed',
-                inquiry_type: 'purchase_order',
-                created_at: nowIso,
-              })
-              .select()
-              .single();
-            if (newInq) {
-              inquiryId = newInq.id;
-            } else if (inqErr) {
-              this.logger.error('Error inserting PO media inquiry:', inqErr);
-            }
-          }
-        } catch (inqErr: any) {
-          this.logger.warn(
-            'Non-blocking inquiry media save notice:',
-            inqErr?.message,
-          );
-        }
-      }
-
-      // 2. Try to find existing deal to update
+      // 1. Search for existing deal to update and mark WON
       let dealId = data.deal_id || null;
       let existingDeal: any = null;
 
@@ -726,28 +736,74 @@ export class DealsService {
           .eq('id', dealId)
           .single();
         if (d) existingDeal = d;
-      } else if (inquiryId) {
+      } else if (data.inquiry_id) {
         const { data: d } = await this.supabase
           .from('deals')
           .select('*')
-          .eq('inquiry_id', inquiryId)
+          .eq('inquiry_id', data.inquiry_id)
           .limit(1);
         if (d && d.length > 0) {
           existingDeal = d[0];
           dealId = existingDeal.id;
         }
-      } else if (data.auto_link_pipeline && customerName) {
-        // Only auto-link to open pipeline deal if explicitly requested
-        const { data: d } = await this.supabase
+      }
+
+      // Auto-link to open pipeline deal for this customer
+      if (!existingDeal && customerName) {
+        const { data: openDeals } = await this.supabase
           .from('deals')
           .select('*')
           .ilike('customer_name', customerName)
           .not('stage', 'in', '("won","lost")')
           .order('created_at', { ascending: false })
           .limit(1);
-        if (d && d.length > 0) {
-          existingDeal = d[0];
+        if (openDeals && openDeals.length > 0) {
+          existingDeal = openDeals[0];
           dealId = existingDeal.id;
+        }
+      }
+
+      // 2. Resolve inquiry ID from deal or payload
+      let inquiryId =
+        data.inquiry_id || (existingDeal ? existingDeal.inquiry_id : null);
+      const targetSourceChannel = data.source_channel || 'web_dashboard';
+
+      if (inquiryId) {
+        const inqUpdates: any = {
+          status: 'confirmed',
+        };
+        if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
+          inqUpdates.media_urls = data.media_urls;
+        }
+        await this.supabase
+          .from('inquiries')
+          .update(inqUpdates)
+          .eq('id', inquiryId);
+      } else if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
+        try {
+          const { data: newInq } = await this.supabase
+            .from('inquiries')
+            .insert({
+              source_channel: targetSourceChannel,
+              raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
+              media_urls: data.media_urls,
+              sender_name: customerName,
+              sender_phone: customerPhone,
+              salesperson_phone: phone,
+              status: 'confirmed',
+              inquiry_type: 'inquiry',
+              created_at: nowIso,
+            })
+            .select()
+            .single();
+          if (newInq) {
+            inquiryId = newInq.id;
+          }
+        } catch (inqErr: any) {
+          this.logger.warn(
+            'Non-blocking inquiry media save notice:',
+            inqErr?.message,
+          );
         }
       }
 

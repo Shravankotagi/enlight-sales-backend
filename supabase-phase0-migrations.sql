@@ -1,4 +1,4 @@
--- Enlight Sales OS Chatbot — Phase 0 Migration Script
+-- Enlight Sales OS Chatbot - Phase 0 Migration Script
 -- Run this script in the Supabase SQL Editor or via migration pipeline
 
 -- 1. Enable pgvector extension for knowledge base embeddings

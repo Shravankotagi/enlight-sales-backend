@@ -8,6 +8,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
@@ -35,6 +36,7 @@ export class EmployeesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(
+    @CurrentEmployee() employee: any,
     @Body()
     body: {
       employee_id?: string;
@@ -46,6 +48,12 @@ export class EmployeesController {
       manager_phone?: string;
     },
   ) {
+    if (!employee || employee.role !== 'admin') {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can create staff accounts.',
+      );
+    }
+
     // Auto-generate employee_id if not provided
     const employeeId =
       body.employee_id ||
@@ -57,15 +65,29 @@ export class EmployeesController {
     });
   }
 
-  // PATCH /employees/:id - update employee
+  // PATCH /employees/:id - update employee (admin only)
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() body: any) {
+  async update(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    if (!employee || employee.role !== 'admin') {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can update staff accounts.',
+      );
+    }
     return this.employeesService.update(id, body);
   }
 
-  // PATCH /employees/:id/deactivate - deactivate employee
+  // PATCH /employees/:id/deactivate - deactivate employee (admin only)
   @Patch(':id/deactivate')
-  async deactivate(@Param('id') id: string) {
+  async deactivate(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    if (!employee || employee.role !== 'admin') {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can deactivate staff accounts.',
+      );
+    }
     return this.employeesService.deactivate(id);
   }
 }

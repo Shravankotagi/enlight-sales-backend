@@ -73,7 +73,7 @@ async function logKRA6Activity(senderPhone, activityType, customerName) {
     });
   } catch (err) {
     console.error('KRA 6 logging error (non-critical):', err.message);
-    // Non-critical — never block the main flow
+    // Non-critical - never block the main flow
   }
 }
 
@@ -152,7 +152,7 @@ router.post('/', async (req, res) => {
           .limit(1);
         if (existingMsg && existingMsg.length > 0) {
           console.log(
-            `[Webhook] MessageId ${messageId} already processed — skipping duplicate.`,
+            `[Webhook] MessageId ${messageId} already processed - skipping duplicate.`,
           );
           return;
         }
@@ -347,7 +347,7 @@ router.post('/', async (req, res) => {
             kra_type: 'deal_lost',
             value: dealAmount,
             customer_name: customerName,
-            description: `Deal Lost: ${customerName} — Reason: ${selectedReason}`,
+            description: `Deal Lost: ${customerName} - Reason: ${selectedReason}`,
             month: new Date().getMonth() + 1,
             year: new Date().getFullYear(),
           });

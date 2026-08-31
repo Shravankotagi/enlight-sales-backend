@@ -49,7 +49,7 @@ async function migrate() {
   } else {
     console.log(
       '\n✅ Migration complete. Sample columns:',
-      data.length > 0 ? Object.keys(data[0]) : 'No rows yet — table is ready',
+      data.length > 0 ? Object.keys(data[0]) : 'No rows yet - table is ready',
     );
   }
 }

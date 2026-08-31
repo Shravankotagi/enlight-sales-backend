@@ -599,7 +599,7 @@ export class CustomersService {
       let complaintsQuery = this.supabase
         .from('complaints')
         .select(
-          'id, customer_name, status, reported_at, complaint_type, reported_by',
+          'id, customer_name, status, reported_at, created_at, complaint_type, reported_by',
         );
 
       if (salespersonPhone) {
@@ -1011,10 +1011,41 @@ export class CustomersService {
   async updateCustomer(
     id: string,
     data: any,
-    salespersonPhone?: string[] | string,
+    accessiblePhones?: string[] | null,
   ) {
     try {
       const decodedId = decodeURIComponent(id || '').trim();
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        if (!decodedId.startsWith('virtual-')) {
+          const { data: existingCust } = await this.supabase
+            .from('recurring_customers')
+            .select('id, assigned_salesperson_phone')
+            .eq('id', decodedId)
+            .single();
+
+          if (
+            existingCust?.assigned_salesperson_phone &&
+            !phoneInList(
+              existingCust.assigned_salesperson_phone,
+              accessiblePhones,
+            )
+          ) {
+            throw new ForbiddenException(
+              'Access Denied: You do not have permission to update this customer.',
+            );
+          }
+        }
+
+        if (
+          data.assigned_salesperson_phone &&
+          !phoneInList(data.assigned_salesperson_phone, accessiblePhones)
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You cannot assign customers outside your authorized scope.',
+          );
+        }
+      }
       const updatePayload: any = {
         updated_at: new Date().toISOString(),
       };
@@ -1059,27 +1090,6 @@ export class CustomersService {
         return created;
       }
 
-      if (salespersonPhone) {
-        const allowedList = Array.isArray(salespersonPhone)
-          ? salespersonPhone
-          : [salespersonPhone];
-        const { data: existing } = await this.supabase
-          .from('recurring_customers')
-          .select('assigned_salesperson_phone')
-          .eq('id', decodedId)
-          .single();
-
-        if (
-          existing &&
-          existing.assigned_salesperson_phone &&
-          !phoneInList(existing.assigned_salesperson_phone, allowedList)
-        ) {
-          throw new ForbiddenException(
-            'Access Denied: You do not have permission to update this customer.',
-          );
-        }
-      }
-
       const { data: updated, error } = await this.supabase
         .from('recurring_customers')
         .update(updatePayload)
@@ -1113,55 +1123,99 @@ export class CustomersService {
         if (orFilter) query = query.or(orFilter);
       }
 
-      const { data: customers, error } = await query;
+      let dealsQuery = this.supabase
+        .from('deals')
+        .select('customer_name, won_at, created_at, salesperson_phone')
+        .eq('stage', 'won')
+        .order('created_at', { ascending: false });
+
+      if (salespersonPhone) {
+        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
+      }
+
+      const [{ data: customers, error }, { data: allWonDeals }] =
+        await Promise.all([query, dealsQuery]);
       if (error) throw error;
 
-      const reorderList = (
-        await Promise.all(
-          (customers || []).map(async (customer: any) => {
-            const { data: deals } = await this.supabase
-              .from('deals')
-              .select('created_at, won_at')
-              .ilike('customer_name', `%${customer.customer_name}%`)
-              .eq('stage', 'won')
-              .order('created_at', { ascending: false })
-              .limit(1);
+      const safeWonDeals = allWonDeals || [];
+      const normalize = (str?: string) =>
+        (str || '')
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]/g, '');
 
-            const latestWonDeal = deals && deals.length > 0 ? deals[0] : null;
-            const effectiveLastOrderStr = latestWonDeal
-              ? latestWonDeal.won_at || latestWonDeal.created_at
-              : customer.last_order_date || null;
+      const existingNameSet = new Set(
+        (customers || []).map((c) => normalize(c.customer_name)),
+      );
 
-            const lastOrder = effectiveLastOrderStr
-              ? new Date(effectiveLastOrderStr)
-              : null;
-            const avgFrequency = customer.avg_order_frequency_days || 30;
-            const predictedDate = lastOrder
-              ? new Date(
-                  lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000,
-                )
-              : null;
-            const daysUntilReorder = predictedDate
-              ? Math.floor(
-                  (predictedDate.getTime() - now.getTime()) /
-                    (1000 * 60 * 60 * 24),
-                )
-              : null;
+      const extraCustomersMap = new Map<string, any>();
+      for (const deal of safeWonDeals) {
+        if (!deal.customer_name || !deal.customer_name.trim()) continue;
+        const norm = normalize(deal.customer_name);
+        if (
+          norm &&
+          !existingNameSet.has(norm) &&
+          !extraCustomersMap.has(norm)
+        ) {
+          extraCustomersMap.set(norm, {
+            id: `virtual-reorder-${norm}`,
+            customer_name: deal.customer_name.trim(),
+            contact_person: null,
+            customer_phone: null,
+            customer_gst: null,
+            avg_order_frequency_days: 30,
+            is_active: true,
+            created_at: deal.created_at,
+          });
+        }
+      }
 
-            return {
-              ...customer,
-              last_order_date: effectiveLastOrderStr,
-              predicted_reorder_date: predictedDate?.toISOString() || null,
-              days_until_reorder: daysUntilReorder,
-              is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
-              is_due_soon:
-                daysUntilReorder !== null &&
-                daysUntilReorder >= 0 &&
-                daysUntilReorder <= 7,
-            };
-          }),
-        )
-      )
+      const combinedCustomers = [
+        ...(customers || []),
+        ...Array.from(extraCustomersMap.values()),
+      ];
+
+      const reorderList = combinedCustomers
+        .map((customer: any) => {
+          const custKeyNorm = normalize(customer.customer_name);
+          const matchingDeals = safeWonDeals.filter(
+            (d) => normalize(d.customer_name) === custKeyNorm,
+          );
+          const latestWonDeal =
+            matchingDeals.length > 0 ? matchingDeals[0] : null;
+          const effectiveLastOrderStr = latestWonDeal
+            ? latestWonDeal.won_at || latestWonDeal.created_at
+            : customer.last_order_date || null;
+
+          const lastOrder = effectiveLastOrderStr
+            ? new Date(effectiveLastOrderStr)
+            : null;
+          const avgFrequency = Number(customer.avg_order_frequency_days) || 30;
+          const predictedDate = lastOrder
+            ? new Date(lastOrder.getTime() + avgFrequency * 24 * 60 * 60 * 1000)
+            : null;
+          const daysUntilReorder = predictedDate
+            ? Math.floor(
+                (predictedDate.getTime() - now.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              )
+            : null;
+
+          return {
+            ...customer,
+            last_order_date: effectiveLastOrderStr,
+            predicted_reorder_date: predictedDate?.toISOString() || null,
+            days_until_reorder: daysUntilReorder,
+            is_overdue: daysUntilReorder !== null && daysUntilReorder < 0,
+            is_due_soon:
+              daysUntilReorder !== null &&
+              daysUntilReorder >= 0 &&
+              daysUntilReorder <= 7,
+          };
+        })
         .filter(
           (c: any) =>
             c.days_until_reorder !== null && c.days_until_reorder <= 14,
@@ -1199,16 +1253,20 @@ export class CustomersService {
       let query = this.supabase
         .from('deals')
         .select(
-          'id, deal_number, lost_reason, total_amount, customer_name, created_at',
+          'id, lost_reason, total_amount, customer_name, created_at, salesperson_phone',
         )
         .eq('stage', 'lost')
-        .gte('created_at', threeMonthsAgo);
+        .gte('created_at', threeMonthsAgo)
+        .order('created_at', { ascending: false });
 
       let logsQuery = this.supabase
         .from('kra_logs')
-        .select('*')
+        .select(
+          'id, customer_name, value, description, created_at, salesperson_phone',
+        )
         .eq('kra_type', 'deal_lost')
-        .gte('created_at', threeMonthsAgo);
+        .gte('created_at', threeMonthsAgo)
+        .order('created_at', { ascending: false });
 
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
@@ -1227,13 +1285,14 @@ export class CustomersService {
 
       const primaryLostDeals = (lostDeals || []).map((d) => ({
         id: d.id,
-        deal_number:
-          d.deal_number ||
-          (d.id ? `DEAL-${d.id.substring(0, 6).toUpperCase()}` : undefined),
-        customer_name: d.customer_name,
+        deal_number: d.id
+          ? `DEAL-${d.id.substring(0, 6).toUpperCase()}`
+          : undefined,
+        customer_name: d.customer_name || 'Unnamed Account',
         lost_reason: d.lost_reason || 'Not specified',
-        total_amount: d.total_amount || 0,
+        total_amount: Number(d.total_amount) || 0,
         created_at: d.created_at,
+        salesperson_phone: d.salesperson_phone,
       }));
 
       // Add kra_logs ONLY if no corresponding deal exists for that customer & amount (prevents double-counting)
@@ -1253,14 +1312,16 @@ export class CustomersService {
         })
         .map((l) => ({
           id: l.id,
-          deal_number: undefined,
-          customer_name: l.customer_name,
+          deal_number: l.id
+            ? `LOG-${l.id.substring(0, 6).toUpperCase()}`
+            : undefined,
+          customer_name: l.customer_name || 'Unnamed Account',
           lost_reason:
             l.description?.match(/Reason:\s*([^|]+)/)?.[1]?.trim() ||
-            l.notes ||
             'Price / Commercials',
-          total_amount: l.value || 0,
+          total_amount: Number(l.value) || 0,
           created_at: l.created_at,
+          salesperson_phone: l.salesperson_phone,
         }));
 
       // Deduplicate log records by customer + date (within 60 seconds) or exact amount
@@ -1290,6 +1351,11 @@ export class CustomersService {
         }
       }
 
+      combinedLosses.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+
       const byReason = combinedLosses.reduce((acc: any, deal: any) => {
         const reason = deal.lost_reason || 'Unknown';
         if (!acc[reason]) acc[reason] = { count: 0, value: 0 };
@@ -1307,7 +1373,8 @@ export class CustomersService {
         by_reason: Object.entries(byReason)
           .map(([reason, data]: [string, any]) => ({ reason, ...data }))
           .sort((a, b) => b.count - a.count),
-        recent_losses: combinedLosses.slice(0, 5),
+        recent_losses: combinedLosses,
+        deals: combinedLosses,
       };
     } catch (error) {
       this.logger.error('Error in getLossAnalytics:', error);

@@ -1230,7 +1230,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
           : 'Won Deals';
 
     return (
-      ` *${title} — ${monthName} ${year}* (${deals.length} won orders)\n\n` +
+      ` *${title} - ${monthName} ${year}* (${deals.length} won orders)\n\n` +
       lines.join('\n\n') +
       `\n\n *Total Won Revenue: ${formatINR(totalValue)}*` +
       (totalTonnage > 0
@@ -1402,7 +1402,7 @@ async function getVisitList(scopeOrPhone, text = '') {
           : 'Customer Visits';
 
     return (
-      ` *${title} — ${monthName} ${year}* (${visits.length} visits)\n\n` +
+      ` *${title} - ${monthName} ${year}* (${visits.length} visits)\n\n` +
       lines.join('\n\n')
     );
   } catch (err) {
@@ -1817,7 +1817,7 @@ async function getLostDeals(scopeOrPhone, text = '') {
           : 'Lost Deals';
 
     return (
-      ` *${title} — ${monthName} ${year}* (${deals.length})\n\n` +
+      ` *${title} - ${monthName} ${year}* (${deals.length})\n\n` +
       lines.join('\n\n') +
       `\n\n *Total Lost Value: ${formatINR(totalLost)}*`
     );
@@ -1943,7 +1943,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
           const out = p.total_amount_pending
             ? `Pending: ₹${Number(p.total_amount_pending).toLocaleString('en-IN')}`
             : 'Paid in full';
-          return `• *Invoice:* ${p.invoice_number || 'N/A'} — ${out} (Status: ${p.status || 'active'})`;
+          return `• *Invoice:* ${p.invoice_number || 'N/A'} - ${out} (Status: ${p.status || 'active'})`;
         })
         .join('\n');
     }

@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { EmployeesService } from '../employees/employees.service';
@@ -23,6 +24,7 @@ export class CustomersController {
 
   @Post('import')
   async importClients(
+    @CurrentEmployee() employee: any,
     @Body()
     body: {
       default_salesperson_phone?: string;
@@ -38,6 +40,12 @@ export class CustomersController {
       }>;
     },
   ) {
+    if (!employee || employee.role !== 'admin') {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can import clients.',
+      );
+    }
+
     return this.customersService.importClients(
       body.clients,
       body.default_salesperson_phone,

@@ -1,4 +1,4 @@
--- Enlight Sales OS Chatbot — Phase 4 Guardrails, Safety & Spend Cap Migration
+-- Enlight Sales OS Chatbot - Phase 4 Guardrails, Safety & Spend Cap Migration
 
 -- 1. Create daily_llm_usage table to track daily token usage and estimated USD spend
 CREATE TABLE IF NOT EXISTS daily_llm_usage (

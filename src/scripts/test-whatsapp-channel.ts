@@ -1,5 +1,5 @@
 /**
- * Automated Verification Suite for Phase 6 — WhatsApp Channel
+ * Automated Verification Suite for Phase 6 - WhatsApp Channel
  *
  * Verifies:
  * 1. Fail-Closed on Unregistered Phone Numbers

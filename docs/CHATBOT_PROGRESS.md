@@ -1,7 +1,7 @@
 # Chatbot Implementation Progress & Status Tracker
 
 **Companion to:** `docs/AGENTS-CHATBOT.md`, `docs/enlight-chatbot-architecture.md`, `docs/chatbot-implementation-phases.md`  
-**Current Phase:** Phase 5 — Full Web Chat Page & Manager Tools (Completed 🟢)  
+**Current Phase:** Phase 5 - Full Web Chat Page & Manager Tools (Completed 🟢)  
 **Last Updated:** August 14, 2026
 
 ---

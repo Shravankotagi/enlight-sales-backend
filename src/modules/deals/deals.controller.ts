@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { DealsService } from './deals.service';
-import { EmployeesService, phoneInList } from '../employees/employees.service';
+import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
@@ -42,17 +42,12 @@ export class DealsController {
       return [];
     }
 
-    const data = await this.dealsService.findAll({
+    return this.dealsService.findAll({
       stage,
       from,
       to,
-      salesperson_phone: salespersonPhoneOverride,
+      salesperson_phone: phones === null ? undefined : phones,
     });
-
-    if (phones) {
-      return data.filter((d: any) => phoneInList(d.salesperson_phone, phones));
-    }
-    return data;
   }
 
   @Get('pipeline')
@@ -88,14 +83,11 @@ export class DealsController {
     const deals = await this.dealsService.findAll({
       from,
       to,
-      salesperson_phone: salespersonPhoneOverride,
+      salesperson_phone: phones === null ? undefined : phones,
     });
-    const filtered = phones
-      ? deals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
-      : deals;
 
     return stages.map((stage) => {
-      const stageDeals = filtered.filter((d: any) =>
+      const stageDeals = deals.filter((d: any) =>
         stage === 'new_inquiry'
           ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
           : d.stage === stage,
@@ -139,19 +131,15 @@ export class DealsController {
     const deals = await this.dealsService.findAll({
       from,
       to,
-      salesperson_phone: salespersonPhoneOverride,
+      salesperson_phone: phones === null ? undefined : phones,
     });
     const activeDeals = deals.filter(
       (d: any) => !['won', 'lost'].includes(d.stage),
     );
 
-    const filtered = phones
-      ? activeDeals.filter((d: any) => phoneInList(d.salesperson_phone, phones))
-      : activeDeals;
-
     return stages.reduce(
       (acc, stage) => {
-        acc[stage] = filtered.filter((d: any) =>
+        acc[stage] = activeDeals.filter((d: any) =>
           stage === 'new_inquiry'
             ? d.stage === 'new_inquiry' || d.stage === 'review'
             : d.stage === stage,
@@ -198,7 +186,11 @@ export class DealsController {
 
   @Post('process-po-internal')
   async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
-    const phone = body.salesperson_phone || employee?.phone || '910000000000';
+    const isCallerAdmin = employee?.role === 'admin';
+    const phone =
+      isCallerAdmin && body.salesperson_phone
+        ? body.salesperson_phone
+        : employee?.phone || '910000000000';
     return this.dealsService.processPo(body, phone);
   }
 

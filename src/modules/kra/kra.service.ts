@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
@@ -1376,7 +1377,7 @@ export class KraService {
       );
 
       const combinedKRA3 = [
-        // kra_logs rows — only include if no richer followup_task exists for same customer
+        // kra_logs rows - only include if no richer followup_task exists for same customer
         ...kra3Logs
           .filter(
             (l) =>
@@ -1409,7 +1410,7 @@ export class KraService {
               details: l.description
                 ? l.description.split('Notes:').pop()?.trim() || l.description
                 : 'Follow-up logged',
-              quantity: l.value ? `${l.value} MT` : '-', // blank — not an order
+              quantity: l.value ? `${l.value} MT` : '-', // blank - not an order
               remarks:
                 statusLabels[parsedStatus] ||
                 parsedStatus ||
@@ -1418,7 +1419,7 @@ export class KraService {
               date: new Date(l.created_at),
             };
           }),
-        // followup_tasks rows — always use these (most up-to-date)
+        // followup_tasks rows - always use these (most up-to-date)
         ...kra3Followups.map((f) => {
           const statusLabels: Record<string, string> = {
             reviewing_quotation: 'Reviewing Quotation ',
@@ -1436,7 +1437,7 @@ export class KraService {
           return {
             customer_name: f.customer_name || 'Recurring Customer',
             details: f.resolution_notes || 'Scheduled Retention Follow-up',
-            quantity: '-', // follow-ups are not orders — never show '1 Order'
+            quantity: '-', // follow-ups are not orders - never show '1 Order'
             remarks:
               statusLabels[statusKey] ||
               `Follow-up #${f.follow_up_count || 1} `,
@@ -1475,7 +1476,7 @@ export class KraService {
               ? `${rc.avg_order_qty_mt} MT`
               : '-',
             next_followup_date: nextDate,
-            remarks: 'Active Account — Follow-up Scheduled ',
+            remarks: 'Active Account - Follow-up Scheduled ',
           };
         });
       }
@@ -1763,7 +1764,7 @@ export class KraService {
           return sum + qtyMT;
         }, 0);
 
-      // Distinct customer count for KRA 2 — matches bot's getMonthlyOnboardCount distinct Set logic
+      // Distinct customer count for KRA 2 - matches bot's getMonthlyOnboardCount distinct Set logic
       const kra2DistinctCount = new Set(
         kra2Rows.map((r) => (r.company_name || '').toLowerCase().trim()),
       ).size;
@@ -1999,7 +2000,7 @@ export class KraService {
     let query = this.supabase
       .from('complaints')
       .select('*')
-      .order('reported_at', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (salespersonPhone) {
       const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -2010,11 +2011,11 @@ export class KraService {
 
     if (from) {
       const fromIso = from.includes('T') ? from : `${from}T00:00:00.000Z`;
-      query = query.gte('reported_at', fromIso);
+      query = query.gte('created_at', fromIso);
     }
     if (to) {
       const toIso = to.includes('T') ? to : `${to}T23:59:59.999Z`;
-      query = query.lte('reported_at', toIso);
+      query = query.lte('created_at', toIso);
     }
 
     const { data, error } = await query;
@@ -2024,9 +2025,10 @@ export class KraService {
     if (complaintsList.length === 0) return [];
 
     try {
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone, role');
+      const [{ data: employees }, { data: deals }] = await Promise.all([
+        this.supabase.from('employees').select('name, phone, role'),
+        this.supabase.from('deals').select('id, po_number'),
+      ]);
 
       const empMap = new Map<string, string>();
       (employees || []).forEach((e) => {
@@ -2036,32 +2038,100 @@ export class KraService {
         }
       });
 
+      const dealPoMap = new Map<string, string>();
+      (deals || []).forEach((d) => {
+        if (d.po_number) {
+          dealPoMap.set(d.id.toLowerCase(), d.po_number);
+          dealPoMap.set(d.id.substring(0, 6).toLowerCase(), d.po_number);
+        }
+      });
+
       return complaintsList.map((c) => {
         const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
+        let poNum = c.po_number;
+        if (!poNum && c.deal_id) {
+          const cleanDeal = c.deal_id
+            .replace(/^#?DEAL-/i, '')
+            .trim()
+            .toLowerCase();
+          poNum = dealPoMap.get(cleanDeal) || null;
+        }
         return {
           ...c,
+          po_number: poNum,
+          created_at: c.created_at || c.reported_at,
+          reported_at: c.reported_at || c.created_at,
+          product_name:
+            c.product_name || c.affected_product || 'General Material',
           salesperson_name:
             empMap.get(cleanRep) || c.reported_by || 'Web Admin',
         };
       });
     } catch {
-      return complaintsList;
+      return complaintsList.map((c) => ({
+        ...c,
+        created_at: c.created_at || c.reported_at,
+        reported_at: c.reported_at || c.created_at,
+        product_name:
+          c.product_name || c.affected_product || 'General Material',
+      }));
     }
   }
 
   async createComplaint(data: any, salespersonPhone?: string) {
-    const reported_at = new Date().toISOString();
+    const nowIso = new Date().toISOString();
     const sla_due_at = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+
+    let cleanDesc = data.description || '';
+    let extractedProduct =
+      data.product_name || data.affected_product || data.product || null;
+    if (cleanDesc.startsWith('[Product:')) {
+      const match = cleanDesc.match(/^\[Product:\s*([^\]]+)\]\s*(.*)$/);
+      if (match) {
+        if (!extractedProduct) extractedProduct = match[1].trim();
+        cleanDesc = match[2].trim() || cleanDesc;
+      }
+    }
+
+    let targetDealId = data.deal_id || null;
+    let targetPoNumber = data.po_number || null;
+
+    if (targetDealId && !targetPoNumber) {
+      try {
+        const cleanDeal = targetDealId
+          .replace(/^#?DEAL-/i, '')
+          .trim()
+          .toLowerCase();
+        const { data: matchedDeal } = await this.supabase
+          .from('deals')
+          .select('id, po_number')
+          .or(`id.eq.${cleanDeal},id.ilike.${cleanDeal}%`)
+          .limit(1);
+        if (matchedDeal && matchedDeal.length > 0) {
+          targetDealId = matchedDeal[0].id;
+          if (matchedDeal[0].po_number)
+            targetPoNumber = matchedDeal[0].po_number;
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Deal PO lookup in createComplaint notice: ${err?.message}`,
+        );
+      }
+    }
 
     const payload: Record<string, any> = {
       customer_name: data.customer_name,
-      affected_product:
-        data.affected_product || data.product || 'General Material',
+      deal_id: targetDealId,
+      po_number: targetPoNumber,
+      product_name: extractedProduct || 'General Material',
+      affected_product: extractedProduct || 'General Material',
       complaint_type: data.complaint_type || 'Quality Defect',
-      description: data.description || '',
+      description: cleanDesc,
       status: data.status || 'reported',
+      corrective_action: data.corrective_action || null,
       resolution_notes: data.resolution_notes || null,
-      reported_at,
+      reported_at: nowIso,
+      created_at: nowIso,
       sla_due_at,
       reported_by: salespersonPhone || 'Web Admin',
     };
@@ -2082,6 +2152,7 @@ export class KraService {
         description: payload.description,
         status: payload.status,
         reported_at: payload.reported_at,
+        created_at: payload.created_at,
         reported_by: payload.reported_by,
       };
       const { data: fallbackData, error: fallbackError } = await this.supabase
@@ -2103,16 +2174,16 @@ export class KraService {
 
     // Log to kra_logs (KRA 8)
     try {
-      const now = new Date(reported_at);
+      const now = new Date(nowIso);
       await this.supabase.from('kra_logs').insert({
         kra_number: 8,
         kra_type: 'complaint_logged',
-        description: `Logged complaint: ${data.complaint_type} for ${data.affected_product || 'product'}`,
+        description: `Logged complaint: ${data.complaint_type} for ${payload.product_name}`,
         salesperson_phone: salespersonPhone || '910000000000',
         customer_name: data.customer_name,
         month: now.getMonth() + 1,
         year: now.getFullYear(),
-        created_at: reported_at,
+        created_at: nowIso,
       });
     } catch (kraErr: any) {
       this.logger.warn(
@@ -2126,7 +2197,7 @@ export class KraService {
       this.activityLogsService.logActivity({
         salesperson_name: 'Sales Team',
         salesperson_phone: salespersonPhone || null,
-        description: `New complaint logged for ${data.customer_name || 'Customer'}`,
+        description: `New complaint logged for ${data.customer_name || 'Customer'}${payload.deal_id ? ` (Deal: ${payload.deal_id})` : ''}`,
         module: 'Complaints',
         customer_name: data.customer_name || 'Customer',
       });
@@ -2144,7 +2215,7 @@ export class KraService {
   ) {
     const { data: existingComplaint, error: fetchErr } = await this.supabase
       .from('complaints')
-      .select('id, reported_by, status')
+      .select('id, reported_by, status, resolution_notes')
       .eq('id', id)
       .single();
     if (fetchErr || !existingComplaint) {
@@ -2165,17 +2236,44 @@ export class KraService {
     const updateData: Record<string, any> = {};
     if (data.customer_name !== undefined)
       updateData.customer_name = data.customer_name;
-    if (data.affected_product !== undefined)
-      updateData.affected_product = data.affected_product;
+    if (data.deal_id !== undefined) updateData.deal_id = data.deal_id || null;
+    if (data.po_number !== undefined)
+      updateData.po_number = data.po_number || null;
+    if (
+      data.product_name !== undefined ||
+      data.affected_product !== undefined
+    ) {
+      const prod = data.product_name || data.affected_product;
+      updateData.product_name = prod;
+      updateData.affected_product = prod;
+    }
     if (data.complaint_type !== undefined)
       updateData.complaint_type = data.complaint_type;
-    if (data.description !== undefined)
-      updateData.description = data.description;
+    if (data.description !== undefined) {
+      let d = data.description;
+      if (d && d.startsWith('[Product:')) {
+        const match = d.match(/^\[Product:\s*([^\]]+)\]\s*(.*)$/);
+        if (match) d = match[2].trim() || d;
+      }
+      updateData.description = d;
+    }
+    if (data.corrective_action !== undefined)
+      updateData.corrective_action = data.corrective_action;
     if (data.status !== undefined) {
       updateData.status = data.status;
       if (data.status === 'resolved') {
+        const notes = (
+          data.resolution_notes ||
+          existingComplaint.resolution_notes ||
+          ''
+        ).trim();
+        if (!notes) {
+          throw new BadRequestException(
+            'Resolution notes are required before marking complaint as resolved.',
+          );
+        }
         updateData.resolved_at = new Date().toISOString();
-      } else if (data.status === 'reported') {
+      } else if (data.status === 'reported' || data.status === 'reopened') {
         updateData.resolved_at = null;
       }
     }
@@ -2437,7 +2535,7 @@ export class KraService {
       );
     }
 
-    // Schedule Condition 2 — Visit Interest Follow-up Task
+    // Schedule Condition 2 - Visit Interest Follow-up Task
     if (
       data.outcome === 'positive' &&
       (data.follow_up_action ||

@@ -51,8 +51,10 @@ import { DealsService } from '../deals/deals.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
   calculateQuotationBreakdown,
+  calculateTotalTonnageMt,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
+import { detectHsnCode } from '../../utils/hsnDetector';
 
 function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
@@ -316,21 +318,23 @@ function isGenuineInquiry(item: any): boolean {
   const rawText = (item.raw_text || '').trim();
   const aiJson = (item.ai_extraction_json as any) || {};
 
-  // 0. Exclude Purchase Orders (POs belong strictly to the Orders tab)
-  if (
-    item.inquiry_type === 'purchase_order' ||
-    item.source_channel === 'whatsapp_po' ||
-    rawText.startsWith('[PO Document Attached:')
-  ) {
-    return false;
-  }
-
-  // 1. All official inquiry types and source channels are genuine
+  // 1. All official inquiry types and source channels (WhatsApp & Dashboard) are genuine
+  const channel = String(item.source_channel || '').toLowerCase();
   if (
     item.inquiry_type === 'inquiry' ||
+    item.inquiry_type === 'purchase_order' ||
+    item.inquiry_type === 'quotation_sent' ||
+    channel.includes('whatsapp') ||
+    channel.includes('dashboard') ||
+    channel === 'manual' ||
+    channel === 'form' ||
+    channel === 'upload' ||
+    item.source_channel === 'whatsapp' ||
     item.source_channel === 'whatsapp_text' ||
     item.source_channel === 'whatsapp_image' ||
-    item.source_channel === 'web_dashboard'
+    item.source_channel === 'whatsapp_po' ||
+    item.source_channel === 'web_dashboard' ||
+    item.source_channel === 'dashboard'
   ) {
     return true;
   }
@@ -339,6 +343,7 @@ function isGenuineInquiry(item: any): boolean {
   if (
     rawText.startsWith('[Inquiry Attachment:') ||
     rawText.startsWith('[Inquiry Document Attached]') ||
+    rawText.startsWith('[PO Document Attached:') ||
     (Array.isArray(item.media_urls) && item.media_urls.length > 0)
   ) {
     return true;
@@ -346,6 +351,29 @@ function isGenuineInquiry(item: any): boolean {
 
   // 3. Extracted line items with product & quantity is genuine
   const lineItemsSrc = aiJson.line_items || aiJson.lineItems || [];
+  if (
+    Array.isArray(lineItemsSrc) &&
+    lineItemsSrc.length > 0 &&
+    lineItemsSrc.some(
+      (i: any) =>
+        (Number(i.quantity) > 0 ||
+          Number(i.quantity_tons) > 0 ||
+          Number(i.quantity_mt) > 0) &&
+        (i.sku_text || i.product_name || i.product || i.description),
+    )
+  ) {
+    return true;
+  }
+
+  // 4. Has customer name
+  if (
+    item.sender_name ||
+    item.customer_name ||
+    aiJson.companyName ||
+    aiJson.customer_name
+  ) {
+    return true;
+  }
   if (
     Array.isArray(lineItemsSrc) &&
     lineItemsSrc.length > 0 &&
@@ -724,6 +752,14 @@ export class InquiriesService implements OnModuleInit {
         };
       });
 
+      // Strict backend sort guarantee: always newest first
+      lightweightData.sort((a: any, b: any) => {
+        const timeA = new Date(a.created_at || 0).getTime() || 0;
+        const timeB = new Date(b.created_at || 0).getTime() || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
+
       return lightweightData;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
@@ -868,7 +904,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      return (data || []).map((row: any) => {
+      const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
           row,
           dealByInqId,
@@ -877,8 +913,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-          Array.isArray(row.media_urls) &&
-          row.media_urls.length > 0,
+            Array.isArray(row.media_urls) &&
+            row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -894,6 +930,16 @@ export class InquiriesService implements OnModuleInit {
             : [],
         };
       });
+
+      // Strict backend sort guarantee: always newest first
+      reviewList.sort((a: any, b: any) => {
+        const timeA = new Date(a.created_at || 0).getTime() || 0;
+        const timeB = new Date(b.created_at || 0).getTime() || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
+
+      return reviewList;
     } catch (error) {
       this.logger.error('Error in findReviewQueue:', error);
       throw error;
@@ -1574,7 +1620,7 @@ export class InquiriesService implements OnModuleInit {
             : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
 
-          // Pull actual inquiry data — payload.details first, then inquiry's ai_extraction_json
+          // Pull actual inquiry data - payload.details first, then inquiry's ai_extraction_json
           const aiJson = (inquiry.ai_extraction_json as any) || {};
           const productType = details.productType || aiJson.productType || '';
           const productForm = details.productForm || aiJson.productForm || '';
@@ -1634,7 +1680,7 @@ export class InquiriesService implements OnModuleInit {
             itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
           }
 
-          // Professional Plain Text Email Body — all real inquiry/order data
+          // Professional Plain Text Email Body - all real inquiry/order data
           const textContent = `Dear ${customerName},
 
 Thank you for partnering with Enlight Metals Private Limited.
@@ -1892,17 +1938,42 @@ MIDC Industrial Zone, Mumbai - 400001`;
         'GEMINI_PAID_API_KEY is not configured in backend environment variables',
       );
     }
-    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    let cleanBase64 = fileBase64;
+    let detectedMime = mimeType;
 
-    try {
-      const response = await axios.post(url, {
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+    // 1. Extract data URI header if present (e.g. data:application/pdf;base64,...)
+    const headerMatch = fileBase64.match(/^data:([^;]+);base64,(.+)$/s);
+    if (headerMatch) {
+      if (
+        !detectedMime ||
+        detectedMime === 'application/octet-stream' ||
+        detectedMime === 'image/jpeg'
+      ) {
+        detectedMime = headerMatch[1];
+      }
+      cleanBase64 = headerMatch[2];
+    } else {
+      cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
+    }
+
+    // 2. Binary magic bytes auto-detection for 100% fail-safe MIME typing
+    const prefix = cleanBase64.slice(0, 16);
+    if (prefix.startsWith('JVBERi')) {
+      detectedMime = 'application/pdf';
+    } else if (prefix.startsWith('iVBORw')) {
+      detectedMime = 'image/png';
+    } else if (prefix.startsWith('/9j/')) {
+      detectedMime = 'image/jpeg';
+    } else if (prefix.startsWith('UklGR')) {
+      detectedMime = 'image/webp';
+    }
+
+    if (!detectedMime) {
+      detectedMime = 'application/pdf';
+    }
+
+    const promptText = `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
   "customer_name": "The buyer / client company issuing this inquiry (from the top letterhead / header banner or explicit 'Customer/Buyer' section). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
@@ -1947,54 +2018,76 @@ CRITICAL EXTRACTION RULES:
 - Keep exact units (Nos, MT, Kg, Pcs, Sheets). Never convert or fabricate units.
 - Extract complete payment terms (e.g. "30 Days Credit") and full delivery location (e.g. "MIDC Industrial Area, Nashik, Maharashtra - 422010").
 
-Return ONLY the JSON.`,
-              },
-              {
-                inline_data: {
-                  mime_type: mimeType || 'image/jpeg',
-                  data: cleanBase64,
-                },
-              },
-            ],
-          },
-        ],
-      });
+Return ONLY the JSON.`;
 
-      const text =
-        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      let parsed: any = null;
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ];
+
+    let lastError: any = null;
+    for (const model of candidateModels) {
       try {
-        const cleanJsonStr = text
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-        parsed = JSON.parse(cleanJsonStr);
-      } catch {
-        const firstOpen = text.indexOf('{');
-        const lastClose = text.lastIndexOf('}');
-        if (firstOpen !== -1 && lastClose > firstOpen) {
-          parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const response = await axios.post(url, {
+          contents: [
+            {
+              parts: [
+                {
+                  text: promptText,
+                },
+                {
+                  inline_data: {
+                    mime_type: detectedMime,
+                    data: cleanBase64,
+                  },
+                },
+              ],
+            },
+          ],
+        });
+
+        const text =
+          response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        let parsed: any = null;
+        try {
+          const cleanJsonStr = text
+            .replace(/```json/gi, '')
+            .replace(/```/g, '')
+            .trim();
+          parsed = JSON.parse(cleanJsonStr);
+        } catch {
+          const firstOpen = text.indexOf('{');
+          const lastClose = text.lastIndexOf('}');
+          if (firstOpen !== -1 && lastClose > firstOpen) {
+            parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+          }
         }
-      }
 
-      if (!parsed) {
-        throw new Error('Failed to parse structured JSON from Gemini response');
+        if (parsed) {
+          return {
+            success: true,
+            data: parsed,
+          };
+        }
+      } catch (err: any) {
+        lastError = err;
+        this.logger.warn(
+          `Gemini OCR parsing attempt with model ${model} failed:`,
+          err?.response?.data || err.message,
+        );
       }
-
-      return {
-        success: true,
-        data: parsed,
-      };
-    } catch (err: any) {
-      this.logger.error(
-        'Gemini vision document extraction failed:',
-        err?.response?.data || err.message,
-      );
-      return {
-        success: false,
-        error: err.message,
-      };
     }
+
+    this.logger.error(
+      'All Gemini OCR model attempts failed:',
+      lastError?.response?.data || lastError?.message,
+    );
+    return {
+      success: false,
+      error: lastError?.message || 'Failed to extract PO details from document',
+    };
   }
 
   async parseTextWithGemini(rawText: string) {
@@ -2041,7 +2134,7 @@ Return ONLY the JSON.`,
 
 CRITICAL RULES:
 1. MULTIPLE LINE ITEMS: NEVER merge, collapse, or summarize multiple distinct products into one line item! Every distinct product with its own thickness, grade, spec, or quantity (e.g. "CR 1mm (300 nos), CR 1.2mm (200 nos), HR 1.6mm (200 nos)") MUST produce its own separate line item object in the line_items array.
-2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" — NEVER convert to MT).
+2. PRESERVE EXACT UNITS: Extract the exact quantity unit stated in the source text (nos, pcs, MT, Kg, sheets, coils, etc.). NEVER substitute, convert, or fabricate units (e.g., if user writes 300 nos, quantity is 300 and unit is "nos" - NEVER convert to MT).
 3. PAYMENT TERMS: Always extract payment terms if mentioned in the text (e.g., "30 days", "30 days credit", "100% advance", "45 days"). Never drop payment terms.
 4. FULL DELIVERY ADDRESS: Always extract the complete, full delivery address and location exactly as provided in the inquiry (including plot, gat, street, MIDC/industrial area, city, district, state, and pin code). Never truncate or shorten address details.
 
@@ -2454,7 +2547,17 @@ ${rawText}`,
                         .filter(Boolean)
                         .join(' ')
                         .trim() || undefined,
-                    hsn_code: '72083730',
+                    hsn_code: detectHsnCode(
+                      details.productType || 'HR - COIL / SHEET',
+                      [
+                        details.thickness,
+                        details.width ? `x ${details.width}` : '',
+                        details.length ? `x ${details.length}` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                        .trim() || undefined,
+                    ),
                     quantity: Number(details.quantityTons || 0),
                     unit: 'MT',
                     rate: Number(details.unitPrice || 0),
@@ -2470,7 +2573,13 @@ ${rawText}`,
             'HR - COIL / SHEET'
           ).toUpperCase(),
           dimensions: item.dimensions || undefined,
-          hsn_code: item.hsn_code || item.hsn || '72083730',
+          hsn_code:
+            item.hsn_code ||
+            item.hsn ||
+            detectHsnCode(
+              item.sku_text || item.description || item.productType || '',
+              item.dimensions,
+            ),
           quantity: Number(item.quantity || 0),
           unit: item.unit || 'MT',
           rate: Number(item.rate || item.unitPrice || 0),
@@ -2481,19 +2590,7 @@ ${rawText}`,
           ),
         }));
 
-        const totalQuantity = lineItems.reduce(
-          (s: number, i: any) => s + (Number(i.quantity) || 0),
-          0,
-        );
-        const distinctUnits = Array.from(
-          new Set(lineItems.map((i: any) => i.unit || 'MT')),
-        );
-        const primaryUnit =
-          distinctUnits.length === 1
-            ? distinctUnits[0]
-            : distinctUnits.length === 0
-              ? 'MT'
-              : 'units';
+        const totalTonnage = calculateTotalTonnageMt(lineItems);
         const computedSubtotal =
           lineItems.reduce(
             (s: number, i: any) => s + (Number(i.amount) || 0),
@@ -2556,10 +2653,15 @@ ${rawText}`,
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(item.hsn_code || '72083730', 278, rowY + 9, {
-              width: 62,
-              align: 'center',
-            });
+            .text(
+              item.hsn_code || detectHsnCode(item.sku_text, item.dimensions),
+              278,
+              rowY + 9,
+              {
+                width: 62,
+                align: 'center',
+              },
+            );
 
           // Qty
           doc
@@ -2621,7 +2723,7 @@ ${rawText}`,
           .text('Items in Total ', leftX, summaryY, { continued: true })
           .font(fontBold)
           .fillColor('#0F172A')
-          .text(`${formatIndianCurrency(totalQuantity, true)} ${primaryUnit}`);
+          .text(totalTonnage.formattedText);
 
         if (paymentTerms) {
           doc

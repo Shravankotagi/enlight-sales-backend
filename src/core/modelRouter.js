@@ -1,5 +1,5 @@
 /**
- * modelRouter.js — Multi-key Google Gemini Model Router
+ * modelRouter.js - Multi-key Google Gemini Model Router
  *
  * Uses process.env.GEMINI_API_KEY / GEMINI_API_KEY_1 / GEMINI_API_KEY_2 / GEMINI_API_KEY_3.
  * Primary model: gemini-3.5-flash-lite

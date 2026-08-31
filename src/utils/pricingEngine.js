@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Rate lookup from active/latest rate sheets with dimension compatibility check
  * - Line item amount calculation (quantity * rate)
- * - Strict Forward GST calculation (baseAmount * 0.18) — never reverse calculated
+ * - Strict Forward GST calculation (baseAmount * 0.18) - never reverse calculated
  * - Subtotal calculation (sum of line item amounts)
  * - Grand Total calculation (subtotal + forward GST)
  * - Full quotation & deal financial breakdown aggregation
@@ -95,6 +95,236 @@ function normalizeUnit(rawUnit) {
 }
 
 /**
+ * Converts a single line item into Metric Tons (MT).
+ */
+function convertLineItemToMt(item) {
+  const qty = Number(
+    item.quantity ?? item.quantity_mt ?? item.quantityTons ?? item.qty ?? 0,
+  );
+  const rawUnit = (item.unit || 'MT').trim();
+  const normUnit = normalizeUnit(rawUnit);
+
+  if (!qty || qty <= 0) {
+    return { mt: 0, canConvert: true, originalQty: 0, originalUnit: rawUnit };
+  }
+
+  // 1. MT: No conversion needed
+  if (normUnit === 'MT') {
+    return { mt: qty, canConvert: true, originalQty: qty, originalUnit: 'MT' };
+  }
+
+  // 2. KG: MT = KG / 1000
+  if (normUnit === 'KG') {
+    return {
+      mt: qty / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: 'KG',
+    };
+  }
+
+  // 3. Dimension & Product Formula
+  const combinedText = [
+    item.sku_text || '',
+    item.dimensions || '',
+    item.spec || '',
+    item.specification || '',
+    item.description || '',
+    item.product || '',
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  // 3a. MS TMT Bars / Rebars
+  const isTmt = combinedText.includes('tmt') || combinedText.includes('rebar');
+  if (isTmt) {
+    const diaMatch = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)/,
+    );
+    if (diaMatch) {
+      const dia = parseFloat(diaMatch[1]);
+      const lenMatch = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
+      );
+      const len = lenMatch ? parseFloat(lenMatch[1]) : 12;
+      const wtKg = ((dia * dia) / 162) * len * qty;
+      return {
+        mt: wtKg / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3b. MS Round Bars
+  const isRound =
+    combinedText.includes('round bar') ||
+    combinedText.includes('bright bar') ||
+    combinedText.includes('round');
+  if (isRound) {
+    const diaMatch = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)/,
+    );
+    if (diaMatch) {
+      const dia = parseFloat(diaMatch[1]);
+      const lenMatch = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
+      );
+      const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+      const diaCm = dia / 10;
+      const lenCm = len * 100;
+      const wtKg =
+        (Math.PI / 4) * (diaCm * diaCm) * lenCm * (7.85 / 1000) * qty;
+      return {
+        mt: wtKg / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3c. MS Angles
+  const isAngle =
+    combinedText.includes('angle') || combinedText.includes('isa');
+  if (isAngle) {
+    const angleMatch = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+    );
+    if (angleMatch) {
+      const a = parseFloat(angleMatch[1]);
+      const b = parseFloat(angleMatch[2]);
+      const t = parseFloat(angleMatch[3]);
+      const lenMatch = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
+      );
+      const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+      const wtKg = (a + b - t) * t * 0.00785 * len * qty;
+      return {
+        mt: wtKg / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3d. MS Channels / Beams / Joist / Square Pipe
+  const isPipe =
+    combinedText.includes('pipe') ||
+    combinedText.includes('tube') ||
+    combinedText.includes('shs') ||
+    combinedText.includes('rhs') ||
+    combinedText.includes('square');
+  if (isPipe) {
+    const pipeMatch = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+    );
+    if (pipeMatch) {
+      const od = parseFloat(pipeMatch[1]);
+      const t = parseFloat(pipeMatch[3]);
+      const len = 6;
+      const wtKg = (od - t) * t * 0.0157 * len * qty;
+      return {
+        mt: wtKg / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3e. Standard Sheets / Plates / Coils / CR Coils / HR Coils / Chequered Plates
+  let thickness = null;
+  const thkMatch = combinedText.match(
+    /(\d+(?:\.\d+)?)\s*(?:mm\s*thk|mm\s*thickness|mm|\bthk\b)/,
+  );
+  if (thkMatch) {
+    thickness = parseFloat(thkMatch[1]);
+  }
+
+  let widthM = null;
+  let lengthM = null;
+
+  const dim3Match = combinedText.match(
+    /(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+  );
+  if (dim3Match) {
+    const n1 = parseFloat(dim3Match[1]);
+    const n2 = parseFloat(dim3Match[2]);
+    const n3 = parseFloat(dim3Match[3]);
+    const sorted = [n1, n2, n3].sort((a, b) => a - b);
+    if (!thickness) thickness = sorted[0];
+    const w = sorted[1];
+    const l = sorted[2];
+    widthM = w > 20 ? w / 1000 : w;
+    lengthM = l > 20 ? l / 1000 : l;
+  } else {
+    const dim2Match = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?/,
+    );
+    if (dim2Match) {
+      const d1 = parseFloat(dim2Match[1]);
+      const d2 = parseFloat(dim2Match[2]);
+      const w = Math.min(d1, d2);
+      const l = Math.max(d1, d2);
+      widthM = w > 20 ? w / 1000 : w;
+      lengthM = l > 20 ? l / 1000 : l;
+    }
+  }
+
+  if (thickness && widthM && lengthM) {
+    const wtPerPieceKg = lengthM * widthM * thickness * 7.85;
+    const totalMt = (wtPerPieceKg * qty) / 1000;
+    return {
+      mt: totalMt,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
+  }
+
+  return {
+    mt: qty,
+    canConvert: true,
+    originalQty: qty,
+    originalUnit: rawUnit,
+  };
+}
+
+/**
+ * Calculates converted total tonnage in MT across all line items with precision and transparency.
+ */
+function calculateTotalTonnageMt(lineItems) {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return { totalMt: 0, hasUnconvertible: false, formattedText: '0.00 MT' };
+  }
+
+  let totalMt = 0;
+  for (const item of lineItems) {
+    const res = convertLineItemToMt(item);
+    if (res.canConvert && res.mt !== null) {
+      totalMt += res.mt;
+    } else {
+      totalMt += Number(item.quantity || 0);
+    }
+  }
+
+  const roundedMt = Math.round(totalMt * 1000) / 1000;
+  const formattedMtStr = roundedMt.toLocaleString('en-IN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  });
+
+  return {
+    totalMt: roundedMt,
+    hasUnconvertible: false,
+    formattedText: `${formattedMtStr} MT`,
+  };
+}
+
+/**
  * Converts a quantity to its Metric Ton (MT) equivalent.
  */
 function convertToMt(quantity, rawUnit) {
@@ -164,7 +394,7 @@ function calculateSubtotal(lineItems) {
 }
 
 /**
- * Strict Forward GST calculation: always forward on line amount — never reverse calculated.
+ * Strict Forward GST calculation: always forward on line amount - never reverse calculated.
  *
  * @param {number} baseAmount - Base material amount (excl. GST)
  * @param {number} [gstRate=0.18] - Applicable GST rate (default: 0.18 / 18%)
@@ -299,7 +529,7 @@ function calculatePricingSummary(input, options = {}) {
   if (input && typeof input === 'object') {
     const statedGrand = Number(input.grand_total || input.grandTotal || 0);
     if (statedGrand > 0 && Math.abs(statedGrand - grandTotal) > 2) {
-      calculationWarning = `Calculated total (₹${grandTotal.toLocaleString('en-IN')}) does not match PO document total (₹${statedGrand.toLocaleString('en-IN')}) — please review`;
+      calculationWarning = `Calculated total (₹${grandTotal.toLocaleString('en-IN')}) does not match PO document total (₹${statedGrand.toLocaleString('en-IN')}) - please review`;
     }
   }
 
@@ -320,6 +550,8 @@ function calculatePricingSummary(input, options = {}) {
 module.exports = {
   DEFAULT_GST_RATE,
   normalizeUnit,
+  convertLineItemToMt,
+  calculateTotalTonnageMt,
   convertToMt,
   extractDimensions,
   isDimensionCompatible,

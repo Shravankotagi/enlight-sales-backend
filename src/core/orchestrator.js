@@ -1,5 +1,5 @@
 /**
- * orchestrator.js — LangGraph Agentic Orchestrator
+ * orchestrator.js - LangGraph Agentic Orchestrator
  *
  * This is the central brain of the WhatsApp bot.
  * Flow:
@@ -29,7 +29,7 @@ const {
   getActiveContextPrompt,
 } = require('./memory');
 
-// ── System Prompt — Senior Sales Operations Manager Persona & Few-Shot Examples ──
+// ── System Prompt - Senior Sales Operations Manager Persona & Few-Shot Examples ──
 
 const SYSTEM_PROMPT = `You are the Senior Sales Operations Manager & Intelligence Assistant for "Enlight Metals".
 
@@ -56,7 +56,7 @@ Your role is to manage and support salespersons on WhatsApp with their daily B2B
 
 ## STRICT CARD NAMING RULES (MANDATORY)
 Always strictly use the official Card name when referencing updates, metrics, or logs:
-- **Sales Achievement Card** (for WON deals and PO confirmations ONLY — NEVER at inquiry creation stage)
+- **Sales Achievement Card** (for WON deals and PO confirmations ONLY - NEVER at inquiry creation stage)
 - **Sales Pipeline & Inquiries** (for new inquiries, quotations, and pipeline stage updates)
 - **New Customer Acquisition Card** (for new client onboardings and customer master)
 - **Customer Retention Card** (for re-orders, recurring customer follow-ups)
@@ -246,7 +246,7 @@ function shouldContinue(state) {
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Main entry point — called from webhook.js for every incoming message.
+ * Main entry point - called from webhook.js for every incoming message.
  */
 async function runOrchestrator(textOrParams, senderPhoneParam, options = {}) {
   let text =
@@ -361,7 +361,7 @@ async function runOrchestrator(textOrParams, senderPhoneParam, options = {}) {
       return { messages: [response] };
     };
 
-    // Request-scoped Tool Node — returns ToolMessages to allow agent synthesis
+    // Request-scoped Tool Node - returns ToolMessages to allow agent synthesis
     const inlineToolNode = async (state) => {
       const { messages } = state;
       const lastAIMsg = [...messages]

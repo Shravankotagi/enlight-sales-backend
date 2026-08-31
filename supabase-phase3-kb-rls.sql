@@ -1,4 +1,4 @@
--- Enlight Sales OS Chatbot — Phase 3 Knowledge Base Vector Search RPC & RLS Migration
+-- Enlight Sales OS Chatbot - Phase 3 Knowledge Base Vector Search RPC & RLS Migration
 
 -- 1. Create or replace match_kb_chunks RPC function for cosine similarity vector search
 CREATE OR REPLACE FUNCTION match_kb_chunks(

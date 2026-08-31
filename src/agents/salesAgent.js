@@ -1164,7 +1164,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       return ` Which customer is this inquiry for? Please reply with the customer/company name (e.g. _"Inquiry for ABC Steel"_).`;
     }
 
-    // Exact match only against database — if not found, use verbatim name from message
+    // Exact match only against database - if not found, use verbatim name from message
     const officialCustomerName = await verifyAndGetCustomerName(
       customerName,
       senderPhone,
@@ -1410,7 +1410,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                   ? ` (₹${Number(d.total_amount).toLocaleString('en-IN')})`
                   : '';
               const stageStr = d.stage ? d.stage.toUpperCase() : 'OPEN';
-              return `${idx + 1} *${code}* — ${itemsStr}${valStr} [Stage: ${stageStr}]`;
+              return `${idx + 1} *${code}* - ${itemsStr}${valStr} [Stage: ${stageStr}]`;
             })
             .join('\n');
 
@@ -1460,7 +1460,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       } else {
         dealId = null;
         console.log(
-          `[SalesAgent] New product category detected — creating separate deal for ${finalCustomerName}`,
+          `[SalesAgent] New product category detected - creating separate deal for ${finalCustomerName}`,
         );
       }
     } else {
@@ -1821,7 +1821,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           );
 
           return (
-            ` *Deal Marked as Lost — Reason Required*\n\n` +
+            ` *Deal Marked as Lost - Reason Required*\n\n` +
             `Please specify why the deal for *${finalCustomerName}* was lost:\n\n` +
             `1 Price too high\n` +
             `2 Payment/Credit terms mismatch\n` +
