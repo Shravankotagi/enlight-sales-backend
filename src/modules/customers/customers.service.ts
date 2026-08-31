@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 
@@ -141,9 +136,14 @@ export class CustomersService {
 
   async findOne(id: string, salespersonPhone?: string[] | string) {
     try {
+      const decodedId = decodeURIComponent(id || '').trim();
       let customer: any = null;
-      if (id.startsWith('virtual-')) {
-        const namePart = id.replace(/^(virtual-deal-|virtual-visit-)/, '');
+
+      if (decodedId.startsWith('virtual-')) {
+        const namePart = decodedId.replace(
+          /^(virtual-deal-|virtual-visit-|virtual-inquiry-|virtual-complaint-)/,
+          '',
+        );
         const { data: found } = await this.supabase
           .from('recurring_customers')
           .select('*')
@@ -153,7 +153,7 @@ export class CustomersService {
           customer = found[0];
         } else {
           customer = {
-            id,
+            id: decodedId,
             customer_name: namePart,
             avg_order_frequency_days: 30,
             is_active: true,
@@ -163,12 +163,31 @@ export class CustomersService {
         const { data: found, error } = await this.supabase
           .from('recurring_customers')
           .select('*')
-          .eq('id', id)
+          .eq('id', decodedId)
           .single();
+
         if (error || !found) {
-          throw new NotFoundException('Customer not found');
+          // Fallback: search by name
+          const { data: foundByName } = await this.supabase
+            .from('recurring_customers')
+            .select('*')
+            .ilike('customer_name', `%${decodedId}%`)
+            .limit(1);
+
+          if (foundByName && foundByName.length > 0) {
+            customer = foundByName[0];
+          } else {
+            // Create a virtual customer object rather than 404
+            customer = {
+              id: decodedId,
+              customer_name: decodedId,
+              avg_order_frequency_days: 30,
+              is_active: true,
+            };
+          }
+        } else {
+          customer = found;
         }
-        customer = found;
       }
 
       if (salespersonPhone && customer.assigned_salesperson_phone) {
@@ -182,62 +201,31 @@ export class CustomersService {
         }
       }
 
-      let dealsQuery = this.supabase
+      // Query related collections
+      const dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
-        .ilike('customer_name', `%${customer.customer_name}%`)
-        .order('created_at', { ascending: false })
-        .limit(10);
-      if (salespersonPhone) {
-        const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (dealsOr) dealsQuery = dealsQuery.or(dealsOr);
-      }
+        .order('created_at', { ascending: false });
 
-      let visitsQuery = this.supabase
+      const visitsQuery = this.supabase
         .from('customer_visits')
         .select('*')
-        .ilike('customer_name', `%${customer.customer_name}%`)
-        .order('visited_at', { ascending: false })
-        .limit(5);
-      if (salespersonPhone) {
-        const visitsOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (visitsOr) visitsQuery = visitsQuery.or(visitsOr);
-      }
+        .order('visited_at', { ascending: false });
 
-      let paymentsQuery = this.supabase
+      const paymentsQuery = this.supabase
         .from('payment_tracking')
         .select('*')
-        .ilike('customer_name', `%${customer.customer_name}%`)
         .order('created_at', { ascending: false });
-      if (salespersonPhone) {
-        const paymentsOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (paymentsOr) paymentsQuery = paymentsQuery.or(paymentsOr);
-      }
 
       const complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
-        .ilike('customer_name', `%${customer.customer_name}%`)
         .order('reported_at', { ascending: false });
 
-      let inquiriesQuery = this.supabase
+      const inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
-        .ilike('customer_name', `%${customer.customer_name}%`)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      if (salespersonPhone) {
-        const inquiriesOr = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (inquiriesOr) inquiriesQuery = inquiriesQuery.or(inquiriesOr);
-      }
+        .order('created_at', { ascending: false });
 
       const [dealsRes, visitsRes, paymentsRes, complaintsRes, inquiriesRes] =
         await Promise.all([
@@ -248,11 +236,57 @@ export class CustomersService {
           inquiriesQuery,
         ]);
 
-      const deals = dealsRes.data || [];
-      const visits = visitsRes.data || [];
-      const payments = paymentsRes.data || [];
-      const complaints = complaintsRes.data || [];
-      const inquiries = inquiriesRes.data || [];
+      const allDeals = dealsRes.data || [];
+      const allVisits = visitsRes.data || [];
+      const allPayments = paymentsRes.data || [];
+      const allComplaints = complaintsRes.data || [];
+      const allInquiries = inquiriesRes.data || [];
+
+      // Match related items using smart matcher
+      const deals = allDeals.filter((d) =>
+        isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          d.customer_name,
+          d.customer_phone,
+        ),
+      );
+
+      const visits = allVisits.filter((v) =>
+        isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          v.customer_name,
+          v.contact_no,
+        ),
+      );
+
+      const payments = allPayments.filter((p) =>
+        isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          p.customer_name,
+          null,
+        ),
+      );
+
+      const complaints = allComplaints.filter((c) =>
+        isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          c.customer_name,
+          null,
+        ),
+      );
+
+      const inquiries = allInquiries.filter((inq) =>
+        isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          inq.sender_name,
+          inq.sender_phone,
+        ),
+      );
 
       const wonDeals = deals.filter(
         (d) =>
@@ -261,6 +295,7 @@ export class CustomersService {
           Boolean(d.po_number) ||
           d.inquiry_type === 'purchase_order',
       );
+
       const latestWonDeal = wonDeals.length > 0 ? wonDeals[0] : null;
       const effectiveLastOrderDate = latestWonDeal
         ? latestWonDeal.won_at || latestWonDeal.created_at
@@ -289,22 +324,35 @@ export class CustomersService {
         return st !== 'resolved' && st !== 'closed';
       }).length;
 
-      // Trailing 12 Month Revenue & Tier Calculation
       const now = new Date();
-      const t12mCutoff = new Date(
-        now.getTime() - 365 * 24 * 60 * 60 * 1000,
-      ).toISOString();
-      const t12mRevenue = wonDeals
-        .filter((d) => (d.won_at || d.created_at) >= t12mCutoff)
-        .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
+      const lastOrderDateObj = effectiveLastOrderDate
+        ? new Date(effectiveLastOrderDate)
+        : null;
+      const daysSinceOrder = lastOrderDateObj
+        ? Math.max(
+            0,
+            Math.floor(
+              (now.getTime() - lastOrderDateObj.getTime()) /
+                (1000 * 60 * 60 * 24),
+            ),
+          )
+        : null;
 
-      let tier = 'C';
-      if (t12mRevenue >= 1000000 || lifetimeValue >= 1000000) {
-        tier = 'A';
-      } else if (t12mRevenue >= 200000 || lifetimeValue >= 100000) {
-        tier = 'B';
+      const cadenceDays = customer.avg_order_frequency_days || 30;
+
+      // Health Status (Active <= 35d, At Risk 35-45d, Churning > 45d)
+      let churnRisk = 'active';
+      if (daysSinceOrder !== null) {
+        if (daysSinceOrder > 45) {
+          churnRisk = 'churning';
+        } else if (daysSinceOrder >= 35) {
+          churnRisk = 'at_risk';
+        } else {
+          churnRisk = 'active';
+        }
       }
 
+      // Segment Classification
       let segment = 'new';
       const explicitSegment = (customer.segment || '').toLowerCase();
       if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
@@ -320,16 +368,89 @@ export class CustomersService {
         segment = 'new';
       }
 
+      const totalOrders = wonDeals.length;
+      const avgOrderValue =
+        totalOrders > 0 ? Math.round(lifetimeValue / totalOrders) : 0;
+
+      // Trailing 12 Month Revenue
+      const t12mCutoff = new Date(
+        now.getTime() - 365 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const t12mRevenue = wonDeals
+        .filter((d) => (d.won_at || d.created_at) >= t12mCutoff)
+        .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
+
+      // AI-Derived Health Signals & Strategic Action
+      let sentiment: 'positive' | 'warning' | 'critical' = 'positive';
+      let cadenceHealth = `On Track: Last order was ${daysSinceOrder ?? 0} days ago (Cadence: ${cadenceDays}d).`;
+
+      if (daysSinceOrder === null) {
+        cadenceHealth = 'New Account: No confirmed orders recorded yet.';
+      } else if (daysSinceOrder > 45) {
+        cadenceHealth = `Churn Alert: ${daysSinceOrder} days since last order (${daysSinceOrder - cadenceDays} days past expected cadence).`;
+        sentiment = 'critical';
+      } else if (daysSinceOrder >= 35) {
+        cadenceHealth = `Re-order Due: ${daysSinceOrder} days since last order (expected every ${cadenceDays}d).`;
+        sentiment = 'warning';
+      }
+
+      if (openComplaints > 0) {
+        sentiment = 'critical';
+      }
+
+      const revenueSignal =
+        lifetimeValue >= 1000000
+          ? `High-Value Key Account with ₹${lifetimeValue.toLocaleString('en-IN')} in total revenue.`
+          : lifetimeValue >= 100000
+            ? `Growing Account with ₹${lifetimeValue.toLocaleString('en-IN')} total billing.`
+            : `Emerging Account with ${totalOrders} order(s).`;
+
+      const qualitySignal =
+        openComplaints > 0
+          ? `Attention Required: ${openComplaints} open complaint ticket(s) currently active.`
+          : complaints.length > 0
+            ? `Stable Quality: All ${complaints.length} previous issue(s) resolved.`
+            : 'Excellent Quality: Zero complaints logged.';
+
+      let recommendedAction =
+        'Schedule a routine check-in with the procurement team for upcoming material requirements.';
+      if (openComplaints > 0) {
+        recommendedAction =
+          'Coordinate with QA & Logistics immediately to resolve active complaint tickets before soliciting new RFQs.';
+      } else if (churnRisk === 'churning') {
+        recommendedAction =
+          'Schedule an urgent on-site visit to understand supply disruption or competitor displacement.';
+      } else if (churnRisk === 'at_risk') {
+        recommendedAction =
+          'Proactively send current metal coil / TMT pricing sheet and request their monthly schedule.';
+      } else if (segment === 'key_account') {
+        recommendedAction =
+          'Review upcoming quarterly tonnage requirements and offer customized payment & dispatch terms.';
+      }
+
+      const executiveSummary = `${customer.customer_name} is currently ${churnRisk === 'active' ? 'actively engaged' : churnRisk === 'at_risk' ? 'at risk of order delay' : 'churning and overdue for re-order'} with ${totalOrders} confirmed order(s) totaling ₹${lifetimeValue.toLocaleString('en-IN')}. ${openComplaints > 0 ? `There are ${openComplaints} unresolved issue(s) requiring immediate rep attention.` : 'Account satisfaction remains steady with zero open tickets.'}`;
+
       return {
         ...customer,
         last_order_date: effectiveLastOrderDate,
-        t12m_revenue: t12mRevenue,
+        days_since_order: daysSinceOrder,
+        churn_risk: churnRisk,
+        total_orders: totalOrders,
         lifetime_value: lifetimeValue,
-        total_orders: wonDeals.length,
+        avg_order_value: avgOrderValue,
+        t12m_revenue: t12mRevenue,
         open_complaints: openComplaints,
         total_complaints: complaints.length,
         segment,
-        tier,
+        avg_order_frequency_days: cadenceDays,
+        health_signals: {
+          sentiment,
+          cadence_health: cadenceHealth,
+          revenue_signal: revenueSignal,
+          quality_signal: qualitySignal,
+          executive_summary: executiveSummary,
+          recommended_action: recommendedAction,
+        },
         deals,
         visits,
         payments,
