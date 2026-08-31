@@ -2025,9 +2025,10 @@ export class KraService {
     if (complaintsList.length === 0) return [];
 
     try {
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone, role');
+      const [{ data: employees }, { data: deals }] = await Promise.all([
+        this.supabase.from('employees').select('name, phone, role'),
+        this.supabase.from('deals').select('id, po_number'),
+      ]);
 
       const empMap = new Map<string, string>();
       (employees || []).forEach((e) => {
@@ -2037,10 +2038,27 @@ export class KraService {
         }
       });
 
+      const dealPoMap = new Map<string, string>();
+      (deals || []).forEach((d) => {
+        if (d.po_number) {
+          dealPoMap.set(d.id.toLowerCase(), d.po_number);
+          dealPoMap.set(d.id.substring(0, 6).toLowerCase(), d.po_number);
+        }
+      });
+
       return complaintsList.map((c) => {
         const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
+        let poNum = c.po_number;
+        if (!poNum && c.deal_id) {
+          const cleanDeal = c.deal_id
+            .replace(/^#?DEAL-/i, '')
+            .trim()
+            .toLowerCase();
+          poNum = dealPoMap.get(cleanDeal) || null;
+        }
         return {
           ...c,
+          po_number: poNum,
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
           product_name:
@@ -2075,10 +2093,36 @@ export class KraService {
       }
     }
 
+    let targetDealId = data.deal_id || null;
+    let targetPoNumber = data.po_number || null;
+
+    if (targetDealId && !targetPoNumber) {
+      try {
+        const cleanDeal = targetDealId
+          .replace(/^#?DEAL-/i, '')
+          .trim()
+          .toLowerCase();
+        const { data: matchedDeal } = await this.supabase
+          .from('deals')
+          .select('id, po_number')
+          .or(`id.eq.${cleanDeal},id.ilike.${cleanDeal}%`)
+          .limit(1);
+        if (matchedDeal && matchedDeal.length > 0) {
+          targetDealId = matchedDeal[0].id;
+          if (matchedDeal[0].po_number)
+            targetPoNumber = matchedDeal[0].po_number;
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Deal PO lookup in createComplaint notice: ${err?.message}`,
+        );
+      }
+    }
+
     const payload: Record<string, any> = {
       customer_name: data.customer_name,
-      deal_id: data.deal_id || null,
-      po_number: data.po_number || null,
+      deal_id: targetDealId,
+      po_number: targetPoNumber,
       product_name: extractedProduct || 'General Material',
       affected_product: extractedProduct || 'General Material',
       complaint_type: data.complaint_type || 'Quality Defect',
