@@ -318,11 +318,18 @@ function isGenuineInquiry(item: any): boolean {
   const rawText = (item.raw_text || '').trim();
   const aiJson = (item.ai_extraction_json as any) || {};
 
-  // 1. All official inquiry types and source channels are genuine
+  // 1. All official inquiry types and source channels (WhatsApp & Dashboard) are genuine
+  const channel = String(item.source_channel || '').toLowerCase();
   if (
     item.inquiry_type === 'inquiry' ||
     item.inquiry_type === 'purchase_order' ||
     item.inquiry_type === 'quotation_sent' ||
+    channel.includes('whatsapp') ||
+    channel.includes('dashboard') ||
+    channel === 'manual' ||
+    channel === 'form' ||
+    channel === 'upload' ||
+    item.source_channel === 'whatsapp' ||
     item.source_channel === 'whatsapp_text' ||
     item.source_channel === 'whatsapp_image' ||
     item.source_channel === 'whatsapp_po' ||
