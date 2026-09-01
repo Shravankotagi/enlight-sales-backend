@@ -74,10 +74,7 @@ export class GuardrailsService {
     if (!text) return { safe: true };
 
     const apiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.GEMINI_API_KEY_1 ||
-      process.env.GEMINI_API_KEY_2 ||
-      process.env.GEMINI_API_KEY_3;
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
 
     if (!apiKey) return { safe: true };
 
@@ -106,7 +103,7 @@ Respond ONLY with valid JSON in this exact format:
 { "safe": true } or { "safe": false, "reason": "out_of_scope" } or { "safe": false, "reason": "security_violation" }`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         contents: [{ role: 'user', parts: [{ text: guardrailPrompt }] }],
       });
 

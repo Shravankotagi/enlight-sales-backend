@@ -366,10 +366,7 @@ export class ChatbotService {
     const toolDeclarations = this.toolRegistry.getToolDeclarations(caller.role);
 
     const apiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.GEMINI_API_KEY_1 ||
-      process.env.GEMINI_API_KEY_2 ||
-      process.env.GEMINI_API_KEY_3;
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       throw new Error('Gemini API key is not configured');
@@ -460,7 +457,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         config.tools = [{ functionDeclarations: toolDeclarations }];
       }
 
-      const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+      const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
       const response = await ai.models.generateContent({
         model: modelName,
         contents,

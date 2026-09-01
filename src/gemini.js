@@ -290,11 +290,9 @@ async function extractFromText(text) {
 async function extractFromImage(imageBuffer, mimeType) {
   try {
     const apiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.GEMINI_API_KEY_1 ||
-      process.env.GEMINI_API_KEY_2;
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
     const model = new ChatGoogleGenerativeAI({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-2.5-flash',
       apiKey: apiKey,
       temperature: 0.1,
     });

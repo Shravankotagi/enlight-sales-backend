@@ -33,10 +33,7 @@ export class KbService {
     taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' = 'RETRIEVAL_DOCUMENT',
   ): Promise<number[]> {
     const apiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.GEMINI_API_KEY_1 ||
-      process.env.GEMINI_API_KEY_2 ||
-      process.env.GEMINI_API_KEY_3;
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       throw new Error('Gemini API key is missing');

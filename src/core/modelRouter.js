@@ -1,100 +1,89 @@
 /**
- * modelRouter.js - Multi-key Google Gemini Model Router
+ * modelRouter.js - Google Gemini Model Router
  *
- * Uses process.env.GEMINI_API_KEY / GEMINI_API_KEY_1 / GEMINI_API_KEY_2 / GEMINI_API_KEY_3.
- * Primary model: gemini-3.5-flash-lite
+ * HEAVY USE CASES (Vision/OCR, Multi-page PO Documents, Complex Agent Decisions):
+ * - Key: process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY
+ * - Model: gemini-2.5-flash
+ *
+ * NORMAL USE CASES (Intent Classification, Query Routing, Field Extractions, FAQ):
+ * - Key: process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY
+ * - Model: gemini-3.1-flash-lite
  */
 
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 
-const GEMINI_KEYS = [
-  process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY_1,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-].filter(Boolean);
+const GEMINI_API_KEY =
+  process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
 
-const GEMINI_MODELS = ['gemini-3.5-flash-lite'];
+/**
+ * Heavy use case model for Image Processing, OCR, PDFs, & Complex Reasoning.
+ * Powered by gemini-2.5-flash.
+ */
+function getPaidHighAccuracyModel(tools = null) {
+  const model = new ChatGoogleGenerativeAI({
+    model: 'gemini-2.5-flash',
+    apiKey: GEMINI_API_KEY,
+    temperature: 0.1,
+    maxRetries: 2,
+  });
 
-let roundRobinIdx = 0;
-
-function getNextGeminiKey() {
-  if (GEMINI_KEYS.length === 0) return process.env.GEMINI_API_KEY || null;
-  const key = GEMINI_KEYS[roundRobinIdx % GEMINI_KEYS.length];
-  roundRobinIdx++;
-  return key;
+  return tools ? model.bindTools(tools) : model;
 }
 
 /**
- * Returns a ChatGoogleGenerativeAI instance using gemini-3.5-flash-lite.
+ * Normal use case model for Simple Tasks (Intent routing, greetings, query classification, standard extractions).
+ * Powered by gemini-3.1-flash-lite.
  */
-function getGeminiModel(tools = null, modelName = 'gemini-3.5-flash-lite') {
-  const key = getNextGeminiKey();
-  if (!key) return null;
-
+function getLightweightModel(tools = null) {
   const model = new ChatGoogleGenerativeAI({
-    model: modelName,
-    apiKey: key,
+    model: 'gemini-3.1-flash-lite',
+    apiKey: GEMINI_API_KEY,
     temperature: 0.1,
-    maxRetries: 1,
+    maxRetries: 2,
   });
 
   return tools ? model.bindTools(tools) : model;
 }
 
 function getModel(tools = null) {
-  const gemini = getGeminiModel(tools);
-  if (gemini) return gemini;
-  throw new Error('[ModelRouter] No Gemini API key configured.');
+  return getLightweightModel(tools);
 }
 
 /**
- * Invoke a model with automatic failover across Gemini models & keys with retry.
- *
- * @param {Array} messages - LangChain message array
- * @param {Array} tools - Optional tools to bind
- * @returns {object} AI message response
+ * Invoke model with automatic routing:
+ * - If isPaidTask === true (heavy tasks: images, OCR, PDFs, complex reasoning), uses gemini-2.5-flash
+ * - If isPaidTask === false (normal tasks: intent classification, query routing), uses gemini-3.1-flash-lite
  */
-async function invokeWithFallback(messages, tools = null) {
-  let lastError;
-
-  const geminiKeys =
-    GEMINI_KEYS.length > 0 ? GEMINI_KEYS : [process.env.GEMINI_API_KEY];
-  for (const modelName of GEMINI_MODELS) {
-    for (const key of geminiKeys) {
-      if (!key) continue;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const model = new ChatGoogleGenerativeAI({
-            model: modelName,
-            apiKey: key,
-            temperature: 0.1,
-            maxRetries: 1,
-          });
-          const boundModel = tools ? model.bindTools(tools) : model;
-          return await boundModel.invoke(messages);
-        } catch (err) {
-          lastError = err;
-          console.warn(
-            `[ModelRouter] Gemini (${modelName}) key (***${key.slice(-4)}) attempt ${attempt} failed: ${err.message}`,
-          );
-          const msg = err.message || '';
-          if (
-            msg.includes('429') ||
-            msg.includes('Quota') ||
-            msg.includes('RESOURCE_EXHAUSTED')
-          ) {
-            await new Promise((r) => setTimeout(r, 1500));
-          }
-          continue;
-        }
-      }
+async function invokeWithFallback(messages, tools = null, isPaidTask = false) {
+  if (isPaidTask) {
+    try {
+      const heavyModel = getPaidHighAccuracyModel(tools);
+      return await heavyModel.invoke(messages);
+    } catch (err) {
+      console.warn(
+        `[ModelRouter] Heavy model (gemini-2.5-flash) invocation error: ${err.message}. Retrying...`,
+      );
+      const retryModel = getPaidHighAccuracyModel(tools);
+      return await retryModel.invoke(messages);
     }
   }
 
-  throw (
-    lastError || new Error('[ModelRouter] All Gemini API keys/models failed')
-  );
+  // Normal use case (gemini-3.1-flash-lite) with fallback to gemini-2.5-flash
+  try {
+    const normalModel = getLightweightModel(tools);
+    return await normalModel.invoke(messages);
+  } catch (err) {
+    console.warn(
+      `[ModelRouter] Normal model (gemini-3.1-flash-lite) warning: ${err.message}. Falling back to gemini-2.5-flash.`,
+    );
+    const fallbackModel = getPaidHighAccuracyModel(tools);
+    return await fallbackModel.invoke(messages);
+  }
 }
 
-module.exports = { getModel, getGeminiModel, invokeWithFallback };
+module.exports = {
+  getModel,
+  getPaidHighAccuracyModel,
+  getLightweightModel,
+  invokeWithFallback,
+};
