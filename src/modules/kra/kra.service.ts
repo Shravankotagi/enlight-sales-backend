@@ -123,26 +123,36 @@ export class KraService {
     year?: number,
     from?: string,
     to?: string,
+    allTime = false,
   ) {
     try {
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+
       let start: string;
       let end: string;
 
-      if (from && to) {
-        start = new Date(from).toISOString();
-        end = new Date(
-          to.includes('T') ? to : to + 'T23:59:59.999Z',
-        ).toISOString();
+      if (!isAllTime) {
+        if (from && to) {
+          start = new Date(from).toISOString();
+          end = new Date(
+            to.includes('T') ? to : to + 'T23:59:59.999Z',
+          ).toISOString();
+        } else {
+          const range = this.getMonthRange(month, year);
+          start = range.start;
+          end = range.end;
+        }
       } else {
-        const range = this.getMonthRange(month, year);
-        start = range.start;
-        end = range.end;
+        start = new Date(0).toISOString();
+        end = new Date().toISOString();
       }
 
       // If salespersonPhone is empty array (e.g. Sales Manager with 0 assigned reps), return clean zero metrics
       if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
         return {
-          month: start,
+          month: isAllTime ? 'all_time' : start,
           kra1: {
             label: 'Sales Achievement',
             deals_count: 0,
@@ -213,34 +223,34 @@ export class KraService {
       let dealsQuery = this.supabase.from('deals').select('*');
       let inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('id, status, created_at, salesperson_phone, sender_phone')
-        .gte('created_at', start)
-        .lte('created_at', end);
-      let kraLogsQuery = this.supabase
-        .from('kra_logs')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
-      let visitsQuery = this.supabase
-        .from('customer_visits')
-        .select('*')
-        .gte('visited_at', start)
-        .lte('visited_at', end);
-      let complaintsQuery = this.supabase
-        .from('complaints')
-        .select('*')
-        .gte('reported_at', start)
-        .lte('reported_at', end);
+        .select('id, status, created_at, salesperson_phone, sender_phone');
+      let kraLogsQuery = this.supabase.from('kra_logs').select('*');
+      let visitsQuery = this.supabase.from('customer_visits').select('*');
+      let complaintsQuery = this.supabase.from('complaints').select('*');
       let paymentsQuery = this.supabase.from('payment_tracking').select('*');
       let recurringQuery = this.supabase
         .from('recurring_customers')
         .select('*')
         .eq('is_active', true);
-      let followupsQuery = this.supabase
-        .from('followup_tasks')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
+      let followupsQuery = this.supabase.from('followup_tasks').select('*');
+
+      if (!isAllTime) {
+        inquiriesQuery = inquiriesQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
+        kraLogsQuery = kraLogsQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
+        visitsQuery = visitsQuery
+          .gte('visited_at', start)
+          .lte('visited_at', end);
+        complaintsQuery = complaintsQuery
+          .gte('reported_at', start)
+          .lte('reported_at', end);
+        followupsQuery = followupsQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
+      }
 
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
@@ -284,9 +294,11 @@ export class KraService {
         if (recurringOr) recurringQuery = recurringQuery.or(recurringOr);
       }
 
-      dealsQuery = dealsQuery.or(
-        `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
-      );
+      if (!isAllTime) {
+        dealsQuery = dealsQuery.or(
+          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+        );
+      }
 
       const [
         dealsResult,
@@ -317,19 +329,23 @@ export class KraService {
       const recurring = recurringResult.data || [];
       const followups = followupsResult.data || [];
 
-      const dealsCreatedThisMonth = deals.filter(
-        (d) => d.created_at >= start && d.created_at <= end,
-      );
-      const wonDeals = deals.filter((d) => {
-        if (d.stage !== 'won') return false;
-        const dealDate = d.won_at || d.created_at;
-        return dealDate >= start && dealDate <= end;
-      });
-      const lostDeals = deals.filter((d) => {
-        if (d.stage !== 'lost') return false;
-        const dealDate = d.created_at;
-        return dealDate >= start && dealDate <= end;
-      });
+      const dealsCreatedPeriod = isAllTime
+        ? deals
+        : deals.filter((d) => d.created_at >= start && d.created_at <= end);
+      const wonDeals = isAllTime
+        ? deals.filter((d) => d.stage === 'won')
+        : deals.filter((d) => {
+            if (d.stage !== 'won') return false;
+            const dealDate = d.won_at || d.created_at;
+            return dealDate >= start && dealDate <= end;
+          });
+      const lostDeals = isAllTime
+        ? deals.filter((d) => d.stage === 'lost')
+        : deals.filter((d) => {
+            if (d.stage !== 'lost') return false;
+            const dealDate = d.created_at;
+            return dealDate >= start && dealDate <= end;
+          });
 
       const totalValue = wonDeals.reduce((sum, d) => {
         if (d.total_amount && Number(d.total_amount) > 0) {
@@ -405,17 +421,19 @@ export class KraService {
         0,
       );
 
-      const reportedThisMonth = complaints.filter(
-        (c) => c.reported_at >= start && c.reported_at <= end,
-      );
-      const resolvedComplaints = reportedThisMonth.filter(
+      const reportedPeriod = isAllTime
+        ? complaints
+        : complaints.filter(
+            (c) => c.reported_at >= start && c.reported_at <= end,
+          );
+      const resolvedComplaints = reportedPeriod.filter(
         (c) => c.status === 'resolved',
       );
       const withinTarget = resolvedComplaints.filter(
         (c) => (c.resolution_time_hrs || 0) <= 48,
       );
 
-      const totalDealsCount = dealsCreatedThisMonth.length;
+      const totalDealsCount = dealsCreatedPeriod.length;
       const wonDealsCount = wonDeals.length;
       const conversionRate =
         totalDealsCount > 0
@@ -423,15 +441,15 @@ export class KraService {
           : 0;
 
       return {
-        month: start,
+        month: isAllTime ? 'all_time' : start,
         kra1: {
           label: 'Sales Achievement',
-          deals_count: dealsCreatedThisMonth.length,
+          deals_count: dealsCreatedPeriod.length,
           won_count: wonDeals.length,
           lost_count: lostDeals.length,
           total_value: totalValue,
           won_value: totalValue,
-          status: dealsCreatedThisMonth.length > 0 ? 'on_track' : 'at_risk',
+          status: dealsCreatedPeriod.length > 0 ? 'on_track' : 'at_risk',
         },
         kra2: {
           label: 'New Customer Acquisition',
@@ -501,7 +519,7 @@ export class KraService {
         },
         kra8: {
           label: 'Complaint Resolution',
-          total: reportedThisMonth.length,
+          total: reportedPeriod.length,
           resolved: resolvedComplaints.length,
           within_48h: withinTarget.length,
           avg_resolution_hrs:
@@ -514,7 +532,7 @@ export class KraService {
                 )
               : 0,
           status:
-            reportedThisMonth.length === 0 ||
+            reportedPeriod.length === 0 ||
             withinTarget.length === resolvedComplaints.length
               ? 'achieved'
               : 'in_progress',
@@ -571,6 +589,7 @@ export class KraService {
     year?: number,
     from?: string,
     to?: string,
+    allTime = false,
   ) {
     const supabase = this.supabase;
     const now = new Date();
@@ -583,23 +602,27 @@ export class KraService {
       return { actions: [], generated_at: now.toISOString() };
     }
 
-    let monthStart: string;
-    let monthEnd: string;
+    const isAllTime = Boolean(allTime || (!from && !to && month === undefined));
 
-    if (from && to) {
-      monthStart = new Date(from).toISOString();
-      monthEnd = new Date(
-        to.includes('T') ? to : to + 'T23:59:59.999Z',
-      ).toISOString();
-    } else {
-      const targetYear = year !== undefined ? year : now.getFullYear();
-      const targetMonth = month !== undefined ? month : now.getMonth();
-      monthStart = new Date(
-        Date.UTC(targetYear, targetMonth, 1, 0, 0, 0),
-      ).toISOString();
-      monthEnd = new Date(
-        Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999),
-      ).toISOString();
+    let monthStart: string | undefined;
+    let monthEnd: string | undefined;
+
+    if (!isAllTime) {
+      if (from && to) {
+        monthStart = new Date(from).toISOString();
+        monthEnd = new Date(
+          to.includes('T') ? to : to + 'T23:59:59.999Z',
+        ).toISOString();
+      } else {
+        const targetYear = year !== undefined ? year : now.getFullYear();
+        const targetMonth = month !== undefined ? month : now.getMonth();
+        monthStart = new Date(
+          Date.UTC(targetYear, targetMonth, 1, 0, 0, 0),
+        ).toISOString();
+        monthEnd = new Date(
+          Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999),
+        ).toISOString();
+      }
     }
     const actions: any[] = [];
 
@@ -617,9 +640,13 @@ export class KraService {
           'new',
           'draft',
           'auto_created',
-        ])
-        .gte('created_at', monthStart)
-        .lte('created_at', monthEnd);
+        ]);
+
+      if (!isAllTime && monthStart && monthEnd) {
+        inquiryQuery = inquiryQuery
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+      }
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -666,10 +693,14 @@ export class KraService {
         .from('deals')
         .select('id, customer_name, stage, created_at, salesperson_phone')
         .not('stage', 'in', '("won","lost")')
-        .lte('created_at', sevenDaysAgo)
-        .gte('created_at', monthStart)
-        .lte('created_at', monthEnd)
-        .order('created_at', { ascending: true });
+        .lte('created_at', sevenDaysAgo);
+
+      if (!isAllTime && monthStart && monthEnd) {
+        staleQuery = staleQuery
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+      }
+      staleQuery = staleQuery.order('created_at', { ascending: true });
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -705,9 +736,13 @@ export class KraService {
       let followupsQuery = supabase
         .from('followup_tasks')
         .select('id, customer_name, due_date, task_type, salesperson_phone')
-        .eq('status', 'pending')
-        .gte('due_date', monthStart)
-        .lte('due_date', monthEnd);
+        .eq('status', 'pending');
+
+      if (!isAllTime && monthStart && monthEnd) {
+        followupsQuery = followupsQuery
+          .gte('due_date', monthStart)
+          .lte('due_date', monthEnd);
+      }
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -791,9 +826,13 @@ export class KraService {
         .from('complaints')
         .select('id, customer_name, complaint_type, reported_by')
         .eq('status', 'pending')
-        .lte('reported_at', dayAgo)
-        .gte('reported_at', monthStart)
-        .lte('reported_at', monthEnd);
+        .lte('reported_at', dayAgo);
+
+      if (!isAllTime && monthStart && monthEnd) {
+        complaintsQuery = complaintsQuery
+          .gte('reported_at', monthStart)
+          .lte('reported_at', monthEnd);
+      }
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -829,9 +868,13 @@ export class KraService {
     try {
       let dealsQuery = supabase
         .from('deals')
-        .select('total_amount, stage, salesperson_phone')
-        .gte('created_at', monthStart)
-        .lte('created_at', monthEnd);
+        .select('total_amount, stage, salesperson_phone');
+
+      if (!isAllTime && monthStart && monthEnd) {
+        dealsQuery = dealsQuery
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+      }
 
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [

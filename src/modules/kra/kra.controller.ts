@@ -30,6 +30,7 @@ export class KraController {
     @Query('year') year?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -43,6 +44,7 @@ export class KraController {
       year ? parseInt(year) : undefined,
       from,
       to,
+      allTime === 'true',
     );
   }
 
@@ -96,6 +98,7 @@ export class KraController {
     @Query('year') year?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const isAdmin = employee.role === 'admin';
     const parsedMonth = month ? parseInt(month) : undefined;
@@ -114,6 +117,7 @@ export class KraController {
       parsedYear,
       from,
       to,
+      allTime === 'true',
     );
   }
 
