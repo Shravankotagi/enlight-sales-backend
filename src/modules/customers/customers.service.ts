@@ -228,47 +228,102 @@ export class CustomersService {
         }
       }
 
-      // Query related collections scoped to salesperson
+      // Build targeted customer search terms for database queries
+      const targetNameClean = cleanLegalSuffixes(customer.customer_name);
+      const targetWords = targetNameClean
+        .split(' ')
+        .filter((w) => w.length >= 3)
+        .slice(0, 3);
+      const targetPhoneClean = cleanPhone(customer.customer_phone);
+
+      const dealCandidateFilters: string[] = [];
+      if (targetNameClean)
+        dealCandidateFilters.push(`customer_name.ilike.%${targetNameClean}%`);
+      targetWords.forEach((w) =>
+        dealCandidateFilters.push(`customer_name.ilike.%${w}%`),
+      );
+      if (targetPhoneClean) {
+        dealCandidateFilters.push(`customer_phone.ilike.%${targetPhoneClean}%`);
+        dealCandidateFilters.push(
+          `customer_phone.ilike.%91${targetPhoneClean}%`,
+        );
+      }
+
+      const visitCandidateFilters: string[] = [];
+      if (targetNameClean)
+        visitCandidateFilters.push(`customer_name.ilike.%${targetNameClean}%`);
+      targetWords.forEach((w) =>
+        visitCandidateFilters.push(`customer_name.ilike.%${w}%`),
+      );
+      if (targetPhoneClean) {
+        visitCandidateFilters.push(`contact_no.ilike.%${targetPhoneClean}%`);
+        visitCandidateFilters.push(`contact_no.ilike.%91${targetPhoneClean}%`);
+      }
+
+      const inqCandidateFilters: string[] = [];
+      if (targetNameClean)
+        inqCandidateFilters.push(`sender_name.ilike.%${targetNameClean}%`);
+      targetWords.forEach((w) =>
+        inqCandidateFilters.push(`sender_name.ilike.%${w}%`),
+      );
+      if (targetPhoneClean) {
+        inqCandidateFilters.push(`sender_phone.ilike.%${targetPhoneClean}%`);
+        inqCandidateFilters.push(`sender_phone.ilike.%91${targetPhoneClean}%`);
+      }
+
+      const compCandidateFilters: string[] = [];
+      if (targetNameClean)
+        compCandidateFilters.push(`customer_name.ilike.%${targetNameClean}%`);
+      targetWords.forEach((w) =>
+        compCandidateFilters.push(`customer_name.ilike.%${w}%`),
+      );
+
+      const payCandidateFilters: string[] = [];
+      if (targetNameClean)
+        payCandidateFilters.push(`customer_name.ilike.%${targetNameClean}%`);
+      targetWords.forEach((w) =>
+        payCandidateFilters.push(`customer_name.ilike.%${w}%`),
+      );
+
+      // Query related collections targeted to candidate matches
       let dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
         .order('created_at', { ascending: false });
+      if (dealCandidateFilters.length > 0) {
+        dealsQuery = dealsQuery.or(dealCandidateFilters.join(','));
+      }
 
       let visitsQuery = this.supabase
         .from('customer_visits')
         .select('*')
         .order('visited_at', { ascending: false });
+      if (visitCandidateFilters.length > 0) {
+        visitsQuery = visitsQuery.or(visitCandidateFilters.join(','));
+      }
 
-      const paymentsQuery = this.supabase
+      let paymentsQuery = this.supabase
         .from('payment_tracking')
         .select('*')
         .order('created_at', { ascending: false });
+      if (payCandidateFilters.length > 0) {
+        paymentsQuery = paymentsQuery.or(payCandidateFilters.join(','));
+      }
 
       let complaintsQuery = this.supabase
         .from('complaints')
         .select('*')
         .order('reported_at', { ascending: false });
+      if (compCandidateFilters.length > 0) {
+        complaintsQuery = complaintsQuery.or(compCandidateFilters.join(','));
+      }
 
       let inquiriesQuery = this.supabase
         .from('inquiries')
         .select('*')
         .order('created_at', { ascending: false });
-
-      if (salespersonPhone) {
-        const spFilter = buildMultiFieldOrFilter(salespersonPhone, [
-          'salesperson_phone',
-        ]);
-        if (spFilter) {
-          dealsQuery = dealsQuery.or(spFilter);
-          visitsQuery = visitsQuery.or(spFilter);
-          inquiriesQuery = inquiriesQuery.or(spFilter);
-        }
-        const compFilter = buildMultiFieldOrFilter(salespersonPhone, [
-          'reported_by',
-        ]);
-        if (compFilter) {
-          complaintsQuery = complaintsQuery.or(compFilter);
-        }
+      if (inqCandidateFilters.length > 0) {
+        inquiriesQuery = inquiriesQuery.or(inqCandidateFilters.join(','));
       }
 
       const [
@@ -385,6 +440,31 @@ export class CustomersService {
       const effectiveLastOrderDate = latestWonDeal
         ? latestWonDeal.won_at || latestWonDeal.created_at
         : customer.last_order_date || null;
+
+      // Persist refreshed last_order_date on recurring_customers (non-blocking)
+      if (
+        customer.id &&
+        !String(customer.id).startsWith('virtual-') &&
+        effectiveLastOrderDate &&
+        effectiveLastOrderDate !== customer.last_order_date
+      ) {
+        const dateOnly = effectiveLastOrderDate.includes('T')
+          ? effectiveLastOrderDate.split('T')[0]
+          : effectiveLastOrderDate;
+        Promise.resolve(
+          this.supabase
+            .from('recurring_customers')
+            .update({
+              last_order_date: dateOnly,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', customer.id),
+        ).catch((err: any) =>
+          this.logger.warn(
+            `Failed to update customer summary: ${err?.message || err}`,
+          ),
+        );
+      }
 
       // Calculate lifetime value with deal_items fallback
       const lifetimeValue = wonDeals.reduce((sum, d) => {
