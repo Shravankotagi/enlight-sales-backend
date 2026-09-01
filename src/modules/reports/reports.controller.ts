@@ -21,6 +21,7 @@ export class ReportsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -34,6 +35,7 @@ export class ReportsController {
       phones === null ? undefined : phones,
       from,
       to,
+      allTime === 'true',
     );
   }
 
@@ -45,6 +47,7 @@ export class ReportsController {
     @Query('year') year?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     if (employee.role === 'admin') {
       return this.reportsService.getSalespersonReport(
@@ -52,6 +55,8 @@ export class ReportsController {
         year ? parseInt(year) : undefined,
         from,
         to,
+        undefined,
+        allTime === 'true',
       );
     }
 
@@ -70,6 +75,7 @@ export class ReportsController {
         from,
         to,
         teamPhones,
+        allTime === 'true',
       );
     }
 
@@ -85,6 +91,7 @@ export class ReportsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -98,6 +105,7 @@ export class ReportsController {
       phones === null ? undefined : phones,
       from,
       to,
+      allTime === 'true',
     );
   }
 
@@ -110,6 +118,7 @@ export class ReportsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -123,6 +132,7 @@ export class ReportsController {
       phones === null ? undefined : phones,
       from,
       to,
+      allTime === 'true',
     );
   }
 
@@ -135,6 +145,7 @@ export class ReportsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('all_time') allTime?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
@@ -148,6 +159,7 @@ export class ReportsController {
       phones === null ? undefined : phones,
       from,
       to,
+      allTime === 'true',
     );
   }
 }

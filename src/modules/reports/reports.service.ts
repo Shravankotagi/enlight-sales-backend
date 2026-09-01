@@ -53,14 +53,20 @@ export class ReportsService {
     salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
+    allTime?: boolean,
   ) {
     try {
-      let start: string;
-      let end: string;
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+      let start: string = '';
+      let end: string = '';
       let monthName = '';
       let y = year || new Date().getFullYear();
 
-      if (from && to) {
+      if (isAllTime) {
+        monthName = 'All Time';
+      } else if (from && to) {
         start = new Date(from).toISOString();
         end = new Date(
           to.includes('T') ? to : to + 'T23:59:59.999Z',
@@ -97,22 +103,21 @@ export class ReportsService {
         };
       }
 
-      const fromDateOnly = start.split('T')[0];
-      const toDateOnly = end.split('T')[0];
+      let dealsQuery = this.supabase.from('deals').select('*');
+      let inquiriesQuery = this.supabase.from('inquiries').select('*');
 
-      let dealsQuery = this.supabase
-        .from('deals')
-        .select('*')
-        .or(
+      if (!isAllTime) {
+        const fromDateOnly = start.split('T')[0];
+        const toDateOnly = end.split('T')[0];
+        dealsQuery = dealsQuery.or(
           `and(won_at.gte.${start},won_at.lte.${end}),` +
             `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
             `and(created_at.gte.${start},created_at.lte.${end})`,
         );
-      let inquiriesQuery = this.supabase
-        .from('inquiries')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        inquiriesQuery = inquiriesQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
+      }
 
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
@@ -234,14 +239,20 @@ export class ReportsService {
     from?: string,
     to?: string,
     allowedPhones?: string[],
+    allTime?: boolean,
   ) {
     try {
-      let start: string;
-      let end: string;
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+      let start: string = '';
+      let end: string = '';
       let monthName = '';
       let y = year || new Date().getFullYear();
 
-      if (from && to) {
+      if (isAllTime) {
+        monthName = 'All Time';
+      } else if (from && to) {
         start = new Date(from).toISOString();
         end = new Date(
           to.includes('T') ? to : to + 'T23:59:59.999Z',
@@ -255,6 +266,25 @@ export class ReportsService {
         y = range.year;
       }
 
+      let dealsQ = this.supabase
+        .from('deals')
+        .select('*')
+        .neq('inquiry_type', 'unknown');
+      let visitsQ = this.supabase.from('customer_visits').select('*');
+      let complaintsQ = this.supabase.from('complaints').select('*');
+      let kraLogsQ = this.supabase.from('kra_logs').select('*');
+      let paymentsQ = this.supabase.from('payment_tracking').select('*');
+
+      if (!isAllTime) {
+        dealsQ = dealsQ.gte('created_at', start).lte('created_at', end);
+        visitsQ = visitsQ.gte('visited_at', start).lte('visited_at', end);
+        complaintsQ = complaintsQ
+          .gte('reported_at', start)
+          .lte('reported_at', end);
+        kraLogsQ = kraLogsQ.gte('created_at', start).lte('created_at', end);
+        paymentsQ = paymentsQ.gte('created_at', start).lte('created_at', end);
+      }
+
       const [
         dealsResult,
         visitsResult,
@@ -262,32 +292,11 @@ export class ReportsService {
         kraLogsResult,
         paymentsResult,
       ] = await Promise.all([
-        this.supabase
-          .from('deals')
-          .select('*')
-          .neq('inquiry_type', 'unknown')
-          .gte('created_at', start)
-          .lte('created_at', end),
-        this.supabase
-          .from('customer_visits')
-          .select('*')
-          .gte('visited_at', start)
-          .lte('visited_at', end),
-        this.supabase
-          .from('complaints')
-          .select('*')
-          .gte('reported_at', start)
-          .lte('reported_at', end),
-        this.supabase
-          .from('kra_logs')
-          .select('*')
-          .gte('created_at', start)
-          .lte('created_at', end),
-        this.supabase
-          .from('payment_tracking')
-          .select('*')
-          .gte('created_at', start)
-          .lte('created_at', end),
+        dealsQ,
+        visitsQ,
+        complaintsQ,
+        kraLogsQ,
+        paymentsQ,
       ]);
 
       if (dealsResult.error) throw dealsResult.error;
@@ -449,14 +458,20 @@ export class ReportsService {
     salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
+    allTime?: boolean,
   ) {
     try {
-      let start: string;
-      let end: string;
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+      let start: string = '';
+      let end: string = '';
       let monthName = '';
       let y = year || new Date().getFullYear();
 
-      if (from && to) {
+      if (isAllTime) {
+        monthName = 'All Time';
+      } else if (from && to) {
         start = new Date(from).toISOString();
         end = new Date(
           to.includes('T') ? to : to + 'T23:59:59.999Z',
@@ -492,12 +507,13 @@ export class ReportsService {
         };
       }
 
-      let dealsQuery = this.supabase
-        .from('deals')
-        .select('*')
-        .or(
+      let dealsQuery = this.supabase.from('deals').select('*');
+
+      if (!isAllTime) {
+        dealsQuery = dealsQuery.or(
           `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
         );
+      }
 
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -570,14 +586,20 @@ export class ReportsService {
     salespersonPhone?: string[] | string,
     from?: string,
     to?: string,
+    allTime?: boolean,
   ) {
     try {
-      let start: string;
-      let end: string;
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+      let start: string = '';
+      let end: string = '';
       let monthName = '';
       let y = year || new Date().getFullYear();
 
-      if (from && to) {
+      if (isAllTime) {
+        monthName = 'All Time';
+      } else if (from && to) {
         start = new Date(from).toISOString();
         end = new Date(
           to.includes('T') ? to : to + 'T23:59:59.999Z',
@@ -598,21 +620,23 @@ export class ReportsService {
         };
       }
 
-      const fromDateOnly = start.split('T')[0];
-      const toDateOnly = end.split('T')[0];
-
       let dealsQuery = this.supabase
         .from('deals')
         .select(
           'id, created_at, won_at, stage, salesperson_phone, inquiry_type, po_date',
         )
         .neq('inquiry_type', 'unknown')
-        .eq('stage', 'won')
-        .or(
+        .eq('stage', 'won');
+
+      if (!isAllTime) {
+        const fromDateOnly = start.split('T')[0];
+        const toDateOnly = end.split('T')[0];
+        dealsQuery = dealsQuery.or(
           `and(won_at.gte.${start},won_at.lte.${end}),` +
             `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
             `and(won_at.is.null,created_at.gte.${start},created_at.lte.${end})`,
         );
+      }
 
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
@@ -686,14 +710,20 @@ export class ReportsService {
     salespersonPhone?: string | string[],
     from?: string,
     to?: string,
+    allTime?: boolean,
   ) {
     try {
-      let start: string;
-      let end: string;
+      const isAllTime = Boolean(
+        allTime || (!from && !to && month === undefined),
+      );
+      let start: string = '';
+      let end: string = '';
       let monthName = '';
       let y = year || new Date().getFullYear();
 
-      if (from && to) {
+      if (isAllTime) {
+        monthName = 'All Time';
+      } else if (from && to) {
         start = new Date(from).toISOString();
         end = new Date(
           to.includes('T') ? to : to + 'T23:59:59.999Z',
@@ -740,25 +770,26 @@ export class ReportsService {
         };
       }
 
-      const fromDateOnly = start.split('T')[0];
-      const toDateOnly = end.split('T')[0];
-
       // 1. Query all deals in period with nested deal_items
-      let dealsQuery = this.supabase
-        .from('deals')
-        .select('*, deal_items(*)')
-        .or(
-          `and(won_at.gte.${start},won_at.lte.${end}),` +
-            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
-            `and(created_at.gte.${start},created_at.lte.${end})`,
-        );
+      let dealsQuery = this.supabase.from('deals').select('*, deal_items(*)');
 
       // 2. Query all inquiries in period
       let inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('id, created_at, salesperson_phone')
-        .gte('created_at', start)
-        .lte('created_at', end);
+        .select('id, created_at, salesperson_phone');
+
+      if (!isAllTime) {
+        const fromDateOnly = start.split('T')[0];
+        const toDateOnly = end.split('T')[0];
+        dealsQuery = dealsQuery.or(
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(created_at.gte.${start},created_at.lte.${end})`,
+        );
+        inquiriesQuery = inquiriesQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
+      }
 
       if (salespersonPhone) {
         const dealsOr = buildMultiFieldOrFilter(salespersonPhone, [
