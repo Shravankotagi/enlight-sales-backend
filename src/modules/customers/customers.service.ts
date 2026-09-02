@@ -1,5 +1,6 @@
 import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { CustomerInsightsService } from './customer-insights.service';
 import { phoneInList } from '../employees/employees.service';
 
 function buildMultiFieldOrFilter(
@@ -139,7 +140,10 @@ function isCustomerMatch(
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private customerInsightsService: CustomerInsightsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -549,55 +553,26 @@ export class CustomersService {
         .filter((d) => (d.won_at || d.created_at) >= t12mCutoff)
         .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
 
-      // AI-Derived Health Signals & Strategic Action
-      let sentiment: 'positive' | 'warning' | 'critical' = 'positive';
-      let cadenceHealth = `On Track: Last order was ${daysSinceOrder ?? 0} days ago (Cadence: ${cadenceDays}d).`;
-
-      if (daysSinceOrder === null) {
-        cadenceHealth = 'New Account: No confirmed orders recorded yet.';
-      } else if (daysSinceOrder > 45) {
-        cadenceHealth = `Churn Alert: ${daysSinceOrder} days since last order (${daysSinceOrder - cadenceDays} days past expected cadence).`;
-        sentiment = 'critical';
-      } else if (daysSinceOrder >= 35) {
-        cadenceHealth = `Re-order Due: ${daysSinceOrder} days since last order (expected every ${cadenceDays}d).`;
-        sentiment = 'warning';
-      }
-
-      if (openComplaints > 0) {
-        sentiment = 'critical';
-      }
-
-      const revenueSignal =
-        totalTonnage >= 100
-          ? `High-Volume Key Account with ${totalTonnage.toLocaleString('en-IN')} MT total ordered tonnage.`
-          : totalTonnage >= 20
-            ? `Growing Account with ${totalTonnage.toLocaleString('en-IN')} MT total volume.`
-            : `Emerging Account with ${totalOrders} order(s).`;
-
-      const qualitySignal =
-        openComplaints > 0
-          ? `Attention Required: ${openComplaints} open complaint ticket(s) currently active.`
-          : complaints.length > 0
-            ? `Stable Quality: All ${complaints.length} previous issue(s) resolved.`
-            : 'Excellent Quality: Zero complaints logged.';
-
-      let recommendedAction =
-        'Schedule a routine check-in with the procurement team for upcoming material requirements.';
-      if (openComplaints > 0) {
-        recommendedAction =
-          'Coordinate with QA & Logistics immediately to resolve active complaint tickets before soliciting new RFQs.';
-      } else if (churnRisk === 'churning') {
-        recommendedAction =
-          'Schedule an urgent on-site visit to understand supply disruption or competitor displacement.';
-      } else if (churnRisk === 'at_risk') {
-        recommendedAction =
-          'Proactively send current metal coil / TMT pricing sheet and request their monthly schedule.';
-      } else if (segment === 'key_account') {
-        recommendedAction =
-          'Review upcoming quarterly tonnage requirements and offer customized payment & dispatch terms.';
-      }
-
-      const executiveSummary = `${customer.customer_name} is currently ${churnRisk === 'active' ? 'actively engaged' : churnRisk === 'at_risk' ? 'at risk of order delay' : 'churning and overdue for re-order'} with ${totalOrders} confirmed order(s) totaling ${totalTonnage.toLocaleString('en-IN')} MT. ${openComplaints > 0 ? `There are ${openComplaints} unresolved issue(s) requiring immediate rep attention.` : 'Account satisfaction remains steady with zero open tickets.'}`;
+      // Generate dynamic AI account insights & health signals via CustomerInsightsService
+      const healthSignals = await this.customerInsightsService.generateInsights(
+        {
+          customerName: customer.customer_name || 'Customer',
+          segment,
+          churnRisk,
+          daysSinceOrder,
+          cadenceDays,
+          totalOrders,
+          totalTonnage,
+          lifetimeValue,
+          openComplaints,
+          totalComplaints: complaints.length,
+          deals: wonDeals,
+          inquiries,
+          visits,
+          complaints,
+          assignedSalespersonName,
+        },
+      );
 
       return {
         ...customer,
@@ -614,14 +589,7 @@ export class CustomersService {
         total_complaints: complaints.length,
         segment,
         avg_order_frequency_days: cadenceDays,
-        health_signals: {
-          sentiment,
-          cadence_health: cadenceHealth,
-          revenue_signal: revenueSignal,
-          quality_signal: qualitySignal,
-          executive_summary: executiveSummary,
-          recommended_action: recommendedAction,
-        },
+        health_signals: healthSignals,
         deals,
         visits,
         payments,
