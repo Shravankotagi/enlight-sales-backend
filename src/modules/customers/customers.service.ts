@@ -1520,22 +1520,30 @@ export class CustomersService {
       // Query existing customers to safely split into update vs insert
       const { data: existingCustomers } = await this.supabase
         .from('recurring_customers')
-        .select('id, customer_name');
-
-      const existingMap = new Map<string, string>(
-        (existingCustomers || []).map((c) => [
-          c.customer_name.toLowerCase(),
-          c.id,
-        ]),
-      );
+        .select('id, customer_name, assigned_salesperson_phone');
 
       const toUpdate: any[] = [];
       const toInsert: any[] = [];
 
       for (const client of formattedClients) {
-        const existingId = existingMap.get(client.customer_name.toLowerCase());
-        if (existingId) {
-          toUpdate.push({ id: existingId, ...client });
+        const clientRepClean = cleanPhone(client.assigned_salesperson_phone);
+        // Find existing matching customer
+        const match = (existingCustomers || []).find((ec: any) => {
+          const ecRepClean = cleanPhone(ec.assigned_salesperson_phone);
+          if (clientRepClean && ecRepClean && clientRepClean !== ecRepClean) {
+            return false;
+          }
+          const c1 = cleanLegalSuffixes(ec.customer_name);
+          const c2 = cleanLegalSuffixes(client.customer_name);
+          return (
+            ec.customer_name.trim().toLowerCase() ===
+              client.customer_name.trim().toLowerCase() ||
+            (c1 && c2 && c1 === c2)
+          );
+        });
+
+        if (match) {
+          toUpdate.push({ id: match.id, ...client });
         } else {
           toInsert.push(client);
         }
