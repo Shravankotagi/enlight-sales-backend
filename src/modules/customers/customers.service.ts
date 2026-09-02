@@ -289,7 +289,7 @@ export class CustomersService {
         payCandidateFilters.push(`customer_name.ilike.%${w}%`),
       );
 
-      // Query related collections targeted to candidate matches
+      // Query related collections targeted to candidate matches and scoped to salesperson
       let dealsQuery = this.supabase
         .from('deals')
         .select('*, deal_items(*)')
@@ -330,6 +330,24 @@ export class CustomersService {
         inquiriesQuery = inquiriesQuery.or(inqCandidateFilters.join(','));
       }
 
+      if (salespersonPhone) {
+        const spFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'salesperson_phone',
+        ]);
+        if (spFilter) {
+          dealsQuery = dealsQuery.or(spFilter);
+          visitsQuery = visitsQuery.or(spFilter);
+          inquiriesQuery = inquiriesQuery.or(spFilter);
+          paymentsQuery = paymentsQuery.or(spFilter);
+        }
+        const compFilter = buildMultiFieldOrFilter(salespersonPhone, [
+          'reported_by',
+        ]);
+        if (compFilter) {
+          complaintsQuery = complaintsQuery.or(compFilter);
+        }
+      }
+
       const [
         dealsRes,
         visitsRes,
@@ -364,57 +382,108 @@ export class CustomersService {
       const allComplaints = complaintsRes.data || [];
       const allInquiries = inquiriesRes.data || [];
 
-      // Match related items using safe matcher
-      const deals = allDeals.filter((d) =>
-        isCustomerMatch(
-          customer.customer_name,
-          customer.customer_phone,
-          d.customer_name,
-          d.customer_phone,
-        ),
-      );
-
-      const visits = allVisits.filter((v) =>
-        isCustomerMatch(
-          customer.customer_name,
-          customer.customer_phone,
-          v.customer_name,
-          v.contact_no,
-        ),
-      );
-
-      const payments = allPayments.filter((p) =>
-        isCustomerMatch(
-          customer.customer_name,
-          customer.customer_phone,
-          p.customer_name,
-          null,
-        ),
-      );
-
-      const complaints = allComplaints.filter((c) =>
-        isCustomerMatch(
-          customer.customer_name,
-          customer.customer_phone,
-          c.customer_name,
-          null,
-        ),
-      );
-
-      const inquiries = allInquiries.filter((inq) =>
-        isCustomerMatch(
-          customer.customer_name,
-          customer.customer_phone,
-          inq.sender_name,
-          inq.sender_phone,
-        ),
-      );
-
-      if (salespersonPhone) {
-        const allowedList = Array.isArray(salespersonPhone)
+      const allowedList = salespersonPhone
+        ? Array.isArray(salespersonPhone)
           ? salespersonPhone
-          : [salespersonPhone];
+          : [salespersonPhone]
+        : null;
 
+      // Match related items using safe matcher AND strict RBAC scoping
+      const deals = allDeals.filter((d) => {
+        if (
+          !isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            d.customer_name,
+            d.customer_phone,
+          )
+        ) {
+          return false;
+        }
+        if (allowedList && allowedList.length > 0) {
+          return (
+            d.salesperson_phone && phoneInList(d.salesperson_phone, allowedList)
+          );
+        }
+        return true;
+      });
+
+      const visits = allVisits.filter((v) => {
+        if (
+          !isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            v.customer_name,
+            v.contact_no,
+          )
+        ) {
+          return false;
+        }
+        if (allowedList && allowedList.length > 0) {
+          return (
+            v.salesperson_phone && phoneInList(v.salesperson_phone, allowedList)
+          );
+        }
+        return true;
+      });
+
+      const payments = allPayments.filter((p) => {
+        if (
+          !isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            p.customer_name,
+            null,
+          )
+        ) {
+          return false;
+        }
+        if (allowedList && allowedList.length > 0) {
+          return (
+            p.salesperson_phone && phoneInList(p.salesperson_phone, allowedList)
+          );
+        }
+        return true;
+      });
+
+      const complaints = allComplaints.filter((c) => {
+        if (
+          !isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            c.customer_name,
+            null,
+          )
+        ) {
+          return false;
+        }
+        if (allowedList && allowedList.length > 0) {
+          return c.reported_by && phoneInList(c.reported_by, allowedList);
+        }
+        return true;
+      });
+
+      const inquiries = allInquiries.filter((inq) => {
+        if (
+          !isCustomerMatch(
+            customer.customer_name,
+            customer.customer_phone,
+            inq.sender_name,
+            inq.sender_phone,
+          )
+        ) {
+          return false;
+        }
+        if (allowedList && allowedList.length > 0) {
+          return (
+            inq.salesperson_phone &&
+            phoneInList(inq.salesperson_phone, allowedList)
+          );
+        }
+        return true;
+      });
+
+      if (allowedList && allowedList.length > 0) {
         const isAssigned =
           customer.assigned_salesperson_phone &&
           phoneInList(customer.assigned_salesperson_phone, allowedList);

@@ -123,15 +123,15 @@ Context Rules & Examples:
 1. New Prospect (0 orders, 0 visits, 0 inquiries):
    - Example: "New prospect account with no past orders or meetings yet. Needs introductory outreach to share our product catalog."
 2. Lead with Inquiries (0 orders, active inquiries/RFQs):
-   - Example: "Active lead currently reviewing quotations for 15 MT CRCA coil. Follow up on pending pricing to close the first deal."
+   - Example: "They lead currently reviewing quotations for 15 MT CRCA coil. Follow up on pending pricing to close the first deal."
 3. Lead with Visits (0 orders, sales meetings logged):
    - Example: "Sales meeting conducted on Feb 22 regarding steel requirements. Awaiting quotation submission."
-4. Active Buyer (>0 orders, steady ordering):
-   - Example: "Regular customer with 5 orders totaling 85 MT (mostly GI Coils). Last ordered 12 days ago with zero quality complaints."
+4. Active Buyer (>5 orders, steady ordering):
+   - Example: "Regular customer with n orders totaling 85 MT (mostly GI Coils). Last ordered 12 days ago with zero quality complaints."
 5. At Risk / Cadence Overdue (>35-45 days without order):
    - Example: "Usually orders monthly, but hasn't placed an order in 42 days. Due for a re-order check-in."
 6. Open Complaints:
-   - Example: "Active buyer, but has 1 open complaint regarding 50x50 Angle dimensions. Needs resolution before quoting new items."
+   - Example: "This Buyer has 1 open complaint regarding 50x50 Angle dimensions. Needs resolution before quoting new items."
 7. Dormant Account (>90 days without order):
    - Example: "Past customer with no orders in over 3 months. Needs re-engagement with fresh price sheets."
 
