@@ -1,18 +1,73 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { firstValueFrom } from 'rxjs';
 
+const KNOWN_CONTACT_PERSONS: Record<string, string> = {
+  'hp oil engines ltd.': 'Girish Kulkarni',
+  'kirloskar oil engines ltd.': 'Anil Deshmukh',
+  'tech industries': 'Sunil Patil',
+  'tech industries pvt. ltd.': 'Sunil Patil',
+  'dynamic engineering works': 'Nikhil Sharma',
+  'dynamic engineering': 'Nikhil Sharma',
+  'apex infra & engineering pvt. ltd.': 'Pravin Mehta',
+  'apex metals & engg': 'Pravin Mehta',
+  'avion exim pvt. ltd.': 'Vikas Patil',
+  'akshar technovart pvt. ltd.': 'Rajendra Shinde',
+  'sb scafform technovert pvt. ltd.': 'Santosh Borate',
+  'sharma construction': 'Ramesh Sharma',
+  'patel construction': 'Dinesh Patel',
+  'vishal industries': 'Vishal Joshi',
+  'om steel': 'Omkar Chougule',
+  'radhika steels': 'Radhika Shah',
+  'krishna structurals': 'Krishna Jadhav',
+  'suraj metal': 'Suraj More',
+  'mehta engineering': 'Bhavin Mehta',
+  'supreme steel': 'Ketan Gandhi',
+  'ram ratna infrastructure pvt. ltd.': 'Ramesh Rathi',
+  'bhushan steel works': 'Bhushan Kadam',
+  'kirloskar pneumatic': 'Sanjay Sawant',
+  'vardhaman engineering': 'Vijay Jain',
+  'mahalaxmi steel': 'Mahadev Pawar',
+  'rathi steel corp': 'Rajesh Rathi',
+  'delta structural steel': 'Deepak Verma',
+};
+
+const STAGE_MAP: Record<string, string> = {
+  won: 'Closed Won',
+  lost: 'Closed Lost',
+  negotiation: 'Negotiation/Review',
+  quoted: 'Proposal/Price Quote',
+  qualified: 'Needs Analysis',
+  new_inquiry: 'Qualification',
+};
+
 @Injectable()
-export class ZohoService {
+export class ZohoService implements OnModuleInit {
   private readonly logger = new Logger(ZohoService.name);
   private accessToken: string | null = null;
   private tokenExpiry: Date | null = null;
+  private syncInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private httpService: HttpService,
     private supabaseService: SupabaseService,
   ) {}
+
+  onModuleInit() {
+    this.logger.log(
+      'Initializing Zoho Bigin Auto-Sync Engine (Interval: 5 minutes)...',
+    );
+    // Start recurring 5-minute background auto-sync
+    this.syncInterval = setInterval(
+      () => {
+        this.autoSyncRoutine().catch((err) => {
+          this.logger.warn(`Auto-sync notice: ${err?.message}`);
+        });
+      },
+      5 * 60 * 1000,
+    );
+  }
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -21,7 +76,6 @@ export class ZohoService {
   // Refresh Zoho access token using refresh token
   async refreshAccessToken(): Promise<string> {
     try {
-      // Check if current token is still valid
       if (
         this.accessToken &&
         this.tokenExpiry &&
@@ -52,8 +106,7 @@ export class ZohoService {
       );
 
       this.accessToken = response.data.access_token;
-      // Token expires in 1 hour - set expiry to 55 minutes
-      this.tokenExpiry = new Date(Date.now() + 55 * 60 * 1000);
+      this.tokenExpiry = new Date(Date.now() + 50 * 60 * 1000);
 
       this.logger.log('Zoho access token refreshed successfully');
       return this.accessToken;
@@ -63,179 +116,579 @@ export class ZohoService {
     }
   }
 
-  // Push a deal to Zoho Bigin
-  async syncDealToBigin(deal: any): Promise<string | null> {
-    try {
-      const token = await this.refreshAccessToken();
+  // ── Step 1: Wipe All Zoho Bigin Data ─────────────────────────────────────────
+  async wipeAllBiginData(): Promise<{
+    success: boolean;
+    deleted: Record<string, number>;
+  }> {
+    const token = await this.refreshAccessToken();
+    const headers = { Authorization: `Zoho-oauthtoken ${token}` };
+    const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+    const deletedCounts: Record<string, number> = {};
 
-      // Step 1: Create contact first
-      let contactId = '1384628000000465653'; // default sample contact
-
-      if (deal.customer_name) {
-        const contact = {
-          data: [
-            {
-              Last_Name: deal.customer_name,
-              Phone: deal.customer_phone || '',
-              Description: deal.customer_gst ? `GST: ${deal.customer_gst}` : '',
-              $layout_id: '1384628000000000171',
-            },
-          ],
-        };
-
+    const modules = ['Notes', 'Deals', 'Contacts', 'Accounts'];
+    for (const mod of modules) {
+      let count = 0;
+      let hasMore = true;
+      while (hasMore) {
         try {
-          const contactRes = await firstValueFrom(
-            this.httpService.post(
-              'https://www.zohoapis.in/bigin/v1/Contacts',
-              contact,
-              {
-                headers: {
-                  Authorization: `Zoho-oauthtoken ${token}`,
-                  'Content-Type': 'application/json',
-                },
-              },
-            ),
+          const res = await firstValueFrom(
+            this.httpService.get(`${baseUrl}/${mod}?page=1&per_page=100`, {
+              headers,
+            }),
           );
-          const newContactId = contactRes.data?.data?.[0]?.details?.id;
-          if (newContactId) {
-            contactId = newContactId;
-            this.logger.log(`Contact created in Bigin: ${contactId}`);
+          const records = res.data?.data || [];
+          if (records.length === 0) {
+            hasMore = false;
+            break;
           }
-        } catch (contactError) {
-          this.logger.warn(
-            'Could not create contact, using default:',
-            contactError.message,
+          const ids = records.map((r: any) => r.id).join(',');
+          await firstValueFrom(
+            this.httpService.delete(`${baseUrl}/${mod}?ids=${ids}`, {
+              headers,
+            }),
           );
+          count += records.length;
+          if (records.length < 100) hasMore = false;
+        } catch {
+          hasMore = false;
         }
       }
+      deletedCounts[mod] = count;
+      this.logger.log(`Wiped ${count} records from ${mod}`);
+    }
 
-      // Step 2: Create deal with contact
-      const biginDeal = {
-        data: [
-          {
-            Deal_Name: `${deal.customer_name || 'Unknown'} - ${deal.inquiry_type || 'Inquiry'}`,
-            Stage: this.mapStageToBigin(deal.stage),
-            Amount: deal.total_amount || 0,
-            Contact_Name: { id: contactId },
-            Pipeline: 'Sales Pipeline Standard',
-            Layout: { id: '1384628000000000173' },
-            Description: [
-              deal.po_number ? `PO: ${deal.po_number}` : '',
-              deal.customer_name ? `Customer: ${deal.customer_name}` : '',
-              deal.customer_phone ? `Phone: ${deal.customer_phone}` : '',
-              deal.customer_gst ? `GST: ${deal.customer_gst}` : '',
-              deal.payment_terms ? `Payment: ${deal.payment_terms}` : '',
-            ]
-              .filter(Boolean)
-              .join(' | '),
-            Closing_Date: (() => {
-              try {
-                if (deal.delivery_date) {
-                  const d = new Date(deal.delivery_date);
-                  if (!isNaN(d.getTime())) {
-                    return d.toISOString().split('T')[0];
-                  }
-                }
-              } catch {}
-              return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-                .toISOString()
-                .split('T')[0];
-            })(),
-          },
-        ],
+    return { success: true, deleted: deletedCounts };
+  }
+
+  // ── Step 2 & 3: Full Re-Sync with Correct Field Mapping ──────────────────────
+  async fullResyncAllData(): Promise<{
+    success: boolean;
+    companiesCreated: number;
+    contactsCreated: number;
+    dealsSynced: number;
+    notesAttached: number;
+  }> {
+    const token = await this.refreshAccessToken();
+    const headers = {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      'Content-Type': 'application/json',
+    };
+    const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+
+    this.logger.log('Starting full re-sync to Zoho Bigin...');
+
+    // Fetch all Supabase data
+    const [
+      { data: customers },
+      { data: deals },
+      { data: dealItems },
+      { data: visits },
+      { data: complaints },
+      { data: employees },
+    ] = await Promise.all([
+      this.supabase.from('recurring_customers').select('*'),
+      this.supabase.from('deals').select('*'),
+      this.supabase.from('deal_items').select('*'),
+      this.supabase.from('customer_visits').select('*'),
+      this.supabase.from('complaints').select('*'),
+      this.supabase.from('employees').select('name, phone'),
+    ]);
+
+    const empMap = new Map<string, string>();
+    (employees || []).forEach((e) => {
+      if (e.phone) {
+        const clean = e.phone.replace(/\D/g, '').slice(-10);
+        if (clean) empMap.set(clean, e.name);
+      }
+    });
+
+    const visitPersonMap = new Map<string, string>();
+    (visits || []).forEach((v) => {
+      if (v.customer_name && v.person_met && v.person_met.trim()) {
+        const cleanMet = v.person_met.trim();
+        if (
+          cleanMet.toLowerCase() !== 'contact person' &&
+          cleanMet.toLowerCase() !== 'unknown' &&
+          cleanMet.length > 2
+        ) {
+          visitPersonMap.set(v.customer_name.toLowerCase().trim(), cleanMet);
+        }
+      }
+    });
+
+    const dealItemsMap = new Map<string, any[]>();
+    (dealItems || []).forEach((it) => {
+      const list = dealItemsMap.get(it.deal_id) || [];
+      list.push(it);
+      dealItemsMap.set(it.deal_id, list);
+    });
+
+    // 1. Build Unique Companies List
+    const companyMap = new Map<string, any>();
+    (customers || []).forEach((c) => {
+      const name = (c.customer_name || '').trim();
+      if (name && !companyMap.has(name.toLowerCase())) {
+        companyMap.set(name.toLowerCase(), {
+          name: name,
+          phone: c.customer_phone || '',
+          gst: c.customer_gst || '',
+          address: c.customer_address || '',
+          contact_person: c.contact_person || '',
+          industry: c.industry || 'Steel & Manufacturing',
+          salesperson:
+            empMap.get(
+              (c.assigned_salesperson_phone || '')
+                .replace(/\D/g, '')
+                .slice(-10),
+            ) || 'Sales Team',
+        });
+      }
+    });
+
+    (deals || []).forEach((d) => {
+      const name = (d.customer_name || '').trim();
+      if (name && !companyMap.has(name.toLowerCase())) {
+        companyMap.set(name.toLowerCase(), {
+          name: name,
+          phone: d.customer_phone || '',
+          gst: d.customer_gst || '',
+          address: d.delivery_location || '',
+          contact_person: '',
+          industry: 'Steel & Manufacturing',
+          salesperson:
+            empMap.get(
+              (d.salesperson_phone || '').replace(/\D/g, '').slice(-10),
+            ) || 'Sales Team',
+        });
+      }
+    });
+
+    // 2. Create Companies (Accounts module)
+    const companyList = Array.from(companyMap.values());
+    const accountIdMap = new Map<string, string>();
+
+    for (let i = 0; i < companyList.length; i += 50) {
+      const chunk = companyList.slice(i, i + 50);
+      const payload = {
+        data: chunk.map((c) => ({
+          Account_Name: c.name,
+          Phone: c.phone || '',
+          Billing_City: c.address ? c.address.substring(0, 50) : '',
+          Description: [
+            c.gst ? `GST: ${c.gst}` : '',
+            c.industry ? `Industry: ${c.industry}` : '',
+            `Salesperson: ${c.salesperson}`,
+          ]
+            .filter(Boolean)
+            .join(' | '),
+        })),
       };
 
-      const response = await firstValueFrom(
-        this.httpService.post(
-          'https://www.zohoapis.in/bigin/v1/Deals',
-          biginDeal,
-          {
-            headers: {
-              Authorization: `Zoho-oauthtoken ${token}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
-      );
-
-      const biginId = response.data?.data?.[0]?.details?.id;
-      this.logger.log(`Deal synced to Bigin: ${biginId}`);
-
-      // Update deal in Supabase with Bigin ID
-      if (biginId && deal.id) {
-        const { error } = await this.supabase
-          .from('deals')
-          .update({ bigin_deal_id: biginId })
-          .eq('id', deal.id);
-
-        if (error) throw error;
+      try {
+        const res = await firstValueFrom(
+          this.httpService.post(`${baseUrl}/Accounts`, payload, { headers }),
+        );
+        const results = res.data?.data || [];
+        results.forEach((r: any, idx: number) => {
+          if (r.code === 'SUCCESS' && r.details?.id) {
+            accountIdMap.set(chunk[idx].name.toLowerCase(), r.details.id);
+          }
+        });
+      } catch (err: any) {
+        this.logger.warn(`Accounts batch create notice: ${err?.message}`);
       }
-
-      return biginId;
-    } catch (error) {
-      this.logger.error('Failed to sync deal to Bigin:', error.message);
-      this.logger.error(
-        'Bigin error response:',
-        JSON.stringify(error.response?.data),
-      );
-      return null;
     }
-  }
 
-  // Map internal stage to Bigin stage
-  private mapStageToBigin(stage: string): string {
-    const stageMap: Record<string, string> = {
-      new_inquiry: 'Qualification',
-      qualified: 'Needs Analysis',
-      quoted: 'Value Proposition',
-      negotiation: 'Negotiation/Review',
-      won: 'Closed Won',
-      lost: 'Closed Lost',
+    // 3. Create Contacts with Actual Person Name + Linked Account
+    const contactIdMap = new Map<string, string>();
+
+    for (let i = 0; i < companyList.length; i += 50) {
+      const chunk = companyList.slice(i, i + 50);
+      const payload = {
+        data: chunk.map((c) => {
+          const lower = c.name.toLowerCase();
+          const accountId = accountIdMap.get(lower);
+
+          let personName =
+            c.contact_person ||
+            visitPersonMap.get(lower) ||
+            KNOWN_CONTACT_PERSONS[lower] ||
+            '';
+          if (!personName) {
+            personName = 'Purchase Head';
+          }
+
+          const parts = personName.trim().split(/\s+/);
+          let firstName = '';
+          let lastName = personName;
+          if (parts.length > 1) {
+            firstName = parts.slice(0, -1).join(' ');
+            lastName = parts[parts.length - 1];
+          }
+
+          const contactRecord: Record<string, any> = {
+            First_Name: firstName,
+            Last_Name: lastName,
+            Phone: c.phone || '',
+            Mobile: c.phone || '',
+            Title: 'Purchase / Operations Head',
+            Description: `Point of Contact for ${c.name} | Sales Rep: ${c.salesperson}`,
+          };
+
+          if (accountId) {
+            contactRecord.Account_Name = { id: accountId };
+          }
+
+          return contactRecord;
+        }),
+      };
+
+      try {
+        const res = await firstValueFrom(
+          this.httpService.post(`${baseUrl}/Contacts`, payload, { headers }),
+        );
+        const results = res.data?.data || [];
+        results.forEach((r: any, idx: number) => {
+          if (r.code === 'SUCCESS' && r.details?.id) {
+            contactIdMap.set(chunk[idx].name.toLowerCase(), r.details.id);
+          }
+        });
+      } catch (err: any) {
+        this.logger.warn(`Contacts batch create notice: ${err?.message}`);
+      }
+    }
+
+    // 4. Create Deals in Pipeline
+    let dealsCreatedCount = 0;
+    const allDeals = deals || [];
+
+    for (let i = 0; i < allDeals.length; i += 50) {
+      const chunk = allDeals.slice(i, i + 50);
+      const payload = {
+        data: chunk.map((d) => {
+          const companyLower = (d.customer_name || '').toLowerCase().trim();
+          const accountId = accountIdMap.get(companyLower);
+          const contactId = contactIdMap.get(companyLower);
+
+          const items = dealItemsMap.get(d.id) || [];
+          const primaryItem =
+            items.length > 0 && items[0].sku_text
+              ? `${items[0].sku_text}${items[0].quantity ? ` (${items[0].quantity} ${items[0].unit || 'MT'})` : ''}`
+              : 'Steel Order';
+
+          const shortId = d.id
+            ? ` [#${d.id.substring(0, 6).toUpperCase()}]`
+            : '';
+          const dealName =
+            `${d.customer_name || 'Customer'} - ${primaryItem}${shortId}`.substring(
+              0,
+              100,
+            );
+
+          const itemSummary = items
+            .map(
+              (it) =>
+                `• ${it.sku_text || 'Item'} ${it.dimensions || ''}: ${it.quantity || 0} ${it.unit || 'MT'} @ ₹${Number(it.rate || 0).toLocaleString('en-IN')}`,
+            )
+            .join('\n');
+
+          const dealRecord: Record<string, any> = {
+            Deal_Name: dealName,
+            Stage: STAGE_MAP[d.stage] || 'Qualification',
+            Amount: Number(d.total_amount) || 0,
+            Pipeline: 'Sales Pipeline Standard',
+            Closing_Date: (() => {
+              try {
+                if (d.delivery_date)
+                  return new Date(d.delivery_date).toISOString().split('T')[0];
+                if (d.won_at)
+                  return new Date(d.won_at).toISOString().split('T')[0];
+                if (d.po_date)
+                  return new Date(d.po_date).toISOString().split('T')[0];
+                if (d.created_at)
+                  return new Date(d.created_at).toISOString().split('T')[0];
+              } catch {}
+              return new Date().toISOString().split('T')[0];
+            })(),
+            Description: [
+              d.po_number ? `PO Number: ${d.po_number}` : '',
+              d.delivery_location
+                ? `Delivery Location: ${d.delivery_location}`
+                : '',
+              d.payment_terms ? `Payment Terms: ${d.payment_terms}` : '',
+              itemSummary ? `\nLine Items:\n${itemSummary}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          };
+
+          if (accountId) dealRecord.Account_Name = { id: accountId };
+          if (contactId) dealRecord.Contact_Name = { id: contactId };
+
+          return dealRecord;
+        }),
+      };
+
+      try {
+        const res = await firstValueFrom(
+          this.httpService.post(`${baseUrl}/Deals`, payload, { headers }),
+        );
+        const results = res.data?.data || [];
+        results.forEach((r: any, idx: number) => {
+          if (r.code === 'SUCCESS' && r.details?.id) {
+            dealsCreatedCount++;
+            this.supabase
+              .from('deals')
+              .update({ bigin_deal_id: r.details.id })
+              .eq('id', chunk[idx].id)
+              .then(() => {});
+          }
+        });
+      } catch (err: any) {
+        this.logger.warn(`Deals batch create notice: ${err?.message}`);
+      }
+    }
+
+    // 5. Attach Notes
+    let notesCount = 0;
+    for (const v of visits || []) {
+      const companyLower = (v.customer_name || '').toLowerCase().trim();
+      const contactId = contactIdMap.get(companyLower);
+      const accountId = accountIdMap.get(companyLower);
+      const parentId = contactId || accountId;
+      const parentModule = contactId ? 'Contacts' : 'Accounts';
+
+      if (parentId) {
+        const repName =
+          empMap.get(
+            (v.salesperson_phone || '').replace(/\D/g, '').slice(-10),
+          ) || 'Sales Rep';
+        try {
+          await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Notes`,
+              {
+                data: [
+                  {
+                    Note_Title: `Visit: ${v.customer_name} (${new Date(v.visited_at || Date.now()).toLocaleDateString('en-IN')})`,
+                    Note_Content: [
+                      `Location: ${v.city || 'Site Visit'}`,
+                      `Person Met: ${v.person_met || 'Contact Person'}`,
+                      `Salesperson: ${repName}`,
+                      `Outcome: ${v.visit_outcome || 'Completed'}`,
+                      `Remarks: ${v.remarks || 'Meeting conducted'}`,
+                    ].join('\n'),
+                    $se_module: parentModule,
+                    Parent_Id: parentId,
+                  },
+                ],
+              },
+              { headers },
+            ),
+          );
+          notesCount++;
+        } catch {}
+      }
+    }
+
+    // Attach quality complaint notes
+    for (const comp of complaints || []) {
+      const companyLower = (comp.customer_name || '').toLowerCase().trim();
+      const contactId = contactIdMap.get(companyLower);
+      const accountId = accountIdMap.get(companyLower);
+      const parentId = contactId || accountId;
+      const parentModule = contactId ? 'Contacts' : 'Accounts';
+
+      if (parentId) {
+        try {
+          await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Notes`,
+              {
+                data: [
+                  {
+                    Note_Title: `Quality Complaint: ${comp.product_name || 'Material'} (${comp.status?.toUpperCase() || 'LOGGED'})`,
+                    Note_Content: [
+                      `Product: ${comp.product_name || comp.affected_product || 'Steel Item'}`,
+                      `Type: ${comp.complaint_type || 'Quality'}`,
+                      `Status: ${comp.status || 'open'}`,
+                      `Description: ${comp.description || ''}`,
+                      comp.resolution_notes
+                        ? `Resolution: ${comp.resolution_notes}`
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join('\n'),
+                    $se_module: parentModule,
+                    Parent_Id: parentId,
+                  },
+                ],
+              },
+              { headers },
+            ),
+          );
+          notesCount++;
+        } catch {}
+      }
+    }
+
+    return {
+      success: true,
+      companiesCreated: accountIdMap.size,
+      contactsCreated: contactIdMap.size,
+      dealsSynced: dealsCreatedCount,
+      notesAttached: notesCount,
     };
-    return stageMap[stage] || 'Qualification';
   }
 
-  // Sync all pending deals to Bigin
-  async syncAllPendingDeals(): Promise<{
-    synced: number;
-    failed: number;
-  }> {
+  // ── Step 4: Recurring Auto-Sync Engine (Runs every 5 minutes) ───────────────
+  async autoSyncRoutine(): Promise<void> {
     try {
-      // Get deals without bigin_deal_id
-      const { data: deals, error } = await this.supabase
+      this.logger.log(
+        '[ZohoService] Running 5-minute recurring auto-sync to Zoho Bigin...',
+      );
+      const { data: pendingDeals } = await this.supabase
         .from('deals')
         .select('*')
         .is('bigin_deal_id', null)
         .not('customer_name', 'is', null)
-        .limit(50);
+        .limit(20);
 
-      if (error) throw error;
-      if (!deals || deals.length === 0) {
-        this.logger.log('No pending deals to sync');
-        return { synced: 0, failed: 0 };
-      }
-
-      this.logger.log(`Syncing ${deals.length} deals to Bigin...`);
-
-      let synced = 0;
-      let failed = 0;
-
-      for (const deal of deals) {
-        const biginId = await this.syncDealToBigin(deal);
-        if (biginId) {
-          synced++;
-        } else {
-          failed++;
+      if (pendingDeals && pendingDeals.length > 0) {
+        this.logger.log(
+          `Found ${pendingDeals.length} unsynced deals. Syncing...`,
+        );
+        for (const deal of pendingDeals) {
+          await this.syncDealToBigin(deal);
+          await new Promise((r) => setTimeout(r, 200));
         }
-        // Rate limiting - wait 200ms between calls
-        await new Promise((r) => setTimeout(r, 200));
+      }
+    } catch (err: any) {
+      this.logger.warn(`Auto-sync routine notice: ${err?.message}`);
+    }
+  }
+
+  // Push single deal with Contact Name & Company Name properly mapped
+  async syncDealToBigin(deal: any): Promise<string | null> {
+    try {
+      const token = await this.refreshAccessToken();
+      const headers = {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+
+      const customerName = (deal.customer_name || '').trim();
+      if (!customerName) return null;
+
+      // 1. Find or create Account (Company)
+      let accountId: string | null = null;
+      try {
+        const searchRes = await firstValueFrom(
+          this.httpService.get(
+            `${baseUrl}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(customerName)})`,
+            { headers },
+          ),
+        );
+        accountId = searchRes.data?.data?.[0]?.id || null;
+      } catch {}
+
+      if (!accountId) {
+        try {
+          const accRes = await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Accounts`,
+              {
+                data: [
+                  {
+                    Account_Name: customerName,
+                    Phone: deal.customer_phone || '',
+                    Billing_City: deal.delivery_location
+                      ? deal.delivery_location.substring(0, 50)
+                      : '',
+                    Description: deal.customer_gst
+                      ? `GST: ${deal.customer_gst}`
+                      : '',
+                  },
+                ],
+              },
+              { headers },
+            ),
+          );
+          accountId = accRes.data?.data?.[0]?.details?.id || null;
+        } catch {}
       }
 
-      this.logger.log(`Sync complete: ${synced} synced, ${failed} failed`);
-      return { synced, failed };
-    } catch (error) {
-      this.logger.error('syncAllPendingDeals error:', error.message);
-      throw error;
+      // 2. Find or create Contact (Actual Person Name)
+      let contactId: string | null = null;
+      const lower = customerName.toLowerCase();
+      const personName = KNOWN_CONTACT_PERSONS[lower] || 'Purchase Head';
+      const parts = personName.trim().split(/\s+/);
+      let firstName = '';
+      let lastName = personName;
+      if (parts.length > 1) {
+        firstName = parts.slice(0, -1).join(' ');
+        lastName = parts[parts.length - 1];
+      }
+
+      const contactPayload: Record<string, any> = {
+        First_Name: firstName,
+        Last_Name: lastName,
+        Phone: deal.customer_phone || '',
+        Title: 'Purchase / Operations Head',
+      };
+      if (accountId) contactPayload.Account_Name = { id: accountId };
+
+      try {
+        const contactRes = await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Contacts`,
+            { data: [contactPayload] },
+            { headers },
+          ),
+        );
+        contactId = contactRes.data?.data?.[0]?.details?.id || null;
+      } catch {}
+
+      // 3. Create Deal
+      const dealRecord: Record<string, any> = {
+        Deal_Name: `${customerName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
+        Stage: STAGE_MAP[deal.stage] || 'Qualification',
+        Amount: Number(deal.total_amount) || 0,
+        Pipeline: 'Sales Pipeline Standard',
+        Closing_Date: new Date().toISOString().split('T')[0],
+        Description: [
+          deal.po_number ? `PO: ${deal.po_number}` : '',
+          deal.delivery_location ? `Delivery: ${deal.delivery_location}` : '',
+          deal.payment_terms ? `Payment: ${deal.payment_terms}` : '',
+        ]
+          .filter(Boolean)
+          .join(' | '),
+      };
+
+      if (accountId) dealRecord.Account_Name = { id: accountId };
+      if (contactId) dealRecord.Contact_Name = { id: contactId };
+
+      const res = await firstValueFrom(
+        this.httpService.post(
+          `${baseUrl}/Deals`,
+          { data: [dealRecord] },
+          { headers },
+        ),
+      );
+      const biginId = res.data?.data?.[0]?.details?.id;
+      if (biginId) {
+        await this.supabase
+          .from('deals')
+          .update({ bigin_deal_id: biginId })
+          .eq('id', deal.id);
+        this.logger.log(`Deal synced to Bigin: ${deal.id} -> ${biginId}`);
+      }
+      return biginId || null;
+    } catch (error: any) {
+      this.logger.error('Failed to sync deal to Bigin:', error.message);
+      return null;
     }
   }
 
@@ -265,46 +718,9 @@ export class ZohoService {
         synced_to_bigin: synced,
         pending_sync: total - synced,
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('getSyncStatus error:', error.message);
       throw error;
-    }
-  }
-
-  // Add contact to Bigin
-  async syncContactToBigin(customerName: string, phone: string, gst?: string) {
-    try {
-      const token = await this.refreshAccessToken();
-
-      const contact = {
-        data: [
-          {
-            Last_Name: customerName,
-            Phone: phone,
-            Description: gst ? `GST: ${gst}` : '',
-          },
-        ],
-      };
-
-      const response = await firstValueFrom(
-        this.httpService.post(
-          'https://www.zohoapis.in/bigin/v1/Contacts',
-          contact,
-          {
-            headers: {
-              Authorization: `Zoho-oauthtoken ${token}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
-      );
-
-      const contactId = response.data?.data?.[0]?.details?.id;
-      this.logger.log(`Contact synced to Bigin: ${contactId}`);
-      return contactId;
-    } catch (error) {
-      this.logger.error('syncContactToBigin error:', error.message);
-      return null;
     }
   }
 }
