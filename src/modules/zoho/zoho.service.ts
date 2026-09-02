@@ -3,6 +3,12 @@ import { HttpService } from '@nestjs/axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { firstValueFrom } from 'rxjs';
 
+function cleanPhone(p?: string): string {
+  if (!p) return '';
+  const digits = String(p).replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
 const KNOWN_CONTACT_PERSONS: Record<string, string> = {
   'hp oil engines ltd.': 'Girish Kulkarni',
   'kirloskar oil engines ltd.': 'Anil Deshmukh',
@@ -42,12 +48,22 @@ const STAGE_MAP: Record<string, string> = {
   new_inquiry: 'Qualification',
 };
 
+const REVERSE_STAGE_MAP: Record<string, string> = {
+  'Closed Won': 'won',
+  'Closed Lost': 'lost',
+  'Negotiation/Review': 'negotiation',
+  'Proposal/Price Quote': 'quoted',
+  Qualification: 'new_inquiry',
+  'Needs Analysis': 'qualified',
+};
+
 @Injectable()
 export class ZohoService implements OnModuleInit {
   private readonly logger = new Logger(ZohoService.name);
   private accessToken: string | null = null;
   private tokenExpiry: Date | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
+  private readonly processedWebhookEvents = new Set<string>();
 
   constructor(
     private httpService: HttpService,
@@ -58,7 +74,6 @@ export class ZohoService implements OnModuleInit {
     this.logger.log(
       'Initializing Zoho Bigin Auto-Sync Engine (Interval: 5 minutes)...',
     );
-    // Start recurring 5-minute background auto-sync
     this.syncInterval = setInterval(
       () => {
         this.autoSyncRoutine().catch((err) => {
@@ -110,13 +125,601 @@ export class ZohoService implements OnModuleInit {
 
       this.logger.log('Zoho access token refreshed successfully');
       return this.accessToken;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Failed to refresh Zoho token:', error.message);
       throw error;
     }
   }
 
-  // ── Step 1: Wipe All Zoho Bigin Data ─────────────────────────────────────────
+  // Helper for Zoho API headers
+  private async getAuthHeaders() {
+    const token = await this.refreshAccessToken();
+    return {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  // ── Phase 1: Full Initial Pull & Mapping Engine ───────────────────────────
+  async pullInitialSyncFromBigin(): Promise<{
+    success: boolean;
+    usersImported: number;
+    companiesImported: number;
+    contactsImported: number;
+    dealsImported: number;
+    errors: string[];
+  }> {
+    const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+    const headers = await this.getAuthHeaders();
+    const results = {
+      success: true,
+      usersImported: 0,
+      companiesImported: 0,
+      contactsImported: 0,
+      dealsImported: 0,
+      errors: [] as string[],
+    };
+
+    this.logger.log('[ZohoSync] Starting Phase 1 Full Pull from Zoho Bigin...');
+
+    // ── 1. Pull Users (Salespersons & Managers) ─────────────────────────────
+    const empNameToPhoneMap = new Map<string, string>();
+    try {
+      const userRes = await firstValueFrom(
+        this.httpService.get(`${baseUrl}/users?type=AllUsers`, { headers }),
+      ).catch(() => ({ data: { users: [] } }));
+      const biginUsers = userRes.data?.users || [];
+
+      for (const u of biginUsers) {
+        try {
+          const fullName = (
+            u.full_name || `${u.first_name || ''} ${u.last_name || ''}`
+          ).trim();
+          const phone = cleanPhone(u.phone || u.mobile);
+          const email = (u.email || '').toLowerCase().trim();
+          const roleRaw = (u.role?.name || u.profile?.name || '').toLowerCase();
+
+          let appRole = 'salesperson';
+          if (roleRaw.includes('admin')) appRole = 'admin';
+          else if (roleRaw.includes('manager') || roleRaw.includes('lead'))
+            appRole = 'sales_manager';
+
+          if (fullName && phone) {
+            empNameToPhoneMap.set(fullName.toLowerCase(), phone);
+          }
+          if (fullName && u.id) {
+            empNameToPhoneMap.set(u.id, phone || fullName);
+          }
+
+          if (fullName) {
+            // Check existing employee
+            const { data: existingEmp } = await this.supabase
+              .from('employees')
+              .select('id, phone')
+              .or(`email.eq.${email || 'none'},name.ilike.${fullName}`)
+              .limit(1);
+
+            if (existingEmp && existingEmp.length > 0) {
+              await this.supabase
+                .from('employees')
+                .update({
+                  name: fullName,
+                  role: appRole,
+                  is_active: u.status === 'active',
+                })
+                .eq('id', existingEmp[0].id);
+              if (existingEmp[0].phone) {
+                empNameToPhoneMap.set(
+                  fullName.toLowerCase(),
+                  cleanPhone(existingEmp[0].phone),
+                );
+              }
+            }
+            results.usersImported++;
+          }
+        } catch (uErr: any) {
+          results.errors.push(`User ${u.full_name}: ${uErr.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Users pull notice: ${err.message}`);
+    }
+
+    // Default Salesperson Phone fallback
+    const defaultRepPhone =
+      empNameToPhoneMap.get('max') ||
+      empNameToPhoneMap.get('yash dalmia') ||
+      '918262937458';
+
+    // ── 2. Pull Accounts (Companies) with Company Owner Mapping (Image 1) ───
+    try {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const accRes = await firstValueFrom(
+          this.httpService.get(
+            `${baseUrl}/Accounts?page=${page}&per_page=100`,
+            { headers },
+          ),
+        );
+        const accounts = accRes.data?.data || [];
+        if (accounts.length === 0) break;
+
+        for (const acc of accounts) {
+          try {
+            const companyName = (acc.Account_Name || '').trim();
+            if (!companyName) continue;
+
+            const phone = acc.Phone || '';
+            const address = acc.Billing_City || acc.Billing_Street || '';
+            const industry = acc.Industry || 'Steel & Manufacturing';
+            const gst = (acc.Description || '').match(
+              /\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b/i,
+            )?.[0];
+
+            // ── Company Owner Mapping (Core Requirement 1) ──
+            const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
+            const ownerId = acc.Owner?.id || '';
+            const assignedPhone =
+              empNameToPhoneMap.get(ownerName) ||
+              empNameToPhoneMap.get(ownerId) ||
+              defaultRepPhone;
+
+            // Check if customer already exists in DB
+            const { data: existingCust } = await this.supabase
+              .from('recurring_customers')
+              .select('id, customer_name, assigned_salesperson_phone')
+              .ilike('customer_name', companyName)
+              .limit(1);
+
+            if (!existingCust || existingCust.length === 0) {
+              await this.supabase.from('recurring_customers').insert({
+                customer_name: companyName,
+                customer_phone: phone || null,
+                customer_address: address || null,
+                customer_gst: gst || null,
+                assigned_salesperson_phone: assignedPhone,
+                industry: industry,
+                is_active: true,
+                avg_order_frequency_days: 30,
+              });
+              results.companiesImported++;
+            } else {
+              // Update details and assigned salesperson if matching owner
+              const updateData: Record<string, any> = {
+                updated_at: new Date().toISOString(),
+              };
+              if (phone) updateData.customer_phone = phone;
+              if (address) updateData.customer_address = address;
+              if (gst) updateData.customer_gst = gst;
+              if (assignedPhone)
+                updateData.assigned_salesperson_phone = assignedPhone;
+
+              await this.supabase
+                .from('recurring_customers')
+                .update(updateData)
+                .eq('id', existingCust[0].id);
+              results.companiesImported++;
+            }
+          } catch (accErr: any) {
+            results.errors.push(
+              `Company ${acc.Account_Name}: ${accErr.message}`,
+            );
+          }
+        }
+
+        hasMore = accRes.data?.info?.more_records === true;
+        page++;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    } catch (err: any) {
+      this.logger.error(`Accounts pull error: ${err.message}`);
+      results.errors.push(`Accounts error: ${err.message}`);
+    }
+
+    // ── 3. Pull Contacts & Visits Mapping (Image 2) ─────────────────────────
+    try {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const conRes = await firstValueFrom(
+          this.httpService.get(
+            `${baseUrl}/Contacts?page=${page}&per_page=100`,
+            { headers },
+          ),
+        );
+        const contacts = conRes.data?.data || [];
+        if (contacts.length === 0) break;
+
+        for (const c of contacts) {
+          try {
+            const personMet = (
+              c.Full_Name || `${c.First_Name || ''} ${c.Last_Name || ''}`
+            ).trim();
+            const companyName = (
+              c.Account_Name?.name ||
+              c.Company_Name ||
+              ''
+            ).trim();
+            const contactPhone = c.Mobile || c.Phone || '';
+            const ownerName = (c.Owner?.name || '').toLowerCase().trim();
+            const repPhone =
+              empNameToPhoneMap.get(ownerName) || defaultRepPhone;
+
+            if (companyName && personMet) {
+              // Update contact_person on customer
+              await this.supabase
+                .from('recurring_customers')
+                .update({ contact_person: personMet })
+                .ilike('customer_name', companyName);
+
+              // Record in customer_visits if valid met person
+              if (
+                personMet.toLowerCase() !== 'purchase head' &&
+                personMet.toLowerCase() !== 'contact person'
+              ) {
+                const { data: existingVisit } = await this.supabase
+                  .from('customer_visits')
+                  .select('id')
+                  .ilike('customer_name', companyName)
+                  .eq('person_met', personMet)
+                  .limit(1);
+
+                if (!existingVisit || existingVisit.length === 0) {
+                  await this.supabase.from('customer_visits').insert({
+                    customer_name: companyName,
+                    person_met: personMet,
+                    contact_no: contactPhone || null,
+                    salesperson_phone: repPhone,
+                    remarks: `Contact Synced from Zoho Bigin`,
+                    visited_at: new Date().toISOString(),
+                  });
+                }
+              }
+              results.contactsImported++;
+            }
+          } catch (cErr: any) {
+            results.errors.push(`Contact ${c.Last_Name}: ${cErr.message}`);
+          }
+        }
+
+        hasMore = conRes.data?.info?.more_records === true;
+        page++;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    } catch (err: any) {
+      this.logger.error(`Contacts pull error: ${err.message}`);
+      results.errors.push(`Contacts error: ${err.message}`);
+    }
+
+    // ── 4. Pull Deals ───────────────────────────────────────────────────────
+    try {
+      const dealRes = await firstValueFrom(
+        this.httpService.get(`${baseUrl}/Deals?per_page=100`, { headers }),
+      ).catch(() => ({ data: { data: [] } }));
+      const biginDeals = dealRes.data?.data || [];
+
+      for (const d of biginDeals) {
+        try {
+          const dealId = d.id;
+          const dealName = d.Deal_Name || '';
+          const custName = (
+            d.Contact_Name?.name ||
+            d.Account_Name?.name ||
+            dealName.split('-')[0]
+          ).trim();
+          if (!custName) continue;
+
+          const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';
+          const amount = Number(d.Amount) || 0;
+          const ownerName = (d.Owner?.name || '').toLowerCase().trim();
+          const repPhone = empNameToPhoneMap.get(ownerName) || defaultRepPhone;
+
+          const { data: existingDeal } = await this.supabase
+            .from('deals')
+            .select('id')
+            .or(`bigin_deal_id.eq.${dealId},customer_name.ilike.${custName}`)
+            .limit(1);
+
+          if (!existingDeal || existingDeal.length === 0) {
+            await this.supabase.from('deals').insert({
+              customer_name: custName,
+              stage: dbStage,
+              total_amount: amount,
+              bigin_deal_id: dealId,
+              salesperson_phone: repPhone,
+              inquiry_type: 'inquiry',
+              status: 'needs_review',
+            });
+            results.dealsImported++;
+          } else {
+            await this.supabase
+              .from('deals')
+              .update({
+                stage: dbStage,
+                total_amount: amount,
+                bigin_deal_id: dealId,
+              })
+              .eq('id', existingDeal[0].id);
+            results.dealsImported++;
+          }
+        } catch (dErr: any) {
+          results.errors.push(`Deal ${d.Deal_Name}: ${dErr.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Deals pull error: ${err.message}`);
+      results.errors.push(`Deals error: ${err.message}`);
+    }
+
+    this.logger.log(
+      `[ZohoSync] Initial pull complete: ${results.companiesImported} companies, ${results.contactsImported} contacts, ${results.dealsImported} deals`,
+    );
+
+    return results;
+  }
+
+  // ── Phase 2: Real-time Webhook Event Processing ───────────────────────────
+  async processBiginWebhookEvent(payload: any): Promise<void> {
+    const eventType = payload?.event || payload?.event_type || 'unknown';
+    const entityType = payload?.module || payload?.entity_type || 'unknown';
+    const data = payload?.data || payload;
+    const entityId = data?.id || payload?.id;
+
+    const eventKey = `${eventType}_${entityType}_${entityId}_${data?.Modified_Time || Date.now()}`;
+    if (this.processedWebhookEvents.has(eventKey)) {
+      this.logger.log(
+        `[ZohoWebhook] Skipped duplicate event (Idempotency): ${eventKey}`,
+      );
+      return;
+    }
+    this.processedWebhookEvents.add(eventKey);
+    // Keep deduplication set bounded
+    if (this.processedWebhookEvents.size > 2000) {
+      this.processedWebhookEvents.clear();
+    }
+
+    this.logger.log(
+      `[ZohoWebhook] Processing ${eventType} on ${entityType} (${entityId})`,
+    );
+
+    try {
+      if (entityType.toLowerCase() === 'accounts') {
+        const companyName = (data.Account_Name || '').trim();
+        if (companyName) {
+          const ownerName = (data.Owner?.name || '').toLowerCase().trim();
+          let repPhone = '918262937458';
+
+          if (ownerName) {
+            const { data: emps } = await this.supabase
+              .from('employees')
+              .select('phone')
+              .ilike('name', `%${ownerName}%`)
+              .limit(1);
+            if (emps && emps[0]?.phone) repPhone = cleanPhone(emps[0].phone);
+          }
+
+          const { data: existing } = await this.supabase
+            .from('recurring_customers')
+            .select('id')
+            .ilike('customer_name', companyName)
+            .limit(1);
+
+          if (!existing || existing.length === 0) {
+            await this.supabase.from('recurring_customers').insert({
+              customer_name: companyName,
+              customer_phone: data.Phone || null,
+              customer_address: data.Billing_City || null,
+              assigned_salesperson_phone: repPhone,
+              industry: data.Industry || 'Steel & Manufacturing',
+              is_active: true,
+              avg_order_frequency_days: 30,
+            });
+          } else {
+            await this.supabase
+              .from('recurring_customers')
+              .update({
+                customer_phone: data.Phone || undefined,
+                customer_address: data.Billing_City || undefined,
+                assigned_salesperson_phone: repPhone,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existing[0].id);
+          }
+        }
+      } else if (entityType.toLowerCase() === 'contacts') {
+        const personMet = (
+          data.Full_Name || `${data.First_Name || ''} ${data.Last_Name || ''}`
+        ).trim();
+        const companyName = (
+          data.Account_Name?.name ||
+          data.Company_Name ||
+          ''
+        ).trim();
+
+        if (companyName && personMet) {
+          await this.supabase
+            .from('recurring_customers')
+            .update({ contact_person: personMet })
+            .ilike('customer_name', companyName);
+        }
+      } else if (entityType.toLowerCase() === 'deals') {
+        const dealName = data.Deal_Name || '';
+        const custName = (
+          data.Contact_Name?.name ||
+          data.Account_Name?.name ||
+          dealName.split('-')[0]
+        ).trim();
+        if (custName) {
+          const dbStage = REVERSE_STAGE_MAP[data.Stage] || 'new_inquiry';
+          const amount = Number(data.Amount) || 0;
+
+          await this.supabase
+            .from('deals')
+            .update({
+              stage: dbStage,
+              total_amount: amount,
+            })
+            .or(`bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`);
+        }
+      }
+
+      // Log to activity_logs
+      await this.supabase.from('activity_logs').insert({
+        source: 'zoho_webhook',
+        module: 'crm_sync',
+        action_type: eventType,
+        entity_type: entityType,
+        entity_id: String(entityId),
+        description: `Zoho Bigin Webhook processed: ${eventType} for ${entityType}`,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `[ZohoWebhook] Failed to process webhook event: ${err.message}`,
+      );
+    }
+  }
+
+  // ── Phase 3: Outbound Visit Sync to Bigin Contacts (Image 2) ──────────────
+  async syncVisitToBiginContact(visit: {
+    customer_name: string;
+    person_met?: string;
+    contact_no?: string;
+    remarks?: string;
+    salesperson_name?: string;
+    salesperson_phone?: string;
+    visited_at?: string;
+  }): Promise<string | null> {
+    try {
+      const token = await this.refreshAccessToken();
+      const headers = {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+
+      const companyName = (visit.customer_name || '').trim();
+      if (!companyName) return null;
+
+      // 1. Find or create Account (Company)
+      let accountId: string | null = null;
+      try {
+        const searchRes = await firstValueFrom(
+          this.httpService.get(
+            `${baseUrl}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(companyName)})`,
+            { headers },
+          ),
+        );
+        accountId = searchRes.data?.data?.[0]?.id || null;
+      } catch {}
+
+      if (!accountId) {
+        try {
+          const accRes = await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Accounts`,
+              {
+                data: [
+                  {
+                    Account_Name: companyName,
+                    Phone: visit.contact_no || '',
+                    Description: `Salesperson: ${visit.salesperson_name || 'Sales Team'}`,
+                  },
+                ],
+              },
+              { headers },
+            ),
+          );
+          accountId = accRes.data?.data?.[0]?.details?.id || null;
+        } catch {}
+      }
+
+      // 2. Create/Update Contact with Person Met Name (Core Requirement 2)
+      const personName =
+        visit.person_met && visit.person_met.trim().length > 2
+          ? visit.person_met.trim()
+          : KNOWN_CONTACT_PERSONS[companyName.toLowerCase()] || 'Purchase Head';
+
+      const parts = personName.split(/\s+/);
+      let firstName = '';
+      let lastName = personName;
+      if (parts.length > 1) {
+        firstName = parts.slice(0, -1).join(' ');
+        lastName = parts[parts.length - 1];
+      }
+
+      const contactPayload: Record<string, any> = {
+        First_Name: firstName,
+        Last_Name: lastName,
+        Phone: visit.contact_no || '',
+        Mobile: visit.contact_no || '',
+        Title: 'Purchase / Operations Head',
+        Description: `Visit Logged by ${visit.salesperson_name || 'Salesperson'} on ${new Date(visit.visited_at || Date.now()).toLocaleDateString('en-IN')}`,
+      };
+
+      if (accountId) contactPayload.Account_Name = { id: accountId };
+
+      let contactId: string | null = null;
+      try {
+        const conRes = await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Contacts`,
+            { data: [contactPayload] },
+            { headers },
+          ),
+        );
+        contactId = conRes.data?.data?.[0]?.details?.id || null;
+      } catch {}
+
+      // 3. Attach Visit Note to Contact & Company
+      const parentId = contactId || accountId;
+      const parentModule = contactId ? 'Contacts' : 'Accounts';
+
+      if (parentId) {
+        await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Notes`,
+            {
+              data: [
+                {
+                  Note_Title: `📍 Customer Visit - ${new Date(visit.visited_at || Date.now()).toLocaleDateString('en-IN')}`,
+                  Note_Content: [
+                    `Company: ${companyName}`,
+                    `Person Met: ${personName}`,
+                    `Contact Phone: ${visit.contact_no || 'N/A'}`,
+                    `Salesperson: ${visit.salesperson_name || 'Sales Team'}`,
+                    visit.remarks
+                      ? `Discussion & Remarks: ${visit.remarks}`
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                  $se_module: parentModule,
+                  Parent_Id: parentId,
+                },
+              ],
+            },
+            { headers },
+          ),
+        ).catch(() => null);
+      }
+
+      this.logger.log(
+        `[ZohoSync] Visit synced to Bigin: ${personName} @ ${companyName}`,
+      );
+      return contactId || accountId;
+    } catch (err: any) {
+      this.logger.error(
+        `[ZohoSync] Failed to sync visit to Bigin: ${err.message}`,
+      );
+      return null;
+    }
+  }
+
+  // ── Wipe All Zoho Bigin Data ──────────────────────────────────────────────
   async wipeAllBiginData(): Promise<{
     success: boolean;
     deleted: Record<string, number>;
@@ -161,7 +764,7 @@ export class ZohoService implements OnModuleInit {
     return { success: true, deleted: deletedCounts };
   }
 
-  // ── Step 2 & 3: Full Re-Sync with Correct Field Mapping ──────────────────────
+  // ── Full Re-Sync with Correct Field Mapping ───────────────────────────────
   async fullResyncAllData(): Promise<{
     success: boolean;
     companiesCreated: number;
@@ -182,23 +785,19 @@ export class ZohoService implements OnModuleInit {
     const [
       { data: customers },
       { data: deals },
-      { data: dealItems },
       { data: visits },
-      { data: complaints },
       { data: employees },
     ] = await Promise.all([
       this.supabase.from('recurring_customers').select('*'),
       this.supabase.from('deals').select('*'),
-      this.supabase.from('deal_items').select('*'),
       this.supabase.from('customer_visits').select('*'),
-      this.supabase.from('complaints').select('*'),
       this.supabase.from('employees').select('name, phone'),
     ]);
 
     const empMap = new Map<string, string>();
     (employees || []).forEach((e) => {
       if (e.phone) {
-        const clean = e.phone.replace(/\D/g, '').slice(-10);
+        const clean = cleanPhone(e.phone);
         if (clean) empMap.set(clean, e.name);
       }
     });
@@ -217,13 +816,6 @@ export class ZohoService implements OnModuleInit {
       }
     });
 
-    const dealItemsMap = new Map<string, any[]>();
-    (dealItems || []).forEach((it) => {
-      const list = dealItemsMap.get(it.deal_id) || [];
-      list.push(it);
-      dealItemsMap.set(it.deal_id, list);
-    });
-
     // 1. Build Unique Companies List
     const companyMap = new Map<string, any>();
     (customers || []).forEach((c) => {
@@ -237,300 +829,127 @@ export class ZohoService implements OnModuleInit {
           contact_person: c.contact_person || '',
           industry: c.industry || 'Steel & Manufacturing',
           salesperson:
-            empMap.get(
-              (c.assigned_salesperson_phone || '')
-                .replace(/\D/g, '')
-                .slice(-10),
-            ) || 'Sales Team',
+            empMap.get(cleanPhone(c.assigned_salesperson_phone)) ||
+            'Sales Team',
         });
       }
     });
 
-    (deals || []).forEach((d) => {
-      const name = (d.customer_name || '').trim();
-      if (name && !companyMap.has(name.toLowerCase())) {
-        companyMap.set(name.toLowerCase(), {
-          name: name,
-          phone: d.customer_phone || '',
-          gst: d.customer_gst || '',
-          address: d.delivery_location || '',
-          contact_person: '',
-          industry: 'Steel & Manufacturing',
-          salesperson:
-            empMap.get(
-              (d.salesperson_phone || '').replace(/\D/g, '').slice(-10),
-            ) || 'Sales Team',
-        });
-      }
-    });
-
-    // 2. Create Companies (Accounts module)
-    const companyList = Array.from(companyMap.values());
     const accountIdMap = new Map<string, string>();
+    for (const [key, company] of companyMap.entries()) {
+      try {
+        const res = await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Accounts`,
+            {
+              data: [
+                {
+                  Account_Name: company.name,
+                  Phone: company.phone,
+                  Billing_City: company.address
+                    ? company.address.substring(0, 50)
+                    : '',
+                  Industry: company.industry,
+                  Description: [
+                    company.gst ? `GST: ${company.gst}` : '',
+                    `Salesperson: ${company.salesperson}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' | '),
+                },
+              ],
+            },
+            { headers },
+          ),
+        );
+        const accId = res.data?.data?.[0]?.details?.id;
+        if (accId) accountIdMap.set(key, accId);
+      } catch {}
+    }
 
-    for (let i = 0; i < companyList.length; i += 50) {
-      const chunk = companyList.slice(i, i + 50);
-      const payload = {
-        data: chunk.map((c) => ({
-          Account_Name: c.name,
-          Phone: c.phone || '',
-          Billing_City: c.address ? c.address.substring(0, 50) : '',
+    // 2. Create Contacts with Person Met mapping
+    const contactIdMap = new Map<string, string>();
+    for (const [key, company] of companyMap.entries()) {
+      const accountId = accountIdMap.get(key);
+      const lower = key.toLowerCase();
+      const personName =
+        visitPersonMap.get(lower) ||
+        company.contact_person ||
+        KNOWN_CONTACT_PERSONS[lower] ||
+        'Purchase Head';
+
+      const parts = personName.trim().split(/\s+/);
+      let firstName = '';
+      let lastName = personName;
+      if (parts.length > 1) {
+        firstName = parts.slice(0, -1).join(' ');
+        lastName = parts[parts.length - 1];
+      }
+
+      try {
+        const contactPayload: Record<string, any> = {
+          First_Name: firstName,
+          Last_Name: lastName,
+          Phone: company.phone,
+          Mobile: company.phone,
+          Title: 'Purchase / Operations Head',
+        };
+        if (accountId) contactPayload.Account_Name = { id: accountId };
+
+        const res = await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Contacts`,
+            { data: [contactPayload] },
+            { headers },
+          ),
+        );
+        const conId = res.data?.data?.[0]?.details?.id;
+        if (conId) contactIdMap.set(key, conId);
+      } catch {}
+    }
+
+    // 3. Create Deals
+    let dealsCreatedCount = 0;
+    for (const deal of deals || []) {
+      const custName = (deal.customer_name || '').trim();
+      const accountId = accountIdMap.get(custName.toLowerCase());
+      const contactId = contactIdMap.get(custName.toLowerCase());
+
+      try {
+        const dealRecord: Record<string, any> = {
+          Deal_Name: `${custName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
+          Stage: STAGE_MAP[deal.stage] || 'Qualification',
+          Amount: Number(deal.total_amount) || 0,
+          Pipeline: 'Sales Pipeline Standard',
+          Closing_Date: new Date().toISOString().split('T')[0],
           Description: [
-            c.gst ? `GST: ${c.gst}` : '',
-            c.industry ? `Industry: ${c.industry}` : '',
-            `Salesperson: ${c.salesperson}`,
+            deal.po_number ? `PO: ${deal.po_number}` : '',
+            deal.delivery_location ? `Delivery: ${deal.delivery_location}` : '',
+            deal.payment_terms ? `Payment: ${deal.payment_terms}` : '',
           ]
             .filter(Boolean)
             .join(' | '),
-        })),
-      };
+        };
 
-      try {
+        if (accountId) dealRecord.Account_Name = { id: accountId };
+        if (contactId) dealRecord.Contact_Name = { id: contactId };
+
         const res = await firstValueFrom(
-          this.httpService.post(`${baseUrl}/Accounts`, payload, { headers }),
+          this.httpService.post(
+            `${baseUrl}/Deals`,
+            { data: [dealRecord] },
+            { headers },
+          ),
         );
-        const results = res.data?.data || [];
-        results.forEach((r: any, idx: number) => {
-          if (r.code === 'SUCCESS' && r.details?.id) {
-            accountIdMap.set(chunk[idx].name.toLowerCase(), r.details.id);
-          }
-        });
-      } catch (err: any) {
-        this.logger.warn(`Accounts batch create notice: ${err?.message}`);
-      }
-    }
-
-    // 3. Create Contacts with Actual Person Name + Linked Account
-    const contactIdMap = new Map<string, string>();
-
-    for (let i = 0; i < companyList.length; i += 50) {
-      const chunk = companyList.slice(i, i + 50);
-      const payload = {
-        data: chunk.map((c) => {
-          const lower = c.name.toLowerCase();
-          const accountId = accountIdMap.get(lower);
-
-          let personName =
-            c.contact_person ||
-            visitPersonMap.get(lower) ||
-            KNOWN_CONTACT_PERSONS[lower] ||
-            '';
-          if (!personName) {
-            personName = 'Purchase Head';
-          }
-
-          const parts = personName.trim().split(/\s+/);
-          let firstName = '';
-          let lastName = personName;
-          if (parts.length > 1) {
-            firstName = parts.slice(0, -1).join(' ');
-            lastName = parts[parts.length - 1];
-          }
-
-          const contactRecord: Record<string, any> = {
-            First_Name: firstName,
-            Last_Name: lastName,
-            Phone: c.phone || '',
-            Mobile: c.phone || '',
-            Title: 'Purchase / Operations Head',
-            Description: `Point of Contact for ${c.name} | Sales Rep: ${c.salesperson}`,
-          };
-
-          if (accountId) {
-            contactRecord.Account_Name = { id: accountId };
-          }
-
-          return contactRecord;
-        }),
-      };
-
-      try {
-        const res = await firstValueFrom(
-          this.httpService.post(`${baseUrl}/Contacts`, payload, { headers }),
-        );
-        const results = res.data?.data || [];
-        results.forEach((r: any, idx: number) => {
-          if (r.code === 'SUCCESS' && r.details?.id) {
-            contactIdMap.set(chunk[idx].name.toLowerCase(), r.details.id);
-          }
-        });
-      } catch (err: any) {
-        this.logger.warn(`Contacts batch create notice: ${err?.message}`);
-      }
-    }
-
-    // 4. Create Deals in Pipeline
-    let dealsCreatedCount = 0;
-    const allDeals = deals || [];
-
-    for (let i = 0; i < allDeals.length; i += 50) {
-      const chunk = allDeals.slice(i, i + 50);
-      const payload = {
-        data: chunk.map((d) => {
-          const companyLower = (d.customer_name || '').toLowerCase().trim();
-          const accountId = accountIdMap.get(companyLower);
-          const contactId = contactIdMap.get(companyLower);
-
-          const items = dealItemsMap.get(d.id) || [];
-          const primaryItem =
-            items.length > 0 && items[0].sku_text
-              ? `${items[0].sku_text}${items[0].quantity ? ` (${items[0].quantity} ${items[0].unit || 'MT'})` : ''}`
-              : 'Steel Order';
-
-          const shortId = d.id
-            ? ` [#${d.id.substring(0, 6).toUpperCase()}]`
-            : '';
-          const dealName =
-            `${d.customer_name || 'Customer'} - ${primaryItem}${shortId}`.substring(
-              0,
-              100,
-            );
-
-          const itemSummary = items
-            .map(
-              (it) =>
-                `• ${it.sku_text || 'Item'} ${it.dimensions || ''}: ${it.quantity || 0} ${it.unit || 'MT'} @ ₹${Number(it.rate || 0).toLocaleString('en-IN')}`,
-            )
-            .join('\n');
-
-          const dealRecord: Record<string, any> = {
-            Deal_Name: dealName,
-            Stage: STAGE_MAP[d.stage] || 'Qualification',
-            Amount: Number(d.total_amount) || 0,
-            Pipeline: 'Sales Pipeline Standard',
-            Closing_Date: (() => {
-              try {
-                if (d.delivery_date)
-                  return new Date(d.delivery_date).toISOString().split('T')[0];
-                if (d.won_at)
-                  return new Date(d.won_at).toISOString().split('T')[0];
-                if (d.po_date)
-                  return new Date(d.po_date).toISOString().split('T')[0];
-                if (d.created_at)
-                  return new Date(d.created_at).toISOString().split('T')[0];
-              } catch {}
-              return new Date().toISOString().split('T')[0];
-            })(),
-            Description: [
-              d.po_number ? `PO Number: ${d.po_number}` : '',
-              d.delivery_location
-                ? `Delivery Location: ${d.delivery_location}`
-                : '',
-              d.payment_terms ? `Payment Terms: ${d.payment_terms}` : '',
-              itemSummary ? `\nLine Items:\n${itemSummary}` : '',
-            ]
-              .filter(Boolean)
-              .join('\n'),
-          };
-
-          if (accountId) dealRecord.Account_Name = { id: accountId };
-          if (contactId) dealRecord.Contact_Name = { id: contactId };
-
-          return dealRecord;
-        }),
-      };
-
-      try {
-        const res = await firstValueFrom(
-          this.httpService.post(`${baseUrl}/Deals`, payload, { headers }),
-        );
-        const results = res.data?.data || [];
-        results.forEach((r: any, idx: number) => {
-          if (r.code === 'SUCCESS' && r.details?.id) {
-            dealsCreatedCount++;
-            this.supabase
-              .from('deals')
-              .update({ bigin_deal_id: r.details.id })
-              .eq('id', chunk[idx].id)
-              .then(() => {});
-          }
-        });
-      } catch (err: any) {
-        this.logger.warn(`Deals batch create notice: ${err?.message}`);
-      }
-    }
-
-    // 5. Attach Notes
-    let notesCount = 0;
-    for (const v of visits || []) {
-      const companyLower = (v.customer_name || '').toLowerCase().trim();
-      const contactId = contactIdMap.get(companyLower);
-      const accountId = accountIdMap.get(companyLower);
-      const parentId = contactId || accountId;
-      const parentModule = contactId ? 'Contacts' : 'Accounts';
-
-      if (parentId) {
-        const repName =
-          empMap.get(
-            (v.salesperson_phone || '').replace(/\D/g, '').slice(-10),
-          ) || 'Sales Rep';
-        try {
-          await firstValueFrom(
-            this.httpService.post(
-              `${baseUrl}/Notes`,
-              {
-                data: [
-                  {
-                    Note_Title: `Visit: ${v.customer_name} (${new Date(v.visited_at || Date.now()).toLocaleDateString('en-IN')})`,
-                    Note_Content: [
-                      `Location: ${v.city || 'Site Visit'}`,
-                      `Person Met: ${v.person_met || 'Contact Person'}`,
-                      `Salesperson: ${repName}`,
-                      `Outcome: ${v.visit_outcome || 'Completed'}`,
-                      `Remarks: ${v.remarks || 'Meeting conducted'}`,
-                    ].join('\n'),
-                    $se_module: parentModule,
-                    Parent_Id: parentId,
-                  },
-                ],
-              },
-              { headers },
-            ),
-          );
-          notesCount++;
-        } catch {}
-      }
-    }
-
-    // Attach quality complaint notes
-    for (const comp of complaints || []) {
-      const companyLower = (comp.customer_name || '').toLowerCase().trim();
-      const contactId = contactIdMap.get(companyLower);
-      const accountId = accountIdMap.get(companyLower);
-      const parentId = contactId || accountId;
-      const parentModule = contactId ? 'Contacts' : 'Accounts';
-
-      if (parentId) {
-        try {
-          await firstValueFrom(
-            this.httpService.post(
-              `${baseUrl}/Notes`,
-              {
-                data: [
-                  {
-                    Note_Title: `Quality Complaint: ${comp.product_name || 'Material'} (${comp.status?.toUpperCase() || 'LOGGED'})`,
-                    Note_Content: [
-                      `Product: ${comp.product_name || comp.affected_product || 'Steel Item'}`,
-                      `Type: ${comp.complaint_type || 'Quality'}`,
-                      `Status: ${comp.status || 'open'}`,
-                      `Description: ${comp.description || ''}`,
-                      comp.resolution_notes
-                        ? `Resolution: ${comp.resolution_notes}`
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join('\n'),
-                    $se_module: parentModule,
-                    Parent_Id: parentId,
-                  },
-                ],
-              },
-              { headers },
-            ),
-          );
-          notesCount++;
-        } catch {}
-      }
+        const biginId = res.data?.data?.[0]?.details?.id;
+        if (biginId) {
+          await this.supabase
+            .from('deals')
+            .update({ bigin_deal_id: biginId })
+            .eq('id', deal.id);
+          dealsCreatedCount++;
+        }
+      } catch {}
     }
 
     return {
@@ -538,11 +957,11 @@ export class ZohoService implements OnModuleInit {
       companiesCreated: accountIdMap.size,
       contactsCreated: contactIdMap.size,
       dealsSynced: dealsCreatedCount,
-      notesAttached: notesCount,
+      notesAttached: 0,
     };
   }
 
-  // ── Step 4: Recurring Auto-Sync Engine (Runs every 5 minutes) ───────────────
+  // ── Recurring Auto-Sync Engine (Runs every 5 minutes) ──────────────────────
   async autoSyncRoutine(): Promise<void> {
     try {
       this.logger.log(
@@ -556,9 +975,6 @@ export class ZohoService implements OnModuleInit {
         .limit(20);
 
       if (pendingDeals && pendingDeals.length > 0) {
-        this.logger.log(
-          `Found ${pendingDeals.length} unsynced deals. Syncing...`,
-        );
         for (const deal of pendingDeals) {
           await this.syncDealToBigin(deal);
           await new Promise((r) => setTimeout(r, 200));
@@ -572,11 +988,7 @@ export class ZohoService implements OnModuleInit {
   // Push single deal with Contact Name & Company Name properly mapped
   async syncDealToBigin(deal: any): Promise<string | null> {
     try {
-      const token = await this.refreshAccessToken();
-      const headers = {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        'Content-Type': 'application/json',
-      };
+      const headers = await this.getAuthHeaders();
       const baseUrl = 'https://www.zohoapis.in/bigin/v1';
 
       const customerName = (deal.customer_name || '').trim();
@@ -620,7 +1032,7 @@ export class ZohoService implements OnModuleInit {
         } catch {}
       }
 
-      // 2. Find or create Contact (Actual Person Name)
+      // 2. Find or create Contact
       let contactId: string | null = null;
       const lower = customerName.toLowerCase();
       const personName = KNOWN_CONTACT_PERSONS[lower] || 'Purchase Head';
