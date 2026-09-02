@@ -2027,7 +2027,11 @@ export class KraService {
     try {
       const [{ data: employees }, { data: deals }] = await Promise.all([
         this.supabase.from('employees').select('name, phone, role'),
-        this.supabase.from('deals').select('id, po_number'),
+        this.supabase
+          .from('deals')
+          .select(
+            'id, po_number, customer_name, deal_items(sku_text, dimensions, quantity, unit)',
+          ),
       ]);
 
       const empMap = new Map<string, string>();
@@ -2039,12 +2043,59 @@ export class KraService {
       });
 
       const dealPoMap = new Map<string, string>();
+      const dealProductMap = new Map<string, string>();
       (deals || []).forEach((d) => {
+        let itemStr = '';
+        if (
+          d.deal_items &&
+          Array.isArray(d.deal_items) &&
+          d.deal_items.length > 0
+        ) {
+          itemStr = d.deal_items
+            .map((it: any) => {
+              let s = it.sku_text || 'Steel Item';
+              if (it.dimensions) s += ` ${it.dimensions}`;
+              if (it.quantity) s += ` (${it.quantity} ${it.unit || 'MT'})`;
+              return s.trim();
+            })
+            .join(', ');
+        }
+
         if (d.po_number) {
           dealPoMap.set(d.id.toLowerCase(), d.po_number);
           dealPoMap.set(d.id.substring(0, 6).toLowerCase(), d.po_number);
+          if (itemStr)
+            dealProductMap.set(d.po_number.toLowerCase().trim(), itemStr);
+        }
+        if (itemStr) {
+          dealProductMap.set(d.id.toLowerCase(), itemStr);
+          dealProductMap.set(d.id.substring(0, 6).toLowerCase(), itemStr);
+          if (d.customer_name) {
+            dealProductMap.set(
+              `cust_${d.customer_name.toLowerCase().trim()}`,
+              itemStr,
+            );
+          }
         }
       });
+
+      const extractProductFromText = (text?: string | null) => {
+        if (!text) return null;
+        const str = String(text).trim();
+        const m1 = str.match(
+          /(?:(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?))\s+)?\b(MS\s+Plates?|MS\s+Sheets?|HR\s+Coils?|HR\s+Sheets?|CR\s+Coils?|CR\s+Sheets?|TMT\s+Bars?|GI\s+Sheets?|GI\s+Coils?|GP\s+Sheets?|GP\s+Coils?|Chequered\s+Plates?|MS\s+Pipes?|Seamless\s+Pipes?|ERW\s+Pipes?|Beams?|Channels?|Angles?|IS\s+2062(?:\s+E250)?)\b(?:\s+([0-9.]+\s*mm(?:(?:\s*x\s*[0-9.]+\s*mm)+)?))?(?:\s+(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?)))?/i,
+        );
+        if (m1) {
+          const qty = (m1[1] || m1[4] || '').trim();
+          const prod = m1[2].trim();
+          const dims = (m1[3] || '').trim();
+          let res = prod;
+          if (dims) res += ` ${dims}`;
+          if (qty) res += ` (${qty})`;
+          return res;
+        }
+        return null;
+      };
 
       return complaintsList.map((c) => {
         const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
@@ -2056,25 +2107,83 @@ export class KraService {
             .toLowerCase();
           poNum = dealPoMap.get(cleanDeal) || null;
         }
+
+        const rawProd = (c.product_name || c.affected_product || '').trim();
+        const lower = rawProd.toLowerCase();
+        const isGeneric =
+          !rawProd ||
+          lower === 'general material' ||
+          lower === 'general steel material' ||
+          lower === 'steel material' ||
+          lower === 'steel' ||
+          lower === 'null';
+
+        let resolvedProd = rawProd;
+        if (isGeneric) {
+          if (
+            c.deal_id &&
+            dealProductMap.has(c.deal_id.toLowerCase().replace(/^#?deal-/i, ''))
+          ) {
+            resolvedProd =
+              dealProductMap.get(
+                c.deal_id.toLowerCase().replace(/^#?deal-/i, ''),
+              ) || '';
+          } else if (poNum && dealProductMap.has(poNum.toLowerCase().trim())) {
+            resolvedProd = dealProductMap.get(poNum.toLowerCase().trim()) || '';
+          }
+
+          if (
+            !resolvedProd &&
+            c.customer_name &&
+            dealProductMap.has(`cust_${c.customer_name.toLowerCase().trim()}`)
+          ) {
+            resolvedProd =
+              dealProductMap.get(
+                `cust_${c.customer_name.toLowerCase().trim()}`,
+              ) || '';
+          }
+
+          if (!resolvedProd) {
+            resolvedProd =
+              extractProductFromText(
+                `${c.description || ''} ${c.resolution_notes || ''}`,
+              ) || '';
+          }
+        }
+
+        const finalProd = resolvedProd || 'Steel Material';
+
         return {
           ...c,
           po_number: poNum,
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
-          product_name:
-            c.product_name || c.affected_product || 'General Material',
+          product_name: finalProd,
+          affected_product: finalProd,
           salesperson_name:
             empMap.get(cleanRep) || c.reported_by || 'Web Admin',
         };
       });
     } catch {
-      return complaintsList.map((c) => ({
-        ...c,
-        created_at: c.created_at || c.reported_at,
-        reported_at: c.reported_at || c.created_at,
-        product_name:
-          c.product_name || c.affected_product || 'General Material',
-      }));
+      return complaintsList.map((c) => {
+        const rawProd = (c.product_name || c.affected_product || '').trim();
+        const lower = rawProd.toLowerCase();
+        const isGeneric =
+          !rawProd ||
+          lower === 'general material' ||
+          lower === 'general steel material' ||
+          lower === 'steel material' ||
+          lower === 'steel' ||
+          lower === 'null';
+        const finalProd = isGeneric ? 'Steel Material' : rawProd;
+        return {
+          ...c,
+          created_at: c.created_at || c.reported_at,
+          reported_at: c.reported_at || c.created_at,
+          product_name: finalProd,
+          affected_product: finalProd,
+        };
+      });
     }
   }
 
@@ -2104,13 +2213,29 @@ export class KraService {
           .toLowerCase();
         const { data: matchedDeal } = await this.supabase
           .from('deals')
-          .select('id, po_number')
+          .select(
+            'id, po_number, deal_items(sku_text, dimensions, quantity, unit)',
+          )
           .or(`id.eq.${cleanDeal},id.ilike.${cleanDeal}%`)
           .limit(1);
         if (matchedDeal && matchedDeal.length > 0) {
           targetDealId = matchedDeal[0].id;
           if (matchedDeal[0].po_number)
             targetPoNumber = matchedDeal[0].po_number;
+          if (
+            !extractedProduct &&
+            matchedDeal[0].deal_items &&
+            matchedDeal[0].deal_items.length > 0
+          ) {
+            extractedProduct = matchedDeal[0].deal_items
+              .map((it: any) => {
+                let s = it.sku_text || 'Steel Item';
+                if (it.dimensions) s += ` ${it.dimensions}`;
+                if (it.quantity) s += ` (${it.quantity} ${it.unit || 'MT'})`;
+                return s.trim();
+              })
+              .join(', ');
+          }
         }
       } catch (err: any) {
         this.logger.warn(
@@ -2119,12 +2244,29 @@ export class KraService {
       }
     }
 
+    if (!extractedProduct) {
+      const m1 = cleanDesc.match(
+        /(?:(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?))\s+)?\b(MS\s+Plates?|MS\s+Sheets?|HR\s+Coils?|HR\s+Sheets?|CR\s+Coils?|CR\s+Sheets?|TMT\s+Bars?|GI\s+Sheets?|GI\s+Coils?|GP\s+Sheets?|GP\s+Coils?|Chequered\s+Plates?|MS\s+Pipes?|Seamless\s+Pipes?|ERW\s+Pipes?|Beams?|Channels?|Angles?|IS\s+2062(?:\s+E250)?)\b(?:\s+([0-9.]+\s*mm(?:(?:\s*x\s*[0-9.]+\s*mm)+)?))?(?:\s+(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?)))?/i,
+      );
+      if (m1) {
+        const qty = (m1[1] || m1[4] || '').trim();
+        const prod = m1[2].trim();
+        const dims = (m1[3] || '').trim();
+        let res = prod;
+        if (dims) res += ` ${dims}`;
+        if (qty) res += ` (${qty})`;
+        extractedProduct = res;
+      }
+    }
+
+    const finalProd = extractedProduct || 'Steel Material';
+
     const payload: Record<string, any> = {
       customer_name: data.customer_name,
       deal_id: targetDealId,
       po_number: targetPoNumber,
-      product_name: extractedProduct || 'General Material',
-      affected_product: extractedProduct || 'General Material',
+      product_name: finalProd,
+      affected_product: finalProd,
       complaint_type: data.complaint_type || 'Quality Defect',
       description: cleanDesc,
       status: data.status || 'reported',
