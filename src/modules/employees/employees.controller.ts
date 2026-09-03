@@ -5,6 +5,7 @@ import {
   Patch,
   Param,
   Body,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -21,8 +22,11 @@ export class EmployeesController {
 
   // GET /employees - list all employees (scoped by caller role)
   @Get()
-  async findAll(@CurrentEmployee() employee: any) {
-    return this.employeesService.findAll(employee);
+  async findAll(
+    @CurrentEmployee() employee: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    return this.employeesService.findAll(employee, salespersonPhoneOverride);
   }
 
   // GET /employees/next-id - get next auto employee ID
