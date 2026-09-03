@@ -261,9 +261,16 @@ export const getInquiriesTool: ChatbotTool = {
         }));
       }
 
+      const humanDealId = deal?.id
+        ? 'DEAL-' + deal.id.substring(0, 6).toUpperCase()
+        : inq.id
+          ? 'DEAL-' + inq.id.substring(0, 6).toUpperCase()
+          : null;
+
       return {
         inquiry_id: inq.id,
-        deal_id: deal?.id || null,
+        deal_id: humanDealId,
+        deal_uuid: deal?.id || null,
         deal_status: dealStage,
         inquiry_status: inquiryStatus,
         customer_name: resolvedCustomerName,
@@ -289,15 +296,62 @@ export const getInquiriesTool: ChatbotTool = {
     // Top customers ranked by count
     const topCustomers = Object.entries(customerCountMap)
       .map(([name, count]) => ({ customer_name: name, inquiry_count: count }))
-      .sort((a, b) => b.inquiry_count - a.inquiry_count)
-      .slice(0, 10);
+      .sort((a, b) => b.inquiry_count - a.inquiry_count);
+
+    // Customers with more than 1 inquiry
+    const customersWithMultipleInquiries = topCustomers.filter(
+      (c) => c.inquiry_count > 1,
+    );
+
+    // Customers with active inquiries
+    const activeCustomersMap: Record<string, number> = {};
+    formattedList.forEach((inq) => {
+      if (
+        inq.deal_status !== 'lost' &&
+        inq.inquiry_status !== 'lost' &&
+        inq.customer_name !== 'Customer Inquiry'
+      ) {
+        activeCustomersMap[inq.customer_name] =
+          (activeCustomersMap[inq.customer_name] || 0) + 1;
+      }
+    });
+
+    const activeCustomers = Object.entries(activeCustomersMap)
+      .map(([name, count]) => ({
+        customer_name: name,
+        active_inquiries_count: count,
+      }))
+      .sort((a, b) => b.active_inquiries_count - a.active_inquiries_count);
+
+    const wonCount = dealStageCounts['won'] || 0;
+    const lostCount =
+      dealStageCounts['lost'] || inquiryStatusCounts['lost'] || 0;
+    const totalInquiriesCount = rawList.length;
+    const conversionRatePercent =
+      totalInquiriesCount > 0
+        ? Number(((wonCount / totalInquiriesCount) * 100).toFixed(1))
+        : 0;
 
     const summary = {
-      total_inquiries: rawList.length,
+      total_inquiries: totalInquiriesCount,
       inquiries_today: inquiriesTodayCount,
       by_inquiry_status: inquiryStatusCounts,
       by_deal_stage: dealStageCounts,
-      top_customers: topCustomers,
+      top_customers: topCustomers.slice(0, 10),
+      customers_with_multiple_inquiries: customersWithMultipleInquiries,
+      active_customers: activeCustomers,
+      conversion_metrics: {
+        total_inquiries: totalInquiriesCount,
+        won_inquiries: wonCount,
+        lost_inquiries: lostCount,
+        active_inquiries: totalInquiriesCount - wonCount - lostCount,
+        inquiry_to_won_conversion_rate: `${conversionRatePercent}%`,
+        inquiry_conversion_percent: conversionRatePercent,
+        closed_win_rate:
+          wonCount + lostCount > 0
+            ? `${((wonCount / (wonCount + lostCount)) * 100).toFixed(1)}%`
+            : '0%',
+      },
     };
 
     // 5. Apply filters for list mode
@@ -319,6 +373,9 @@ export const getInquiriesTool: ChatbotTool = {
         const dStage = i.deal_status.toLowerCase();
         const iStatus = i.inquiry_status.toLowerCase();
 
+        if (rawStatus === 'active') {
+          return dStage !== 'lost' && iStatus !== 'lost';
+        }
         if (rawStatus === 'won') {
           return dStage === 'won' || iStatus === 'order_created';
         }
@@ -368,15 +425,27 @@ export const getInquiriesTool: ChatbotTool = {
     if (mode === 'top_customers') {
       return {
         data: {
-          top_customers: topCustomers,
+          top_customers: topCustomers.slice(0, 10),
+          customers_with_multiple_inquiries: customersWithMultipleInquiries,
           total_inquiries: rawList.length,
         },
         rowCount: topCustomers.length,
       };
     }
 
-    // Default 'list' mode
-    const paginatedList = filteredList.slice(0, limit);
+    if (mode === 'active_customers') {
+      return {
+        data: {
+          active_customers: activeCustomers,
+          total_active_customers: activeCustomers.length,
+        },
+        rowCount: activeCustomers.length,
+      };
+    }
+
+    // When customer search is requested (e.g. inquiry history for a customer), allow returning all matching entries up to 100
+    const effectiveLimit = searchName ? Math.max(limit, 50) : limit;
+    const paginatedList = filteredList.slice(0, effectiveLimit);
 
     return {
       data: {

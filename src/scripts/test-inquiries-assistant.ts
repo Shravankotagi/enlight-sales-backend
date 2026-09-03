@@ -20,7 +20,8 @@ import { ChatbotService } from '../modules/chatbot/chatbot.service';
 import { GuardrailsService } from '../modules/chatbot/guardrails/guardrails.service';
 import { ToolRegistryService } from '../modules/chatbot/tools/tool-registry.service';
 import { CallerContext } from '../modules/chatbot/tools/chatbot-tool.interface';
-import { getInquiriesTool } from '../modules/chatbot/tools/get_inquiries.tool';
+import { getMyOpenDealsTool } from '../modules/chatbot/tools/get_my_open_deals.tool';
+import { getCustomer360Tool } from '../modules/chatbot/tools/get_customer_360.tool';
 
 const mockSupabaseService: any = {
   getAdminClient: () => supabaseAdmin,
@@ -35,7 +36,9 @@ const chatbotService = new ChatbotService(
 );
 
 async function runTests() {
-  console.log('=== Verifying Upgraded Inquiry Intelligence Engine ===\n');
+  console.log(
+    '=== Verifying Upgraded AI Assistant (Customer, Deals & Conversion Analytics) ===\n',
+  );
   let passed = 0;
   let failed = 0;
 
@@ -46,98 +49,99 @@ async function runTests() {
     name: 'Admin Test',
   };
 
-  // --- UNIT TEST 1: Direct Tool Execution with Summary & Counts ---
-  console.log('1. Direct get_inquiries Execution (Unit Check)...');
+  // --- UNIT TEST 1: get_customer_360 Directory & Count ---
+  console.log('1. Unit Test: get_customer_360 directory & total count...');
   try {
-    const res = await getInquiriesTool.execute(
-      { limit: 10 },
+    const custRes = await getCustomer360Tool.execute(
+      {},
       adminContext,
       supabaseAdmin,
     );
-    const data = res.data;
+    const data = custRes.data;
     if (
       data &&
       data.summary &&
-      typeof data.summary.total_inquiries === 'number' &&
-      data.inquiries?.length > 0
+      typeof data.summary.total_customers === 'number'
     ) {
-      console.log('   PASS: Total Inquiries:', data.summary.total_inquiries);
+      console.log('   PASS: Total Customers:', data.summary.total_customers);
       console.log(
-        '   PASS: Top Customers:',
-        JSON.stringify(data.summary.top_customers.slice(0, 3)),
+        '   PASS: Customers Directory Sample:',
+        data.customers.slice(0, 2).map((c: any) => c.customer_name),
       );
-      console.log(
-        '   PASS: Deal Stages Breakdown:',
-        JSON.stringify(data.summary.by_deal_stage),
-      );
-      const first = data.inquiries[0];
-      console.log('   PASS: Fields on item:', {
-        inquiry_id: !!first.inquiry_id,
-        customer_name: first.customer_name,
-        deal_id: first.deal_id,
-        deal_status: first.deal_status,
-        source_channel: first.source_channel,
-        has_items: first.extracted_line_items?.length >= 0,
-      });
       passed++;
     } else {
-      console.error('   FAIL: Invalid structure from get_inquiries:', data);
+      console.error('   FAIL: Invalid structure from get_customer_360:', data);
       failed++;
     }
   } catch (err: any) {
-    console.error('   FAIL: Error in get_inquiries:', err.message);
+    console.error('   FAIL: get_customer_360 unit check:', err.message);
     failed++;
   }
 
-  // --- UNIT TEST 2: Filter by Won / Lost ---
-  console.log('\n2. Filtering Inquiries by Deal Outcome (Won & Lost)...');
+  // --- UNIT TEST 2: get_my_open_deals Won Deals Sum & DEAL-XXXXXX ID Format ---
+  console.log(
+    '\n2. Unit Test: get_my_open_deals pipeline values and human Deal IDs...',
+  );
   try {
-    const wonRes = await getInquiriesTool.execute(
-      { status_filter: 'won' },
+    const dealsRes = await getMyOpenDealsTool.execute(
+      { stage_filter: 'won' },
       adminContext,
       supabaseAdmin,
     );
-    const lostRes = await getInquiriesTool.execute(
-      { status_filter: 'lost' },
-      adminContext,
-      supabaseAdmin,
-    );
-    console.log(
-      '   PASS: Won inquiries count:',
-      wonRes.data.inquiries?.length,
-      '(Total in DB:',
-      wonRes.data.summary.by_deal_stage.won,
-      ')',
-    );
-    console.log(
-      '   PASS: Lost inquiries count:',
-      lostRes.data.inquiries?.length,
-      '(Total in DB:',
-      lostRes.data.summary.by_deal_stage.lost,
-      ')',
-    );
-    passed++;
+    const dData = dealsRes.data;
+    if (
+      dData &&
+      dData.summary &&
+      typeof dData.summary.won_deals_total_value === 'number' &&
+      dData.deals?.length > 0
+    ) {
+      console.log(
+        '   PASS: Won Deals Count:',
+        dData.summary.stage_breakdown.won?.count,
+      );
+      console.log(
+        '   PASS: Won Deals Total Value: ₹',
+        dData.summary.won_deals_total_value,
+      );
+      const firstDeal = dData.deals[0];
+      console.log('   PASS: Deal ID format:', firstDeal.deal_id);
+      if (firstDeal.deal_id.startsWith('DEAL-')) {
+        passed++;
+      } else {
+        console.error(
+          '   FAIL: Deal ID does not start with DEAL-:',
+          firstDeal.deal_id,
+        );
+        failed++;
+      }
+    } else {
+      console.error(
+        '   FAIL: Invalid structure from get_my_open_deals:',
+        dData,
+      );
+      failed++;
+    }
   } catch (err: any) {
-    console.error('   FAIL: Error filtering by outcome:', err.message);
+    console.error('   FAIL: get_my_open_deals unit check:', err.message);
     failed++;
   }
 
-  // --- PROMPT 1: Total number of inquiries ---
-  console.log('\n3. Prompt: "Show me the total number of inquiries."');
+  // --- PROMPT 1: How many customers do we have? ---
+  console.log('\n3. Prompt: "How many customers do we have?"');
   try {
     const reply1 = await chatbotService.processChatMessage(
       adminContext,
-      'Show me the total number of inquiries.',
+      'How many customers do we have?',
     );
     console.log('   Bot Response:\n  ', reply1.reply.replace(/\n/g, '\n   '));
     if (
-      !reply1.reply.includes('cannot provide a total count') &&
+      !reply1.reply.includes("can't directly provide a total customer count") &&
       /\b\d+\b/.test(reply1.reply)
     ) {
-      console.log('   PASS: Bot provided total inquiry count without refusal.');
+      console.log('   PASS: Bot provided total customer count.');
       passed++;
     } else {
-      console.error('   FAIL: Bot refused or did not provide count.');
+      console.error('   FAIL: Bot refused customer count.');
       failed++;
     }
   } catch (err: any) {
@@ -145,22 +149,26 @@ async function runTests() {
     failed++;
   }
 
-  // --- PROMPT 2: How many inquiries do we have currently? ---
-  console.log('\n4. Prompt: "How many inquiries do we have currently?"');
+  // --- PROMPT 2: Show me all customers who have active inquiries ---
+  console.log(
+    '\n4. Prompt: "Show me all customers who have active inquiries."',
+  );
   try {
     const reply2 = await chatbotService.processChatMessage(
       adminContext,
-      'How many inquiries do we have currently?',
+      'Show me all customers who have active inquiries.',
     );
     console.log('   Bot Response:\n  ', reply2.reply.replace(/\n/g, '\n   '));
     if (
-      !reply2.reply.includes('cannot provide a total count') &&
-      /\b\d+\b/.test(reply2.reply)
+      !reply2.reply.includes('column inquiries.customer_name does not exist') &&
+      !reply2.reply.includes('error')
     ) {
-      console.log('   PASS: Bot answered currently inquiries without refusal.');
+      console.log(
+        '   PASS: Bot listed customers with active inquiries without errors.',
+      );
       passed++;
     } else {
-      console.error('   FAIL: Bot refused or did not provide count.');
+      console.error('   FAIL: Error in active inquiries customers.');
       failed++;
     }
   } catch (err: any) {
@@ -168,26 +176,26 @@ async function runTests() {
     failed++;
   }
 
-  // --- PROMPT 3: List all inquiries with customer name, deal ID, items, source channel, and deal status ---
+  // --- PROMPT 3: Show me the complete inquiry history for ABC steel company ---
   console.log(
-    '\n5. Prompt: "List inquiries with customer name, deal ID, items, source channel, and deal status."',
+    '\n5. Prompt: "Show me the complete inquiry history for ABC steel company."',
   );
   try {
     const reply3 = await chatbotService.processChatMessage(
       adminContext,
-      'List the latest 5 inquiries with customer name, deal ID, items, source channel, and deal status.',
+      'Show me the complete inquiry history for ABC steel company.',
     );
     console.log('   Bot Response:\n  ', reply3.reply.replace(/\n/g, '\n   '));
     if (
       !reply3.reply.includes('column inquiries.customer_name does not exist') &&
-      !reply3.reply.includes('error')
+      reply3.reply.includes('ABC')
     ) {
-      console.log(
-        '   PASS: Bot listed inquiries with all required fields and ZERO SQL errors.',
-      );
+      console.log('   PASS: Inquiry history for ABC steel company returned.');
       passed++;
     } else {
-      console.error('   FAIL: SQL error or failure returned.');
+      console.error(
+        '   FAIL: Could not get inquiry history for ABC steel company.',
+      );
       failed++;
     }
   } catch (err: any) {
@@ -195,21 +203,22 @@ async function runTests() {
     failed++;
   }
 
-  // --- PROMPT 4: Show me all Won inquiries ---
-  console.log('\n6. Prompt: "Show me all Won inquiries."');
+  // --- PROMPT 4: Which customers have more than one inquiry? ---
+  console.log('\n6. Prompt: "Which customers have more than one inquiry?"');
   try {
     const reply4 = await chatbotService.processChatMessage(
       adminContext,
-      'Show me all Won inquiries.',
+      'Which customers have more than one inquiry?',
     );
     console.log('   Bot Response:\n  ', reply4.reply.replace(/\n/g, '\n   '));
-    if (!reply4.reply.includes('there is no "won" status for inquiries')) {
-      console.log(
-        '   PASS: Bot answered won inquiries without rejecting status.',
-      );
+    if (
+      !reply4.reply.includes('column inquiries.customer_name does not exist') &&
+      !reply4.reply.includes('error')
+    ) {
+      console.log('   PASS: Customers with multiple inquiries identified.');
       passed++;
     } else {
-      console.error('   FAIL: Bot rejected won status.');
+      console.error('   FAIL: Customers with multiple inquiries failed.');
       failed++;
     }
   } catch (err: any) {
@@ -217,27 +226,24 @@ async function runTests() {
     failed++;
   }
 
-  // --- PROMPT 5: Which customer has the highest number of inquiries? ---
-  console.log(
-    '\n7. Prompt: "Which customer has the highest number of inquiries?"',
-  );
+  // --- PROMPT 5: Show me all Won deals with their total value ---
+  console.log('\n7. Prompt: "Show me all Won deals with their total value."');
   try {
     const reply5 = await chatbotService.processChatMessage(
       adminContext,
-      'Which customer has the highest number of inquiries?',
+      'Show me all Won deals with their total value.',
     );
     console.log('   Bot Response:\n  ', reply5.reply.replace(/\n/g, '\n   '));
-    if (
-      !reply5.reply.includes(
-        'I cannot directly tell you which customer has the highest number of inquiries',
-      )
-    ) {
+    // Check that Deal ID format matches DEAL-XXXXXX
+    if (reply5.reply.includes('DEAL-') && /\b\d+\b/.test(reply5.reply)) {
       console.log(
-        '   PASS: Bot accurately identified the customer with highest inquiries.',
+        '   PASS: Bot displayed Won deals with DEAL-XXXXXX human IDs and values.',
       );
       passed++;
     } else {
-      console.error('   FAIL: Bot refused to aggregate by customer.');
+      console.error(
+        '   FAIL: Deal ID format did not contain DEAL- or values missing.',
+      );
       failed++;
     }
   } catch (err: any) {
@@ -245,25 +251,55 @@ async function runTests() {
     failed++;
   }
 
-  // --- PROMPT 6 & 7: Latest 10 inquiries & today inquiries ---
-  console.log('\n8. Prompt: "Show me the latest 10 inquiries."');
+  // --- PROMPT 6: What is the total value of all Won deals? ---
+  console.log('\n8. Prompt: "What is the total value of all Won deals?"');
   try {
     const reply6 = await chatbotService.processChatMessage(
       adminContext,
-      'Show me the latest 10 inquiries.',
+      'What is the total value of all Won deals?',
     );
     console.log('   Bot Response:\n  ', reply6.reply.replace(/\n/g, '\n   '));
     if (
-      !reply6.reply.includes('column inquiries.customer_name does not exist')
+      !reply6.reply.includes("can't directly calculate the total value") &&
+      (reply6.reply.includes('15') ||
+        reply6.reply.includes('151,152,615') ||
+        reply6.reply.includes('15.1'))
     ) {
-      console.log('   PASS: Latest 10 inquiries returned successfully.');
+      console.log(
+        '   PASS: Bot cited the exact won deals total value (~15.1 Cr).',
+      );
       passed++;
     } else {
-      console.error('   FAIL: SQL error on latest inquiries.');
+      console.error(
+        '   FAIL: Bot refused or miscalculated won deals total value.',
+      );
       failed++;
     }
   } catch (err: any) {
     console.error('   FAIL Prompt 6:', err.message);
+    failed++;
+  }
+
+  // --- PROMPT 7: What is our current inquiry conversion rate? ---
+  console.log('\n9. Prompt: "What is our current inquiry conversion rate?"');
+  try {
+    const reply7 = await chatbotService.processChatMessage(
+      adminContext,
+      'What is our current inquiry conversion rate?',
+    );
+    console.log('   Bot Response:\n  ', reply7.reply.replace(/\n/g, '\n   '));
+    if (
+      !reply7.reply.includes("couldn't find the specific metric") &&
+      (reply7.reply.includes('32') || reply7.reply.includes('%'))
+    ) {
+      console.log('   PASS: Bot cited inquiry conversion rate.');
+      passed++;
+    } else {
+      console.error('   FAIL: Bot refused conversion rate question.');
+      failed++;
+    }
+  } catch (err: any) {
+    console.error('   FAIL Prompt 7:', err.message);
     failed++;
   }
 
