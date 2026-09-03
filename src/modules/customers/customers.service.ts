@@ -1075,6 +1075,35 @@ export class CustomersService {
     }
   }
 
+  async deleteCustomer(id: string) {
+    try {
+      const decodedId = decodeURIComponent(id || '').trim();
+      const { data, error } = await this.supabase
+        .from('recurring_customers')
+        .update({
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', decodedId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      this.logger.log(
+        `Customer deactivated in Enlight Sales OS (Preserved in Zoho Bigin): ${decodedId}`,
+      );
+      return {
+        success: true,
+        message:
+          'Customer deactivated successfully in Enlight Sales OS (Preserved in Zoho Bigin CRM).',
+        data,
+      };
+    } catch (error) {
+      this.logger.error(`Error deactivating customer ${id}:`, error);
+      throw error;
+    }
+  }
+
   async getReorderQueue(salespersonPhone?: string[] | string) {
     try {
       if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
