@@ -26,19 +26,16 @@ async function runRbacTestSuite() {
     '=== Phase 2, 3 & 5 RBAC, Tool Layer & Knowledge Base Verification Suite ===\n',
   );
 
-  const { SupabaseService } = await import(
-    '../infrastructure/supabase/supabase.service'
-  );
+  const { SupabaseService } =
+    await import('../infrastructure/supabase/supabase.service');
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
   const { ChatbotService } = await import('../modules/chatbot/chatbot.service');
-  const { ToolRegistryService } = await import(
-    '../modules/chatbot/tools/tool-registry.service'
-  );
+  const { ToolRegistryService } =
+    await import('../modules/chatbot/tools/tool-registry.service');
   const { KbService } = await import('../modules/chatbot/kb/kb.service');
-  const { GuardrailsService } = await import(
-    '../modules/chatbot/guardrails/guardrails.service'
-  );
+  const { GuardrailsService } =
+    await import('../modules/chatbot/guardrails/guardrails.service');
 
   const configService = new ConfigService(new NestConfigService());
   const supabaseService = new SupabaseService(configService);
@@ -55,28 +52,28 @@ async function runRbacTestSuite() {
   const repA_Phone = '919187305823';
 
   console.log(
-    '--- 1. Role-Filtered Tool Declarations Check (7 Total Tools) ---',
+    '--- 1. Role-Filtered Tool Declarations Check (8 Total Tools) ---',
   );
   const salesDeclarations = toolRegistry.getToolDeclarations('salesperson');
   const managerDeclarations = toolRegistry.getToolDeclarations('manager');
   const adminDeclarations = toolRegistry.getToolDeclarations('admin');
   console.log(
-    `  Salesperson declarations count: ${salesDeclarations.length} (Expected 5)`,
+    `  Salesperson declarations count: ${salesDeclarations.length} (Expected 7)`,
   );
   console.log(
-    `  Manager declarations count: ${managerDeclarations.length} (Expected 7)`,
+    `  Manager declarations count: ${managerDeclarations.length} (Expected 8)`,
   );
   console.log(
-    `  Admin declarations count: ${adminDeclarations.length} (Expected 7)`,
+    `  Admin declarations count: ${adminDeclarations.length} (Expected 8)`,
   );
 
   if (
-    salesDeclarations.length === 5 &&
-    managerDeclarations.length === 7 &&
-    adminDeclarations.length === 7
+    salesDeclarations.length === 7 &&
+    managerDeclarations.length === 8 &&
+    adminDeclarations.length === 8
   ) {
     console.log(
-      '   PASS: Tool declarations correctly filtered per role (Salesperson: 5, Manager/Admin: 7).',
+      '   PASS: Tool declarations correctly filtered per role (Salesperson: 7, Manager/Admin: 8).',
     );
   } else {
     console.error('   FAIL: Tool declarations count mismatch!');
