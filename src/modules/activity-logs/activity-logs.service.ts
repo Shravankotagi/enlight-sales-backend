@@ -122,13 +122,10 @@ export class ActivityLogsService {
       const { data, error } = await q;
       if (error) throw error;
 
-      return {
-        data: data || [],
-        total: data ? data.length : 0,
-      };
+      return data || [];
     } catch (err: any) {
       this.logger.error('Error fetching activity logs:', err);
-      return { data: [], total: 0 };
+      return [];
     }
   }
 }
