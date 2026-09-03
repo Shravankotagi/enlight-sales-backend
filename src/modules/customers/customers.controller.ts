@@ -115,9 +115,16 @@ export class CustomersController {
   }
 
   @Get(':id')
-  async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
+  async findOne(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     return this.customersService.findOne(
       id,
@@ -130,9 +137,13 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
     @Body() body: any,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
 
     return this.customersService.updateCustomer(
       id,
