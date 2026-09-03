@@ -9,33 +9,100 @@ import {
 export const getCustomer360Tool: ChatbotTool = {
   name: 'get_customer_360',
   description:
-    'Retrieves comprehensive Customer 360 overview (profile details, active deals, past orders, payment status) for a specific customer, scoped by caller role.',
+    'Retrieves comprehensive Customer 360 overview for a specific customer, OR lists total customer counts and the customer directory when customer_name is omitted. Scoped by caller role.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_customer_360',
     description:
-      'Fetches Customer 360 information including profile, recent deals, and payment tracking for a specified customer.',
+      'Retrieves Customer 360 profile for a specific customer, OR returns total customer count and customer directory when customer_name is omitted. Scoped by caller role.',
     parameters: {
       type: 'OBJECT',
       properties: {
         customer_name: {
           type: 'STRING',
           description:
-            'Name of the customer or company (e.g. "Supreme Steel" or "Mehta")',
+            'Optional name of customer or company (e.g. "Supreme Steel" or "Mehta"). Omit to retrieve total customer count and customer directory.',
+        },
+        limit: {
+          type: 'INTEGER',
+          description:
+            'Maximum number of customers to return in directory list (default: 50, max: 100).',
         },
       },
-      required: ['customer_name'],
     },
   },
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
     const customerName = (args?.customer_name || '').trim();
-    if (!customerName) {
-      return { data: { message: 'Customer name is required' }, rowCount: 0 };
-    }
-
     const rawPhone = callerContext.phone || '';
     const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
     const empId = callerContext.employeeId;
+    const limit = Math.min(Math.max(Number(args?.limit) || 50, 1), 100);
+
+    // If customer_name is omitted, return total customer count and customer directory
+    if (!customerName) {
+      let dirQuery = supabaseAdmin
+        .from('recurring_customers')
+        .select('*', { count: 'exact' })
+        .order('customer_name', { ascending: true });
+
+      if (isSalespersonRole(callerContext.role)) {
+        if (cleanPhone) {
+          dirQuery = dirQuery.ilike(
+            'assigned_salesperson_phone',
+            `%${cleanPhone}%`,
+          );
+        }
+      } else if (isManagerRole(callerContext.role)) {
+        const { phoneSuffixes } = await getSubordinateSalespersons(
+          callerContext,
+          supabaseAdmin,
+        );
+
+        if (phoneSuffixes.length === 0) {
+          return {
+            data: {
+              summary: { total_customers: 0, active_customers: 0 },
+              customers: [],
+            },
+            rowCount: 0,
+          };
+        }
+
+        const orConditions = phoneSuffixes.map(
+          (p) => `assigned_salesperson_phone.ilike.%${p}%`,
+        );
+        dirQuery = dirQuery.or(orConditions.join(','));
+      }
+
+      const { data, count, error } = await dirQuery.limit(limit);
+      if (error) {
+        throw new Error(`get_customer_360 error: ${error.message}`);
+      }
+
+      const custList = data || [];
+      const activeCount = custList.filter(
+        (c: any) => c.is_active !== false,
+      ).length;
+
+      return {
+        data: {
+          summary: {
+            total_customers:
+              count !== null && count !== undefined ? count : custList.length,
+            active_customers: activeCount,
+          },
+          customers: custList.map((c: any) => ({
+            customer_name: c.customer_name,
+            customer_phone: c.customer_phone || '',
+            contact_person: c.contact_person || '',
+            assigned_salesperson_phone: c.assigned_salesperson_phone || '',
+            is_active: c.is_active !== false,
+            last_order_date: c.last_order_date || null,
+          })),
+        },
+        rowCount: custList.length,
+      };
+    }
 
     // 1. Fetch customer profile from recurring_customers
     let customerQuery = supabaseAdmin
@@ -151,20 +218,31 @@ export const getCustomer360Tool: ChatbotTool = {
     const latestDealWithPhone = deals?.find((d: any) => d.customer_phone);
     const resolvedPhone =
       profile?.phone ||
+      profile?.customer_phone ||
       profile?.contact_phone ||
       latestDealWithPhone?.customer_phone ||
       null;
     const resolvedGst =
-      profile?.gst_number || latestDealWithPhone?.customer_gst || null;
+      profile?.gst_number ||
+      profile?.customer_gst ||
+      latestDealWithPhone?.customer_gst ||
+      null;
     const resolvedAddress =
       profile?.address ||
+      profile?.customer_address ||
       latestDealWithPhone?.customer_address ||
       latestDealWithPhone?.delivery_location ||
       null;
 
+    const formattedDeals = (deals || []).map((d: any) => ({
+      ...d,
+      deal_id: 'DEAL-' + d.id.substring(0, 6).toUpperCase(),
+      deal_uuid: d.id,
+    }));
+
     const rowCount =
       (profile ? 1 : 0) +
-      (deals ? deals.length : 0) +
+      formattedDeals.length +
       (payments ? payments.length : 0);
 
     return {
@@ -181,7 +259,7 @@ export const getCustomer360Tool: ChatbotTool = {
           gst_number: resolvedGst,
           address: resolvedAddress,
         },
-        deals: deals || [],
+        deals: formattedDeals,
         payments: payments || [],
       },
       rowCount,
