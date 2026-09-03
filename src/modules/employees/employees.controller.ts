@@ -25,8 +25,13 @@ export class EmployeesController {
   async findAll(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
-    return this.employeesService.findAll(employee, salespersonPhoneOverride);
+    return this.employeesService.findAll(
+      employee,
+      salespersonPhoneOverride,
+      mode,
+    );
   }
 
   // GET /employees/next-id - get next auto employee ID

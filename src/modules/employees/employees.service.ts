@@ -34,7 +34,11 @@ export class EmployeesService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll(currentEmployee?: any, requestedPhoneOverride?: string) {
+  async findAll(
+    currentEmployee?: any,
+    requestedPhoneOverride?: string,
+    mode?: string,
+  ) {
     try {
       const { data, error } = await this.supabase
         .from('employees')
@@ -43,6 +47,8 @@ export class EmployeesService {
       if (error) throw error;
 
       const allEmployees = data || [];
+      const isPersonalMode =
+        mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
       let effectiveEmp = currentEmployee;
       if (currentEmployee?.role === 'admin' && requestedPhoneOverride) {
@@ -51,6 +57,15 @@ export class EmployeesService {
           (e: any) => normalizePhone(e.phone) === normOverride,
         );
         if (matched) effectiveEmp = matched;
+      }
+
+      if (isPersonalMode && effectiveEmp) {
+        const selfPhone = normalizePhone(effectiveEmp.phone);
+        return allEmployees.filter(
+          (emp: any) =>
+            emp.id === effectiveEmp.id ||
+            normalizePhone(emp.phone) === selfPhone,
+        );
       }
 
       // If no current employee or admin without override, return all
@@ -176,7 +191,15 @@ export class EmployeesService {
   async getAccessibleSalespersonPhones(
     employee: any,
     requestedPhoneOverride?: string,
-  ): Promise<{ phones: string[] | null; isManagerView?: boolean }> {
+    mode?: string,
+  ): Promise<{
+    phones: string[] | null;
+    isManagerView?: boolean;
+    isPersonalView?: boolean;
+  }> {
+    const isPersonalMode =
+      mode === 'personal' || mode === 'strict_self' || mode === 'self';
+
     if (!employee || employee.role === 'admin') {
       if (requestedPhoneOverride) {
         const normOverride = normalizePhone(requestedPhoneOverride);
@@ -193,6 +216,10 @@ export class EmployeesService {
           targetEmp &&
           (targetEmp.role === 'sales_manager' || targetEmp.role === 'manager')
         ) {
+          if (isPersonalMode) {
+            return { phones: [targetEmp.phone], isPersonalView: true };
+          }
+
           const assigned = await this.getAssignedSalespersons(
             targetEmp.id,
             targetEmp.phone,
@@ -220,7 +247,17 @@ export class EmployeesService {
         new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
       );
 
+      if (isPersonalMode) {
+        return { phones: [employee.phone], isPersonalView: true };
+      }
+
       if (requestedPhoneOverride) {
+        const normReq = normalizePhone(requestedPhoneOverride);
+        // If manager requested their own phone, treat as personal mode
+        if (normReq === normalizePhone(employee.phone)) {
+          return { phones: [employee.phone], isPersonalView: true };
+        }
+
         const isAllowed = phoneInList(requestedPhoneOverride, teamPhones);
         if (!isAllowed) {
           throw new ForbiddenException(
