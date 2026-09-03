@@ -524,9 +524,18 @@ export class ZohoService implements OnModuleInit {
     );
 
     try {
+      const isDelete = eventType.toLowerCase().includes('delete');
+
       if (entityType.toLowerCase() === 'accounts') {
         const companyName = (data.Account_Name || '').trim();
-        if (companyName) {
+        if (isDelete) {
+          await this.supabase
+            .from('recurring_customers')
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .or(
+              `zoho_account_id.eq.${entityId},customer_name.ilike.${companyName || 'none'}`,
+            );
+        } else if (companyName) {
           const ownerName = (data.Owner?.name || '').toLowerCase().trim();
           let repPhone = '918262937458';
 
@@ -541,7 +550,7 @@ export class ZohoService implements OnModuleInit {
 
           const { data: existing } = await this.supabase
             .from('recurring_customers')
-            .select('id')
+            .select('id, assigned_salesperson_phone')
             .ilike('customer_name', companyName)
             .limit(1);
 
@@ -554,16 +563,22 @@ export class ZohoService implements OnModuleInit {
               industry: data.Industry || 'Steel & Manufacturing',
               is_active: true,
               avg_order_frequency_days: 30,
+              zoho_account_id: String(entityId),
             });
           } else {
+            const updatePayload: Record<string, any> = {
+              customer_phone: data.Phone || undefined,
+              customer_address: data.Billing_City || undefined,
+              is_active: true,
+              zoho_account_id: String(entityId),
+              updated_at: new Date().toISOString(),
+            };
+            if (!existing[0].assigned_salesperson_phone) {
+              updatePayload.assigned_salesperson_phone = repPhone;
+            }
             await this.supabase
               .from('recurring_customers')
-              .update({
-                customer_phone: data.Phone || undefined,
-                customer_address: data.Billing_City || undefined,
-                assigned_salesperson_phone: repPhone,
-                updated_at: new Date().toISOString(),
-              })
+              .update(updatePayload)
               .eq('id', existing[0].id);
           }
         }
@@ -580,27 +595,36 @@ export class ZohoService implements OnModuleInit {
         if (companyName && personMet) {
           await this.supabase
             .from('recurring_customers')
-            .update({ contact_person: personMet })
+            .update({ contact_person: isDelete ? null : personMet })
             .ilike('customer_name', companyName);
         }
       } else if (entityType.toLowerCase() === 'deals') {
-        const dealName = data.Deal_Name || '';
-        const custName = (
-          data.Contact_Name?.name ||
-          data.Account_Name?.name ||
-          dealName.split('-')[0]
-        ).trim();
-        if (custName) {
-          const dbStage = REVERSE_STAGE_MAP[data.Stage] || 'new_inquiry';
-          const amount = Number(data.Amount) || 0;
-
+        if (isDelete) {
           await this.supabase
             .from('deals')
-            .update({
-              stage: dbStage,
-              total_amount: amount,
-            })
-            .or(`bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`);
+            .delete()
+            .eq('bigin_deal_id', String(entityId));
+        } else {
+          const dealName = data.Deal_Name || '';
+          const custName = (
+            data.Contact_Name?.name ||
+            data.Account_Name?.name ||
+            dealName.split('-')[0]
+          ).trim();
+          if (custName) {
+            const dbStage = REVERSE_STAGE_MAP[data.Stage] || 'new_inquiry';
+            const amount = Number(data.Amount) || 0;
+
+            await this.supabase
+              .from('deals')
+              .update({
+                stage: dbStage,
+                total_amount: amount,
+              })
+              .or(
+                `bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`,
+              );
+          }
         }
       } else if (entityType.toLowerCase() === 'users') {
         const fullName = (
@@ -619,7 +643,7 @@ export class ZohoService implements OnModuleInit {
         else if (roleRaw.includes('manager') || roleRaw.includes('lead'))
           appRole = 'sales_manager';
 
-        if (eventType === 'user_deactivated') {
+        if (eventType === 'user_deactivated' || isDelete) {
           await this.supabase
             .from('employees')
             .update({ is_active: false })
