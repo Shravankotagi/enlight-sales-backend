@@ -1548,12 +1548,14 @@ async function pullBiginToDatabase() {
             const address = acc.Billing_City || acc.Billing_Street || '';
             const industry = acc.Industry || 'Steel & Manufacturing';
             const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
-            const repPhone =
-              empNameToPhoneMap.get(ownerName) || defaultRepPhone;
+            const explicitRepPhone = empNameToPhoneMap.get(ownerName);
+            const repPhone = explicitRepPhone || defaultRepPhone;
 
             const { data: existing } = await sb
               .from('recurring_customers')
-              .select('id, customer_phone, customer_address')
+              .select(
+                'id, customer_phone, customer_address, assigned_salesperson_phone',
+              )
               .ilike('customer_name', companyName)
               .limit(1);
 
@@ -1577,7 +1579,16 @@ async function pullBiginToDatabase() {
                 updateData.customer_phone = phone;
               if (!existingCust.customer_address && address)
                 updateData.customer_address = address;
-              if (repPhone) updateData.assigned_salesperson_phone = repPhone;
+
+              if (!existingCust.assigned_salesperson_phone && repPhone) {
+                updateData.assigned_salesperson_phone = repPhone;
+              } else if (
+                explicitRepPhone &&
+                cleanPhone(existingCust.assigned_salesperson_phone) !==
+                  cleanPhone(explicitRepPhone)
+              ) {
+                updateData.assigned_salesperson_phone = explicitRepPhone;
+              }
 
               await sb
                 .from('recurring_customers')

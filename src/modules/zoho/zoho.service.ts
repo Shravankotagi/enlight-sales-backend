@@ -287,10 +287,10 @@ export class ZohoService implements OnModuleInit {
             // ── Company Owner Mapping (Core Requirement 1) ──
             const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
             const ownerId = acc.Owner?.id || '';
-            const assignedPhone =
+            const explicitOwnerPhone =
               empNameToPhoneMap.get(ownerName) ||
-              empNameToPhoneMap.get(ownerId) ||
-              defaultRepPhone;
+              empNameToPhoneMap.get(ownerId);
+            const assignedPhone = explicitOwnerPhone || defaultRepPhone;
 
             // Check if customer already exists in DB
             const { data: existingCust } = await this.supabase
@@ -312,15 +312,27 @@ export class ZohoService implements OnModuleInit {
               });
               results.companiesImported++;
             } else {
-              // Update details and assigned salesperson if matching owner
+              // Update details while protecting existing salesperson assignment
               const updateData: Record<string, any> = {
                 updated_at: new Date().toISOString(),
               };
               if (phone) updateData.customer_phone = phone;
               if (address) updateData.customer_address = address;
               if (gst) updateData.customer_gst = gst;
-              if (assignedPhone)
+
+              // Only update assigned rep if customer is unassigned or has an explicit non-fallback owner
+              if (
+                !existingCust[0].assigned_salesperson_phone &&
+                assignedPhone
+              ) {
                 updateData.assigned_salesperson_phone = assignedPhone;
+              } else if (
+                explicitOwnerPhone &&
+                cleanPhone(existingCust[0].assigned_salesperson_phone) !==
+                  cleanPhone(explicitOwnerPhone)
+              ) {
+                updateData.assigned_salesperson_phone = explicitOwnerPhone;
+              }
 
               await this.supabase
                 .from('recurring_customers')
