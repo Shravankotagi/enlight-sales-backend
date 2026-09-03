@@ -206,12 +206,38 @@ export class ZohoService implements OnModuleInit {
                   name: fullName,
                   role: appRole,
                   is_active: u.status === 'active',
+                  zoho_user_id: u.id,
                 })
                 .eq('id', existingEmp[0].id);
               if (existingEmp[0].phone) {
                 empNameToPhoneMap.set(
                   fullName.toLowerCase(),
                   cleanPhone(existingEmp[0].phone),
+                );
+              }
+            } else {
+              // Auto-create new salesperson / manager account from Zoho Bigin
+              const newEmpId = `EMP${String(Math.floor(100 + Math.random() * 900))}`;
+              const formattedPhone = phone
+                ? phone.length === 10
+                  ? `91${phone}`
+                  : phone
+                : null;
+
+              await this.supabase.from('employees').insert({
+                employee_id: newEmpId,
+                name: fullName,
+                phone: formattedPhone,
+                email: email || null,
+                role: appRole,
+                is_active: u.status === 'active',
+                zoho_user_id: u.id,
+              });
+
+              if (phone) {
+                empNameToPhoneMap.set(
+                  fullName.toLowerCase(),
+                  cleanPhone(phone),
                 );
               }
             }
@@ -563,6 +589,66 @@ export class ZohoService implements OnModuleInit {
               total_amount: amount,
             })
             .or(`bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`);
+        }
+      } else if (entityType.toLowerCase() === 'users') {
+        const fullName = (
+          data.full_name || `${data.first_name || ''} ${data.last_name || ''}`
+        ).trim();
+        const phone = cleanPhone(data.phone || data.mobile);
+        const email = (data.email || '').toLowerCase().trim();
+        const roleRaw = (
+          data.role?.name ||
+          data.profile?.name ||
+          ''
+        ).toLowerCase();
+
+        let appRole = 'salesperson';
+        if (roleRaw.includes('admin')) appRole = 'admin';
+        else if (roleRaw.includes('manager') || roleRaw.includes('lead'))
+          appRole = 'sales_manager';
+
+        if (eventType === 'user_deactivated') {
+          await this.supabase
+            .from('employees')
+            .update({ is_active: false })
+            .or(`zoho_user_id.eq.${entityId},email.eq.${email || 'none'}`);
+        } else if (fullName) {
+          const { data: existingEmp } = await this.supabase
+            .from('employees')
+            .select('id')
+            .or(
+              `zoho_user_id.eq.${entityId},email.eq.${email || 'none'},name.ilike.${fullName}`,
+            )
+            .limit(1);
+
+          if (existingEmp && existingEmp.length > 0) {
+            await this.supabase
+              .from('employees')
+              .update({
+                name: fullName,
+                role: appRole,
+                is_active: data.status === 'active',
+                zoho_user_id: String(entityId),
+              })
+              .eq('id', existingEmp[0].id);
+          } else {
+            const newEmpId = `EMP${String(Math.floor(100 + Math.random() * 900))}`;
+            const formattedPhone = phone
+              ? phone.length === 10
+                ? `91${phone}`
+                : phone
+              : null;
+
+            await this.supabase.from('employees').insert({
+              employee_id: newEmpId,
+              name: fullName,
+              phone: formattedPhone,
+              email: email || null,
+              role: appRole,
+              is_active: data.status === 'active',
+              zoho_user_id: String(entityId),
+            });
+          }
         }
       }
 
