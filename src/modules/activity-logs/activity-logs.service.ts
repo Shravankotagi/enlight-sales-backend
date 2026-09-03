@@ -13,9 +13,12 @@ export interface ActivityLogInput {
 @Injectable()
 export class ActivityLogsService {
   private readonly logger = new Logger(ActivityLogsService.name);
-  private supabase = this.supabaseService.getClient();
 
   constructor(private readonly supabaseService: SupabaseService) {}
+
+  private get supabase() {
+    return this.supabaseService.getAdminClient();
+  }
 
   /**
    * Log an activity in a non-blocking, fire-and-forget manner.
