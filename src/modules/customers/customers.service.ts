@@ -590,22 +590,6 @@ export class CustomersService {
         }
       }
 
-      // Segment Classification
-      let segment = 'new';
-      const explicitSegment = (customer.segment || '').toLowerCase();
-      if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
-        segment = explicitSegment;
-      } else if (lifetimeValue >= 1000000 || wonDeals.length >= 5) {
-        segment = 'key_account';
-      } else if (
-        wonDeals.length >= 2 ||
-        (lifetimeValue >= 100000 && lifetimeValue < 1000000)
-      ) {
-        segment = 'growth';
-      } else {
-        segment = 'new';
-      }
-
       const totalOrders = wonDeals.length;
       const totalTonnage =
         Math.round(
@@ -613,6 +597,28 @@ export class CustomersService {
         ) / 1000;
       const avgOrderValue =
         totalOrders > 0 ? Math.round(lifetimeValue / totalOrders) : 0;
+
+      // Segment Classification: Key Account, Growth, New
+      let segment = 'new';
+      const explicitSegment = (customer.segment || '').toLowerCase();
+      if (['key_account', 'growth', 'new'].includes(explicitSegment)) {
+        segment = explicitSegment;
+      } else if (
+        totalTonnage >= 100 ||
+        lifetimeValue >= 5000000 ||
+        (totalOrders >= 4 && (lifetimeValue >= 2000000 || totalTonnage >= 30))
+      ) {
+        segment = 'key_account';
+      } else if (
+        (totalOrders >= 2 && (lifetimeValue >= 500000 || totalTonnage >= 10)) ||
+        totalTonnage >= 25 ||
+        lifetimeValue >= 1500000 ||
+        (totalOrders >= 1 && (inquiries.length >= 3 || visits.length >= 2))
+      ) {
+        segment = 'growth';
+      } else {
+        segment = 'new';
+      }
 
       // Trailing 12 Month Revenue
       const t12mCutoff = new Date(
@@ -1077,14 +1083,17 @@ export class CustomersService {
           segment = explicitSegment;
         } else if (
           totalTonnage >= 100 ||
-          lifetimeValue >= 1000000 ||
-          totalOrders >= 5
+          lifetimeValue >= 5000000 ||
+          (totalOrders >= 4 && (lifetimeValue >= 2000000 || totalTonnage >= 30))
         ) {
           segment = 'key_account';
         } else if (
-          totalOrders >= 2 ||
-          totalTonnage >= 20 ||
-          (lifetimeValue >= 100000 && lifetimeValue < 1000000)
+          (totalOrders >= 2 &&
+            (lifetimeValue >= 500000 || totalTonnage >= 10)) ||
+          totalTonnage >= 25 ||
+          lifetimeValue >= 1500000 ||
+          (totalOrders >= 1 &&
+            (customerInquiries.length >= 3 || customerVisits.length >= 2))
         ) {
           segment = 'growth';
         } else {
