@@ -13,7 +13,7 @@ function buildMultiFieldOrFilter(
     : [salespersonPhones];
   const parts: string[] = [];
   for (const phone of list) {
-    if (!phone) continue;
+    if (!phone || typeof phone !== 'string') continue;
     const clean = phone.replace(/\D/g, '');
     const p10 = clean.slice(-10);
     const p12 = '91' + p10;
