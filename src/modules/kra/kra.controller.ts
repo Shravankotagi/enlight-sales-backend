@@ -31,11 +31,13 @@ export class KraController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getDashboard(
@@ -56,11 +58,13 @@ export class KraController {
     @Query('year') year?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getSheets(
@@ -77,11 +81,13 @@ export class KraController {
     @CurrentEmployee() employee: any,
     @Query('kra_number') kraNumber?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getLogs(
@@ -99,6 +105,7 @@ export class KraController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
+    @Query('mode') mode?: string,
   ) {
     const isAdmin = employee.role === 'admin';
     const parsedMonth = month ? parseInt(month) : undefined;
@@ -108,6 +115,7 @@ export class KraController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getActionQueue(
@@ -127,11 +135,13 @@ export class KraController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getComplaints(
@@ -163,11 +173,13 @@ export class KraController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.kraService.getVisits(

@@ -57,11 +57,13 @@ export class CustomersController {
   async findAll(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.customersService.findAll(phones === null ? undefined : phones);
@@ -71,11 +73,13 @@ export class CustomersController {
   async getChurnRisk(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.customersService.getChurnRisk(
@@ -87,11 +91,13 @@ export class CustomersController {
   async getReorderQueue(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.customersService.getReorderQueue(
@@ -103,11 +109,13 @@ export class CustomersController {
   async getLossAnalytics(
     @CurrentEmployee() employee: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.customersService.getLossAnalytics(

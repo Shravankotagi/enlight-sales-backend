@@ -20,12 +20,14 @@ export class ActivityLogsController {
     @Query('module') module?: string,
     @Query('search') search?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('limit') limit?: number,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.activityLogsService.getActivityLogs(
