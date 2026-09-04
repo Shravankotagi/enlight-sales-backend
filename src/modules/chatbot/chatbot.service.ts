@@ -217,7 +217,7 @@ export class ChatbotService {
       .select('id, role, content, created_at')
       .eq('session_id', sessionId)
       .in('role', rolesFilter)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(limit);
 
     if (error) {
@@ -227,7 +227,7 @@ export class ChatbotService {
       );
       return [];
     }
-    return data || [];
+    return (data || []).reverse();
   }
 
   /**
@@ -589,6 +589,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         ) {
           const parts = finalResponse.candidates[0].content?.parts || [];
           textOutput = parts
+            .filter((p: any) => !p.thought)
             .map((p: any) => p.text || '')
             .filter(Boolean)
             .join('\n')
@@ -598,8 +599,95 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         assistantReply =
           textOutput || this.formatToolResultFallback(toolName, toolResult);
       } else {
-        assistantReply =
-          response.text?.trim() || 'I am processing your request.';
+        let textOutput = response.text?.trim() || '';
+        if (
+          !textOutput &&
+          response.candidates &&
+          response.candidates.length > 0
+        ) {
+          const parts = response.candidates[0].content?.parts || [];
+          textOutput = parts
+            .filter((p: any) => !p.thought)
+            .map((p: any) => p.text || '')
+            .filter(Boolean)
+            .join('\n')
+            .trim();
+        }
+
+        if (textOutput) {
+          assistantReply = textOutput;
+        } else {
+          // If Gemini did not call a tool and output was empty/only thought tokens,
+          // check if message has clear operational intent and auto-dispatch the appropriate tool
+          const lowerMsg = messageText.toLowerCase();
+          let rescuedToolName: string | null = null;
+          let rescuedArgs: Record<string, any> = {};
+
+          if (lowerMsg.includes('complaint')) {
+            rescuedToolName = 'get_complaints';
+            if (lowerMsg.includes('reopen') || lowerMsg.includes('re-open')) {
+              rescuedArgs = { status: 'reopened' };
+            } else if (lowerMsg.includes('open')) {
+              rescuedArgs = { status: 'open' };
+            } else if (
+              lowerMsg.includes('resolved') ||
+              lowerMsg.includes('closed')
+            ) {
+              rescuedArgs = { status: 'resolved' };
+            }
+          } else if (lowerMsg.includes('visit')) {
+            rescuedToolName = 'get_visits';
+          } else if (
+            lowerMsg.includes('deal') ||
+            lowerMsg.includes('pipeline') ||
+            lowerMsg.includes('order volume') ||
+            lowerMsg.includes('won') ||
+            lowerMsg.includes('order')
+          ) {
+            rescuedToolName = 'get_my_open_deals';
+            if (lowerMsg.includes('won')) {
+              rescuedArgs = { stage_filter: 'won' };
+            }
+          } else if (
+            lowerMsg.includes('inquir') ||
+            lowerMsg.includes('enquir')
+          ) {
+            rescuedToolName = 'get_inquiries';
+          } else if (
+            lowerMsg.includes('customer') ||
+            lowerMsg.includes('account') ||
+            lowerMsg.includes('360')
+          ) {
+            rescuedToolName = 'get_customer_360';
+          }
+
+          if (rescuedToolName) {
+            this.logger.warn(
+              `Gemini returned empty text without tool call for message "${messageText}". Auto-dispatching rescued tool: ${rescuedToolName}`,
+            );
+            const rescuedResult = await this.toolRegistry.executeTool(
+              rescuedToolName,
+              rescuedArgs,
+              caller,
+            );
+            await this.saveMessage(
+              sessionId,
+              'tool',
+              typeof rescuedResult === 'string'
+                ? rescuedResult
+                : JSON.stringify(rescuedResult),
+              { name: rescuedToolName, args: rescuedArgs },
+              rescuedResult,
+            );
+            assistantReply = this.formatToolResultFallback(
+              rescuedToolName,
+              rescuedResult,
+            );
+          } else {
+            assistantReply =
+              'I received your request, but could you please provide more details or specify which customer, order, or module you need information about?';
+          }
+        }
       }
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
@@ -652,53 +740,117 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         return msg;
       }
 
-      if (Array.isArray(parsed) || (parsed && Array.isArray(parsed.data))) {
-        const items = Array.isArray(parsed) ? parsed : parsed.data;
-        if (items.length === 0) {
-          return `No matching records were found in Enlight Metals OS for this request. Please refine your query.`;
-        }
+      let items: any[] = [];
+      let summaryObj: any = null;
 
-        if (toolName === 'get_inquiries') {
-          const lines = items.slice(0, 15).map((i: any, idx: number) => {
-            const itemsSummary =
-              (i.extracted_line_items || [])
-                .map((li: any) => `${li.description} (${li.quantity_mt} MT)`)
-                .join(', ') || 'N/A';
-            return `| ${idx + 1} | **${i.customer_name || 'N/A'}** | ${i.customer_phone || '-'} | ${itemsSummary} | \`${i.status}\` | ${i.source_channel} | ${i.received_at ? new Date(i.received_at).toLocaleDateString('en-IN') : '-'} |\n> **Original Message:** "${i.original_whatsapp_message || 'N/A'}"\n`;
-          });
-          return `### Inquiries Overview (${items.length} records found):\n\n| # | Customer | Phone | Extracted Items | Status | Channel | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      if (Array.isArray(parsed)) {
+        items = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.data)) {
+          items = parsed.data;
+        } else if (parsed.data && typeof parsed.data === 'object') {
+          summaryObj = parsed.data.summary || null;
+          if (Array.isArray(parsed.data.inquiries)) {
+            items = parsed.data.inquiries;
+          } else if (Array.isArray(parsed.data.deals)) {
+            items = parsed.data.deals;
+          } else if (Array.isArray(parsed.data.visits)) {
+            items = parsed.data.visits;
+          } else if (Array.isArray(parsed.data.complaints)) {
+            items = parsed.data.complaints;
+          } else if (Array.isArray(parsed.data.customers)) {
+            items = parsed.data.customers;
+          }
         }
-
-        if (
-          toolName === 'get_my_open_deals' ||
-          toolName === 'get_team_pipeline'
-        ) {
-          const lines = items.slice(0, 15).map((d: any, idx: number) => {
-            return `| ${idx + 1} | **${d.customer_name || 'N/A'}** | ${d.customer_phone || '-'} | \`${d.stage || 'review'}\` | ₹${(d.total_amount || 0).toLocaleString('en-IN')} | ${d.tonnage_mt ? d.tonnage_mt + ' MT' : '-'} | ${d.payment_terms || '-'} |`;
-          });
-          return `### Deals & Orders Overview (${items.length} records found):\n\n| # | Customer | Phone | Stage | Total Amount | Volume | Payment Terms |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
-        }
-
-        if (toolName === 'get_visits') {
-          const lines = items.slice(0, 15).map((v: any, idx: number) => {
-            return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} | ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
-          });
-          return `### Customer Visits Overview (${items.length} records found):\n\n| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n${lines.join('\n')}`;
-        }
-
-        if (toolName === 'get_complaints') {
-          const lines = items.slice(0, 15).map((c: any, idx: number) => {
-            return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | \`${c.complaint_type || 'quality'}\` | \`${c.status || 'open'}\` | \`${c.sla_status || 'on_track'}\` | ${c.affected_product || '-'} | ${c.reported_at ? new Date(c.reported_at).toLocaleDateString('en-IN') : '-'} |\n> **Issue:** "${c.description || 'No description'}"\n`;
-          });
-          return `### Complaints & Quality Overview (${items.length} records found):\n\n| # | Customer | Type | Status | SLA (48h) | Affected Product | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
-        }
-
-        return `### Retrieved Data (${toolName} - ${items.length} records):\n\`\`\`json\n${JSON.stringify(items.slice(0, 10), null, 2)}\n\`\`\``;
       }
 
-      return typeof parsed === 'string'
-        ? parsed
-        : JSON.stringify(parsed, null, 2);
+      if (toolName === 'get_customer_360') {
+        if (parsed.data?.metrics) {
+          const m = parsed.data.metrics;
+          const cName = parsed.data.customer_name || 'Customer';
+          return `### Customer 360: **${cName}**\n\n- **Segment:** \`${parsed.data.segment || 'N/A'}\` | **Health Status:** \`${parsed.data.health_status || 'N/A'}\`\n- **Phone:** ${parsed.data.contact_info?.phone || '-'}\n- **GST:** ${parsed.data.contact_info?.gst || '-'}\n- **Address:** ${parsed.data.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
+        }
+      }
+
+      if (items.length === 0) {
+        if (summaryObj) {
+          if (toolName === 'get_complaints') {
+            return `No complaints found matching this criteria for your assigned accounts (Total logged complaints: ${summaryObj.total_complaints || 0}, Reopened: ${summaryObj.by_status?.reopened || 0}, Open: ${summaryObj.open_complaints || 0}).`;
+          }
+          if (
+            toolName === 'get_my_open_deals' ||
+            toolName === 'get_team_pipeline'
+          ) {
+            return `No deals found matching this criteria for your assigned accounts (Total Pipeline Value: ₹${(summaryObj.total_pipeline_value || 0).toLocaleString('en-IN')}, Won Orders: ₹${(summaryObj.won_deals_total_value || 0).toLocaleString('en-IN')}, Won Volume: ${summaryObj.won_orders_tonnage_mt || 0} MT).`;
+          }
+          if (toolName === 'get_visits') {
+            return `No visits found matching this criteria for your assigned accounts (Total Logged Visits: ${summaryObj.total_visits || 0}).`;
+          }
+          if (toolName === 'get_inquiries') {
+            return `No inquiries found matching this criteria for your assigned accounts (Total Inquiries: ${summaryObj.total_inquiries || 0}).`;
+          }
+        }
+        return `No matching records were found in Enlight Metals OS for this request. Please refine your query.`;
+      }
+
+      if (toolName === 'get_inquiries') {
+        const summaryHeader = summaryObj
+          ? `> **Summary:** Total Inquiries: ${summaryObj.total_inquiries || items.length} | New: ${summaryObj.by_status?.new || 0} | Converted: ${summaryObj.by_status?.converted || 0}\n\n`
+          : '';
+        const lines = items.slice(0, 15).map((i: any, idx: number) => {
+          const itemsSummary =
+            (i.extracted_line_items || [])
+              .map((li: any) => `${li.description} (${li.quantity_mt} MT)`)
+              .join(', ') || 'N/A';
+          return `| ${idx + 1} | **${i.customer_name || 'N/A'}** | ${i.customer_phone || '-'} | ${itemsSummary} | \`${i.status}\` | ${i.source_channel} | ${i.received_at ? new Date(i.received_at).toLocaleDateString('en-IN') : '-'} |\n> **Original Message:** "${i.original_whatsapp_message || 'N/A'}"\n`;
+        });
+        return `### Inquiries Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Phone | Extracted Items | Status | Channel | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      }
+
+      if (
+        toolName === 'get_my_open_deals' ||
+        toolName === 'get_team_pipeline'
+      ) {
+        const summaryHeader = summaryObj
+          ? `> **Summary:** Total Pipeline: ₹${(summaryObj.total_pipeline_value || 0).toLocaleString('en-IN')} (${summaryObj.total_tonnage_mt || 0} MT) | Won Orders: ₹${(summaryObj.won_deals_total_value || 0).toLocaleString('en-IN')} (${summaryObj.won_orders_tonnage_mt || 0} MT, ${summaryObj.won_orders_count || 0} orders)\n\n`
+          : '';
+        const lines = items.slice(0, 15).map((d: any, idx: number) => {
+          return `| ${idx + 1} | **${d.customer_name || 'N/A'}** | ${d.customer_phone || '-'} | \`${d.stage || 'review'}\` | ₹${(d.total_amount || 0).toLocaleString('en-IN')} | ${d.tonnage_mt ? d.tonnage_mt + ' MT' : '-'} | ${d.payment_terms || '-'} |`;
+        });
+        return `### Deals & Orders Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Phone | Stage | Total Amount | Volume | Payment Terms |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      }
+
+      if (toolName === 'get_visits') {
+        const summaryHeader = summaryObj
+          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Follow-up: ${summaryObj.by_outcome?.follow_up || 0}\n\n`
+          : '';
+        const lines = items.slice(0, 15).map((v: any, idx: number) => {
+          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} | ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
+        });
+        return `### Customer Visits Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      }
+
+      if (toolName === 'get_complaints') {
+        const summaryHeader = summaryObj
+          ? `> **Summary:** Total Complaints: ${summaryObj.total_complaints || items.length} | Open: ${summaryObj.open_complaints || 0} | Reopened: ${summaryObj.by_status?.reopened || 0} | SLA Resolution Rate: ${summaryObj.sla_resolution_rate_within_48h || 'N/A'}\n\n`
+          : '';
+        const lines = items.slice(0, 15).map((c: any, idx: number) => {
+          return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | \`${c.complaint_type || 'quality'}\` | \`${c.status || 'open'}\` | \`${c.sla_status || 'on_track'}\` | ${c.affected_product || '-'} | ${c.reported_at ? new Date(c.reported_at).toLocaleDateString('en-IN') : '-'} |\n> **Issue:** "${c.description || 'No description'}"\n`;
+        });
+        return `### Complaints & Quality Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Type | Status | SLA (48h) | Affected Product | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      }
+
+      if (toolName === 'get_customer_360') {
+        const lines = items.slice(0, 15).map((c: any, idx: number) => {
+          return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | ${c.phone || '-'} | \`${c.segment || 'new'}\` | \`${c.health_status || 'active'}\` | ₹${(c.ltv_inr || 0).toLocaleString('en-IN')} | ${c.total_orders || 0} |`;
+        });
+        const summaryHeader = summaryObj
+          ? `> **Directory Summary:** Total Accounts: ${summaryObj.total_customers || items.length} | Active: ${summaryObj.active_customers || 0} | Key Accounts: ${summaryObj.by_segment?.key_account || 0}\n\n`
+          : '';
+        return `### Customer Directory (${items.length} records found):\n\n${summaryHeader}| # | Customer | Phone | Segment | Health | LTV | Orders |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
+      }
+
+      return `### Retrieved Data (${toolName} - ${items.length} records):\n\`\`\`json\n${JSON.stringify(items.slice(0, 10), null, 2)}\n\`\`\``;
     } catch {
       return 'I have processed your query and retrieved the latest sales data.';
     }
