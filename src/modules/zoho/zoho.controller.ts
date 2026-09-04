@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -18,6 +19,32 @@ export class ZohoController {
   @Get('status')
   async getStatus() {
     return this.zohoService.getSyncStatus();
+  }
+
+  // POST /zoho/pull-initial-sync - Trigger full inbound sync from Zoho Bigin
+  @Post('pull-initial-sync')
+  @HttpCode(HttpStatus.OK)
+  async pullInitialSync() {
+    return this.zohoService.pullInitialSyncFromBigin();
+  }
+
+  // POST /zoho/sync-visit - Push visit to Bigin Contacts module (Image 2)
+  @Post('sync-visit')
+  @HttpCode(HttpStatus.OK)
+  async syncVisit(
+    @Body()
+    visitData: {
+      customer_name: string;
+      person_met?: string;
+      contact_no?: string;
+      remarks?: string;
+      salesperson_name?: string;
+      salesperson_phone?: string;
+      visited_at?: string;
+    },
+  ) {
+    const contactId = await this.zohoService.syncVisitToBiginContact(visitData);
+    return { success: !!contactId, contact_id: contactId };
   }
 
   // POST /zoho/sync - trigger manual auto-sync

@@ -272,7 +272,7 @@ async function checkVisitInterestFollowups(supabase) {
           .update({
             status: 'resolved',
             resolved_at: now.toISOString(),
-            resolution_notes: `Order received (Deal #${recentOrders[0].id.slice(0, 8)}). Visit follow-up fulfilled `,
+            resolution_notes: `Order received (Inquiry #${recentOrders[0].id.slice(0, 8)}). Visit follow-up fulfilled `,
           })
           .eq('id', task.id);
         console.log(

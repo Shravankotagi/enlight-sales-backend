@@ -50,12 +50,12 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
 export const getMyOpenDealsTool: ChatbotTool = {
   name: 'get_my_open_deals',
   description:
-    'Fetches deals and confirmed orders (negotiations, quotations, review, won orders, or lost deals) scoped strictly by caller role. Always returns total pipeline values, won orders total value, total tonnage in Metric Tons (MT), exact stage-by-stage counts, and human-readable Deal IDs matching the UI (#DEAL-XXXXXX). Can filter by stage (e.g. stage_filter="won" for orders), date range, PO number, and delivery location.',
+    'Fetches deals and confirmed orders (negotiations, quotations, review, won orders, or lost deals) scoped strictly by caller role. Always returns total pipeline values, won orders total value, total tonnage in Metric Tons (MT), exact stage-by-stage counts, and human-readable Inquiry/Deal IDs matching the UI (#INQ-XXXXXX / #DEAL-XXXXXX). Can filter by stage (e.g. stage_filter="won" for orders), date range, PO number, and delivery location.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_my_open_deals',
     description:
-      'Retrieves deals and orders for the authenticated user based on role scope. Can filter by stage (use stage_filter="won" for confirmed orders), customer name, date range (today, this_week, this_month), PO number, or delivery location. Always returns total order value, won deal total value, volume in MT, and human-readable Deal IDs (DEAL-XXXXXX).',
+      'Retrieves deals and orders for the authenticated user based on role scope. Can filter by stage (use stage_filter="won" for confirmed orders), customer name, date range (today, this_week, this_month), PO number, or delivery location. Always returns total order value, won deal total value, volume in MT, and human-readable Inquiry/Deal IDs (INQ-XXXXXX / DEAL-XXXXXX). Valid stage_filter values: "all", "won", "quoted", "negotiation", "review", "qualified", "lost".',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -263,10 +263,14 @@ export const getMyOpenDealsTool: ChatbotTool = {
         lostCount++;
       }
 
-      const humanDealId = 'DEAL-' + d.id.substring(0, 6).toUpperCase();
+      const cleanNum = d.deal_number
+        ? d.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+        : d.id.substring(0, 6).toUpperCase();
+      const humanDealId = 'INQ-' + cleanNum;
 
       return {
         deal_id: humanDealId,
+        inquiry_id: humanDealId,
         deal_uuid: d.id,
         customer_name: d.customer_name || 'Unknown Customer',
         customer_phone: d.customer_phone || '',

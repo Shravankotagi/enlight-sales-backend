@@ -19,6 +19,7 @@ export class ReportsController {
     @Query('month') month?: string,
     @Query('year') year?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
@@ -27,6 +28,7 @@ export class ReportsController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.reportsService.getMonthlySalesReport(
@@ -45,41 +47,27 @@ export class ReportsController {
     @CurrentEmployee() employee: any,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
   ) {
-    if (employee.role === 'admin') {
-      return this.reportsService.getSalespersonReport(
-        month ? parseInt(month) : undefined,
-        year ? parseInt(year) : undefined,
-        from,
-        to,
-        undefined,
-        allTime === 'true',
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+        mode,
       );
-    }
 
-    if (employee.role === 'sales_manager' || employee.role === 'manager') {
-      const assigned = await this.employeesService.getAssignedSalespersons(
-        employee.id,
-        employee.phone,
-      );
-      if (assigned.length === 0) {
-        return [];
-      }
-      const teamPhones = assigned.map((a: any) => a.phone).filter(Boolean);
-      return this.reportsService.getSalespersonReport(
-        month ? parseInt(month) : undefined,
-        year ? parseInt(year) : undefined,
-        from,
-        to,
-        teamPhones,
-        allTime === 'true',
-      );
-    }
-
-    return [];
+    return this.reportsService.getSalespersonReport(
+      month ? parseInt(month) : undefined,
+      year ? parseInt(year) : undefined,
+      from,
+      to,
+      phones === null ? undefined : phones,
+      allTime === 'true',
+    );
   }
 
   // GET /reports/funnel
@@ -89,6 +77,7 @@ export class ReportsController {
     @Query('month') month?: string,
     @Query('year') year?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
@@ -97,6 +86,7 @@ export class ReportsController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.reportsService.getFunnelReport(
@@ -116,6 +106,7 @@ export class ReportsController {
     @Query('month') month?: string,
     @Query('year') year?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
@@ -124,6 +115,7 @@ export class ReportsController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.reportsService.getSkuReport(
@@ -143,6 +135,7 @@ export class ReportsController {
     @Query('month') month?: string,
     @Query('year') year?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
@@ -151,6 +144,7 @@ export class ReportsController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     return this.reportsService.getOverviewReport(

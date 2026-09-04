@@ -1062,8 +1062,11 @@ router.post('/', async (req, res) => {
               ? ' Auto-logged'
               : ' Needs review';
 
+          const code = deal.deal_number
+            ? deal.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+            : deal.id.substring(0, 8);
           replyMessage =
-            `${status} - Deal #${deal.id.substring(0, 8)}\n\n` +
+            `${status} - Inquiry #${code}\n\n` +
             ` *${extraction.inquiry_type === 'purchase_order' ? 'Purchase Order' : 'Inquiry'}*\n` +
             (extraction.customer?.name
               ? ` Customer: ${extraction.customer.name}\n`

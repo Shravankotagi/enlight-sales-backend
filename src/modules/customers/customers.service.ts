@@ -13,7 +13,7 @@ function buildMultiFieldOrFilter(
     : [salespersonPhones];
   const parts: string[] = [];
   for (const phone of list) {
-    if (!phone) continue;
+    if (!phone || typeof phone !== 'string') continue;
     const clean = phone.replace(/\D/g, '');
     const p10 = clean.slice(-10);
     const p12 = '91' + p10;
@@ -773,153 +773,7 @@ export class CustomersService {
       const safeAllInquiries = allInquiries || [];
       const safeAllComplaints = allComplaints || [];
 
-      const extraCustomersMap = new Map<string, any>();
-
-      const customerExistsForRep = (
-        name?: string,
-        phone?: string,
-        repPhone?: string,
-      ) => {
-        if (!name && !phone) return true;
-        const cleanRep = cleanPhone(repPhone);
-        const inDb = (customers || []).some((c) => {
-          const cRep = cleanPhone(c.assigned_salesperson_phone);
-          if (cRep && cleanRep && cRep !== cleanRep) return false;
-          return isCustomerMatch(
-            c.customer_name,
-            c.customer_phone,
-            name,
-            phone,
-          );
-        });
-        if (inDb) return true;
-        for (const ec of extraCustomersMap.values()) {
-          const ecRep = cleanPhone(ec.assigned_salesperson_phone);
-          if (ecRep && cleanRep && ecRep !== cleanRep) continue;
-          if (
-            isCustomerMatch(ec.customer_name, ec.customer_phone, name, phone)
-          ) {
-            return true;
-          }
-        }
-        return false;
-      };
-
-      const spPhonesList = salespersonPhone
-        ? Array.isArray(salespersonPhone)
-          ? salespersonPhone
-          : [salespersonPhone]
-        : null;
-
-      const matchesSpPhone = (repPhone?: string) => {
-        if (!spPhonesList) return true;
-        if (!repPhone) return false;
-        return phoneInList(repPhone, spPhonesList);
-      };
-
-      for (const deal of safeAllDeals) {
-        if (!deal.customer_name || !deal.customer_name.trim()) continue;
-        if (!matchesSpPhone(deal.salesperson_phone)) continue;
-        if (
-          !customerExistsForRep(
-            deal.customer_name,
-            deal.customer_phone,
-            deal.salesperson_phone,
-          )
-        ) {
-          const norm = cleanLegalSuffixes(deal.customer_name);
-          const repKey = cleanPhone(deal.salesperson_phone);
-          extraCustomersMap.set(`${repKey}-${norm || deal.customer_name}`, {
-            id: `virtual-deal-${norm || deal.customer_name}`,
-            customer_name: deal.customer_name.trim(),
-            contact_person: null,
-            customer_phone: deal.customer_phone || null,
-            customer_gst: null,
-            assigned_salesperson_phone: deal.salesperson_phone || null,
-            avg_order_frequency_days: 30,
-            is_active: true,
-            created_at: deal.created_at,
-          });
-        }
-      }
-
-      for (const visit of safeAllVisits) {
-        if (!visit.customer_name || !visit.customer_name.trim()) continue;
-        if (!matchesSpPhone(visit.salesperson_phone)) continue;
-        if (
-          !customerExistsForRep(
-            visit.customer_name,
-            visit.contact_no,
-            visit.salesperson_phone,
-          )
-        ) {
-          const norm = cleanLegalSuffixes(visit.customer_name);
-          const repKey = cleanPhone(visit.salesperson_phone);
-          extraCustomersMap.set(`${repKey}-${norm || visit.customer_name}`, {
-            id: `virtual-visit-${norm || visit.customer_name}`,
-            customer_name: visit.customer_name.trim(),
-            contact_person: visit.person_met || null,
-            customer_phone: visit.contact_no || null,
-            customer_gst: null,
-            assigned_salesperson_phone: visit.salesperson_phone || null,
-            avg_order_frequency_days: 30,
-            is_active: true,
-            created_at: visit.visited_at,
-          });
-        }
-      }
-
-      for (const inq of safeAllInquiries) {
-        if (!inq.sender_name || !inq.sender_name.trim()) continue;
-        if (!matchesSpPhone(inq.salesperson_phone)) continue;
-        if (
-          !customerExistsForRep(
-            inq.sender_name,
-            inq.sender_phone,
-            inq.salesperson_phone,
-          )
-        ) {
-          const norm = cleanLegalSuffixes(inq.sender_name);
-          const repKey = cleanPhone(inq.salesperson_phone);
-          extraCustomersMap.set(`${repKey}-${norm || inq.sender_name}`, {
-            id: `virtual-inquiry-${norm || inq.sender_name}`,
-            customer_name: inq.sender_name.trim(),
-            contact_person: null,
-            customer_phone: inq.sender_phone || null,
-            customer_gst: null,
-            assigned_salesperson_phone: inq.salesperson_phone || null,
-            avg_order_frequency_days: 30,
-            is_active: true,
-            created_at: inq.created_at,
-          });
-        }
-      }
-
-      for (const comp of safeAllComplaints) {
-        if (!comp.customer_name || !comp.customer_name.trim()) continue;
-        if (!matchesSpPhone(comp.reported_by)) continue;
-        if (!customerExistsForRep(comp.customer_name, null, comp.reported_by)) {
-          const norm = cleanLegalSuffixes(comp.customer_name);
-          const repKey = cleanPhone(comp.reported_by);
-          extraCustomersMap.set(`${repKey}-${norm || comp.customer_name}`, {
-            id: `virtual-complaint-${norm || comp.customer_name}`,
-            customer_name: comp.customer_name.trim(),
-            contact_person: null,
-            customer_phone: null,
-            customer_gst: null,
-            assigned_salesperson_phone: comp.reported_by || null,
-            avg_order_frequency_days: 30,
-            is_active: true,
-            created_at: comp.reported_at,
-          });
-        }
-      }
-
-      const combinedCustomers = [
-        ...(customers || []),
-        ...Array.from(extraCustomersMap.values()),
-      ];
-
+      const combinedCustomers = customers || [];
       const results: any[] = [];
 
       for (const customer of combinedCustomers) {
@@ -1230,6 +1084,35 @@ export class CustomersService {
     }
   }
 
+  async deleteCustomer(id: string) {
+    try {
+      const decodedId = decodeURIComponent(id || '').trim();
+      const { data, error } = await this.supabase
+        .from('recurring_customers')
+        .update({
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', decodedId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      this.logger.log(
+        `Customer deactivated in Enlight Sales OS (Preserved in Zoho Bigin): ${decodedId}`,
+      );
+      return {
+        success: true,
+        message:
+          'Customer deactivated successfully in Enlight Sales OS (Preserved in Zoho Bigin CRM).',
+        data,
+      };
+    } catch (error) {
+      this.logger.error(`Error deactivating customer ${id}:`, error);
+      throw error;
+    }
+  }
+
   async getReorderQueue(salespersonPhone?: string[] | string) {
     try {
       if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
@@ -1273,36 +1156,7 @@ export class CustomersService {
           .trim()
           .replace(/[^a-z0-9]/g, '');
 
-      const existingNameSet = new Set(
-        (customers || []).map((c) => normalize(c.customer_name)),
-      );
-
-      const extraCustomersMap = new Map<string, any>();
-      for (const deal of safeWonDeals) {
-        if (!deal.customer_name || !deal.customer_name.trim()) continue;
-        const norm = normalize(deal.customer_name);
-        if (
-          norm &&
-          !existingNameSet.has(norm) &&
-          !extraCustomersMap.has(norm)
-        ) {
-          extraCustomersMap.set(norm, {
-            id: `virtual-reorder-${norm}`,
-            customer_name: deal.customer_name.trim(),
-            contact_person: null,
-            customer_phone: null,
-            customer_gst: null,
-            avg_order_frequency_days: 30,
-            is_active: true,
-            created_at: deal.created_at,
-          });
-        }
-      }
-
-      const combinedCustomers = [
-        ...(customers || []),
-        ...Array.from(extraCustomersMap.values()),
-      ];
+      const combinedCustomers = customers || [];
 
       const reorderList = combinedCustomers
         .map((customer: any) => {
@@ -1566,22 +1420,30 @@ export class CustomersService {
       // Query existing customers to safely split into update vs insert
       const { data: existingCustomers } = await this.supabase
         .from('recurring_customers')
-        .select('id, customer_name');
-
-      const existingMap = new Map<string, string>(
-        (existingCustomers || []).map((c) => [
-          c.customer_name.toLowerCase(),
-          c.id,
-        ]),
-      );
+        .select('id, customer_name, assigned_salesperson_phone');
 
       const toUpdate: any[] = [];
       const toInsert: any[] = [];
 
       for (const client of formattedClients) {
-        const existingId = existingMap.get(client.customer_name.toLowerCase());
-        if (existingId) {
-          toUpdate.push({ id: existingId, ...client });
+        const clientRepClean = cleanPhone(client.assigned_salesperson_phone);
+        // Find existing matching customer
+        const match = (existingCustomers || []).find((ec: any) => {
+          const ecRepClean = cleanPhone(ec.assigned_salesperson_phone);
+          if (clientRepClean && ecRepClean && clientRepClean !== ecRepClean) {
+            return false;
+          }
+          const c1 = cleanLegalSuffixes(ec.customer_name);
+          const c2 = cleanLegalSuffixes(client.customer_name);
+          return (
+            ec.customer_name.trim().toLowerCase() ===
+              client.customer_name.trim().toLowerCase() ||
+            (c1 && c2 && c1 === c2)
+          );
+        });
+
+        if (match) {
+          toUpdate.push({ id: match.id, ...client });
         } else {
           toInsert.push(client);
         }

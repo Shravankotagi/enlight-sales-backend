@@ -32,15 +32,18 @@ async function runRbacIsolationTests() {
     '===============================================================\n',
   );
 
-  const { SupabaseService } =
-    await import('../infrastructure/supabase/supabase.service');
+  const { SupabaseService } = await import(
+    '../infrastructure/supabase/supabase.service'
+  );
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
   const { ChatbotService } = await import('../modules/chatbot/chatbot.service');
-  const { ToolRegistryService } =
-    await import('../modules/chatbot/tools/tool-registry.service');
-  const { GuardrailsService } =
-    await import('../modules/chatbot/guardrails/guardrails.service');
+  const { ToolRegistryService } = await import(
+    '../modules/chatbot/tools/tool-registry.service'
+  );
+  const { GuardrailsService } = await import(
+    '../modules/chatbot/guardrails/guardrails.service'
+  );
 
   const configService = new ConfigService(new NestConfigService());
   const supabaseService = new SupabaseService(configService);

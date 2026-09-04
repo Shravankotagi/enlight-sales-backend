@@ -2091,7 +2091,10 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
             )
             .filter(Boolean)
             .join(', ');
-          return `• *Deal #${d.id.substring(0, 8)}* (${d.stage || 'inquiry'})\n  Value: ${amt}${items ? `\n  Items: ${items}` : ''}`;
+          const code = d.deal_number
+            ? d.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+            : d.id.substring(0, 8);
+          return `• *Inquiry #${code}* (${d.stage || 'inquiry'})\n  Value: ${amt}${items ? `\n  Items: ${items}` : ''}`;
         })
         .join('\n\n');
     }

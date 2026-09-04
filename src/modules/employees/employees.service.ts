@@ -34,7 +34,11 @@ export class EmployeesService {
     return this.supabaseService.getAdminClient();
   }
 
-  async findAll(currentEmployee?: any) {
+  async findAll(
+    currentEmployee?: any,
+    requestedPhoneOverride?: string,
+    mode?: string,
+  ) {
     try {
       const { data, error } = await this.supabase
         .from('employees')
@@ -43,19 +47,39 @@ export class EmployeesService {
       if (error) throw error;
 
       const allEmployees = data || [];
+      const isPersonalMode =
+        mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
-      // If no current employee or admin, return all
-      if (!currentEmployee || currentEmployee.role === 'admin') {
+      let effectiveEmp = currentEmployee;
+      if (currentEmployee?.role === 'admin' && requestedPhoneOverride) {
+        const normOverride = normalizePhone(requestedPhoneOverride);
+        const matched = allEmployees.find(
+          (e: any) => normalizePhone(e.phone) === normOverride,
+        );
+        if (matched) effectiveEmp = matched;
+      }
+
+      if (isPersonalMode && effectiveEmp) {
+        const selfPhone = normalizePhone(effectiveEmp.phone);
+        return allEmployees.filter(
+          (emp: any) =>
+            emp.id === effectiveEmp.id ||
+            normalizePhone(emp.phone) === selfPhone,
+        );
+      }
+
+      // If no current employee or admin without override, return all
+      if (!effectiveEmp || effectiveEmp.role === 'admin') {
         return allEmployees;
       }
 
       // If Sales Manager: return self + salespersons assigned under this manager
       if (
-        currentEmployee.role === 'sales_manager' ||
-        currentEmployee.role === 'manager'
+        effectiveEmp.role === 'sales_manager' ||
+        effectiveEmp.role === 'manager'
       ) {
-        const myId = currentEmployee.id;
-        const myPhone = normalizePhone(currentEmployee.phone);
+        const myId = effectiveEmp.id;
+        const myPhone = normalizePhone(effectiveEmp.phone);
 
         return allEmployees.filter((emp: any) => {
           if (emp.id === myId || normalizePhone(emp.phone) === myPhone) {
@@ -75,15 +99,14 @@ export class EmployeesService {
       }
 
       // If Salesperson: return only self
-      const selfPhone = normalizePhone(currentEmployee.phone);
+      const selfPhone = normalizePhone(effectiveEmp.phone);
       return allEmployees.filter(
         (emp: any) =>
-          emp.id === currentEmployee.id ||
-          normalizePhone(emp.phone) === selfPhone,
+          emp.id === effectiveEmp.id || normalizePhone(emp.phone) === selfPhone,
       );
     } catch (error) {
-      this.logger.error('Error in findAll:', error);
-      throw error;
+      this.logger.error('Error fetching employees:', error);
+      return [];
     }
   }
 
@@ -134,6 +157,8 @@ export class EmployeesService {
     managerPhone?: string,
   ): Promise<any[]> {
     try {
+      if (!managerId && !managerPhone) return [];
+
       const { data, error } = await this.supabase
         .from('employees')
         .select('*')
@@ -157,16 +182,57 @@ export class EmployeesService {
 
   /**
    * Determine the authorized list of salesperson phones for any given API request:
-   * - Admin: Returns requested override phone or null (unrestricted/all)
+   * - Admin: If requested override belongs to a Sales Manager -> returns their full team phones.
+   *          If requested override belongs to a Salesperson -> returns [override phone].
+   *          If no override -> returns null (unrestricted/all).
    * - Sales Manager: Returns requested phone (if in assigned team) or array of all team phones
    * - Salesperson: Strictly returns [employee.phone]
    */
   async getAccessibleSalespersonPhones(
     employee: any,
     requestedPhoneOverride?: string,
-  ): Promise<{ phones: string[] | null; isManagerView?: boolean }> {
+    mode?: string,
+  ): Promise<{
+    phones: string[] | null;
+    isManagerView?: boolean;
+    isPersonalView?: boolean;
+  }> {
+    const isPersonalMode =
+      mode === 'personal' || mode === 'strict_self' || mode === 'self';
+
     if (!employee || employee.role === 'admin') {
       if (requestedPhoneOverride) {
+        const normOverride = normalizePhone(requestedPhoneOverride);
+        const { data: allEmps } = await this.supabase
+          .from('employees')
+          .select('*')
+          .eq('is_active', true);
+
+        const targetEmp = (allEmps || []).find(
+          (e: any) => normalizePhone(e.phone) === normOverride,
+        );
+
+        if (
+          targetEmp &&
+          (targetEmp.role === 'sales_manager' || targetEmp.role === 'manager')
+        ) {
+          if (isPersonalMode) {
+            return { phones: [targetEmp.phone], isPersonalView: true };
+          }
+
+          const assigned = await this.getAssignedSalespersons(
+            targetEmp.id,
+            targetEmp.phone,
+          );
+          const teamPhones = Array.from(
+            new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
+          );
+          if (targetEmp.phone && !teamPhones.includes(targetEmp.phone)) {
+            teamPhones.push(targetEmp.phone);
+          }
+          return { phones: teamPhones, isManagerView: true };
+        }
+
         return { phones: [requestedPhoneOverride] };
       }
       return { phones: null };
@@ -181,7 +247,17 @@ export class EmployeesService {
         new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
       );
 
+      if (isPersonalMode) {
+        return { phones: [employee.phone], isPersonalView: true };
+      }
+
       if (requestedPhoneOverride) {
+        const normReq = normalizePhone(requestedPhoneOverride);
+        // If manager requested their own phone, treat as personal mode
+        if (normReq === normalizePhone(employee.phone)) {
+          return { phones: [employee.phone], isPersonalView: true };
+        }
+
         const isAllowed = phoneInList(requestedPhoneOverride, teamPhones);
         if (!isAllowed) {
           throw new ForbiddenException(

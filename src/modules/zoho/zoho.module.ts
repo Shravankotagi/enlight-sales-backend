@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ZohoController } from './zoho.controller';
+import { ZohoWebhookController } from './zoho-webhook.controller';
 import { ZohoService } from './zoho.service';
 import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { HttpModule } from '@nestjs/axios';
@@ -14,7 +15,7 @@ import { JwtModule } from '@nestjs/jwt';
       signOptions: { expiresIn: '7d' },
     }),
   ],
-  controllers: [ZohoController],
+  controllers: [ZohoController, ZohoWebhookController],
   providers: [ZohoService],
   exports: [ZohoService],
 })

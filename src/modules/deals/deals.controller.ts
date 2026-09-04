@@ -31,11 +31,13 @@ export class DealsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -56,11 +58,13 @@ export class DealsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     const stages = [
@@ -110,11 +114,13 @@ export class DealsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
