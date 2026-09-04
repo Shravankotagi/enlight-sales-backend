@@ -31,11 +31,13 @@ export class InquiriesController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -56,11 +58,13 @@ export class InquiriesController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -76,11 +80,13 @@ export class InquiriesController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('mode') mode?: string,
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        mode,
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
