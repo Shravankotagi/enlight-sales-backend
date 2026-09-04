@@ -47,15 +47,107 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   return {};
 }
 
+export function parseVisitRemarks(remarks?: string | null): {
+  outcome: 'positive' | 'neutral' | 'negative';
+  follow_up_action: string | null;
+  requires_follow_up: boolean;
+  material_requirement: string | null;
+  location: string | null;
+  interests: string | null;
+  clean_remarks: string;
+} {
+  if (!remarks) {
+    return {
+      outcome: 'neutral',
+      follow_up_action: null,
+      requires_follow_up: false,
+      material_requirement: null,
+      location: null,
+      interests: null,
+      clean_remarks: '',
+    };
+  }
+
+  // 1. Parse Outcome tag [Outcome: Positive | Neutral | Negative]
+  let outcome: 'positive' | 'neutral' | 'negative' = 'neutral';
+  const outcomeMatch = remarks.match(/\[Outcome:\s*([^\]]+)\]/i);
+  if (outcomeMatch) {
+    const rawOut = outcomeMatch[1].toLowerCase().trim();
+    if (
+      rawOut === 'positive' ||
+      rawOut === 'negative' ||
+      rawOut === 'neutral'
+    ) {
+      outcome = rawOut;
+    }
+  }
+
+  // 2. Parse Follow-up Action tag [FollowUp: ...]
+  let follow_up_action: string | null = null;
+  let requires_follow_up = false;
+  const followUpMatch = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
+  if (followUpMatch) {
+    const text = followUpMatch[1].trim();
+    if (
+      text &&
+      !text.toLowerCase().startsWith('no remarks') &&
+      !text.toLowerCase().startsWith('rer') &&
+      text.toLowerCase() !== 'none'
+    ) {
+      follow_up_action = text;
+      requires_follow_up = true;
+    }
+  }
+
+  // 3. Parse Material Requirement tag [Requirement: ...]
+  let material_requirement: string | null = null;
+  const reqMatch = remarks.match(/\[Requirement:\s*([^\]]+)\]/i);
+  if (reqMatch) {
+    material_requirement = reqMatch[1].trim();
+  }
+
+  // 4. Parse Location tag [Location: ...]
+  let location: string | null = null;
+  const locMatch = remarks.match(/\[Location:\s*([^\]]+)\]/i);
+  if (locMatch) {
+    location = locMatch[1].trim();
+  }
+
+  // 5. Parse Interests tag [Interests: ...]
+  let interests: string | null = null;
+  const intMatch = remarks.match(/\[Interests:\s*([^\]]+)\]/i);
+  if (intMatch) {
+    interests = intMatch[1].trim();
+  }
+
+  // 6. Clean Remarks by removing metadata bracket tags
+  const clean_remarks = remarks
+    .replace(
+      /\[(?:Outcome|Location|FollowUp|Requirement|Interests):[^\]]*\]\s*/gi,
+      '',
+    )
+    .trim();
+
+  return {
+    outcome,
+    follow_up_action,
+    requires_follow_up,
+    material_requirement,
+    location,
+    interests,
+    clean_remarks,
+  };
+}
+
 export const getVisitsTool: ChatbotTool = {
   name: 'get_visits',
   description:
-    'Retrieves customer site visit logs, meeting outcomes, remarks, and follow-up actions from customer_visits (KRA 9). Returns summary counts by outcome (positive, neutral, negative), today visits, top visited customers, and itemized records. Scoped strictly by caller role.',
+    'Retrieves customer site visit logs, meeting outcomes (positive, neutral, negative), remarks, and follow-up actions from customer_visits (KRA 9). Can filter by outcome (positive/neutral/negative), requires_follow_up (true/false for visits requiring follow-up), customer name, or date range. Scoped strictly by caller role.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_visits',
     description:
-      'Retrieves customer site visits and field visit reports. Can filter by customer name, outcome (positive/neutral/negative), or date range (today, this_week, this_month). Scoped by caller role.',
+      'Retrieves customer site visits and field visit reports. Can filter by customer name, outcome (positive/neutral/negative), requires_follow_up (true for visits needing follow-up actions), or date range (today, this_week, this_month). Scoped by caller role.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -68,6 +160,11 @@ export const getVisitsTool: ChatbotTool = {
           type: 'STRING',
           description:
             'Optional filter by meeting outcome. Valid values: "all", "positive", "neutral", "negative". Default is "all".',
+        },
+        requires_follow_up: {
+          type: 'BOOLEAN',
+          description:
+            'Optional filter. When true, returns only visits that require follow-up actions or remarks.',
         },
         date_range: {
           type: 'STRING',
@@ -189,11 +286,17 @@ export const getVisitsTool: ChatbotTool = {
       }
     });
 
+    const requiresFollowUp =
+      args?.requires_follow_up === true ||
+      args?.follow_up === true ||
+      args?.follow_up_only === true;
+
     // 3. Compute Summary Aggregations
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
     let visitsTodayCount = 0;
+    let followUpCount = 0;
     const outcomeCounts: Record<string, number> = {
       positive: 0,
       neutral: 0,
@@ -207,11 +310,27 @@ export const getVisitsTool: ChatbotTool = {
         visitsTodayCount++;
       }
 
-      const out = (v.outcome || 'neutral').toLowerCase().trim();
+      const parsed = parseVisitRemarks(v.remarks);
+      const out =
+        v.outcome &&
+        ['positive', 'neutral', 'negative'].includes(
+          v.outcome.toLowerCase().trim(),
+        )
+          ? v.outcome.toLowerCase().trim()
+          : parsed.outcome;
+
       if (outcomeCounts[out] !== undefined) {
         outcomeCounts[out]++;
       } else {
         outcomeCounts[out] = 1;
+      }
+
+      const followUpAction =
+        v.follow_up_action || v.follow_up || parsed.follow_up_action;
+      const needsFollowUp =
+        parsed.requires_follow_up || Boolean(v.follow_up_action || v.follow_up);
+      if (needsFollowUp) {
+        followUpCount++;
       }
 
       const cName = v.customer_name || 'Unnamed Customer';
@@ -227,13 +346,17 @@ export const getVisitsTool: ChatbotTool = {
         customer_name: cName,
         person_met: v.person_met || null,
         contact_phone: v.contact_phone || v.contact_no || null,
-        location: v.location || v.customer_address || null,
+        location: v.location || v.customer_address || parsed.location || null,
         outcome: out,
         visited_at: v.visited_at || v.created_at,
-        remarks: v.remarks || v.raw_remarks || null,
-        material_requirement: v.material_requirement || v.requirement || null,
-        follow_up_action:
-          v.follow_up_action || v.follow_up || v.followup || null,
+        remarks: parsed.clean_remarks || v.remarks || null,
+        material_requirement:
+          v.material_requirement ||
+          v.requirement ||
+          parsed.material_requirement ||
+          null,
+        follow_up_action: followUpAction,
+        requires_follow_up: needsFollowUp,
         salesperson_name: repName,
         salesperson_phone: v.salesperson_phone || '',
       };
@@ -244,8 +367,12 @@ export const getVisitsTool: ChatbotTool = {
 
     if (rawOutcome && rawOutcome !== 'all') {
       filteredList = filteredList.filter((v: any) =>
-        v.outcome.includes(rawOutcome),
+        v.outcome.toLowerCase().includes(rawOutcome),
       );
+    }
+
+    if (requiresFollowUp) {
+      filteredList = filteredList.filter((v: any) => v.requires_follow_up);
     }
 
     if (searchCustomer) {
@@ -261,6 +388,7 @@ export const getVisitsTool: ChatbotTool = {
             summary: {
               total_visits: 0,
               filtered_visits_count: 0,
+              visits_requiring_follow_up: 0,
               message: access.message,
             },
             visits: [],
@@ -283,6 +411,7 @@ export const getVisitsTool: ChatbotTool = {
       total_visits: rawList.length,
       filtered_visits_count: filteredList.length,
       visits_today: visitsTodayCount,
+      visits_requiring_follow_up: followUpCount,
       by_outcome: outcomeCounts,
       top_visited_customers: topCustomers,
     };

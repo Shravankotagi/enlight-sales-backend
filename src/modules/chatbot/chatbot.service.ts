@@ -406,11 +406,13 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
    - Customer 360 & Directory: Use 'get_customer_360' for customer profiles, historical orders, payment tracking, site visits, complaints, customer segmentation, and health risk.
      * When customer_name is provided: Returns complete Customer 360 with contact info, lifetime won value, lifetime tonnage in MT, recent visits ('visits_summary'), recent complaints ('complaints_summary'), customer segment ('Key Account', 'Growth', 'New'), and health status ('Active', 'At Risk', 'Churning').
      * When the user asks general customer count or directory questions (e.g. "How many customers do we have?", "List all customers", "Who are our Key Account customers?"), call 'get_customer_360' without customer_name (or with segment_filter / health_filter) to retrieve 'summary.total_customers', segment breakdown, and the customer directory!
+     * When the user asks "List my Growth customers" or asks about customers in a specific segment, call 'get_customer_360' with segment_filter="growth" (or "key_account", "new").
    - Customer Site Visits (KRA 9): Use 'get_visits' whenever the user asks about customer site visits, market visits, meetings, visit logs, meeting outcomes ('positive', 'neutral', 'negative'), visit remarks, material requirements observed, or follow-up actions.
-     * Note: 'get_visits' returns 'summary' with 'total_visits', 'visits_today', 'by_outcome', and 'top_visited_customers'.
+     * Note: 'get_visits' returns 'summary' with 'total_visits', 'visits_today', 'by_outcome' (positive, neutral, negative), 'visits_requiring_follow_up', and 'top_visited_customers'.
+     * When the user asks "Which visits require follow-up actions?" or asks for visits needing follow-up / next steps / actions, call 'get_visits' with requires_follow_up=true.
+     * When the user asks "Show all visits with a positive outcome" or for positive / neutral / negative visits, call 'get_visits' with outcome="positive", outcome="neutral", or outcome="negative".
      * When the user asks "How many visits were logged today?", set date_range="today".
      * When the user asks for visits to a specific customer (e.g. "Show visits for Supreme Steel"), pass customer_name="Supreme Steel".
-     * When the user asks for negative or neutral visits, pass outcome="negative" or outcome="neutral".
    - Complaints & Quality Issues (KRA 7 & 8): Use 'get_complaints' whenever the user asks about customer quality complaints, delivery/billing issues, rejection reports, resolution status, or 48-hour SLA performance.
      * Note: 'get_complaints' returns 'summary' with 'total_complaints', 'open_complaints', 'resolved_complaints', 'sla_resolution_rate_within_48h', and 'top_affected_products'.
      * When the user asks for open complaints (e.g. "How many open complaints do we have?", "Show all unresolved complaints"), set status_filter="open".
@@ -637,6 +639,19 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             }
           } else if (lowerMsg.includes('visit')) {
             rescuedToolName = 'get_visits';
+            if (
+              lowerMsg.includes('follow') ||
+              lowerMsg.includes('action') ||
+              lowerMsg.includes('pending')
+            ) {
+              rescuedArgs = { requires_follow_up: true };
+            } else if (lowerMsg.includes('positive')) {
+              rescuedArgs = { outcome: 'positive' };
+            } else if (lowerMsg.includes('negative')) {
+              rescuedArgs = { outcome: 'negative' };
+            } else if (lowerMsg.includes('neutral')) {
+              rescuedArgs = { outcome: 'neutral' };
+            }
           } else if (
             lowerMsg.includes('deal') ||
             lowerMsg.includes('pipeline') ||
@@ -656,9 +671,20 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           } else if (
             lowerMsg.includes('customer') ||
             lowerMsg.includes('account') ||
-            lowerMsg.includes('360')
+            lowerMsg.includes('360') ||
+            lowerMsg.includes('growth')
           ) {
             rescuedToolName = 'get_customer_360';
+            if (lowerMsg.includes('growth')) {
+              rescuedArgs = { segment_filter: 'growth' };
+            } else if (lowerMsg.includes('key account')) {
+              rescuedArgs = { segment_filter: 'key_account' };
+            } else if (
+              lowerMsg.includes('new customer') ||
+              lowerMsg.includes('new segment')
+            ) {
+              rescuedArgs = { segment_filter: 'new' };
+            }
           }
 
           if (rescuedToolName) {
@@ -784,7 +810,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             return `No deals found matching this criteria for your assigned accounts (Total Pipeline Value: ₹${(summaryObj.total_pipeline_value || 0).toLocaleString('en-IN')}, Won Orders: ₹${(summaryObj.won_deals_total_value || 0).toLocaleString('en-IN')}, Won Volume: ${summaryObj.won_orders_tonnage_mt || 0} MT).`;
           }
           if (toolName === 'get_visits') {
-            return `No visits found matching this criteria for your assigned accounts (Total Logged Visits: ${summaryObj.total_visits || 0}).`;
+            return `No visits found matching this criteria for your assigned accounts (Total Logged Visits: ${summaryObj.total_visits || 0}, Positive: ${summaryObj.by_outcome?.positive || 0}, Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}).`;
+          }
+          if (toolName === 'get_customer_360') {
+            return `No customers found matching this criteria for your assigned accounts (Total Accounts: ${summaryObj.total_customers || 0}, Growth: ${summaryObj.by_segment?.growth || 0}, Key Accounts: ${summaryObj.by_segment?.key_account || 0}).`;
           }
           if (toolName === 'get_inquiries') {
             return `No inquiries found matching this criteria for your assigned accounts (Total Inquiries: ${summaryObj.total_inquiries || 0}).`;
@@ -822,12 +851,21 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
       if (toolName === 'get_visits') {
         const summaryHeader = summaryObj
-          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Follow-up: ${summaryObj.by_outcome?.follow_up || 0}\n\n`
+          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Neutral: ${summaryObj.by_outcome?.neutral || 0} | Negative: ${summaryObj.by_outcome?.negative || 0} | Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}\n\n`
           : '';
+        const hasFollowUps = items.some(
+          (v: any) => v.follow_up_action || v.requires_follow_up,
+        );
         const lines = items.slice(0, 15).map((v: any, idx: number) => {
-          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} | ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
+          const followUpCol = hasFollowUps
+            ? ` ${v.follow_up_action || '-'} |`
+            : '';
+          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} |${followUpCol} ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
         });
-        return `### Customer Visits Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n${lines.join('\n')}`;
+        const tableHeader = hasFollowUps
+          ? `| # | Customer | Person Met | Outcome | Date | Follow-Up Action | Salesperson |\n|---|---|---|---|---|---|---|\n`
+          : `| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n`;
+        return `### Customer Visits Overview (${items.length} records found):\n\n${summaryHeader}${tableHeader}${lines.join('\n')}`;
       }
 
       if (toolName === 'get_complaints') {
@@ -842,10 +880,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
       if (toolName === 'get_customer_360') {
         const lines = items.slice(0, 15).map((c: any, idx: number) => {
-          return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | ${c.phone || '-'} | \`${c.segment || 'new'}\` | \`${c.health_status || 'active'}\` | ₹${(c.ltv_inr || 0).toLocaleString('en-IN')} | ${c.total_orders || 0} |`;
+          return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | ${c.phone || c.customer_phone || '-'} | \`${c.segment || 'new'}\` | \`${c.health_status || 'active'}\` | ₹${(c.ltv_inr || c.lifetime_value_inr || 0).toLocaleString('en-IN')} | ${c.total_orders || 0} |`;
         });
         const summaryHeader = summaryObj
-          ? `> **Directory Summary:** Total Accounts: ${summaryObj.total_customers || items.length} | Active: ${summaryObj.active_customers || 0} | Key Accounts: ${summaryObj.by_segment?.key_account || 0}\n\n`
+          ? `> **Directory Summary:** Total Accounts: ${summaryObj.total_customers || items.length} | Active: ${summaryObj.active_customers || 0} | Key Accounts: ${summaryObj.by_segment?.key_account || 0} | Growth: ${summaryObj.by_segment?.growth || 0} | New: ${summaryObj.by_segment?.new || 0}\n\n`
           : '';
         return `### Customer Directory (${items.length} records found):\n\n${summaryHeader}| # | Customer | Phone | Segment | Health | LTV | Orders |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
       }

@@ -231,16 +231,16 @@ Every valid response from the assistant must strictly comply with the following 
 
 ### 4.4 Module 4: Customer Site Visits (`get_visits`)
 
-| Test ID    | Test Category           | Natural Language Query Prompt                               | Expected Tool & Arguments                                   | Success Criteria & Assertions                                           |
-| :--------- | :---------------------- | :---------------------------------------------------------- | :---------------------------------------------------------- | :---------------------------------------------------------------------- |
-| **VIS-01** | Total Logged Visits     | `"How many site visits have I logged?"`                     | `get_visits` `{}`                                           | Cites `summary.total_visits` from caller's assigned accounts.           |
-| **VIS-02** | Positive Outcome        | `"Show all visits with a positive outcome"`                 | `get_visits` `{ "outcome": "positive" }`                    | Filters visits where outcome was marked positive.                       |
-| **VIS-03** | Follow-Up Needed        | `"Which visits require follow-up actions?"`                 | `get_visits` `{ "outcome": "follow_up" }`                   | Displays visits needing follow-up remarks and actions.                  |
-| **VIS-04** | Customer Site Visits    | `"Show visits logged for Supreme Steel Pvt Ltd"`            | `get_visits` `{ "customer_name": "Supreme Steel Pvt Ltd" }` | Lists visit date, person met, outcome, and remarks.                     |
-| **VIS-05** | Date Filter (Today)     | `"Show visits conducted today"`                             | `get_visits` `{ "date_range": "today" }`                    | Filters visits logged for the current date.                             |
-| **VIS-06** | Date Filter (This Week) | `"Show my customer visits from this week"`                  | `get_visits` `{ "date_range": "this_week" }`                | Filters visits conducted in the past 7 days.                            |
-| **VIS-07** | Material Requirements   | `"What material requirements were noted in recent visits?"` | `get_visits` `{}`                                           | Highlights observed material requirements and customer expansion notes. |
-| **VIS-08** | Top Visited Accounts    | `"Which customer have we visited most frequently?"`         | `get_visits` `{}`                                           | Cites top visited customer from `summary.top_visited_customers`.        |
+| Test ID    | Test Category           | Natural Language Query Prompt                               | Expected Tool & Arguments                                   | Success Criteria & Assertions                                                                       |
+| :--------- | :---------------------- | :---------------------------------------------------------- | :---------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
+| **VIS-01** | Total Logged Visits     | `"How many site visits have I logged?"`                     | `get_visits` `{}`                                           | Cites `summary.total_visits` from caller's assigned accounts.                                       |
+| **VIS-02** | Positive Outcome        | `"Show all visits with a positive outcome"`                 | `get_visits` `{ "outcome": "positive" }`                    | Filters visits where outcome was marked positive.                                                   |
+| **VIS-03** | Follow-Up Needed        | `"Which visits require follow-up actions?"`                 | `get_visits` `{ "requires_follow_up": true }`               | Displays visits needing follow-up remarks and actions (cites `summary.visits_requiring_follow_up`). |
+| **VIS-04** | Customer Site Visits    | `"Show visits logged for Supreme Steel Pvt Ltd"`            | `get_visits` `{ "customer_name": "Supreme Steel Pvt Ltd" }` | Lists visit date, person met, outcome, and remarks.                                                 |
+| **VIS-05** | Date Filter (Today)     | `"Show visits conducted today"`                             | `get_visits` `{ "date_range": "today" }`                    | Filters visits logged for the current date.                                                         |
+| **VIS-06** | Date Filter (This Week) | `"Show my customer visits from this week"`                  | `get_visits` `{ "date_range": "this_week" }`                | Filters visits conducted in the past 7 days.                                                        |
+| **VIS-07** | Material Requirements   | `"What material requirements were noted in recent visits?"` | `get_visits` `{}`                                           | Highlights observed material requirements and customer expansion notes.                             |
+| **VIS-08** | Top Visited Accounts    | `"Which customer have we visited most frequently?"`         | `get_visits` `{}`                                           | Cites top visited customer from `summary.top_visited_customers`.                                    |
 
 ---
 

@@ -6,11 +6,14 @@ import {
   isSalespersonRole,
   verifyCustomerAccountAccess,
 } from './chatbot-tool.interface';
+import { parseVisitRemarks } from './get_visits.tool';
 
 function deriveCustomerSegment(
   totalTonnage: number,
   ltv: number,
   totalOrders: number,
+  inquiriesCount: number = 0,
+  visitsCount: number = 0,
 ): 'key_account' | 'growth' | 'new' {
   // Key Account: Bulk Volume (>=100 MT or >=50L) OR Consistent Core (>=4 orders and (>=20L or >=30 MT))
   if (
@@ -20,8 +23,17 @@ function deriveCustomerSegment(
   ) {
     return 'key_account';
   }
-  // Growth: >=2 orders, or >=5L LTV, or >=10 MT
-  if (totalOrders >= 2 || ltv >= 500000 || totalTonnage >= 10) {
+  // Growth: >=2 orders, or >=5L LTV, or >=10 MT, or LTV >= 15L, or totalTonnage >= 25 MT, or (>=1 order and (ltv >= 500000 || totalTonnage >= 10 || inquiriesCount >= 3 || visitsCount >= 2))
+  if (
+    (totalOrders >= 2 && (ltv >= 500000 || totalTonnage >= 10)) ||
+    totalTonnage >= 25 ||
+    ltv >= 1500000 ||
+    (totalOrders >= 1 &&
+      (ltv >= 500000 ||
+        totalTonnage >= 10 ||
+        inquiriesCount >= 3 ||
+        visitsCount >= 2))
+  ) {
     return 'growth';
   }
   return 'new';
@@ -163,15 +175,103 @@ export const getCustomer360Tool: ChatbotTool = {
       }
 
       const custList = data || [];
+
+      // Fetch caller's scoped deals, visits, and inquiries to compute accurate segments & activity
+      let dealsQuery = supabaseAdmin
+        .from('deals')
+        .select(
+          'customer_name, stage, total_amount, deal_items(quantity, unit, amount)',
+        );
+      let visitsQuery = supabaseAdmin
+        .from('customer_visits')
+        .select('customer_name, remarks');
+      let inqsQuery = supabaseAdmin.from('inquiries').select('sender_name');
+
+      if (isSalespersonRole(callerContext.role)) {
+        dealsQuery = dealsQuery.ilike('salesperson_phone', `%${cleanPhone}%`);
+        visitsQuery = visitsQuery.ilike('salesperson_phone', `%${cleanPhone}%`);
+        inqsQuery = inqsQuery.ilike('salesperson_phone', `%${cleanPhone}%`);
+      } else if (isManagerRole(callerContext.role)) {
+        const orConditions = managerPhoneSuffixes.map(
+          (p) => `salesperson_phone.ilike.%${p}%`,
+        );
+        if (orConditions.length > 0) {
+          dealsQuery = dealsQuery.or(orConditions.join(','));
+          visitsQuery = visitsQuery.or(orConditions.join(','));
+          inqsQuery = inqsQuery.or(orConditions.join(','));
+        }
+      }
+
+      const [{ data: allDeals }, { data: allVisits }, { data: allInqs }] =
+        await Promise.all([dealsQuery, visitsQuery, inqsQuery]);
+
+      const dealsMap = new Map<string, any[]>();
+      (allDeals || []).forEach((d: any) => {
+        const name = (d.customer_name || '').toLowerCase().trim();
+        if (!dealsMap.has(name)) dealsMap.set(name, []);
+        dealsMap.get(name)!.push(d);
+      });
+
+      const visitsMap = new Map<string, number>();
+      (allVisits || []).forEach((v: any) => {
+        const name = (v.customer_name || '').toLowerCase().trim();
+        visitsMap.set(name, (visitsMap.get(name) || 0) + 1);
+      });
+
+      const inqsMap = new Map<string, number>();
+      (allInqs || []).forEach((i: any) => {
+        const name = (i.sender_name || '').toLowerCase().trim();
+        inqsMap.set(name, (inqsMap.get(name) || 0) + 1);
+      });
+
       const segmentCounts = { key_account: 0, growth: 0, new: 0 };
       const healthCounts = { active: 0, at_risk: 0, churning: 0 };
 
       const enrichedCustomers = custList.map((c: any) => {
-        const tonnage = Number(c.total_tonnage || 0);
-        const ltv = Number(c.lifetime_value || 0);
-        const orders = Number(c.total_orders || 0);
-        const segment = deriveCustomerSegment(tonnage, ltv, orders);
-        const health = deriveHealthRisk(c.last_order_date);
+        const cName = (c.customer_name || '').toLowerCase().trim();
+        const cDeals = dealsMap.get(cName) || [];
+        const wonDeals = cDeals.filter(
+          (d: any) => (d.stage || '').toLowerCase() === 'won',
+        );
+        const vCount = visitsMap.get(cName) || 0;
+        const iCount = inqsMap.get(cName) || 0;
+
+        let wonTonnage = 0;
+        let wonLtv = 0;
+        wonDeals.forEach((d: any) => {
+          wonLtv += Number(d.total_amount) || 0;
+          const items = d.deal_items || [];
+          const tonnage = items.reduce((sum: number, it: any) => {
+            const q = Number(it.quantity) || 0;
+            const u = (it.unit || 'MT').toLowerCase().trim();
+            if (u === 'kg' || u === 'kgs') return sum + q / 1000;
+            return sum + q;
+          }, 0);
+          wonTonnage += tonnage;
+        });
+
+        const effectiveTonnage = wonTonnage || Number(c.total_tonnage || 0);
+        const effectiveLtv = wonLtv || Number(c.lifetime_value || 0);
+        const effectiveOrders = wonDeals.length || Number(c.total_orders || 0);
+
+        const explicitSegment = (c.segment || '').toLowerCase().trim();
+        const segment: 'key_account' | 'growth' | 'new' = [
+          'key_account',
+          'growth',
+          'new',
+        ].includes(explicitSegment)
+          ? (explicitSegment as 'key_account' | 'growth' | 'new')
+          : deriveCustomerSegment(
+              effectiveTonnage,
+              effectiveLtv,
+              effectiveOrders,
+              iCount,
+              vCount,
+            );
+
+        const health = deriveHealthRisk(
+          c.last_order_date || wonDeals[0]?.created_at || null,
+        );
 
         segmentCounts[segment]++;
         healthCounts[health]++;
@@ -183,10 +283,11 @@ export const getCustomer360Tool: ChatbotTool = {
           assigned_salesperson_phone: c.assigned_salesperson_phone || '',
           segment,
           health_status: health,
-          total_orders: orders,
-          total_tonnage_mt: Math.round(tonnage * 1000) / 1000,
-          lifetime_value_inr: ltv,
-          last_order_date: c.last_order_date || null,
+          total_orders: effectiveOrders,
+          total_tonnage_mt: Math.round(effectiveTonnage * 1000) / 1000,
+          lifetime_value_inr: effectiveLtv,
+          ltv_inr: effectiveLtv,
+          last_order_date: c.last_order_date || wonDeals[0]?.created_at || null,
           is_active: c.is_active !== false,
         };
       });
@@ -479,6 +580,8 @@ export const getCustomer360Tool: ChatbotTool = {
       totalTonnageRounded,
       lifetimeWonValue,
       wonOrdersCount,
+      0,
+      visits.length,
     );
     const healthStatus = deriveHealthRisk(
       profile?.last_order_date || deals[0]?.created_at,
@@ -488,11 +591,26 @@ export const getCustomer360Tool: ChatbotTool = {
       (c: any) => c.status !== 'resolved',
     ).length;
 
+    const formattedVisits = visits.map((v: any) => {
+      const parsed = parseVisitRemarks(v.remarks);
+      return {
+        ...v,
+        visit_date: v.visited_at ? v.visited_at.split('T')[0] : null,
+        outcome: parsed.outcome,
+        follow_up_action: parsed.follow_up_action,
+        requires_follow_up: parsed.requires_follow_up,
+        material_requirement: parsed.material_requirement,
+        location: parsed.location || v.location,
+        interests: parsed.interests,
+        remarks: parsed.clean_remarks || v.remarks,
+      };
+    });
+
     const rowCount =
       (profile ? 1 : 0) +
       formattedDeals.length +
       payments.length +
-      visits.length +
+      formattedVisits.length +
       complaints.length;
 
     return {
@@ -516,14 +634,14 @@ export const getCustomer360Tool: ChatbotTool = {
           total_orders: wonOrdersCount,
           lifetime_value_inr: lifetimeWonValue,
           lifetime_tonnage_mt: totalTonnageRounded,
-          total_visits: visits.length,
-          last_visit_date: visits[0]?.visited_at || null,
+          total_visits: formattedVisits.length,
+          last_visit_date: formattedVisits[0]?.visited_at || null,
           total_complaints: complaints.length,
           open_complaints: openComplaintsCount,
         },
         visits_summary: {
-          total_logged: visits.length,
-          recent_visits: visits.slice(0, 5),
+          total_logged: formattedVisits.length,
+          recent_visits: formattedVisits.slice(0, 5),
         },
         complaints_summary: {
           total_reported: complaints.length,
