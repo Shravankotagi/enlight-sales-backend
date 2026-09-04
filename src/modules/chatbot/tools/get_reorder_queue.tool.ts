@@ -42,6 +42,8 @@ export const getReorderQueueTool: ChatbotTool = {
     if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone) {
         query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
+      } else {
+        return { data: [], rowCount: 0 };
       }
     } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes } = await getSubordinateSalespersons(

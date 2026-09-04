@@ -14,6 +14,8 @@ import { searchKnowledgeBaseTool } from './search_knowledge_base.tool';
 import { getTeamPipelineTool } from './get_team_pipeline.tool';
 import { getChurnRadarTool } from './get_churn_radar.tool';
 import { getLossAnalyticsTool } from './get_loss_analytics.tool';
+import { getVisitsTool } from './get_visits.tool';
+import { getComplaintsTool } from './get_complaints.tool';
 
 @Injectable()
 export class ToolRegistryService {
@@ -29,6 +31,8 @@ export class ToolRegistryService {
     this.registerTool(getTeamPipelineTool);
     this.registerTool(getChurnRadarTool);
     this.registerTool(getLossAnalyticsTool);
+    this.registerTool(getVisitsTool);
+    this.registerTool(getComplaintsTool);
   }
 
   registerTool(tool: ChatbotTool) {
