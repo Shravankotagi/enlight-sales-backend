@@ -37,12 +37,11 @@ Input message can be English, Hindi, or Hinglish.
 
 Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 {
-  "action": "inquiry|stage_update|purchase_order|deal_update", // Use "inquiry" for ALL customer requirements, notes, RFQs, quotes (even if dash-separated or including credit terms). Use "purchase_order" ONLY if text explicitly contains "PO", "PO-...", "Purchase order", "Order confirmed", "Order placed", or "Won".
+  "action": "inquiry|stage_update|purchase_order|deal_update", // Use "stage_update" whenever moving stage, updating status, or marking as won/lost/negotiation/quoted/qualified. Use "inquiry" for ALL new customer requirements, notes, RFQs, quotes. Use "purchase_order" ONLY if text explicitly contains "PO", "PO-...", "Purchase order", "Order confirmed", "Order placed", or "Won".
   "deal_id": "<deal ID if mentioned e.g. #DEAL-C538B6, DEAL-C538B6, or C538B6, else null>",
   "customer_name": "<exact company/customer name requesting material or placing order, else null>",
   "contact_person": "<full name of customer contact person/owner/proprietor if mentioned e.g. Rajesh Mehta, else null>",
-  "customer_phone": "<customer phone number ONLY if explicitly provided in text e.g. 9812345670, else null>",
-  "target_stage": "new_inquiry|won|lost", // ALWAYS "new_inquiry" for all inquiries, RFQs, rates, or field updates. ONLY "won" if order confirmed/PO received, or "lost" if deal lost. NEVER "quoted" on rate updates.
+  "target_stage": "new_inquiry|qualified|negotiation|quoted|won|lost", // Stage if explicitly requested to update e.g. "update to negotiation", "mark as negotiation", "mark as won", "deal lost", else null
   "line_items": [
     {
       "product_requirement": "<specific product name from 9 categories e.g. CR Coil, HR Coil, HRPO Coil, MS Round Bar, MS Square Pipe, MS Angle, MS Beam, MS Channel, MS Plate, Chequered Plate, TMT Bar>",
@@ -472,7 +471,10 @@ function extractDeliveryLocation(text) {
 
 function detectInvalidUnitInMessage(text) {
   if (!text) return null;
-  const cleanText = text.replace(/(\d+),(\d+)/g, '$1$2');
+  const cleanText = text
+    .replace(/#?(?:DEAL|INQ)-[A-F0-9]{4,8}\b/gi, '')
+    .replace(/#?[A-F0-9]{6}\b/gi, '')
+    .replace(/(\d+),(\d+)/g, '$1$2');
 
   const VALID_STEEL_UNITS = [
     'mt',
@@ -696,6 +698,33 @@ function detectInvalidUnitInMessage(text) {
     'option',
     'inquiry',
     'deal',
+    'for',
+    'to',
+    'from',
+    'in',
+    'at',
+    'as',
+    'of',
+    'and',
+    'with',
+    'by',
+    'is',
+    'are',
+    'was',
+    'were',
+    'the',
+    'this',
+    'that',
+    'customer',
+    'company',
+    'client',
+    'status',
+    'stage',
+    'negotiation',
+    'qualified',
+    'quoted',
+    'won',
+    'lost',
   ];
 
   const genericQtyRegex = /\b(\d+(?:\\.\d+)?)\s+([a-zA-Z]{3,15})\b/g;
@@ -1271,11 +1300,12 @@ async function findDealByCodeOrId(codeOrId, senderPhone) {
     .toUpperCase();
   if (clean.length < 4) return null;
 
+  // 1. Search in deals table
   const { data: deals } = await supabase
     .from('deals')
     .select('*, deal_items(*)')
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(300);
 
   if (deals && deals.length > 0) {
     const found = deals.find(
@@ -1284,8 +1314,62 @@ async function findDealByCodeOrId(codeOrId, senderPhone) {
         (d.inquiry_id || '').toUpperCase().startsWith(clean) ||
         (d.deal_number && d.deal_number.toUpperCase().includes(clean)),
     );
-    return found || null;
+    if (found) return found;
   }
+
+  // 2. Search in inquiries table
+  const { data: inquiries } = await supabase
+    .from('inquiries')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(300);
+
+  if (inquiries && inquiries.length > 0) {
+    const foundInq = inquiries.find((inq) =>
+      (inq.id || '').toUpperCase().startsWith(clean),
+    );
+    if (foundInq) {
+      const inqStatus = (foundInq.status || '').toLowerCase().trim();
+      let derivedStage = 'new_inquiry';
+      if (
+        ['confirmed', 'saved', 'processed', 'qualified'].includes(inqStatus)
+      ) {
+        derivedStage = 'qualified';
+      } else if (['quoted', 'quotation_sent'].includes(inqStatus)) {
+        derivedStage = 'quoted';
+      } else if (inqStatus === 'negotiation') {
+        derivedStage = 'negotiation';
+      } else if (inqStatus === 'won') {
+        derivedStage = 'won';
+      } else if (inqStatus === 'lost') {
+        derivedStage = 'lost';
+      } else {
+        derivedStage = 'new_inquiry';
+      }
+
+      let cName = foundInq.sender_name;
+      if (!cName || isInvalidCustomerName(cName)) {
+        const rawFirstLine = (foundInq.raw_text || '').split('\n')[0];
+        const matchComp = rawFirstLine.match(
+          /^([A-Za-z0-9\s&.,'-]+?)(?:\s+requires|\s+needs|\s+inquiry|\s+order|\s+deal|:|-|$)/i,
+        );
+        cName = matchComp ? matchComp[1].trim() : 'Customer';
+      }
+
+      return {
+        id: foundInq.id,
+        inquiry_id: foundInq.id,
+        is_inquiry_source: true,
+        stage: derivedStage,
+        customer_name: cName,
+        total_amount: 0,
+        deal_items: [],
+        salesperson_phone: foundInq.sender_phone || senderPhone,
+        raw_inquiry: foundInq,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -1529,14 +1613,21 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         }
       }
 
-      const invalidUnitCheck = detectInvalidUnitInMessage(effectiveTextForLLM);
-      if (invalidUnitCheck) {
-        return (
-          `*Invalid Quantity Unit*\n\n` +
-          `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
-          `Metal products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
-          `Please specify the quantity using a valid unit (e.g. *15 MT*, *1500 Kg*, *100 Sheets*, or *50 Pcs*).`
+      const isStageOrStatusUpdate =
+        /\b(?:mark|move|update|set|change|status|stage|negotiation|won|lost|quoted|qualified)\b/i.test(
+          effectiveTextForLLM,
         );
+      if (!isStageOrStatusUpdate) {
+        const invalidUnitCheck =
+          detectInvalidUnitInMessage(effectiveTextForLLM);
+        if (invalidUnitCheck) {
+          return (
+            `*Invalid Quantity Unit*\n\n` +
+            `You specified *${invalidUnitCheck.number} ${invalidUnitCheck.invalidUnit}*.\n\n` +
+            `Metal products cannot be measured in *"${invalidUnitCheck.invalidUnit}"*.\n\n` +
+            `Please specify the quantity using a valid unit (e.g. *15 MT*, *1500 Kg*, *100 Sheets*, or *50 Pcs*).`
+          );
+        }
       }
 
       try {
@@ -1876,8 +1967,8 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
     // ── CONTEXT RESOLUTION FOR EXPLICIT DEAL ID & ACTIVE SESSIONS ──────────
     const explicitDealIdMatch =
-      text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,6})\b/i) ||
-      text.match(/#([A-F0-9]{6})\b/i);
+      text.match(/#?(?:DEAL|INQ)-([A-Za-z0-9_-]+)/i) ||
+      text.match(/#([A-Fa-f0-9]{6})\b/i);
     let targetExplicitDeal = null;
     if (explicitDealIdMatch || data.deal_id) {
       const dealCodeToFind = explicitDealIdMatch
@@ -1887,6 +1978,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         dealCodeToFind,
         senderPhone,
       );
+      if (!targetExplicitDeal && explicitDealIdMatch) {
+        return `❌ Deal ID #${dealCodeToFind.toUpperCase()} was not found in our records. Please check the Deal ID and try again.`;
+      }
     }
 
     let customerName = data.customer_name;
@@ -2012,10 +2106,33 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       (i) => i.quantity > 0 || i.quantity_mt > 0,
     );
 
-    // ── STAGE UPDATE HANDLER (e.g. "mark the deal as won", "deal is lost") ───
-    if (data.action === 'stage_update') {
+    // ── STAGE UPDATE HANDLER (e.g. "mark the deal as won", "deal is lost", "mark as negotiation") ───
+    const isExplicitStageUpdate =
+      data.action === 'stage_update' ||
+      (data.target_stage &&
+        ['negotiation', 'won', 'lost', 'quoted', 'qualified'].includes(
+          data.target_stage,
+        )) ||
+      /\b(?:mark|move|update|set|change)\b.*?\b(negotiation|won|lost|quoted|qualified)\b/i.test(
+        text,
+      ) ||
+      /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+)?(negotiation|won|lost|quoted|qualified)\b/i.test(
+        text,
+      );
+
+    if (isExplicitStageUpdate) {
+      let targetStageName = data.target_stage;
+      if (!targetStageName || targetStageName === 'new_inquiry') {
+        const stageMatch = text.match(
+          /\b(negotiation|won|lost|quoted|qualified)\b/i,
+        );
+        if (stageMatch) {
+          targetStageName = stageMatch[1].toLowerCase();
+        }
+      }
+
       if (
-        data.target_stage === 'quoted' ||
+        targetStageName === 'quoted' ||
         text.toLowerCase().includes('quoted')
       ) {
         return await handleSendQuotationMessage(text, senderPhone);
@@ -2026,8 +2143,10 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         won: 'won',
         lost: 'lost',
         negotiation: 'negotiation',
+        qualified: 'qualified',
+        quoted: 'quoted',
       };
-      const dbStage = stageMap[data.target_stage] || 'new_inquiry';
+      const dbStage = stageMap[targetStageName] || 'new_inquiry';
 
       let dealToUpdate = targetExplicitDeal;
       if (!dealToUpdate && customerName) {
@@ -2037,6 +2156,8 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         );
         if (openDeals.length > 0) {
           dealToUpdate = openDeals[0];
+        } else {
+          dealToUpdate = await findBestDeal(customerName, senderPhone);
         }
       }
 
@@ -2044,27 +2165,134 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         return `Which deal would you like to mark as *${dbStage.toUpperCase()}*? Please provide the Deal ID (e.g. #DEAL-XXXXXX) or customer name.`;
       }
 
-      const updatePayload = {
-        stage: dbStage,
-      };
-      if (dbStage === 'won') {
-        updatePayload.won_at = new Date().toISOString();
-        if (data.po_number) updatePayload.po_number = data.po_number;
-      }
-      if (dbStage === 'lost' && data.loss_reason) {
-        updatePayload.lost_reason = data.loss_reason;
+      const currentStage = (dealToUpdate.stage || 'new_inquiry')
+        .toLowerCase()
+        .trim();
+
+      // Stage Gate 1: If deal is in New Inquiry stage, no status updates allowed
+      if (
+        [
+          'new_inquiry',
+          'review',
+          'auto_created',
+          'pending',
+          'draft',
+          'needs_review',
+        ].includes(currentStage)
+      ) {
+        return `This deal is currently in New Inquiry stage. It must be moved to Qualified before it can be updated further. Please save the deal first.`;
       }
 
-      await supabase
-        .from('deals')
-        .update(updatePayload)
-        .eq('id', dealToUpdate.id);
+      // Stage Gate 2: If deal is in Qualified stage, must move to Negotiation or Quoted first before Won/Lost
+      if (
+        currentStage === 'qualified' &&
+        (dbStage === 'won' || dbStage === 'lost')
+      ) {
+        return `This deal must go through Negotiation or Quoted stage before it can be marked as Won or Lost.`;
+      }
 
-      if (dealToUpdate.inquiry_id && ['won'].includes(dbStage)) {
+      // Stage Gate 3: If deal is already closed
+      if (currentStage === 'won' || currentStage === 'lost') {
+        return `This deal is already marked as ${currentStage.toUpperCase()} and cannot be updated further.`;
+      }
+
+      const dealCode = getDealCode(dealToUpdate);
+
+      if (dealToUpdate.is_inquiry_source) {
+        // Insert pipeline deal in deals table linked to this inquiry
+        const newDealPayload = {
+          inquiry_id: dealToUpdate.inquiry_id,
+          stage: dbStage,
+          customer_name: dealToUpdate.customer_name,
+          salesperson_phone: senderPhone || dealToUpdate.salesperson_phone,
+          total_amount: dealToUpdate.total_amount || 0,
+          status: dbStage,
+          created_at: new Date().toISOString(),
+        };
+        if (dbStage === 'won') {
+          newDealPayload.won_at = new Date().toISOString();
+          if (data.po_number) newDealPayload.po_number = data.po_number;
+        }
+        if (dbStage === 'lost' && data.loss_reason) {
+          newDealPayload.lost_reason = data.loss_reason;
+        }
+
+        const { data: insertedDeals, error: insErr } = await supabase
+          .from('deals')
+          .insert(newDealPayload)
+          .select('*, deal_items(*)');
+
+        if (insErr || !insertedDeals || insertedDeals.length === 0) {
+          throw new Error(
+            `Failed to create pipeline deal: ${insErr?.message || 'DB write error'}`,
+          );
+        }
+
+        dealToUpdate = insertedDeals[0];
+
+        // Update inquiries table status
+        const inqStatus = dbStage === 'won' ? 'confirmed' : dbStage;
         await supabase
           .from('inquiries')
-          .update({ status: 'confirmed' })
+          .update({ status: inqStatus })
           .eq('id', dealToUpdate.inquiry_id);
+      } else {
+        // Update existing deals record
+        const updatePayload = {
+          stage: dbStage,
+          status: dbStage,
+        };
+        if (dbStage === 'won') {
+          updatePayload.won_at = new Date().toISOString();
+          if (data.po_number) updatePayload.po_number = data.po_number;
+        }
+        if (dbStage === 'lost' && data.loss_reason) {
+          updatePayload.lost_reason = data.loss_reason;
+        }
+
+        const { data: updatedDeals, error: updErr } = await supabase
+          .from('deals')
+          .update(updatePayload)
+          .eq('id', dealToUpdate.id)
+          .select('*, deal_items(*)');
+
+        if (
+          updErr ||
+          !updatedDeals ||
+          updatedDeals.length === 0 ||
+          updatedDeals[0].stage !== dbStage
+        ) {
+          throw new Error(
+            `Failed to update deal stage: ${updErr?.message || 'DB stage verification mismatch'}`,
+          );
+        }
+
+        dealToUpdate = updatedDeals[0];
+
+        if (dealToUpdate.inquiry_id) {
+          const inqStatus = dbStage === 'won' ? 'confirmed' : dbStage;
+          await supabase
+            .from('inquiries')
+            .update({ status: inqStatus })
+            .eq('id', dealToUpdate.inquiry_id);
+        }
+      }
+
+      // Mandatory Database Write Verification
+      const { data: verifiedDeals, error: verifyErr } = await supabase
+        .from('deals')
+        .select('id, stage, customer_name, inquiry_id')
+        .eq('id', dealToUpdate.id);
+
+      if (
+        verifyErr ||
+        !verifiedDeals ||
+        verifiedDeals.length === 0 ||
+        verifiedDeals[0].stage !== dbStage
+      ) {
+        throw new Error(
+          `Database write verification failed: deal stage is not ${dbStage} in Supabase.`,
+        );
       }
 
       await saveActiveSession(
@@ -2072,8 +2300,6 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         dealToUpdate.customer_name,
         'deal_stage_update',
       );
-
-      const dealCode = getDealCode(dealToUpdate);
 
       try {
         logBotActivity({
