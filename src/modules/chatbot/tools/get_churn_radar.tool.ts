@@ -36,6 +36,16 @@ export const getChurnRadarTool: ChatbotTool = {
     if (isSalespersonRole(callerContext.role)) {
       if (cleanPhone) {
         query = query.ilike('assigned_salesperson_phone', `%${cleanPhone}%`);
+      } else {
+        return {
+          data: {
+            total_accounts_assessed: 0,
+            high_risk_count: 0,
+            medium_risk_count: 0,
+            churn_radar_accounts: [],
+          },
+          rowCount: 0,
+        };
       }
     } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes } = await getSubordinateSalespersons(

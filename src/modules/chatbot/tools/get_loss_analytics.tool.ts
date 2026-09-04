@@ -60,6 +60,16 @@ export const getLossAnalyticsTool: ChatbotTool = {
         query = query.ilike('salesperson_phone', `%${cleanPhone}%`);
       } else if (empId) {
         query = query.eq('employee_id', empId);
+      } else {
+        return {
+          data: {
+            total_lost_deals_count: 0,
+            total_lost_revenue_usd: 0,
+            loss_reasons_breakdown: {},
+            recent_lost_deals: [],
+          },
+          rowCount: 0,
+        };
       }
     } else if (isManagerRole(callerContext.role)) {
       const { employeeIds, phoneSuffixes } = await getSubordinateSalespersons(

@@ -4,6 +4,7 @@ import {
   getSubordinateSalespersons,
   isManagerRole,
   isSalespersonRole,
+  verifyCustomerAccountAccess,
 } from './chatbot-tool.interface';
 
 function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
@@ -110,7 +111,7 @@ export const getInquiriesTool: ChatbotTool = {
       )
       .order('created_at', { ascending: false });
 
-    // 2. Role-based scoping (Layer 1 enforcement)
+    // 2. Role-based scoping (Layer 1 enforcement - Fail-Closed)
     if (isSalespersonRole(callerContext.role)) {
       const rawPhone = callerContext.phone || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
@@ -127,9 +128,25 @@ export const getInquiriesTool: ChatbotTool = {
         orParts.push(`employee_id.eq.${empId}`);
       }
 
-      if (orParts.length > 0) {
-        query = query.or(orParts.join(','));
+      if (orParts.length === 0) {
+        return {
+          data: {
+            notFound: true,
+            summary: {
+              total_inquiries: 0,
+              inquiries_today: 0,
+              by_inquiry_status: {},
+              by_deal_stage: {},
+              top_customers: [],
+              message: 'Access denied. Caller identity could not be verified.',
+            },
+            inquiries: [],
+          },
+          rowCount: 0,
+        };
       }
+
+      query = query.or(orParts.join(','));
     } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes, employeeIds } = await getSubordinateSalespersons(
         callerContext,
@@ -359,6 +376,40 @@ export const getInquiriesTool: ChatbotTool = {
 
     // Filter by customer name search (checks customer_name, original message, phone)
     if (searchName) {
+      const access = await verifyCustomerAccountAccess(
+        args.customer_name_search,
+        callerContext,
+        supabaseAdmin,
+      );
+      if (!access.allowed) {
+        return {
+          data: {
+            notFound: true,
+            summary: {
+              total_inquiries: 0,
+              inquiries_today: 0,
+              by_inquiry_status: {},
+              by_deal_stage: {},
+              top_customers: [],
+              customers_with_multiple_inquiries: [],
+              active_customers: [],
+              conversion_metrics: {
+                total_inquiries: 0,
+                won_inquiries: 0,
+                lost_inquiries: 0,
+                active_inquiries: 0,
+                inquiry_to_won_conversion_rate: '0%',
+                inquiry_conversion_percent: 0,
+                closed_win_rate: '0%',
+              },
+              message: access.message,
+            },
+            inquiries: [],
+          },
+          rowCount: 0,
+        };
+      }
+
       filteredList = filteredList.filter(
         (i) =>
           i.customer_name.toLowerCase().includes(searchName) ||
