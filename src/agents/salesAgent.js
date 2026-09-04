@@ -687,6 +687,15 @@ function detectInvalidUnitInMessage(text) {
     'arn',
     'e-way',
     'eway',
+    'user',
+    'confirmed',
+    'confirmation',
+    'reply',
+    'message',
+    'correct',
+    'option',
+    'inquiry',
+    'deal',
   ];
 
   const genericQtyRegex = /\b(\d+(?:\\.\d+)?)\s+([a-zA-Z]{3,15})\b/g;
@@ -1487,7 +1496,40 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     let data = overrideData;
 
     if (!data) {
-      const invalidUnitCheck = detectInvalidUnitInMessage(text);
+      let effectiveTextForLLM = text;
+      const isShortConfirmation =
+        /^(?:yes|correct|confirm|proceed|haan?|sahi\s+hai|update\s+(?:it|this|deal|inquiry)|ok|okay|yep|sure|ha|1|option\s*1)\b/i.test(
+          (text || '').trim(),
+        );
+
+      if (isShortConfirmation) {
+        try {
+          const { getRawChatHistory } = require('../core/memory');
+          const history = await getRawChatHistory(senderPhone);
+          for (let i = history.length - 1; i >= 0; i--) {
+            const hMsg = history[i];
+            if (
+              hMsg.role === 'user' &&
+              hMsg.content &&
+              hMsg.content.trim() !== text.trim()
+            ) {
+              const hContent = hMsg.content;
+              const hasProdOrRateInHistory =
+                /\b(mt|tons?|kg|sheet|plate|coil|beam|channel|pipe|angle|bar|tmt|rate|price|rs|₹|@)\b/i.test(
+                  hContent,
+                );
+              if (hasProdOrRateInHistory) {
+                effectiveTextForLLM = `${hContent}\n\nConfirmed: ${text}`;
+                break;
+              }
+            }
+          }
+        } catch (histErr) {
+          console.warn('[SalesAgent] History lookup notice:', histErr.message);
+        }
+      }
+
+      const invalidUnitCheck = detectInvalidUnitInMessage(effectiveTextForLLM);
       if (invalidUnitCheck) {
         return (
           `*Invalid Quantity Unit*\n\n` +
@@ -1501,7 +1543,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         const { invokeWithFallback } = require('../core/modelRouter');
         const response = await invokeWithFallback([
           new SystemMessage(SALES_AGENT_PROMPT),
-          new HumanMessage('Salesperson message:\n' + text),
+          new HumanMessage('Salesperson message:\n' + effectiveTextForLLM),
         ]);
         const rawText =
           typeof response.content === 'string'
@@ -1517,7 +1559,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       }
 
       if (!data || data.confidence < 0.3) {
-        const textRaw = text || '';
+        const textRaw = effectiveTextForLLM || text || '';
         const textClean = textRaw
           .replace(/#?(?:DEAL-[A-F0-9]{4,6}|[A-F0-9]{6})\b/gi, '')
           .replace(/\s+/g, ' ');
