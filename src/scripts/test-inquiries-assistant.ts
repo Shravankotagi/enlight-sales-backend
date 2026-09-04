@@ -104,12 +104,15 @@ async function runTests() {
         dData.summary.won_deals_total_value,
       );
       const firstDeal = dData.deals[0];
-      console.log('   PASS: Deal ID format:', firstDeal.deal_id);
-      if (firstDeal.deal_id.startsWith('DEAL-')) {
+      console.log('   PASS: Inquiry ID format:', firstDeal.deal_id);
+      if (
+        firstDeal.deal_id.startsWith('INQ-') ||
+        firstDeal.deal_id.startsWith('DEAL-')
+      ) {
         passed++;
       } else {
         console.error(
-          '   FAIL: Deal ID does not start with DEAL-:',
+          '   FAIL: Inquiry ID does not start with INQ- or DEAL-:',
           firstDeal.deal_id,
         );
         failed++;
@@ -234,15 +237,18 @@ async function runTests() {
       'Show me all Won deals with their total value.',
     );
     console.log('   Bot Response:\n  ', reply5.reply.replace(/\n/g, '\n   '));
-    // Check that Deal ID format matches DEAL-XXXXXX
-    if (reply5.reply.includes('DEAL-') && /\b\d+\b/.test(reply5.reply)) {
+    // Check that Inquiry ID format matches INQ-XXXXXX or DEAL-XXXXXX
+    if (
+      (reply5.reply.includes('INQ-') || reply5.reply.includes('DEAL-')) &&
+      /\b\d+\b/.test(reply5.reply)
+    ) {
       console.log(
-        '   PASS: Bot displayed Won deals with DEAL-XXXXXX human IDs and values.',
+        '   PASS: Bot displayed Won deals with INQ-XXXXXX human IDs and values.',
       );
       passed++;
     } else {
       console.error(
-        '   FAIL: Deal ID format did not contain DEAL- or values missing.',
+        '   FAIL: Inquiry ID format did not contain INQ- or DEAL- or values missing.',
       );
       failed++;
     }

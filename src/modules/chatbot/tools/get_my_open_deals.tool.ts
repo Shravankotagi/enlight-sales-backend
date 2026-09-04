@@ -9,12 +9,12 @@ import {
 export const getMyOpenDealsTool: ChatbotTool = {
   name: 'get_my_open_deals',
   description:
-    'Fetches deals (negotiations, quotations, review, won, or lost) scoped strictly by caller role. Always returns total pipeline values, exact stage-by-stage counts and values (including total won deal value), and human-readable Deal IDs matching the UI (#DEAL-XXXXXX).',
+    'Fetches deals (negotiations, quotations, review, won, or lost) scoped strictly by caller role. Always returns total pipeline values, exact stage-by-stage counts and values (including total won deal value), and human-readable Inquiry IDs matching the UI (#INQ-XXXXXX).',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_my_open_deals',
     description:
-      'Retrieves deals for the authenticated user based on role scope. Always returns pipeline value sums, stage-by-stage totals (e.g. won deals total value), and human-readable Deal IDs (DEAL-XXXXXX). Valid stage_filter values: "all", "won", "quoted", "negotiation", "review", "qualified", "lost".',
+      'Retrieves deals for the authenticated user based on role scope. Always returns pipeline value sums, stage-by-stage totals (e.g. won deals total value), and human-readable Inquiry IDs (INQ-XXXXXX). Valid stage_filter values: "all", "won", "quoted", "negotiation", "review", "qualified", "lost".',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -151,10 +151,14 @@ export const getMyOpenDealsTool: ChatbotTool = {
         lostCount++;
       }
 
-      const humanDealId = 'DEAL-' + d.id.substring(0, 6).toUpperCase();
+      const cleanNum = d.deal_number
+        ? d.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+        : d.id.substring(0, 6).toUpperCase();
+      const humanDealId = 'INQ-' + cleanNum;
 
       return {
         deal_id: humanDealId,
+        inquiry_id: humanDealId,
         deal_uuid: d.id,
         customer_name: d.customer_name || 'Unknown Customer',
         customer_phone: d.customer_phone || '',

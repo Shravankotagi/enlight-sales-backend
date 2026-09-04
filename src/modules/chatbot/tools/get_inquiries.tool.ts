@@ -261,10 +261,16 @@ export const getInquiriesTool: ChatbotTool = {
         }));
       }
 
-      const humanDealId = deal?.id
-        ? 'DEAL-' + deal.id.substring(0, 6).toUpperCase()
-        : inq.id
-          ? 'DEAL-' + inq.id.substring(0, 6).toUpperCase()
+      const dealNum = deal?.deal_number
+        ? deal.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+        : deal?.id
+          ? deal.id.substring(0, 6).toUpperCase()
+          : null;
+      const inqNum = inq.id ? inq.id.substring(0, 6).toUpperCase() : null;
+      const humanDealId = dealNum
+        ? 'INQ-' + dealNum
+        : inqNum
+          ? 'INQ-' + inqNum
           : null;
 
       return {
