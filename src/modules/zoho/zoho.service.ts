@@ -44,8 +44,8 @@ const STAGE_MAP: Record<string, string> = {
   lost: 'Closed Lost',
   negotiation: 'Negotiation/Review',
   quoted: 'Proposal/Price Quote',
-  qualified: 'New Inquiry',
-  new_inquiry: 'New Inquiry',
+  qualified: 'Qualification',
+  new_inquiry: 'Qualification',
 };
 
 const REVERSE_STAGE_MAP: Record<string, string> = {
