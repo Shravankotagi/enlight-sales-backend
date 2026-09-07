@@ -2,7 +2,30 @@ const { invokeWithFallback } = require('../core/modelRouter');
 const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
 const { getEmployeeByPhone } = require('../supabase');
 
+const axios = require('axios');
+
 async function handleConversationalQuery(text, senderPhone) {
+  try {
+    const backendUrl =
+      process.env.CENTRAL_BACKEND_URL || 'http://127.0.0.1:3000';
+    const res = await axios.post(
+      `${backendUrl}/chat/whatsapp/message`,
+      {
+        senderPhone,
+        messageText: text,
+      },
+      { timeout: 20000 },
+    );
+
+    if (res.data && res.data.reply) {
+      return res.data.reply;
+    }
+  } catch (err) {
+    console.warn(
+      `[AssistantAgent] Central backend gateway unreachable (${err.message}). Using local fallback.`,
+    );
+  }
+
   try {
     const employee = await getEmployeeByPhone(senderPhone);
     const empName = employee ? employee.name : 'Salesperson';
@@ -61,7 +84,7 @@ GUIDELINES:
     return reply;
   } catch (error) {
     console.error('Conversational assistant error:', error.message);
-    return ` Sorry, I encountered an error answering your question: ${error.message}`;
+    return `Sorry, I encountered an error answering your question: ${error.message}`;
   }
 }
 

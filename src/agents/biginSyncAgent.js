@@ -42,7 +42,7 @@ function cleanPhone(p) {
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY,
   );
 }
 
@@ -223,13 +223,13 @@ function buildDealSummary(data, salespersonName) {
   const timeline = [];
   if (deal.created_at) {
     timeline.push(
-      ` Inquiry Created: ${new Date(deal.created_at).toLocaleDateString('en-IN')}`,
+      `📋 Inquiry Created: ${new Date(deal.created_at).toLocaleDateString('en-IN')}`,
     );
   }
   if (visits.length > 0) {
     visits.forEach((v) => {
       timeline.push(
-        ` Visit: ${new Date(v.visited_at).toLocaleDateString('en-IN')}` +
+        `🏭 Visit: ${new Date(v.visited_at).toLocaleDateString('en-IN')}` +
           (v.person_met ? ` - Met ${v.person_met}` : ''),
       );
     });
@@ -237,17 +237,19 @@ function buildDealSummary(data, salespersonName) {
   if (followups.length > 0) {
     followups.forEach((f) => {
       timeline.push(
-        ` Follow-up: ${new Date(f.created_at).toLocaleDateString('en-IN')}` +
+        `🔄 Follow-up: ${new Date(f.created_at).toLocaleDateString('en-IN')}` +
           (f.followup_status ? ` - ${f.followup_status}` : ''),
       );
     });
   }
   if (deal.stage === 'won' && deal.won_at) {
-    timeline.push(` Won: ${new Date(deal.won_at).toLocaleDateString('en-IN')}`);
+    timeline.push(
+      `🏆 Won: ${new Date(deal.won_at).toLocaleDateString('en-IN')}`,
+    );
   }
   if (deal.stage === 'lost') {
     timeline.push(
-      ` Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
+      `❌ Lost: ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}` +
         (deal.lost_reason || deal.loss_reason
           ? ` - Reason: ${deal.lost_reason || deal.loss_reason}`
           : ''),
@@ -257,21 +259,21 @@ function buildDealSummary(data, salespersonName) {
   const paymentSection = payment
     ? [
         '',
-        ' PAYMENT SUMMARY',
+        '💰 PAYMENT SUMMARY',
         `  Invoice Amount: ₹${Number(payment.invoice_amount || 0).toLocaleString('en-IN')}`,
         `  Collected: ₹${Number(payment.collected_amount || 0).toLocaleString('en-IN')}`,
         `  Outstanding: ₹${Number(payment.outstanding || 0).toLocaleString('en-IN')}`,
-        `  Status: ${payment.status === 'collected' ? 'Fully Settled ' : payment.status === 'partial' ? 'Partial ' : 'Pending '}`,
+        `  Status: ${payment.status === 'collected' ? 'Fully Settled ✅' : payment.status === 'partial' ? 'Partial ⏳' : 'Pending ⏳'}`,
       ].join('\n')
     : '';
 
   return [
-    ` DEAL SUMMARY - ${deal.customer_name}`,
+    `📊 DEAL SUMMARY - ${deal.customer_name}`,
     `Salesperson: ${salespersonName}`,
     `Status: ${deal.stage?.toUpperCase()}`,
     deal.po_number ? `PO Number: ${deal.po_number}` : '',
     '',
-    ' LINE ITEMS',
+    '📦 LINE ITEMS',
     itemLines || '  No items recorded',
     deal.total_amount ? `  ─────────────────────` : '',
     deal.total_amount
@@ -284,7 +286,7 @@ function buildDealSummary(data, salespersonName) {
     deal.payment_terms ? `  Payment Terms: ${deal.payment_terms}` : '',
     paymentSection,
     '',
-    ' ACTIVITY TIMELINE',
+    '📅 ACTIVITY TIMELINE',
     ...timeline,
     '',
     `Last Updated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
@@ -307,13 +309,13 @@ function buildVisitSummary(data, salespersonName) {
   } = data;
 
   const outcomeLabel = {
-    positive: 'Positive ',
-    neutral: 'Neutral ',
-    negative: 'Negative ',
+    positive: 'Positive 🟢',
+    neutral: 'Neutral 🟡',
+    negative: 'Negative 🔴',
   };
 
   return [
-    ` VISIT SUMMARY - ${customerName}`,
+    `🏭 VISIT SUMMARY - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Location: ${city || 'Not specified'}`,
@@ -321,11 +323,11 @@ function buildVisitSummary(data, salespersonName) {
     contactNo ? `Contact: ${contactNo}` : '',
     `Outcome: ${outcomeLabel[visitOutcome] || visitOutcome || 'Neutral'}`,
     '',
-    ' DISCUSSION NOTES',
+    '📝 DISCUSSION NOTES',
     remarks || 'Meeting conducted',
-    productInterests ? `\n Product Interests: ${productInterests}` : '',
-    materialRequirement ? ` Requirement: ${materialRequirement}` : '',
-    followUpAction ? ` Follow-up Action: ${followUpAction}` : '',
+    productInterests ? `\n🛒 Product Interests: ${productInterests}` : '',
+    materialRequirement ? `📦 Requirement: ${materialRequirement}` : '',
+    followUpAction ? `📌 Follow-up Action: ${followUpAction}` : '',
     '',
     `Logged via Enlight Sales Bot - ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
@@ -350,7 +352,7 @@ function buildPaymentSummary(data, salespersonName) {
   };
 
   return [
-    ` PAYMENT UPDATE - ${customerName}`,
+    `💰 PAYMENT UPDATE - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     `Type: ${typeLabel[paymentType] || paymentType || 'Payment'}`,
@@ -361,7 +363,7 @@ function buildPaymentSummary(data, salespersonName) {
     amountPending > 0
       ? `Outstanding Balance: ₹${Number(amountPending).toLocaleString('en-IN')}`
       : '',
-    isFullPayment ? ' FULLY SETTLED - No outstanding balance' : '',
+    isFullPayment ? '✅ FULLY SETTLED - No outstanding balance' : '',
     '',
     `Logged via Enlight Sales Bot - ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
   ]
@@ -382,11 +384,11 @@ function buildComplaintSummary(data, salespersonName) {
   if (action === 'resolve') {
     const slaStatus =
       resolutionTimeHrs <= 48
-        ? `Within SLA  (${resolutionTimeHrs}h)`
-        : `SLA Breached  (${resolutionTimeHrs}h - target: 48h)`;
+        ? `Within SLA ✅ (${resolutionTimeHrs}h)`
+        : `SLA Breached ⚠️ (${resolutionTimeHrs}h - target: 48h)`;
 
     return [
-      ` COMPLAINT RESOLVED - ${customerName}`,
+      `✅ COMPLAINT RESOLVED - ${customerName}`,
       `Salesperson: ${salespersonName}`,
       `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
       affectedProduct ? `Product: ${affectedProduct}` : '',
@@ -399,7 +401,7 @@ function buildComplaintSummary(data, salespersonName) {
   }
 
   return [
-    ` COMPLAINT REPORTED - ${customerName}`,
+    `🚨 COMPLAINT REPORTED - ${customerName}`,
     `Salesperson: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     affectedProduct ? `Product Affected: ${affectedProduct}` : '',
@@ -414,7 +416,7 @@ function buildComplaintSummary(data, salespersonName) {
 function buildCustomerSummary(data, salespersonName) {
   const { customerName, phone, gst, city, contactPerson } = data;
   return [
-    ` NEW CUSTOMER - ${customerName}`,
+    `👤 NEW CUSTOMER - ${customerName}`,
     `Onboarded by: ${salespersonName}`,
     `Date: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
     contactPerson ? `Contact Person: ${contactPerson}` : '',
@@ -1088,7 +1090,7 @@ async function syncActivity(activityType, data) {
                 {
                   parentId: zohoDealId,
                   parentModule: 'Deals',
-                  noteTitle: `${normalizedType === 'deal_won' ? ' Deal Closed Won' : ' Deal Closed Lost'} - ${new Date().toLocaleDateString('en-IN')}`,
+                  noteTitle: `${normalizedType === 'deal_won' ? '🏆 Deal Closed Won' : '❌ Deal Closed Lost'} - ${new Date().toLocaleDateString('en-IN')}`,
                   noteContent: summary,
                 },
                 token,
@@ -1292,7 +1294,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: ` Complaint Reported - ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `🚨 Complaint Reported - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1319,7 +1321,7 @@ async function syncActivity(activityType, data) {
               {
                 parentId: zohoContactId,
                 parentModule: 'Contacts',
-                noteTitle: ` Complaint Resolved - ${new Date().toLocaleDateString('en-IN')}`,
+                noteTitle: `✅ Complaint Resolved - ${new Date().toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1374,10 +1376,12 @@ async function syncActivity(activityType, data) {
         payload: data,
       });
 
-      console.log(`[BiginSync]  ${normalizedType} synced for ${customerName}`);
+      console.log(
+        `[BiginSync] ✅ ${normalizedType} synced for ${customerName}`,
+      );
     } catch (err) {
       console.error(
-        `[BiginSync]  ${normalizedType} sync failed for ${customerName}:`,
+        `[BiginSync] ❌ ${normalizedType} sync failed for ${customerName}:`,
         err.message,
       );
 
@@ -1533,10 +1537,10 @@ async function syncAllDatabaseToBigin() {
           .join('\n');
 
         const summary = [
-          ` DEAL SUMMARY - ${custName}`,
+          `📊 DEAL SUMMARY - ${custName}`,
           `Status: ${(deal.stage || 'NEW_INQUIRY').toUpperCase()}`,
           deal.po_number ? `PO Number: ${deal.po_number}` : '',
-          ' LINE ITEMS',
+          '📦 LINE ITEMS',
           itemLines || '  No items recorded',
           deal.total_amount
             ? `  Total: ₹${Number(deal.total_amount).toLocaleString('en-IN')}`
@@ -1568,7 +1572,7 @@ async function syncAllDatabaseToBigin() {
               {
                 parentId: dealId,
                 parentModule: 'Deals',
-                noteTitle: `${deal.stage === 'won' ? ' Deal Closed Won' : ' Deal Closed Lost'} - ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
+                noteTitle: `${deal.stage === 'won' ? '🏆 Deal Closed Won' : '❌ Deal Closed Lost'} - ${new Date(deal.updated_at || deal.created_at).toLocaleDateString('en-IN')}`,
                 noteContent: summary,
               },
               token,
@@ -1619,230 +1623,210 @@ async function pullBiginToDatabase() {
 
     // 1. Pull Accounts (Companies) with Company Owner Mapping (Image 1)
     try {
-      let page = 1;
-      let hasMore = true;
-      while (hasMore) {
-        const accRes = await axios.get(`${ZOHO_BIGIN_BASE}/Accounts`, {
-          headers: zohoHeaders(token),
-          params: { page, per_page: 100 },
-        });
-        const biginAccounts = accRes.data?.data || [];
-        if (biginAccounts.length === 0) break;
+      const accRes = await axios.get(`${ZOHO_BIGIN_BASE}/Accounts`, {
+        headers: zohoHeaders(token),
+        params: { per_page: 200 },
+      });
+      const biginAccounts = accRes.data?.data || [];
 
-        for (const acc of biginAccounts) {
-          try {
-            const companyName = (acc.Account_Name || '').trim();
-            if (!companyName) continue;
+      for (const acc of biginAccounts) {
+        try {
+          const companyName = (acc.Account_Name || '').trim();
+          if (!companyName) continue;
 
-            const phone = acc.Phone || '';
-            const address = acc.Billing_City || acc.Billing_Street || '';
-            const industry = acc.Industry || 'Steel & Manufacturing';
-            const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
-            const explicitRepPhone = empNameToPhoneMap.get(ownerName);
-            const repPhone = explicitRepPhone || defaultRepPhone;
+          const phone = acc.Phone || '';
+          const address = acc.Billing_City || acc.Billing_Street || '';
+          const industry = acc.Industry || 'Steel & Manufacturing';
+          const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
+          const explicitRepPhone = empNameToPhoneMap.get(ownerName);
+          const repPhone = explicitRepPhone || defaultRepPhone;
 
-            const { data: existing } = await sb
-              .from('recurring_customers')
-              .select(
-                'id, customer_phone, customer_address, assigned_salesperson_phone',
-              )
-              .ilike('customer_name', companyName)
-              .limit(1);
+          const { data: existing } = await sb
+            .from('recurring_customers')
+            .select(
+              'id, customer_phone, customer_address, assigned_salesperson_phone',
+            )
+            .ilike('customer_name', companyName)
+            .limit(1);
 
-            if (!existing || existing.length === 0) {
-              await sb.from('recurring_customers').insert([
-                {
-                  customer_name: companyName,
-                  customer_phone: phone || null,
-                  customer_address: address || null,
-                  assigned_salesperson_phone: repPhone,
-                  industry: industry,
-                  is_active: true,
-                  avg_order_frequency_days: 30,
-                },
-              ]);
-              results.accountsImported++;
-            } else {
-              const existingCust = existing[0];
-              const updateData = { updated_at: new Date().toISOString() };
-              if (!existingCust.customer_phone && phone)
-                updateData.customer_phone = phone;
-              if (!existingCust.customer_address && address)
-                updateData.customer_address = address;
+          if (!existing || existing.length === 0) {
+            await sb.from('recurring_customers').insert([
+              {
+                customer_name: companyName,
+                customer_phone: phone || null,
+                customer_address: address || null,
+                assigned_salesperson_phone: repPhone,
+                industry: industry,
+                is_active: true,
+                avg_order_frequency_days: 30,
+              },
+            ]);
+            results.accountsImported++;
+          } else {
+            const existingCust = existing[0];
+            const updateData = { updated_at: new Date().toISOString() };
+            if (!existingCust.customer_phone && phone)
+              updateData.customer_phone = phone;
+            if (!existingCust.customer_address && address)
+              updateData.customer_address = address;
 
-              if (!existingCust.assigned_salesperson_phone && repPhone) {
-                updateData.assigned_salesperson_phone = repPhone;
-              } else if (
-                explicitRepPhone &&
-                cleanPhone(existingCust.assigned_salesperson_phone) !==
-                  cleanPhone(explicitRepPhone)
-              ) {
-                updateData.assigned_salesperson_phone = explicitRepPhone;
-              }
-
-              await sb
-                .from('recurring_customers')
-                .update(updateData)
-                .eq('id', existingCust.id);
-              results.accountsImported++;
+            if (!existingCust.assigned_salesperson_phone && repPhone) {
+              updateData.assigned_salesperson_phone = repPhone;
+            } else if (
+              explicitRepPhone &&
+              cleanPhone(existingCust.assigned_salesperson_phone) !==
+                cleanPhone(explicitRepPhone)
+            ) {
+              updateData.assigned_salesperson_phone = explicitRepPhone;
             }
-          } catch (accErr) {
-            results.errors.push(
-              `Account import error (${acc.Account_Name}): ${accErr.message}`,
-            );
+
+            await sb
+              .from('recurring_customers')
+              .update(updateData)
+              .eq('id', existingCust.id);
+            results.accountsImported++;
           }
+        } catch (accErr) {
+          results.errors.push(
+            `Account import error (${acc.Account_Name}): ${accErr.message}`,
+          );
         }
-        hasMore = accRes.data?.info?.more_records === true;
-        page++;
       }
     } catch (accErr) {
       results.errors.push(`Accounts endpoint error: ${accErr.message}`);
     }
 
     // 2. Pull Contacts & Visits from Zoho Bigin (Image 2)
-    try {
-      let page = 1;
-      let hasMore = true;
-      while (hasMore) {
-        const contactRes = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts`, {
-          headers: zohoHeaders(token),
-          params: { page, per_page: 100 },
-        });
-        const biginContacts = contactRes.data?.data || [];
-        if (biginContacts.length === 0) break;
+    const contactRes = await axios.get(`${ZOHO_BIGIN_BASE}/Contacts`, {
+      headers: zohoHeaders(token),
+      params: { per_page: 200 },
+    });
+    const biginContacts = contactRes.data?.data || [];
 
-        for (const c of biginContacts) {
-          try {
-            const personMet = (
-              c.Full_Name || `${c.First_Name || ''} ${c.Last_Name || ''}`
-            ).trim();
-            const companyName = (
-              c.Account_Name?.name ||
-              c.Company_Name ||
-              c.Last_Name ||
-              ''
-            ).trim();
-            if (!companyName) continue;
+    for (const c of biginContacts) {
+      try {
+        const personMet = (
+          c.Full_Name || `${c.First_Name || ''} ${c.Last_Name || ''}`
+        ).trim();
+        const companyName = (
+          c.Account_Name?.name ||
+          c.Company_Name ||
+          c.Last_Name ||
+          ''
+        ).trim();
+        if (!companyName) continue;
 
-            const phone = c.Mobile || c.Phone || '';
-            const ownerName = (c.Owner?.name || '').toLowerCase().trim();
-            const repPhone =
-              empNameToPhoneMap.get(ownerName) || defaultRepPhone;
+        const phone = c.Mobile || c.Phone || '';
+        const ownerName = (c.Owner?.name || '').toLowerCase().trim();
+        const repPhone = empNameToPhoneMap.get(ownerName) || defaultRepPhone;
 
-            if (personMet && personMet.toLowerCase() !== 'purchase head') {
-              await sb
-                .from('recurring_customers')
-                .update({ contact_person: personMet })
-                .ilike('customer_name', companyName);
+        if (personMet && personMet.toLowerCase() !== 'purchase head') {
+          await sb
+            .from('recurring_customers')
+            .update({ contact_person: personMet })
+            .ilike('customer_name', companyName);
 
-              const { data: existingVisit } = await sb
-                .from('customer_visits')
-                .select('id')
-                .ilike('customer_name', companyName)
-                .eq('person_met', personMet)
-                .limit(1);
+          const { data: existingVisit } = await sb
+            .from('customer_visits')
+            .select('id')
+            .ilike('customer_name', companyName)
+            .eq('person_met', personMet)
+            .limit(1);
 
-              if (!existingVisit || existingVisit.length === 0) {
-                await sb.from('customer_visits').insert([
-                  {
-                    customer_name: companyName,
-                    person_met: personMet,
-                    contact_no: phone || null,
-                    salesperson_phone: repPhone,
-                    remarks: 'Contact Synced from Zoho Bigin',
-                    visited_at: new Date().toISOString(),
-                  },
-                ]);
-              }
-            }
-            results.contactsImported++;
-          } catch (err) {
-            results.errors.push(
-              `Contact import error (${c.Last_Name}): ${err.message}`,
-            );
+          if (!existingVisit || existingVisit.length === 0) {
+            await sb.from('customer_visits').insert([
+              {
+                customer_name: companyName,
+                person_met: personMet,
+                contact_no: phone || null,
+                salesperson_phone: repPhone,
+                remarks: 'Contact Synced from Zoho Bigin',
+                visited_at: new Date().toISOString(),
+              },
+            ]);
           }
         }
-        hasMore = contactRes.data?.info?.more_records === true;
-        page++;
+        results.contactsImported++;
+      } catch (err) {
+        results.errors.push(
+          `Contact import error (${c.Last_Name}): ${err.message}`,
+        );
       }
-    } catch (cErr) {
-      results.errors.push(`Contacts endpoint error: ${cErr.message}`);
     }
 
     // 3. Pull Deals from Zoho Bigin
-    try {
-      const dealRes = await axios.get(`${ZOHO_BIGIN_BASE}/Deals`, {
-        headers: zohoHeaders(token),
-        params: { per_page: 100 },
-      });
-      const biginDeals = dealRes.data?.data || [];
+    const dealRes = await axios.get(`${ZOHO_BIGIN_BASE}/Deals`, {
+      headers: zohoHeaders(token),
+      params: { per_page: 200 },
+    });
+    const biginDeals = dealRes.data?.data || [];
 
-      const REVERSE_STAGE_MAP = {
-        'Closed Won': 'won',
-        'Closed Lost': 'lost',
-        'Negotiation/Review': 'negotiation',
-        'Proposal/Price Quote': 'quoted',
-        'New Inquiry': 'new_inquiry',
-        'Inquiry Received': 'new_inquiry',
-        'Waiting for Inquiry': 'new_inquiry',
-        Qualification: 'qualified',
-        'Needs Analysis': 'qualified',
-      };
+    const REVERSE_STAGE_MAP = {
+      'Closed Won': 'won',
+      'Closed Lost': 'lost',
+      'Negotiation/Review': 'negotiation',
+      'Proposal/Price Quote': 'quoted',
+      'New Inquiry': 'new_inquiry',
+      'Inquiry Received': 'new_inquiry',
+      'Waiting for Inquiry': 'new_inquiry',
+      Qualification: 'qualified',
+      'Needs Analysis': 'qualified',
+    };
 
-      for (const d of biginDeals) {
-        try {
-          const dealId = d.id;
-          const dealName = d.Deal_Name || '';
-          const custName =
-            d.Contact_Name?.name ||
-            d.Account_Name?.name ||
-            dealName.split('-')[0].trim();
-          if (!custName) continue;
+    for (const d of biginDeals) {
+      try {
+        const dealId = d.id;
+        const dealName = d.Deal_Name || '';
+        const custName =
+          d.Contact_Name?.name ||
+          d.Account_Name?.name ||
+          dealName.split('-')[0].trim();
+        if (!custName) continue;
 
-          const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';
-          const amount = Number(d.Amount) || 0;
-          const ownerName = (d.Owner?.name || '').toLowerCase().trim();
-          const repPhone = empNameToPhoneMap.get(ownerName) || defaultRepPhone;
+        const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';
+        const amount = Number(d.Amount) || 0;
+        const ownerName = (d.Owner?.name || '').toLowerCase().trim();
+        const repPhone = empNameToPhoneMap.get(ownerName) || defaultRepPhone;
 
-          const { data: existingDeal } = await sb
+        const { data: existingDeal } = await sb
+          .from('deals')
+          .select('id, stage, total_amount')
+          .or(`bigin_deal_id.eq.${dealId},customer_name.ilike.${custName}`)
+          .limit(1);
+
+        if (!existingDeal || existingDeal.length === 0) {
+          await sb.from('deals').insert([
+            {
+              customer_name: custName,
+              stage: dbStage,
+              total_amount: amount,
+              bigin_deal_id: dealId,
+              salesperson_phone: repPhone,
+              inquiry_type: 'inquiry',
+              status: 'needs_review',
+            },
+          ]);
+          results.dealsImported++;
+          // Update existing deal in DB
+          const ex = existingDeal[0];
+          await sb
             .from('deals')
-            .select('id, stage, total_amount')
-            .or(`bigin_deal_id.eq.${dealId},customer_name.ilike.${custName}`)
-            .limit(1);
-
-          if (!existingDeal || existingDeal.length === 0) {
-            await sb.from('deals').insert([
-              {
-                customer_name: custName,
-                stage: dbStage,
-                total_amount: amount,
-                bigin_deal_id: dealId,
-                salesperson_phone: repPhone,
-                inquiry_type: 'inquiry',
-                status: 'needs_review',
-              },
-            ]);
-            results.dealsImported++;
-          } else {
-            const ex = existingDeal[0];
-            await sb
-              .from('deals')
-              .update({
-                stage: dbStage,
-                total_amount: amount || ex.total_amount,
-                bigin_deal_id: dealId,
-              })
-              .eq('id', ex.id);
-            results.dealsImported++;
-          }
-        } catch (err) {
-          results.errors.push(
-            `Deal import error (${d.Deal_Name}): ${err.message}`,
+            .update({
+              stage: dbStage,
+              total_amount: amount || ex.total_amount,
+              bigin_deal_id: dealId,
+            })
+            .eq('id', ex.id);
+          results.dealsImported++;
+          console.log(
+            `[BiginPull] Synced existing deal in DB: ${dealName} → ${dbStage}`,
           );
         }
+      } catch (err) {
+        results.errors.push(
+          `Deal import error (${d.Deal_Name}): ${err.message}`,
+        );
       }
-    } catch (dErr) {
-      results.errors.push(`Deals endpoint error: ${dErr.message}`);
     }
 
     return results;

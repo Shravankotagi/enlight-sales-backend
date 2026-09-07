@@ -24,6 +24,7 @@
 
 const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
+const { logBotActivity } = require('../utils/activityLogger');
 
 const VISIT_AGENT_PROMPT = `
 You are the Specialized Site Visit & Meeting AI Agent (KRA 9) for Enlight Metals, a B2B metal distributor.
@@ -110,7 +111,7 @@ async function processVisitMessage(text, senderPhone) {
 
     // Missing customer name - must ask
     if (!data.customer_name) {
-      return ` *Visit Agent - Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Mehta Engineering in Pune today, met Purchase Manager, interested in CR Sheets"_`;
+      return `⚠️ *Visit Agent - Customer Name Missing*\n\nPlease specify the *Customer/Company* you visited.\nExample: _"Visited Mehta Engineering in Pune today, met Purchase Manager, interested in CR Sheets"_`;
     }
 
     const customerName = data.customer_name.trim();
@@ -140,14 +141,17 @@ async function processVisitMessage(text, senderPhone) {
 
     const finalCustomerName = officialCustomerName;
 
-    // ── Duplicate Visit Safeguard for Bare Customer Name Replies ─────────
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    // ── Duplicate Visit Safeguard ─────────
+    const thirtyMinutesAgo = new Date(
+      Date.now() - 30 * 60 * 1000,
+    ).toISOString();
     const { data: recentVisits } = await supabase
       .from('customer_visits')
-      .select('id, visited_at')
+      .select('id, visited_at, person_met, remarks')
       .eq('salesperson_phone', senderPhone)
       .ilike('customer_name', `%${finalCustomerName}%`)
-      .gte('visited_at', tenMinutesAgo)
+      .gte('visited_at', thirtyMinutesAgo)
+      .order('visited_at', { ascending: false })
       .limit(1);
 
     const isBareNameMsg =
@@ -156,25 +160,37 @@ async function processVisitMessage(text, senderPhone) {
       !text.toLowerCase().includes('met') &&
       !text.toLowerCase().includes('introduced');
 
-    if (recentVisits && recentVisits.length > 0 && isBareNameMsg) {
-      console.log(
-        `[VisitAgent] Suppressing duplicate visit for "${finalCustomerName}" (visit already logged ${recentVisits[0].visited_at})`,
-      );
+    if (recentVisits && recentVisits.length > 0) {
+      const recent = recentVisits[0];
+      const isRepeatedVisitReport =
+        !isBareNameMsg &&
+        (recent.person_met === data.person_met ||
+          !data.person_met ||
+          (recent.remarks &&
+            data.remarks &&
+            (recent.remarks.includes(data.remarks.slice(0, 25)) ||
+              data.remarks.includes(recent.remarks.slice(0, 25)))));
 
-      // Refresh active session
-      await saveActiveSession(
-        senderPhone,
-        finalCustomerName,
-        'profile_updated',
-      );
+      if (isBareNameMsg || isRepeatedVisitReport) {
+        console.log(
+          `[VisitAgent] Suppressing duplicate visit for "${finalCustomerName}" (visit already logged ${recent.visited_at})`,
+        );
 
-      return (
-        `ℹ *Visit Already Logged for ${finalCustomerName}*\n\n` +
-        `Your visit with *${finalCustomerName}* is already recorded on your KRA 9 dashboard!\n\n` +
-        `If you meant to update their contact info, say: _"${finalCustomerName} phone 9876543210 owner Mr. Kapoor"_\n` +
-        `Or to log a new inquiry, say: _"${finalCustomerName} needs 10 MT HR Coil"_\n\n` +
-        `Updated Customer Visits Card! `
-      );
+        // Refresh active session
+        await saveActiveSession(
+          senderPhone,
+          finalCustomerName,
+          'profile_updated',
+        );
+
+        return (
+          `ℹ️ *Visit Already Logged for ${finalCustomerName}*\n\n` +
+          `Your visit with *${finalCustomerName}* has already been recorded on your KRA 9 dashboard!\n\n` +
+          `If you meant to update their contact info, say: _"${finalCustomerName} phone 9876543210 owner Mr. Kapoor"_\n` +
+          `Or to log a new inquiry, say: _"${finalCustomerName} needs 10 MT HR Coil"_\n\n` +
+          `Updated Customer Visits Card! ✅`
+        );
+      }
     }
 
     // Extract all fields - NEVER use placeholder values
@@ -315,11 +331,30 @@ async function processVisitMessage(text, senderPhone) {
     // Save active session for context retention (follow-up messages will know this customer)
     await saveActiveSession(senderPhone, finalCustomerName, 'visit_logged');
 
+    // Auto-resolve any previous pending follow-ups for this customer
+    try {
+      const { resolveCustomerFollowupTasks } = require('../kra3');
+      await resolveCustomerFollowupTasks(
+        finalCustomerName,
+        senderPhone,
+        'site_visit_logged',
+      );
+    } catch (rErr) {
+      console.warn(
+        '[VisitAgent] Follow-up task auto-resolution notice:',
+        rErr.message,
+      );
+    }
+
     // Schedule Condition 2 - Visit Interest Follow-up Task if product interest was shown
     const interestProducts = productInterests || materialRequirement;
     if (visitOutcome === 'positive' && interestProducts) {
       try {
-        const promisedDays = Number(data.followup_days) || 4;
+        const { extractFollowupDays } = require('../kra3');
+        const promisedDays = extractFollowupDays(
+          text,
+          Number(data.followup_days) || 3,
+        );
         const visitDueDate = new Date(
           Date.now() + promisedDays * 24 * 60 * 60 * 1000,
         ).toISOString();
@@ -332,6 +367,7 @@ async function processVisitMessage(text, senderPhone) {
           due_date: visitDueDate,
           status: 'pending',
           reminder_sent_at: null,
+          escalated_at: null,
           follow_up_count: 0,
           resolution_notes: `Visit Interest Follow-up: Customer showed interest in ${interestProducts}. Promised decision timeframe: ${promisedDays} days. Notes: ${remarks}`,
         });
@@ -344,6 +380,30 @@ async function processVisitMessage(text, senderPhone) {
           fErr.message,
         );
       }
+    }
+
+    // Log to activity_logs
+    try {
+      logBotActivity({
+        salesperson_phone: senderPhone,
+        description: `Site visit logged for ${finalCustomerName} at ${city || 'Client Site'}`,
+        module: 'Visits',
+        customer_name: finalCustomerName,
+      });
+
+      if (visitOutcome === 'positive' && interestProducts) {
+        logBotActivity({
+          salesperson_phone: senderPhone,
+          description: `Follow-up scheduled with ${finalCustomerName} for next ${data.followup_days || 4} days`,
+          module: 'Visits',
+          customer_name: finalCustomerName,
+        });
+      }
+    } catch (actErr) {
+      console.warn(
+        '[VisitAgent] Non-blocking activity log notice:',
+        actErr?.message,
+      );
     }
 
     // Count ALL visits this month
@@ -364,7 +424,7 @@ async function processVisitMessage(text, senderPhone) {
       .ilike('customer_name', `%${finalCustomerName}%`);
 
     const outcomeEmoji =
-      { positive: '', neutral: '', negative: '' }[visitOutcome] || '';
+      { positive: '🟢', neutral: '🟡', negative: '🔴' }[visitOutcome] || '🟡';
 
     // Async Zoho Bigin Smart Sync
     syncActivity('visit', {
@@ -381,7 +441,7 @@ async function processVisitMessage(text, senderPhone) {
     // Build response
     let reply = isNewProspect
       ? `🆕 *New Prospect Added & Visit Logged!*\n\n`
-      : ` *Customer Visit Logged!*\n\n`;
+      : `🚗 *Customer Visit Logged!*\n\n`;
 
     reply += `Customer: *${finalCustomerName}*\n`;
     if (data.city) reply += `Location: *${data.city}*\n`;
@@ -390,23 +450,23 @@ async function processVisitMessage(text, senderPhone) {
     reply += `Outcome: ${outcomeEmoji} *${visitOutcome.charAt(0).toUpperCase() + visitOutcome.slice(1)}*\n`;
     reply += `Notes: ${remarks}\n`;
     if (productInterests)
-      reply += ` Product Interests: *${productInterests}*\n`;
+      reply += `🛒 Product Interests: *${productInterests}*\n`;
     if (materialRequirement)
-      reply += ` Requirement: *${materialRequirement}*\n`;
-    if (followUpAction) reply += ` Follow-up: *${followUpAction}*\n`;
+      reply += `📦 Requirement: *${materialRequirement}*\n`;
+    if (followUpAction) reply += `📌 Follow-up: *${followUpAction}*\n`;
     reply += `\nTotal Visits This Month: *${totalVisits}*\n`;
-    reply += `\nUpdated Customer Visits Card! `;
+    reply += `\nUpdated Customer Visits Card! ✅`;
 
     // For new prospects, ask for missing mandatory details
     if (isNewProspect) {
       const missingFields = [];
-      if (!contactNo) missingFields.push('•  *Mobile Number*');
-      if (!personMet) missingFields.push('•  *Owner / Contact Person Name*');
-      if (!data.city) missingFields.push('•  *City / Location*');
-      missingFields.push('•  *GSTIN* (optional)');
+      if (!contactNo) missingFields.push('• 📱 *Mobile Number*');
+      if (!personMet) missingFields.push('• 👤 *Owner / Contact Person Name*');
+      if (!data.city) missingFields.push('• 📍 *City / Location*');
+      missingFields.push('• 🧾 *GSTIN* (optional)');
 
       reply +=
-        `\n\n *${finalCustomerName} has been added as a new prospect.*\n` +
+        `\n\n📌 *${finalCustomerName} has been added as a new prospect.*\n` +
         `To complete their profile, please share:\n${missingFields.join('\n')}\n\n` +
         `_(Simply reply: "${finalCustomerName} phone 9876543210 owner Mr. Kapoor")_`;
     } else {
@@ -420,13 +480,13 @@ async function processVisitMessage(text, senderPhone) {
     }
 
     if (materialRequirement || productInterests) {
-      reply += `\n\n *Potential Opportunity:* To create a sales pipeline deal for this requirement, reply *"Create deal for ${finalCustomerName}"*.`;
+      reply += `\n\n💡 *Potential Opportunity:* To create a sales pipeline deal for this requirement, reply *"Create deal for ${finalCustomerName}"*.`;
     }
 
     return reply;
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
-    return ` Could not process site visit update: ${error.message}`;
+    return `⚠️ Could not process site visit update: ${error.message}`;
   }
 }
 

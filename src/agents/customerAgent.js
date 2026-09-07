@@ -23,21 +23,22 @@ const { supabase } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 
 const CUSTOMER_AGENT_PROMPT = `
-You are the Specialized Customer Onboarding AI Agent (KRA 2) for Enlight Metals.
-Your job is to parse salesperson new customer acquisition reports.
+You are the Specialized Customer Onboarding & Profile AI Agent for Enlight Metals.
+Your job is to parse customer onboarding, profile updates, and order cycle configurations.
 
-The salesperson message may be informal, in Hinglish, or missing expected keywords.
+The salesperson or admin message may be informal, in Hinglish, or missing expected keywords.
 Understand the meaning and context - do not look for specific words.
 
 Input message can be English, Hindi, or Hinglish.
 
 Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 {
-  "customer_name": "<new company/customer name, else null>",
+  "customer_name": "<new or existing company/customer name, else null>",
   "contact_person": "<contact person/owner name if mentioned, else null>",
   "phone": "<phone number if mentioned (digits only), else null>",
   "gst": "<GST number if mentioned, else null>",
   "city": "<city/location if mentioned, else null>",
+  "order_frequency_days": <number of days for order cycle/frequency if mentioned (e.g. 45, 30), else null>,
   "confidence": <float 0.0 to 1.0>
 }
 
@@ -130,10 +131,7 @@ async function processCustomerMessage(text, senderPhone) {
       saveActiveSession,
       getAccessibleSalespersonPhonesForBot,
     } = require('../supabase');
-    const scope =
-      typeof getAccessibleSalespersonPhonesForBot === 'function'
-        ? await getAccessibleSalespersonPhonesForBot(senderPhone)
-        : { phones: [senderPhone], isAdmin: false, isManager: false };
+    const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
     const senderCleanPhone = cleanPhone(senderPhone);
 
     // ── 1. Check if user is responding to an ongoing Duplicate Confirmation Session ──
@@ -261,7 +259,7 @@ async function processCustomerMessage(text, senderPhone) {
     const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
     const response = await invokeWithFallback([
       new SystemMessage(CUSTOMER_AGENT_PROMPT),
-      new HumanMessage('Salesperson message:\n' + text),
+      new HumanMessage('User message:\n' + text),
     ]);
     const rawText =
       typeof response.content === 'string'
@@ -331,12 +329,31 @@ async function processCustomerMessage(text, senderPhone) {
         'id, customer_name, assigned_salesperson_phone, customer_phone, customer_gst, customer_address, contact_person, notes, avg_order_frequency_days',
       );
 
-    const exactMatch = (allCustomers || []).find((c) =>
-      isExactDuplicate(customerName, c.customer_name),
-    );
+    const incomingPhoneClean = data.phone ? cleanPhone(data.phone) : '';
+    const incomingGstClean = data.gst ? data.gst.trim().toUpperCase() : '';
+
+    const exactMatch = (allCustomers || []).find((c) => {
+      if (isExactDuplicate(customerName, c.customer_name)) return true;
+      if (
+        incomingPhoneClean &&
+        incomingPhoneClean.length >= 10 &&
+        c.customer_phone
+      ) {
+        if (cleanPhone(c.customer_phone) === incomingPhoneClean) return true;
+      }
+      if (incomingGstClean && incomingGstClean.length >= 10 && c.customer_gst) {
+        if (c.customer_gst.trim().toUpperCase() === incomingGstClean)
+          return true;
+      }
+      return false;
+    });
 
     if (exactMatch) {
       const matchRepClean = cleanPhone(exactMatch.assigned_salesperson_phone);
+      const isDifferentName = !isExactDuplicate(
+        customerName,
+        exactMatch.customer_name,
+      );
 
       // Case A: Customer already exists under THIS salesperson
       if (
@@ -368,7 +385,9 @@ async function processCustomerMessage(text, senderPhone) {
 
         return (
           `✅ *Customer Profile Updated!*\n\n` +
-          `Company: *${exactMatch.customer_name}* is already in your account.\n` +
+          (isDifferentName
+            ? `Existing Customer: *${exactMatch.customer_name}* matches the provided contact phone/GST.\n`
+            : `Company: *${exactMatch.customer_name}* is already in your account.\n`) +
           (data.order_frequency_days
             ? `Order Frequency: *Every ${data.order_frequency_days} days*\n`
             : '') +
@@ -407,7 +426,11 @@ async function processCustomerMessage(text, senderPhone) {
       );
 
       return (
-        `⚠️ *${exactMatch.customer_name}* is already recorded under *${otherRepName}*.\n\n` +
+        `⚠️ *${exactMatch.customer_name}* is already recorded under *${otherRepName}*` +
+        (isDifferentName
+          ? ` (matching contact phone: *${exactMatch.customer_phone || data.phone}*)`
+          : '') +
+        `.\n\n` +
         `Is this the same customer?\n` +
         `👉 Reply *YES* to confirm and link to your portfolio, or *NO* with the correct company name.`
       );
@@ -426,9 +449,8 @@ async function processCustomerMessage(text, senderPhone) {
     // Save active session
     await saveActiveSession(senderPhone, customerName, 'onboarding_prompted');
 
-    // Log KRA 2 once per customer per salesperson per month
+    // Log KRA 2
     const alreadyLogged = await isKRA2AlreadyLogged(senderPhone, customerName);
-
     if (!alreadyLogged) {
       await supabase.from('kra_logs').insert({
         salesperson_phone: senderPhone,
@@ -441,10 +463,8 @@ async function processCustomerMessage(text, senderPhone) {
       });
     }
 
-    // Edge Case 7: Distinct count for accurate monthly progress
     const currentCount = await getMonthlyOnboardCount(senderPhone);
 
-    // Prompt for missing info
     const missingInfo = [];
     if (!data.phone) missingInfo.push('• 📱 *Mobile Number*');
     if (!data.contact_person)
@@ -474,7 +494,7 @@ async function processCustomerMessage(text, senderPhone) {
       (data.phone ? `Phone: *${data.phone}*\n` : '') +
       (data.city ? `City: *${data.city}*\n` : '') +
       `Monthly Progress: *${currentCount} / 3 Onboarded*\n\n` +
-      `Added live to your Customers Dashboard! ✅` +
+      `Updated New Customer Acquisition Card! ✅` +
       promptSuffix
     );
   } catch (error) {

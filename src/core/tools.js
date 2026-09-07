@@ -78,11 +78,53 @@ function createTools(senderPhone, rawUserText = '') {
     },
     {
       name: 'update_deal_stage',
-      description: `Use this tool when the salesperson explicitly requests to create a new inquiry, add a deal to the sales pipeline, update a deal stage, progress an RFQ/quotation, or mark a deal as won/lost. DO NOT call this tool for customer site visit or meeting reports (use log_customer_visit instead).`,
+      description: `Use this tool when the salesperson creates a new inquiry, updates deal rates, updates quantities or units, adds/removes line items, updates payment terms, delivery address, delivery date, notes, customer details, or updates deal stage. DO NOT call this tool for customer site visits (use log_customer_visit) or customer quality complaints / rejection reports (use log_complaint).`,
       schema: z.object({
         text: z
           .string()
           .describe('The full original message from the salesperson'),
+      }),
+    },
+  );
+
+  const sendQuotationTool = tool(
+    async ({ text, email, customer_name, deal_id }) => {
+      try {
+        return await getSalesAgent().handleSendQuotationMessage(
+          rawUserText || text,
+          senderPhone,
+          email,
+          customer_name,
+          deal_id,
+        );
+      } catch (err) {
+        return `Error sending quotation: ${err.message}`;
+      }
+    },
+    {
+      name: 'send_quotation',
+      description: `Use this tool when the salesperson explicitly requests to send, email, mail, or dispatch a quotation / quote to an email address or customer (e.g. "Send quotation to client@gmail.com", "Mail quote to test@example.com", "Send quote for Inquiry #INQ-A983FC").`,
+      schema: z.object({
+        text: z
+          .string()
+          .describe('The full original message from the salesperson'),
+        email: z
+          .string()
+          .optional()
+          .nullable()
+          .describe(
+            'The email address if mentioned e.g. client@gmail.com, else null',
+          ),
+        customer_name: z
+          .string()
+          .optional()
+          .nullable()
+          .describe('Customer or company name if mentioned, else null'),
+        deal_id: z
+          .string()
+          .optional()
+          .nullable()
+          .describe('Inquiry ID if mentioned e.g. #INQ-A983FC, else null'),
       }),
     },
   );
@@ -294,35 +336,79 @@ function createTools(senderPhone, rawUserText = '') {
       schema: z.object({
         customer_name: z
           .string()
-          .describe('The name of the company or customer to update'),
+          .optional()
+          .nullable()
+          .describe(
+            'The name of the company or customer to update. If omitted in user message, pass null or the active customer name from context.',
+          ),
         order_frequency_days: z
           .number()
           .optional()
+          .nullable()
           .describe('New order frequency in number of days (e.g. 45, 30, 60)'),
         contact_person: z
           .string()
           .optional()
+          .nullable()
           .describe('New contact person / owner name'),
-        phone: z.string().optional().describe('New phone or mobile number'),
-        gst: z.string().optional().describe('New GST number'),
+        phone: z
+          .string()
+          .optional()
+          .nullable()
+          .describe('New phone or mobile number'),
+        gst: z.string().optional().nullable().describe('New GST number'),
         address_or_city: z
           .string()
           .optional()
+          .nullable()
           .describe('New address or city/location'),
         assigned_salesperson: z
           .string()
           .optional()
+          .nullable()
           .describe(
             'Salesperson name to reassign or associate with this customer (e.g. "Max", "Rahul")',
           ),
-        text: z.string().optional().describe('The original message text'),
+        text: z
+          .string()
+          .optional()
+          .nullable()
+          .describe('The original message text'),
+      }),
+    },
+  );
+
+  const getDealIdsTool = tool(
+    async ({ company_name, text }) => {
+      try {
+        return await getQueryHandler().getDealIdsForCompany(
+          senderPhone,
+          text || rawUserText || '',
+          company_name || null,
+        );
+      } catch (err) {
+        return `Error fetching deal IDs: ${err.message}`;
+      }
+    },
+    {
+      name: 'get_deal_ids',
+      description: `Use this tool when the salesperson asks for the Inquiry ID(s) or inquiry code(s) for a company (e.g. "What is the inquiry ID for Radhe Ispat?", "Inquiry ID for Apex Steel", "Give me inquiry ID", "Inquiry ID", "Deal ID"). If company name is not provided in message, pass company_name as null so the system uses the active customer session or asks for the company name.`,
+      schema: z.object({
+        company_name: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('The customer/company name if mentioned, else null'),
+        text: z.string().optional().describe('The user query text'),
       }),
     },
   );
 
   return [
+    getDealIdsTool,
     logCustomerVisitTool,
     updateDealStageTool,
+    sendQuotationTool,
     logPaymentTool,
     logComplaintTool,
     logRetentionFollowupTool,

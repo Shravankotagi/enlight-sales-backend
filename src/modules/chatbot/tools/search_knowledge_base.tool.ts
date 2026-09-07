@@ -59,9 +59,8 @@ export const searchKnowledgeBaseTool: ChatbotTool = {
       }
     } catch (err: any) {
       // Fallback to LangChain generative embeddings if primary SDK call fails
-      const { GoogleGenerativeAIEmbeddings } = await import(
-        '@langchain/google-genai'
-      );
+      const { GoogleGenerativeAIEmbeddings } =
+        await import('@langchain/google-genai');
       const embeddings = new GoogleGenerativeAIEmbeddings({
         model: modelName,
         apiKey: apiKey,

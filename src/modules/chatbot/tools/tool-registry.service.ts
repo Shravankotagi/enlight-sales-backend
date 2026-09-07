@@ -16,6 +16,15 @@ import { getChurnRadarTool } from './get_churn_radar.tool';
 import { getLossAnalyticsTool } from './get_loss_analytics.tool';
 import { getVisitsTool } from './get_visits.tool';
 import { getComplaintsTool } from './get_complaints.tool';
+import { updateDealStageTool } from './update_deal_stage.tool';
+import { logCustomerVisitTool } from './log_customer_visit.tool';
+import { logComplaintTool } from './log_complaint.tool';
+import { logPaymentTool } from './log_payment.tool';
+import { onboardNewCustomerTool } from './onboard_new_customer.tool';
+import { updateCustomerProfileTool } from './update_customer_profile.tool';
+import { logRetentionFollowupTool } from './log_retention_followup.tool';
+import { sendQuotationTool } from './send_quotation.tool';
+import { getDealIdsTool } from './get_deal_ids.tool';
 
 @Injectable()
 export class ToolRegistryService {
@@ -23,6 +32,7 @@ export class ToolRegistryService {
   private readonly toolsMap = new Map<string, ChatbotTool>();
 
   constructor(private readonly supabaseService: SupabaseService) {
+    // 10 RBAC Query Tools
     this.registerTool(getInquiriesTool);
     this.registerTool(getMyOpenDealsTool);
     this.registerTool(getCustomer360Tool);
@@ -33,6 +43,17 @@ export class ToolRegistryService {
     this.registerTool(getLossAnalyticsTool);
     this.registerTool(getVisitsTool);
     this.registerTool(getComplaintsTool);
+
+    // 9 Operational / Transactional Tools (WhatsApp Bot Parity)
+    this.registerTool(updateDealStageTool);
+    this.registerTool(logCustomerVisitTool);
+    this.registerTool(logComplaintTool);
+    this.registerTool(logPaymentTool);
+    this.registerTool(onboardNewCustomerTool);
+    this.registerTool(updateCustomerProfileTool);
+    this.registerTool(logRetentionFollowupTool);
+    this.registerTool(sendQuotationTool);
+    this.registerTool(getDealIdsTool);
   }
 
   registerTool(tool: ChatbotTool) {

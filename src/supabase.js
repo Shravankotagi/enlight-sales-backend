@@ -121,11 +121,15 @@ async function getAccessibleSalespersonPhonesForBot(senderPhone) {
     });
 
     const teamPhones = Array.from(
-      new Set(assigned.map((a) => a.phone).filter(Boolean)),
+      new Set(
+        [employee.phone || senderPhone, ...assigned.map((a) => a.phone)].filter(
+          Boolean,
+        ),
+      ),
     );
     return {
       role: 'sales_manager',
-      phones: teamPhones, // empty array [] if 0 assigned salespersons
+      phones: teamPhones,
       employee,
       isManager: true,
       isAdmin: false,
@@ -520,7 +524,7 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
   try {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
 
-    // 1. Strict Exact match at SQL level (case-insensitive, no substring / wildcards)
+    // 1. Fast exact match at SQL level
     let exactQuery = supabase
       .from('recurring_customers')
       .select('customer_name')
@@ -546,25 +550,112 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
       return exactRows[0].customer_name;
     }
 
-    // 2. If Admin, check company-wide exact match
-    if (scope.isAdmin) {
-      const { data: adminExact } = await supabase
-        .from('recurring_customers')
-        .select('customer_name')
-        .eq('is_active', true)
-        .ilike('customer_name', clean)
-        .limit(1);
-      if (adminExact && adminExact.length > 0) {
-        return adminExact[0].customer_name;
+    // 2. Substring candidate retrieval (scoped, max 15)
+    let subQuery = supabase
+      .from('recurring_customers')
+      .select('customer_name')
+      .eq('is_active', true)
+      .ilike('customer_name', `%${clean}%`)
+      .limit(15);
+
+    if (scope.phones !== null) {
+      if (scope.phones.length === 1) {
+        subQuery = subQuery.eq('assigned_salesperson_phone', scope.phones[0]);
+      } else if (scope.phones.length > 1) {
+        subQuery = subQuery.in('assigned_salesperson_phone', scope.phones);
       }
     }
 
-    // Zero tolerance for fuzzy / partial / substring match: return null if no exact match found
-    return null;
+    let { data: candidateRows } = await subQuery;
+
+    // If Admin and not found in rep scope, try company-wide
+    if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
+      const { data: adminSub } = await supabase
+        .from('recurring_customers')
+        .select('customer_name')
+        .eq('is_active', true)
+        .ilike('customer_name', `%${clean}%`)
+        .limit(15);
+      candidateRows = adminSub;
+    }
+
+    // 3. Word token candidate retrieval for typos or word order differences (max 20 candidates)
+    if (!candidateRows || candidateRows.length === 0) {
+      const stopWords = [
+        'pvt',
+        'ltd',
+        'steel',
+        'company',
+        'corp',
+        'enterprises',
+        'private',
+        'limited',
+        'industries',
+        'works',
+      ];
+      const words = clean
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !stopWords.includes(w.toLowerCase()));
+
+      if (words.length > 0) {
+        const orTokens = words
+          .map((w) => `customer_name.ilike.%${w}%`)
+          .join(',');
+        let wordQuery = supabase
+          .from('recurring_customers')
+          .select('customer_name')
+          .eq('is_active', true)
+          .or(orTokens)
+          .limit(20);
+
+        if (scope.phones !== null) {
+          if (scope.phones.length === 1) {
+            wordQuery = wordQuery.eq(
+              'assigned_salesperson_phone',
+              scope.phones[0],
+            );
+          } else if (scope.phones.length > 1) {
+            wordQuery = wordQuery.in(
+              'assigned_salesperson_phone',
+              scope.phones,
+            );
+          }
+        }
+
+        const { data: wordRows } = await wordQuery;
+        candidateRows = wordRows;
+
+        if ((!candidateRows || candidateRows.length === 0) && scope.isAdmin) {
+          const { data: adminWordRows } = await supabase
+            .from('recurring_customers')
+            .select('customer_name')
+            .eq('is_active', true)
+            .or(orTokens)
+            .limit(20);
+          candidateRows = adminWordRows;
+        }
+      }
+    }
+
+    if (!candidateRows || candidateRows.length === 0) return null;
+
+    const customerList = Array.from(
+      new Set(candidateRows.map((c) => c.customer_name)),
+    );
+
+    // Exact match in candidates
+    const exactMatch = customerList.find(
+      (c) => c.toLowerCase().trim() === clean.toLowerCase(),
+    );
+    if (exactMatch) return exactMatch;
+
+    // Fuzzy match with Gemini only across targeted candidates (max 20)
+    const fuzzyMatch = await fuzzyMatchCustomer(clean, customerList);
+    if (fuzzyMatch) return fuzzyMatch;
   } catch (err) {
     console.error('verifyAndGetCustomerName error:', err.message);
-    return null;
   }
+  return null;
 }
 
 /**
@@ -759,6 +850,37 @@ async function updateCustomerProfileRecord(
 
     if (updateError) throw updateError;
 
+    // Sync updated location / phone / contact person to the customer's latest visit record
+    try {
+      const visitUpdates = {};
+      if (updates.address_or_city)
+        visitUpdates.customer_address = updates.address_or_city;
+      if (updates.phone) visitUpdates.contact_no = updates.phone;
+      if (updates.contact_person)
+        visitUpdates.person_met = updates.contact_person;
+
+      if (Object.keys(visitUpdates).length > 0) {
+        const { data: latestVisit } = await supabase
+          .from('customer_visits')
+          .select('id')
+          .ilike('customer_name', `%${matched.customer_name}%`)
+          .order('visited_at', { ascending: false })
+          .limit(1);
+
+        if (latestVisit && latestVisit.length > 0) {
+          await supabase
+            .from('customer_visits')
+            .update(visitUpdates)
+            .eq('id', latestVisit[0].id);
+        }
+      }
+    } catch (vErr) {
+      console.warn(
+        'Syncing profile update to customer_visits notice:',
+        vErr.message,
+      );
+    }
+
     // Get current assigned rep name for display
     let assignedRepName = targetRepEmployee ? targetRepEmployee.name : null;
     if (!assignedRepName && updatedRecord.assigned_salesperson_phone) {
@@ -775,30 +897,30 @@ async function updateCustomerProfileRecord(
       customer: updatedRecord,
       assignedRepName,
       message:
-        ` *Customer Profile Updated!*\n\n` +
-        ` Company: *${updatedRecord.customer_name}*\n` +
+        `✅ *Customer Profile Updated!*\n\n` +
+        `🏢 Company: *${updatedRecord.customer_name}*\n` +
         (updates.order_frequency_days
-          ? ` Order Frequency: *Every ${updatedRecord.avg_order_frequency_days} days*\n`
+          ? `📅 Order Frequency: *Every ${updatedRecord.avg_order_frequency_days} days*\n`
           : '') +
         (updatedRecord.contact_person
-          ? ` Contact: *${updatedRecord.contact_person}*\n`
+          ? `👤 Contact: *${updatedRecord.contact_person}*\n`
           : '') +
         (updatedRecord.customer_phone
-          ? ` Phone: *${updatedRecord.customer_phone}*\n`
+          ? `📱 Phone: *${updatedRecord.customer_phone}*\n`
           : '') +
         (updatedRecord.customer_address
-          ? ` Location: *${updatedRecord.customer_address}*\n`
+          ? `📍 Location: *${updatedRecord.customer_address}*\n`
           : '') +
         (assignedRepName
-          ? ` Assigned Salesperson: *${assignedRepName}*\n`
+          ? `💼 Assigned Salesperson: *${assignedRepName}*\n`
           : '') +
-        `\n_Updated live on Enlight Sales OS Dashboard!_ `,
+        `\n_Updated live on Enlight Sales OS Dashboard!_ ✅`,
     };
   } catch (err) {
     console.error('updateCustomerProfileRecord error:', err.message);
     return {
       success: false,
-      message: ` Could not update customer: ${err.message}`,
+      message: `❌ Could not update customer: ${err.message}`,
     };
   }
 }
@@ -834,14 +956,14 @@ async function getCustomerMissingInfoPrompt(customerName, senderPhone) {
 
     const customer = data[0];
     const missing = [];
-    if (!customer.customer_phone) missing.push('•  *Mobile Number*');
-    if (!customer.contact_person) missing.push('•  *Contact Person / Owner*');
-    if (!customer.customer_address) missing.push('•  *City / Location*');
-    if (!customer.customer_gst) missing.push('•  *GSTIN* (optional)');
+    if (!customer.customer_phone) missing.push('• *Mobile Number*');
+    if (!customer.contact_person) missing.push('• *Contact Person / Owner*');
+    if (!customer.customer_address) missing.push('• *City / Location*');
+    if (!customer.customer_gst) missing.push('• *GSTIN* (optional)');
 
     if (missing.length > 0) {
       return (
-        `\n\n *Missing profile details for ${customerName}:*\n` +
+        `\n\n*Missing profile details for ${customerName}:*\n` +
         missing.join('\n') +
         `\n\n_(You can update these details anytime by simply replying in your own words, e.g. "Supreme Steel phone is 9876543210 owner Mr. Kapoor" or "Supreme location is Nashik")_`
       );
@@ -862,13 +984,37 @@ async function saveActiveSession(
 ) {
   if (!salespersonPhone || !customerName) return;
   try {
-    const { error } = await supabase.from('conversation_sessions').upsert({
-      salesperson_phone: salespersonPhone,
-      active_customer_name: customerName,
-      last_intent: intent,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) console.error('saveActiveSession error:', error.message);
+    const clean = String(salespersonPhone).replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const variants = p10
+      ? Array.from(new Set([p10, `91${p10}`, `+91${p10}`, clean]))
+      : [clean];
+
+    const { data: existing } = await supabase
+      .from('conversation_sessions')
+      .select('salesperson_phone')
+      .in('salesperson_phone', variants)
+      .limit(1);
+
+    const primaryPhone = `91${p10 || clean}`;
+
+    if (existing && existing.length > 0) {
+      await supabase
+        .from('conversation_sessions')
+        .update({
+          active_customer_name: customerName,
+          last_intent: intent,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('salesperson_phone', existing[0].salesperson_phone);
+    } else {
+      await supabase.from('conversation_sessions').insert({
+        salesperson_phone: primaryPhone,
+        active_customer_name: customerName,
+        last_intent: intent,
+        updated_at: new Date().toISOString(),
+      });
+    }
   } catch (err) {
     console.error('saveActiveSession catch:', err.message);
   }
@@ -894,12 +1040,18 @@ function getStartOfTodayISO() {
 async function getActiveSession(salespersonPhone) {
   if (!salespersonPhone) return null;
   try {
+    const clean = String(salespersonPhone).replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const variants = p10
+      ? Array.from(new Set([p10, `91${p10}`, `+91${p10}`, clean]))
+      : [clean];
     const startOfToday = getStartOfTodayISO();
     const { data, error } = await supabase
       .from('conversation_sessions')
       .select('active_customer_name')
-      .eq('salesperson_phone', salespersonPhone)
+      .in('salesperson_phone', variants)
       .gte('updated_at', startOfToday)
+      .order('updated_at', { ascending: false })
       .limit(1);
 
     if (error) {
@@ -921,12 +1073,18 @@ async function getActiveSession(salespersonPhone) {
 async function getFullActiveSession(salespersonPhone) {
   if (!salespersonPhone) return null;
   try {
+    const clean = String(salespersonPhone).replace(/\D/g, '');
+    const p10 = clean.slice(-10);
+    const variants = p10
+      ? Array.from(new Set([p10, `91${p10}`, `+91${p10}`, clean]))
+      : [clean];
     const startOfToday = getStartOfTodayISO();
     const { data, error } = await supabase
       .from('conversation_sessions')
       .select('*')
-      .eq('salesperson_phone', salespersonPhone)
+      .in('salesperson_phone', variants)
       .gte('updated_at', startOfToday)
+      .order('updated_at', { ascending: false })
       .limit(1);
 
     if (error) {

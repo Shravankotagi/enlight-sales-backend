@@ -20,7 +20,7 @@ You are an expert document parser for Enlight Metals, an Indian B2B metal distri
 Input is a photo, PDF, or text of a business document - either a PURCHASE ORDER (PO) or a MATERIAL REQUIREMENT/INQUIRY/RFQ.
 
 ════════════════════════════════════════════════════
- RULE #1 - PO vs INQUIRY (MOST IMPORTANT RULE):
+🔴 RULE #1 - PO vs INQUIRY (MOST IMPORTANT RULE):
 ════════════════════════════════════════════════════
 
 STEP 1: Scan the ENTIRE document for a field explicitly labeled:
@@ -36,22 +36,22 @@ STEP 2B - If NO such label exists, OR the document says "Inquiry", "RFQ", "Quota
   → Set po_number: null
   → This is an INQUIRY/RFQ, NOT a purchase order.
 
-  IMPORTANT: "Ref No", "Inquiry Ref", "Quotation Ref", "Our Ref", "Your Ref", "PR No." are NOT PO numbers.
+⚠️  IMPORTANT: "Ref No", "Inquiry Ref", "Quotation Ref", "Our Ref", "Your Ref", "PR No." are NOT PO numbers.
     Only fields explicitly labeled PO No / Purchase Order No / Order No qualify.
     When in doubt → inquiry_type: "inquiry", po_number: null.
 
 ════════════════════════════════════════════════════
- RULE #2 - CUSTOMER / COMPANY NAME vs ADDRESS:
+🔴 RULE #2 - CUSTOMER / COMPANY NAME vs ADDRESS:
 ════════════════════════════════════════════════════
 
 1. CUSTOMER COMPANY NAME (customer.name):
    - In Purchase Orders, the Customer is the BUYER who issued the PO (found under "Invoice To:", "Bill To:", "Buyer:", "Customer:", "M/s:").
    - The Customer Name is STRICTLY the Legal Company / Enterprise Name on the FIRST line under "Invoice To:" (e.g. "SB Scafform Technovert Pvt. Ltd.", "ABC Fabricators Pvt. Ltd.").
-   -  CRITICAL: NEVER include the building name, commercial complex, industrial estate, plot number, road, or city name in the customer name!
+   - ⚠️ CRITICAL: NEVER include the building name, commercial complex, industrial estate, plot number, road, or city name in the customer name!
      * Example: "Akshar Business Park, Office No - 1068, 1st Floor, Turbhe Navi Mumbai" is the OFFICE/BUILDING ADDRESS, NOT the company name.
      * Correct customer.name: "SB Scafform Technovert Pvt. Ltd."
      * INCORRECT: "Akshar Technovart Pvt. Ltd." or "Akshar Business Park".
-   -  CRITICAL: The Supplier / Seller is "Enlight Metals Private Limited" (our own company). NEVER set "Enlight Metals" as the customer.name!
+   - ⚠️ CRITICAL: The Supplier / Seller is "Enlight Metals Private Limited" (our own company). NEVER set "Enlight Metals" as the customer.name!
 
 2. CUSTOMER BILLING ADDRESS (customer.address):
    - The street/building/city address under "Invoice To:" (e.g. "Akshar Business Park, Office No - 1068, 1st Floor, U - Wing Plot No - 03, Sector - 25, Turbhe, Navi Mumbai, PIN: 400703").
@@ -62,7 +62,7 @@ STEP 2B - If NO such label exists, OR the document says "Inquiry", "RFQ", "Quota
 4. DELIVERY LOCATION (delivery_location):
    - In Purchase Orders, extract delivery_location STRICTLY from the "Delivery Address:" / "Ship To:" / "Consignee Address:" section.
    - Format cleanly as the destination site/city (e.g. "Gat No / Plot No PAP V - 149/2, Village Vasuli, Taluka Khed, Pune, PIN: 410501").
-   -  NEVER include Enlight Metals' supplier address, supplier PIN (411048), or billing office in the delivery_location!
+   - ⚠️ NEVER include Enlight Metals' supplier address, supplier PIN (411048), or billing office in the delivery_location!
 
 5. LINE ITEMS & UNITS (line_items):
    - Extract exact quantity and EXACT UOM (unit of measure) stated in the line item table.
@@ -287,51 +287,87 @@ async function extractFromText(text) {
   }
 }
 
-async function extractFromImage(imageBuffer, mimeType) {
+async function extractFromImageOrDoc(buffer, mimeType) {
   try {
+    const axios = require('axios');
     const apiKey =
       process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
-    const model = new ChatGoogleGenerativeAI({
-      model: 'gemini-2.5-flash',
-      apiKey: apiKey,
-      temperature: 0.1,
-    });
-    const base64Img = imageBuffer.toString('base64');
-    const imageUrl = `data:${mimeType || 'image/jpeg'};base64,${base64Img}`;
+    if (!apiKey) {
+      throw new Error('GEMINI API key missing');
+    }
 
-    const message = new HumanMessage({
-      content: [
-        { type: 'text', text: EXTRACTION_PROMPT },
-        { type: 'image_url', image_url: { url: imageUrl } },
-      ],
-    });
+    const cleanBase64 = buffer.toString('base64');
+    const cleanMime = mimeType || 'application/pdf';
 
-    const response = await model.invoke([message]);
-    const rawText = (
-      typeof response.content === 'string'
-        ? response.content
-        : JSON.stringify(response.content)
-    ).trim();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    // Using gemini-2.5-flash - highest accuracy multimodal model for PO vs Inquiry differentiation
 
+    const response = await axios.post(
+      url,
+      {
+        system_instruction: {
+          parts: [
+            {
+              text: `You are a document classifier for Enlight Metals (Indian B2B metal distributor).
+CRITICAL: Before you do ANYTHING else, scan the document for a field labeled "PO No", "P.O. No", "PO Number", "Purchase Order No", or "Purchase Order Number".
+- If that label EXISTS with a value → inquiry_type MUST be "purchase_order" and po_number MUST be set to that value.
+- If that label does NOT exist → inquiry_type MUST be "inquiry" and po_number MUST be null.
+"Ref No", "Inquiry Ref", "Quotation Ref" are NOT PO numbers. Never confuse them with a PO Number.
+Return ONLY a valid JSON object. No markdown, no prose, no backticks.`,
+            },
+          ],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: EXTRACTION_PROMPT },
+              {
+                inline_data: {
+                  mime_type: cleanMime,
+                  data: cleanBase64,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.05,
+          response_mime_type: 'application/json',
+        },
+      },
+      { timeout: 35000 },
+    );
+
+    const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
     const parsed = safeParseJSON(rawText, null);
     if (!parsed)
-      throw new Error(
-        'Could not parse image extraction from Gemini vision response',
-      );
+      throw new Error('Could not parse JSON from Gemini vision response');
     const postProcessed = postProcessExtraction(parsed);
     console.log(
-      'Gemini image extraction successful:',
+      'Gemini document/image extraction successful:',
       JSON.stringify(postProcessed, null, 2),
     );
     return postProcessed;
   } catch (error) {
-    console.error('Gemini image extraction error:', error.message);
+    console.error('Gemini vision extraction error:', error.message);
     return {
       overall_confidence: 0,
       inquiry_type: 'unknown',
       error: error.message,
     };
   }
+}
+
+async function extractFromImage(imageBuffer, mimeType) {
+  return extractFromImageOrDoc(imageBuffer, mimeType || 'image/jpeg');
+}
+
+async function extractFromDocument(
+  documentBuffer,
+  mimeType = 'application/pdf',
+) {
+  return extractFromImageOrDoc(documentBuffer, mimeType || 'application/pdf');
 }
 
 const INTENT_PROMPT = `
@@ -464,6 +500,7 @@ DATA & RBAC QUERIES:
 - "loss_analytics": Questions asking for lost deal analysis or why deals were lost.
 - "team_pipeline": Questions from managers/admins asking for overall team pipeline or subordinates' deals.
 - "inactive_customers": Questions asking for inactive recurring customer accounts.
+- "deal_id_lookup": Questions asking for the Inquiry ID, inquiry IDs, deal numbers, or active inquiry codes for a company or asking "What is the inquiry ID?" / "What is the deal ID?" (e.g. "What is the inquiry ID for Radhe Ispat?", "Inquiry ID for Apex Steel", "Give me inquiry ID", "Deal ID", "Inquiry ID", "Show inquiry IDs", "Find inquiry ID for Supreme Steel", "Inquiry code of Mehta").
 - "dashboard_link", "sales_summary", "kra_status", "visit_summary", "payment_summary", "complaint_summary", "full_report", "deals_this_week", "pending_deals", "pending_inquiries", "new_customers_summary", "won_customers", "active_deals_detail", "customer_list", "rate_sheet", "visit_list", "payment_aging", "lost_deals"
 
 ASSISTANT QUERIES: "general"
@@ -499,6 +536,7 @@ async function classifyQueryType(text) {
 module.exports = {
   extractFromText,
   extractFromImage,
+  extractFromDocument,
   classifyIntent,
   classifyQueryType,
 };

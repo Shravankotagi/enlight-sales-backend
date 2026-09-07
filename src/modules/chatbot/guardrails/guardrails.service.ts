@@ -73,6 +73,13 @@ export class GuardrailsService {
     const text = input.trim();
     if (!text) return { safe: true };
 
+    // Conversational multi-turn decision tokens and short operational options must never be blocked as out_of_scope
+    const MULTI_TURN_SHORT_TOKENS =
+      /^(?:[1-9]|10|yes|no|y|n|confirm|proceed|cancel|ok|okay|option\s*[1-9])$/i;
+    if (MULTI_TURN_SHORT_TOKENS.test(text)) {
+      return { safe: true };
+    }
+
     const apiKey =
       process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
 

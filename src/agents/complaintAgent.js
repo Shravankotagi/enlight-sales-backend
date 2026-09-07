@@ -186,22 +186,27 @@ async function resolveProductFromContext(
   if (dealId) {
     try {
       const cleanDeal = String(dealId)
-        .replace(/^#?DEAL-/i, '')
+        .replace(/^#?(?:DEAL|INQ)-?/i, '')
         .trim()
-        .toLowerCase();
+        .toUpperCase();
       const { data: dealRows } = await supabase
         .from('deals')
         .select('id, deal_items(sku_text, dimensions, quantity, unit)')
-        .or(`id.eq.${cleanDeal},id.ilike.${cleanDeal}%`)
-        .limit(1);
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      const foundDeal = (dealRows || []).find(
+        (d) =>
+          (d.id || '').toUpperCase().startsWith(cleanDeal) ||
+          (d.id || '').replace(/-/g, '').toUpperCase().startsWith(cleanDeal),
+      );
 
       if (
-        dealRows &&
-        dealRows.length > 0 &&
-        dealRows[0].deal_items &&
-        dealRows[0].deal_items.length > 0
+        foundDeal &&
+        foundDeal.deal_items &&
+        foundDeal.deal_items.length > 0
       ) {
-        const items = dealRows[0].deal_items;
+        const items = foundDeal.deal_items;
         const itemSummaries = items.map((it) => {
           let s = it.sku_text || 'Steel Item';
           if (it.dimensions) s += ` ${it.dimensions}`;

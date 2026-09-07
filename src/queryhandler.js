@@ -38,6 +38,12 @@ function checkOperationalAction(lowerText) {
     ) ||
     /\b(new customer|add customer|onboard customer|register customer)\b/i.test(
       lowerText,
+    ) ||
+    /\b(location|city|address|gst|gstin|gst number|contact person|owner|phone|mobile|phone number|mobile number|order frequency|frequency|reorder days|order cycle|reassign customer|change frequency)\b/i.test(
+      lowerText,
+    ) ||
+    /^(?:location\s*[-:]|gst\s*(?:no|number)?\s*[-:]|phone\s*[-:]|owner\s*[-:]|contact\s*(?:no|number|numeber)?\s*[-:])/i.test(
+      lowerText,
     )
   );
 }
@@ -598,7 +604,7 @@ async function getSalesThisMonth(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` *Team Sales Summary - ${monthName} ${year}*\n\n No sales data found. You currently have no salespersons assigned to your team.`;
+      return `📊 *Team Sales Summary - ${monthName} ${year}*\n\n📋 No sales data found. You currently have no salespersons assigned to your team.`;
     }
 
     // Match Dashboard logic: includes deals created in month OR won in month
@@ -643,21 +649,306 @@ async function getSalesThisMonth(scopeOrPhone, text = '') {
           : 'Sales Summary';
 
     return (
-      ` *${title} - ${monthName} ${year}*\n\n` +
-      ` *Won Sales Achievement:*\n` +
+      `📊 *${title} - ${monthName} ${year}*\n\n` +
+      `🏆 *Won Sales Achievement:*\n` +
       `• Won Revenue: *${formatINR(wonRevenue)}*\n` +
       `• Won Orders: *${wonDealsCount}*\n` +
       (wonTonnage > 0
         ? `• Delivered Volume: *${wonTonnage.toLocaleString('en-IN')} MT*\n`
         : '') +
-      `\n *Pipeline Activity:*\n` +
+      `\n📋 *Pipeline Activity:*\n` +
       `• Deals Created: ${totalCreatedDeals}\n` +
       `• Total Pipeline Value: ${formatINR(totalPipelineValue)}\n\n` +
       `_Data from Enlight Sales OS_`
     );
   } catch (error) {
     console.error('getSalesThisMonth error:', error);
-    return ' Could not fetch sales data. Please try again.';
+    return '❌ Could not fetch sales data. Please try again.';
+  }
+}
+
+async function getDealIdsForCompany(
+  scopeOrPhone,
+  text = '',
+  explicitCustomer = null,
+) {
+  try {
+    const supabase = getSupabase();
+    const scope =
+      typeof scopeOrPhone === 'object' && scopeOrPhone !== null
+        ? scopeOrPhone
+        : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
+
+    const senderPhone =
+      typeof scopeOrPhone === 'string'
+        ? scopeOrPhone
+        : scope.phones && scope.phones[0];
+
+    // 1. Resolve Customer Name from explicit arg or natural language text
+    let customerName = explicitCustomer;
+
+    const INVALID_COMPANY_TOKENS = new Set([
+      'the',
+      'this',
+      'that',
+      'any',
+      'my',
+      'all',
+      'a',
+      'an',
+      'company',
+      'customer',
+      'me',
+      'us',
+      'today',
+      'please',
+      'kya',
+      'hai',
+      'chahiye',
+      'bhai',
+      'mujhe',
+      'code',
+      'codes',
+      'id',
+      'ids',
+      'number',
+      'numbers',
+      'no',
+      'details',
+      'deal',
+      'deals',
+      'inquiry',
+      'inquiries',
+      'order',
+      'orders',
+      'share',
+      'give',
+      'tell',
+      'show',
+      'ref',
+      'which',
+      'what',
+      'how',
+      'who',
+      'where',
+      'why',
+      'when',
+      'is',
+      'was',
+      'are',
+      'were',
+    ]);
+
+    function isValidCompanyName(name) {
+      if (!name || name.trim().length < 2) return false;
+      const lower = name.toLowerCase().trim();
+      if (INVALID_COMPANY_TOKENS.has(lower)) return false;
+      const tokens = lower.split(/\s+/);
+      const nonInvalidTokens = tokens.filter(
+        (t) => !INVALID_COMPANY_TOKENS.has(t),
+      );
+      return nonInvalidTokens.length > 0;
+    }
+
+    if (!customerName && text) {
+      const cleanText = text.trim();
+
+      // Check for "<Company> deal (id/code/number)" e.g. "radhe ispat deal code" or "radhe ispat ka deal number"
+      const matchBefore = cleanText.match(
+        /([A-Za-z0-9\s&.-]{2,40}?)\s+(?:ka|ki|ke)?\s*(?:deal|inquiry|order|reference)\s*(?:ids?|numbers?|codes?|no)/i,
+      );
+      if (matchBefore && matchBefore[1]) {
+        let cand = matchBefore[1]
+          .replace(
+            /^(?:which\s+|what\s+is\s+(?:the\s+)?|what\s+|where\s+is\s+(?:the\s+)?|give\s+me\s+(?:the\s+)?|show\s+(?:me\s+)?(?:the\s+)?|get\s+(?:the\s+)?|tell\s+me\s+(?:the\s+)?|find\s+(?:the\s+)?|please\s+|can\s+you\s+(?:give\s+|show\s+|tell\s+|share\s+)?(?:me\s+)?(?:with\s+me\s+)?|bhai\s+|mujhe\s+)/i,
+            '',
+          )
+          .trim();
+        cand = cand
+          .replace(/\b(ka|ki|ke|kya|hai|batao|dena|de\s*do)\b/gi, '')
+          .trim();
+        if (isValidCompanyName(cand)) {
+          customerName = cand;
+        }
+      }
+
+      // Check for "deal (id/code/number) [verbs/prepositions] <Company>" e.g. "deal id was created for radhe ispat" or "deal id for radhe ispat"
+      if (!customerName) {
+        const matchForOf = cleanText.match(
+          /(?:deal|inquiry|order|reference)\s*(?:ids?|numbers?|codes?|no)?(?:\s+(?:was|is|created|generated|given|assigned|for|of|from|to|ka|ki|ke|de|dena|batao))+\s+([A-Za-z0-9\s&.-]{2,40})/i,
+        );
+        if (matchForOf && matchForOf[1]) {
+          let cand = matchForOf[1]
+            .replace(
+              /\b(kya\s*hai|hai|batao|dena|de\s*do|please|bhai|chahiye)\b/gi,
+              '',
+            )
+            .trim();
+          cand = cand.replace(/^(?:for|of|from|to|in|at)\s+/i, '').trim();
+          if (isValidCompanyName(cand)) {
+            customerName = cand;
+          }
+        }
+      }
+
+      // LLM semantic entity extraction fallback for complex/colloquial phrasing
+      if (!customerName && cleanText.split(/\s+/).length >= 2) {
+        try {
+          const { callLightweightModel } = require('./gemini');
+          const prompt = `Extract the customer or company name from this sales message if present. If no company is mentioned, return "NONE".
+Message: "${cleanText}"
+Return ONLY the company name or "NONE":`;
+          const ans = await callLightweightModel(prompt);
+          const cleanAns = ans.replace(/["'\n\r]/g, '').trim();
+          if (isValidCompanyName(cleanAns) && cleanAns !== 'NONE') {
+            customerName = cleanAns;
+          }
+        } catch (llmErr) {
+          // ignore
+        }
+      }
+    }
+
+    // 2. If no customer name found in message, check active conversation session
+    if (!customerName && senderPhone) {
+      const { getActiveSession } = require('./supabase');
+      const activeCust = await getActiveSession(senderPhone);
+      if (activeCust && activeCust !== 'Unknown' && activeCust.length >= 2) {
+        customerName = activeCust;
+      }
+    }
+
+    // 3. If still no company name, prompt the user for the company name
+    if (!customerName || customerName.trim().length < 2) {
+      if (senderPhone) {
+        const { saveActiveSession } = require('./supabase');
+        await saveActiveSession(
+          senderPhone,
+          'Unknown',
+          'pending_company_for_deal_lookup',
+        );
+      }
+      return `❓ Which company's Inquiry ID would you like to retrieve? Please reply with the customer/company name (e.g. _"Inquiry ID for Radhe Ispat"_).`;
+    }
+
+    // 4. Query deals in Supabase
+    let query = supabase
+      .from('deals')
+      .select('*, deal_items(*)')
+      .ilike('customer_name', `%${customerName.trim()}%`)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    query = applySalespersonFilter(query, scope.phones, 'salesperson_phone');
+
+    let { data: deals, error } = await query;
+    if (error) throw error;
+
+    // If no deals found with exact substring, try word token matching (e.g. "Radhe" -> "Radhe Ispat")
+    if (!deals || deals.length === 0) {
+      const words = customerName
+        .trim()
+        .split(/\s+/)
+        .filter(
+          (w) =>
+            w.length > 2 &&
+            ![
+              'pvt',
+              'ltd',
+              'steel',
+              'company',
+              'enterprises',
+              'industries',
+            ].includes(w.toLowerCase()),
+        );
+      if (words.length > 0) {
+        const orClause = words
+          .map((w) => `customer_name.ilike.%${w}%`)
+          .join(',');
+        let wordQuery = supabase
+          .from('deals')
+          .select('*, deal_items(*)')
+          .or(orClause)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        wordQuery = applySalespersonFilter(
+          wordQuery,
+          scope.phones,
+          'salesperson_phone',
+        );
+        const { data: wordDeals } = await wordQuery;
+        if (wordDeals && wordDeals.length > 0) {
+          deals = wordDeals;
+        }
+      }
+    }
+
+    if (!deals || deals.length === 0) {
+      return `📋 *No Inquiries Found*\n\nNo inquiries or deals found for *${customerName}* in your pipeline.`;
+    }
+
+    const { saveActiveSession } = require('./supabase');
+    if (senderPhone && deals[0].customer_name) {
+      await saveActiveSession(
+        senderPhone,
+        deals[0].customer_name,
+        'deal_inquiry',
+      );
+    }
+
+    const dealCards = deals.map((d, i) => {
+      const cleanNum = d.deal_number
+        ? d.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
+        : d.id
+          ? d.id.substring(0, 6).toUpperCase()
+          : 'UNKNOWN';
+      const dealCode = `#INQ-${cleanNum}`;
+      const stageStr = (d.stage || 'new_inquiry').toUpperCase();
+      const items = d.deal_items || [];
+      let itemStr = '';
+      if (items.length > 0) {
+        const itemLines = items.map((it) => {
+          const name = it.sku_text || 'Steel Item';
+          const dim = it.dimensions ? ` (${it.dimensions})` : '';
+          const qty = it.quantity ? ` - ${it.quantity} ${it.unit || 'MT'}` : '';
+          const rate = it.rate
+            ? ` @ Rs. ${Number(it.rate).toLocaleString('en-IN')}`
+            : '';
+          return `   • *${name}*${dim}${qty}${rate}`;
+        });
+        itemStr = itemLines.join('\n');
+      } else {
+        itemStr = `   • Product: *${d.inquiry_type || 'Steel Requirement'}*`;
+      }
+
+      const poStr = d.po_number ? `\n   • PO: *${d.po_number}*` : '';
+      const amountStr =
+        d.total_amount && Number(d.total_amount) > 0
+          ? `\n   • Total Value: *Rs. ${Number(d.total_amount).toLocaleString('en-IN')}*`
+          : '';
+
+      return (
+        `${i + 1}. *${dealCode}*\n` +
+        `   Stage: *${stageStr}*${amountStr}${poStr}\n` +
+        itemStr
+      );
+    });
+
+    const displayCustName = deals[0].customer_name || customerName;
+    const sampleInqCode = deals[0].deal_number
+      ? `#INQ-${deals[0].deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')}`
+      : deals[0].id
+        ? `#INQ-${deals[0].id.substring(0, 6).toUpperCase()}`
+        : '#INQ-XXXXXX';
+
+    return (
+      `📋 *Active Inquiries & Deals - ${displayCustName}* (${deals.length} found)\n\n` +
+      dealCards.join('\n\n') +
+      `\n\n💡 *Tip:* To update any inquiry, reply with the Inquiry ID (e.g. _"${sampleInqCode} mark as quoted"_).`
+    );
+  } catch (error) {
+    console.error('getDealIdsForCompany error:', error);
+    return `❌ Could not fetch inquiry IDs: ${error.message}`;
   }
 }
 
@@ -670,7 +961,7 @@ async function getPendingDeals(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No pending deals found. You currently have no salespersons assigned to your team.';
+      return '✅ No pending deals found. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -686,7 +977,7 @@ async function getPendingDeals(scopeOrPhone) {
     if (error) throw error;
 
     if (!deals || deals.length === 0) {
-      return ' No pending deals right now!';
+      return '✅ No pending deals right now!';
     }
 
     const dealList = deals
@@ -706,10 +997,10 @@ async function getPendingDeals(scopeOrPhone) {
           ? 'Team Pending Deals'
           : 'Pending Deals';
 
-    return ` *${title} (${deals.length})*\n\n${dealList}\n\n_Showing latest 10_`;
+    return `📋 *${title} (${deals.length})*\n\n${dealList}\n\n_Showing latest 10_`;
   } catch (error) {
     console.error('getPendingDeals error:', error);
-    return ' Could not fetch pending deals.';
+    return '❌ Could not fetch pending deals.';
   }
 }
 
@@ -814,7 +1105,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` *Team Inquiries - ${monthName} ${year}*\n\n0 inquiries found. You currently have no salespersons assigned to your team.`;
+      return `📥 *Team Inquiries - ${monthName} ${year}*\n\n0 inquiries found. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -861,7 +1152,7 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
           : 'My Inquiries';
 
     if (totalCount === 0) {
-      return ` *${title} - ${monthName} ${year}*\n\nWe haven't received any product inquiries yet for ${monthName} ${year}.`;
+      return `📥 *${title} - ${monthName} ${year}*\n\nWe haven't received any product inquiries yet for ${monthName} ${year}.`;
     }
 
     const lower = (text || '').toLowerCase();
@@ -882,12 +1173,12 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
 
     if (isChannelBreakdownQuery) {
       return (
-        ` *${title} by Source Channel - ${monthName} ${year}*\n\n` +
+        `📥 *${title} by Source Channel - ${monthName} ${year}*\n\n` +
         `Total inquiries received: *${inqWord(totalCount)}*\n\n` +
-        ` *Source Channel Breakdown:*\n` +
+        `📊 *Source Channel Breakdown:*\n` +
         `• WhatsApp Entry: *${inqWord(channelBreakdown['WhatsApp Entry'])}*\n` +
         `• Dashboard Entry: *${inqWord(channelBreakdown['Dashboard Entry'])}*\n\n` +
-        ` *Total: ${inqWord(totalCount)}*\n\n` +
+        `💰 *Total: ${inqWord(totalCount)}*\n\n` +
         `_Directly synced with Enlight Sales OS Inquiries_`
       );
     }
@@ -902,12 +1193,12 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         lower.includes('kitni'))
     ) {
       return (
-        ` *${title} - In Review (${monthName} ${year})*\n\n` +
+        `📥 *${title} - In Review (${monthName} ${year})*\n\n` +
         `You currently have *${reviewCount} inquiries in review / pending* out of *${inqWord(totalCount)}* received this month.\n\n` +
-        ` *Inquiry Status Breakdown:*\n` +
+        `📊 *Inquiry Status Breakdown:*\n` +
         `• In Review / Pending: *${reviewCount}*\n` +
         `• Processed / Confirmed: *${processedCount}*\n\n` +
-        ` _Tip: Say "List pending inquiries" to inspect pending items or review on the dashboard._`
+        `💡 _Tip: Say "List pending inquiries" to inspect pending items or review on the dashboard._`
       );
     }
 
@@ -921,9 +1212,9 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
         lower.includes('kitni'))
     ) {
       return (
-        ` *${title} - Processed Inquiries (${monthName} ${year})*\n\n` +
-        `*${processedCount} inquiries* have been successfully processed and confirmed out of *${inqWord(totalCount)}* this month. \n\n` +
-        ` *Inquiry Status Breakdown:*\n` +
+        `📥 *${title} - Processed Inquiries (${monthName} ${year})*\n\n` +
+        `*${processedCount} inquiries* have been successfully processed and confirmed out of *${inqWord(totalCount)}* this month. 🎉\n\n` +
+        `📊 *Inquiry Status Breakdown:*\n` +
         `• Processed / Confirmed: *${processedCount}*\n` +
         `• In Review / Pending: *${reviewCount}*`
       );
@@ -938,9 +1229,9 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
       lower.includes('total tons')
     ) {
       return (
-        ` *${title} - Total Inquiry Tonnage (${monthName} ${year})*\n\n` +
+        `📥 *${title} - Total Inquiry Tonnage (${monthName} ${year})*\n\n` +
         `Total volume across all inquiries this month is *${totalTonnage.toLocaleString('en-IN')} MT* across *${inqWord(totalCount)}*.\n\n` +
-        ` *Inquiry Breakdown:*\n` +
+        `📊 *Inquiry Breakdown:*\n` +
         `• Total Inquiries: *${totalCount}*\n` +
         `• Processed: *${processedCount}*\n` +
         `• In Review: *${reviewCount}*\n` +
@@ -950,22 +1241,22 @@ async function getInquiriesThisMonth(scopeOrPhone, text = '') {
 
     // General inquiry breakdown & summary
     return (
-      ` *${title} - ${monthName} ${year}*\n\n` +
+      `📥 *${title} - ${monthName} ${year}*\n\n` +
       `We've received *${inqWord(totalCount)}* this month! That's a great volume of customer demand.\n\n` +
-      ` *Inquiry Status Breakdown:*\n` +
+      `📊 *Inquiry Status Breakdown:*\n` +
       `• Processed: *${processedCount}*\n` +
       `• In Review: *${reviewCount}*\n` +
       (totalTonnage > 0
         ? `• Total Volume: *${totalTonnage.toLocaleString('en-IN')} MT*\n\n`
         : '\n') +
-      ` *Source Channel Breakdown:*\n` +
+      `📱 *Source Channel Breakdown:*\n` +
       `• WhatsApp Entry: *${channelBreakdown['WhatsApp Entry']}*\n` +
       `• Dashboard Entry: *${channelBreakdown['Dashboard Entry']}*\n\n` +
       `_Directly synced with Enlight Sales OS Inquiries_`
     );
   } catch (error) {
     console.error('getInquiriesThisMonth error:', error);
-    return ' Could not fetch inquiry count.';
+    return '❌ Could not fetch inquiry count.';
   }
 }
 
@@ -978,7 +1269,7 @@ async function getPendingInquiries(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No inquiries pending review. You currently have no salespersons assigned to your team.';
+      return '✅ No inquiries pending review. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -994,7 +1285,7 @@ async function getPendingInquiries(scopeOrPhone) {
     if (error) throw error;
 
     if (!inquiries || inquiries.length === 0) {
-      return ' No inquiries pending review!';
+      return '✅ No inquiries pending review!';
     }
 
     const list = inquiries
@@ -1014,10 +1305,10 @@ async function getPendingInquiries(scopeOrPhone) {
           ? 'Team Inquiries Needing Review'
           : 'Inquiries Needing Review';
 
-    return ` *${title} (${inquiries.length})*\n\n${list}`;
+    return `⚠️ *${title} (${inquiries.length})*\n\n${list}`;
   } catch (error) {
     console.error('getPendingInquiries error:', error);
-    return ' Could not fetch inquiries.';
+    return '❌ Could not fetch inquiries.';
   }
 }
 
@@ -1031,7 +1322,7 @@ async function getDealsThisWeek(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No deals logged this week. You currently have no salespersons assigned to your team.';
+      return '📋 No deals logged this week. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -1047,7 +1338,7 @@ async function getDealsThisWeek(scopeOrPhone) {
     if (error) throw error;
 
     if (!deals || deals.length === 0) {
-      return ' No deals logged this week yet.';
+      return '📋 No deals logged this week yet.';
     }
 
     const totalAmount = deals.reduce(
@@ -1071,12 +1362,12 @@ async function getDealsThisWeek(scopeOrPhone) {
           : "This Week's Deals";
 
     return (
-      ` *${title} (${deals.length})*\n\n${list}\n\n` +
-      ` *Total: ${formatINR(totalAmount)}*`
+      `📊 *${title} (${deals.length})*\n\n${list}\n\n` +
+      `💰 *Total: ${formatINR(totalAmount)}*`
     );
   } catch (error) {
     console.error('getDealsThisWeek error:', error);
-    return ' Could not fetch this week deals.';
+    return '❌ Could not fetch this week deals.';
   }
 }
 
@@ -1090,7 +1381,7 @@ async function getKRAStatus(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` *Team KRA Status - ${monthName} ${year}*\n\n You currently have no salespersons assigned to your team. Contact an administrator to assign sales team members.`;
+      return `🎯 *Team KRA Status - ${monthName} ${year}*\n\n📋 You currently have no salespersons assigned to your team. Contact an administrator to assign sales team members.`;
     }
 
     let dealsQuery = supabase
@@ -1290,30 +1581,30 @@ async function getKRAStatus(scopeOrPhone, text = '') {
           : 'Performance Scorecard';
 
     return (
-      ` *${title} - ${monthName} ${year}*\n\n` +
-      ` *Sales Achievement Card*\n` +
+      `🎯 *${title} - ${monthName} ${year}*\n\n` +
+      `📋 *Sales Achievement Card*\n` +
       `   Won Revenue: *${formatINR(wonValue)}* | Orders: *${wonCount}*` +
       (wonTonnage > 0
         ? ` | Volume: *${wonTonnage.toLocaleString('en-IN')} MT*`
         : '') +
       `\n\n` +
-      ` *New Customer Acquisition Card*\n` +
+      `👥 *New Customer Acquisition Card*\n` +
       `   Acquired: *${newCustomersCount}/3* new customers\n\n` +
-      ` *Customer Retention Card*\n` +
+      `🔄 *Customer Retention Card*\n` +
       `   Active Accounts: *${uniqueRecurringWithOrder}/${recurring.length}* (${retentionRate}%)\n\n` +
-      ` *Enquiry Conversion Card*\n` +
+      `📈 *Enquiry Conversion Card*\n` +
       `   Inquiries: *${totalDealsCount}* | Won: *${wonCount}* | Rate: *${conversionRate}%*\n\n` +
-      ` *Payment Collection Card*\n` +
+      `💵 *Payment Collection Card*\n` +
       `   Collected: *${formatINR(totalCollected)}* | Outstanding: *${formatINR(totalOutstanding)}*\n\n` +
-      ` *Customer Complaints Card*\n` +
+      `⚠️ *Customer Complaints Card*\n` +
       `   Total Logged: *${complaints.length}* | Open: *${openComplaints.length}*\n\n` +
-      ` *Customer Visits Card*\n` +
+      `📍 *Customer Visits Card*\n` +
       `   Total Visits: *${totalVisits}* (Target: 10/wk)\n\n` +
       `_Full live metrics verified with Enlight Sales OS Dashboard_`
     );
   } catch (error) {
     console.error('getKRAStatus error:', error);
-    return ' Could not fetch KRA status.';
+    return '❌ Could not fetch KRA status.';
   }
 }
 
@@ -1328,7 +1619,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` No won deals found for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
+      return `📋 No won deals found for ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1344,7 +1635,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return ` No won deals found for ${monthName} ${year}.`;
+      return `📋 No won deals found for ${monthName} ${year}.`;
     }
 
     let srNo = 1;
@@ -1354,7 +1645,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
       const poStr = deal.po_number ? ` (PO: ${deal.po_number})` : '';
       if (items.length === 0) {
         lines.push(
-          `${srNo++}. *${deal.customer_name}*${poStr}\n    Value: ${formatINR(deal.total_amount)}`,
+          `${srNo++}. *${deal.customer_name}*${poStr}\n   💰 Value: ${formatINR(deal.total_amount)}`,
         );
       } else {
         const itemLines = items
@@ -1366,7 +1657,7 @@ async function getWonCustomers(scopeOrPhone, text = '') {
           )
           .join('\n');
         lines.push(
-          `${srNo++}. *${deal.customer_name}*${poStr}\n${itemLines}\n    *Total: ${formatINR(deal.total_amount)}*`,
+          `${srNo++}. *${deal.customer_name}*${poStr}\n${itemLines}\n   💰 *Total: ${formatINR(deal.total_amount)}*`,
         );
       }
     }
@@ -1389,16 +1680,16 @@ async function getWonCustomers(scopeOrPhone, text = '') {
           : 'Won Deals';
 
     return (
-      ` *${title} - ${monthName} ${year}* (${deals.length} won orders)\n\n` +
+      `🏆 *${title} - ${monthName} ${year}* (${deals.length} won orders)\n\n` +
       lines.join('\n\n') +
-      `\n\n *Total Won Revenue: ${formatINR(totalValue)}*` +
+      `\n\n💰 *Total Won Revenue: ${formatINR(totalValue)}*` +
       (totalTonnage > 0
-        ? `\n *Total Volume: ${totalTonnage.toLocaleString('en-IN')} MT*`
+        ? `\n📦 *Total Volume: ${totalTonnage.toLocaleString('en-IN')} MT*`
         : '')
     );
   } catch (err) {
     console.error('getWonCustomers error:', err.message);
-    return ' Could not fetch won customers.';
+    return '❌ Could not fetch won customers.';
   }
 }
 
@@ -1412,7 +1703,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No active deals in pipeline. You currently have no salespersons assigned to your team.';
+      return '✅ No active deals in pipeline. You currently have no salespersons assigned to your team.';
     }
 
     let query = supabase
@@ -1426,7 +1717,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return ' No active deals in pipeline right now.';
+      return '✅ No active deals in pipeline right now.';
     }
 
     const lines = deals.map((d, i) => {
@@ -1435,7 +1726,7 @@ async function getActiveDealsDetail(scopeOrPhone) {
           (it) => `     • ${it.sku_text || 'Item'}: ${it.quantity} ${it.unit}`,
         )
         .join('\n');
-      return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n    ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
+      return `${i + 1}. *${d.customer_name}* [${d.stage}]\n${items || '     (no items yet)'}\n   💰 ${d.total_amount > 0 ? formatINR(d.total_amount) : 'TBD'}`;
     });
 
     const title = scope.targetRepName
@@ -1446,10 +1737,10 @@ async function getActiveDealsDetail(scopeOrPhone) {
           ? 'Team Active Pipeline Deals'
           : 'Active Pipeline Deals';
 
-    return ` *${title} (${deals.length})*\n\n` + lines.join('\n\n');
+    return `📋 *${title} (${deals.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getActiveDealsDetail error:', err.message);
-    return ' Could not fetch active deals.';
+    return '❌ Could not fetch active deals.';
   }
 }
 
@@ -1463,7 +1754,7 @@ async function getCustomerList(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No customers registered under your assigned sales team yet.';
+      return '👥 No customers registered under your assigned sales team yet.';
     }
 
     let query = supabase
@@ -1484,15 +1775,15 @@ async function getCustomerList(scopeOrPhone) {
 
     if (!customers || customers.length === 0) {
       return scope.isManager
-        ? ' No customers registered under your assigned sales team yet.'
-        : ' No customers registered under your account yet.';
+        ? '👥 No customers registered under your assigned sales team yet.'
+        : '📋 No customers registered under your account yet.';
     }
 
     const lines = customers.map(
       (c, i) =>
         `${i + 1}. *${c.customer_name}*\n` +
-        `    ${c.contact_person || 'N/A'} |  ${c.customer_address || 'N/A'} |  ${c.customer_phone || 'N/A'}` +
-        (c.customer_gst ? `\n    GST: ${c.customer_gst}` : ''),
+        `   👤 ${c.contact_person || 'N/A'} | 📍 ${c.customer_address || 'N/A'} | 📱 ${c.customer_phone || 'N/A'}` +
+        (c.customer_gst ? `\n   🧾 GST: ${c.customer_gst}` : ''),
     );
 
     const title = scope.targetRepName
@@ -1503,16 +1794,16 @@ async function getCustomerList(scopeOrPhone) {
           ? 'Team Customer List'
           : 'Your Customer List';
 
-    return ` *${title} (${customers.length})*\n\n` + lines.join('\n\n');
+    return `👥 *${title} (${customers.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getCustomerList error:', err.message);
-    return ' Could not fetch customer list.';
+    return '❌ Could not fetch customer list.';
   }
 }
 
 /** Active rate sheet information */
 async function getRateSheet() {
-  return ` *Metal Pricing Policy*\n\nRates and pricing are provided directly by the Salesperson for each specific inquiry or order.\n\nTo log an inquiry with pricing, send:\n \`[Customer] [Qty MT] [Product] rate [Price] Delivery [Location]\`\n_Example: Supreme Steel 20 MT HR Coil rate 52000 Delivery Pune_`;
+  return `💹 *Metal Pricing Policy*\n\nRates and pricing are provided directly by the Salesperson for each specific inquiry or order.\n\nTo log an inquiry with pricing, send:\n👉 \`[Customer] [Qty MT] [Product] rate [Price] Delivery [Location]\`\n_Example: Supreme Steel 20 MT HR Coil rate 52000 Delivery Pune_`;
 }
 
 /** Customer visits list */
@@ -1637,7 +1928,7 @@ async function getInactiveCustomers(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No customer data found. You currently have no salespersons assigned to your team.';
+      return '⚠️ No customer data found. You currently have no salespersons assigned to your team.';
     }
 
     let custQuery = supabase
@@ -1668,7 +1959,7 @@ async function getInactiveCustomers(scopeOrPhone) {
     ]);
 
     if (!customers || customers.length === 0) {
-      return ' No registered recurring customers found.';
+      return '📋 No registered recurring customers found.';
     }
 
     const now = new Date();
@@ -1707,7 +1998,7 @@ async function getInactiveCustomers(scopeOrPhone) {
     }
 
     if (inactiveList.length === 0) {
-      return ' All customers are active and ordering regularly (no churn risk > 60 days)!';
+      return '✅ All customers are active and ordering regularly (no churn risk > 60 days)!';
     }
 
     const lines = inactiveList
@@ -1715,8 +2006,8 @@ async function getInactiveCustomers(scopeOrPhone) {
       .map(
         (c, i) =>
           `${i + 1}. *${c.name}*\n` +
-          `    Last Order: ${c.daysSince} (${c.lastDateStr})\n` +
-          `    Contact: ${c.contact || 'N/A'} |  ${c.phone || 'N/A'}`,
+          `   ⏳ Last Order: ${c.daysSince} (${c.lastDateStr})\n` +
+          `   👤 Contact: ${c.contact || 'N/A'} | 📱 ${c.phone || 'N/A'}`,
       );
 
     const title = scope.targetRepName
@@ -1728,13 +2019,13 @@ async function getInactiveCustomers(scopeOrPhone) {
           : 'Inactive Customers (Churn Risk)';
 
     return (
-      ` *${title} (${inactiveList.length} accounts)*\n\n` +
+      `⚠️ *${title} (${inactiveList.length} accounts)*\n\n` +
       lines.join('\n\n') +
       `\n\n_Reach out under Customer Retention Card to re-engage these accounts!_`
     );
   } catch (err) {
     console.error('getInactiveCustomers error:', err.message);
-    return ' Could not fetch inactive customers.';
+    return '❌ Could not fetch inactive customers.';
   }
 }
 
@@ -1748,7 +2039,7 @@ async function getReorderQueue(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No reorder queue data. You currently have no salespersons assigned to your team.';
+      return '📋 No reorder queue data. You currently have no salespersons assigned to your team.';
     }
 
     let taskQuery = supabase
@@ -1766,7 +2057,7 @@ async function getReorderQueue(scopeOrPhone) {
     const { data: tasks } = await taskQuery;
 
     if (!tasks || tasks.length === 0) {
-      return ' No open reorder tasks right now. Log follow-ups to add to reorder queue!';
+      return '✅ No open reorder tasks right now. Log follow-ups to add to reorder queue!';
     }
 
     const lines = tasks.map((t, i) => {
@@ -1775,8 +2066,8 @@ async function getReorderQueue(scopeOrPhone) {
         : 'This week';
       return (
         `${i + 1}. *${t.customer_name}*\n` +
-        `    Follow-up Due: ${dueStr}\n` +
-        `    Notes: ${t.notes || t.remarks || 'Reorder expected'}`
+        `   📅 Follow-up Due: ${dueStr}\n` +
+        `   📝 Notes: ${t.notes || t.remarks || 'Reorder expected'}`
       );
     });
 
@@ -1788,10 +2079,10 @@ async function getReorderQueue(scopeOrPhone) {
           ? 'Team Reorder Queue'
           : 'Reorder Queue';
 
-    return ` *${title} (${tasks.length})*\n\n` + lines.join('\n\n');
+    return `🔄 *${title} (${tasks.length})*\n\n` + lines.join('\n\n');
   } catch (err) {
     console.error('getReorderQueue error:', err.message);
-    return ' Could not fetch reorder queue.';
+    return '❌ Could not fetch reorder queue.';
   }
 }
 
@@ -1805,7 +2096,7 @@ async function getPaymentAging(scopeOrPhone) {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ' No outstanding payments found. You currently have no salespersons assigned to your team.';
+      return '💰 No outstanding payments found. You currently have no salespersons assigned to your team.';
     }
 
     let ptQuery = supabase
@@ -1851,7 +2142,7 @@ async function getPaymentAging(scopeOrPhone) {
             const overdue = daysLeft < 0;
             dueDisplay = due.toLocaleDateString('en-IN');
             overdueStr = overdue
-              ? `  (${Math.abs(daysLeft)}d overdue)`
+              ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
               : ` (${daysLeft}d left)`;
           }
         }
@@ -1877,14 +2168,14 @@ async function getPaymentAging(scopeOrPhone) {
             : 'Outstanding Payments';
 
       return (
-        ` *${title} (${ptRecords.length})*\n\n` +
+        `💰 *${title} (${ptRecords.length})*\n\n` +
         rows.join('\n\n') +
-        `\n\n *Total Outstanding: ${formatINR(totalOutstanding)}*`
+        `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
       );
     }
 
     if (!deals || deals.length === 0) {
-      return ' No outstanding payments! All collections up to date.';
+      return '✅ No outstanding payments! All collections up to date.';
     }
 
     rows = deals.map((d, i) => {
@@ -1898,7 +2189,7 @@ async function getPaymentAging(scopeOrPhone) {
         const overdue = daysLeft < 0;
         dueDisplay = due.toLocaleDateString('en-IN');
         overdueStr = overdue
-          ? `  (${Math.abs(daysLeft)}d overdue)`
+          ? ` ⚠️ (${Math.abs(daysLeft)}d overdue)`
           : ` (${daysLeft}d left)`;
       }
       return (
@@ -1921,13 +2212,13 @@ async function getPaymentAging(scopeOrPhone) {
           : 'Outstanding Payments';
 
     return (
-      ` *${title} (${deals.length})*\n\n` +
+      `💰 *${title} (${deals.length})*\n\n` +
       rows.join('\n\n') +
-      `\n\n *Total Outstanding: ${formatINR(totalOutstanding)}*`
+      `\n\n📊 *Total Outstanding: ${formatINR(totalOutstanding)}*`
     );
   } catch (err) {
     console.error('getPaymentAging error:', err.message);
-    return ' Could not fetch payment aging.';
+    return '❌ Could not fetch payment aging.';
   }
 }
 
@@ -1942,7 +2233,7 @@ async function getLostDeals(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` No lost deals found in ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
+      return `✅ No lost deals found in ${monthName} ${year}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1957,7 +2248,7 @@ async function getLostDeals(scopeOrPhone, text = '') {
     const { data: deals } = await query;
 
     if (!deals || deals.length === 0) {
-      return ` No lost deals in ${monthName} ${year}.`;
+      return `✅ No lost deals in ${monthName} ${year}.`;
     }
 
     const lines = deals.map(
@@ -1978,13 +2269,13 @@ async function getLostDeals(scopeOrPhone, text = '') {
           : 'Lost Deals';
 
     return (
-      ` *${title} - ${monthName} ${year}* (${deals.length})\n\n` +
+      `❌ *${title} - ${monthName} ${year}* (${deals.length})\n\n` +
       lines.join('\n\n') +
-      `\n\n *Total Lost Value: ${formatINR(totalLost)}*`
+      `\n\n📉 *Total Lost Value: ${formatINR(totalLost)}*`
     );
   } catch (err) {
     console.error('getLostDeals error:', err.message);
-    return ' Could not fetch lost deals.';
+    return '❌ Could not fetch lost deals.';
   }
 }
 
@@ -1995,7 +2286,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     const scope = await getAccessibleSalespersonPhonesForBot(senderPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` *Customer 360*\n\nNo records found. You currently have no salespersons assigned to your team.`;
+      return `🔍 *Customer 360*\n\nNo records found. You currently have no salespersons assigned to your team.`;
     }
 
     if (!customerName) {
@@ -2010,7 +2301,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     }
 
     if (!customerName || customerName.length < 2) {
-      return ` *Please specify the customer name.*\n\nExample: _"Customer 360 for Supreme Steel"_`;
+      return `❓ *Please specify the customer name.*\n\nExample: _"Customer 360 for Supreme Steel"_`;
     }
 
     // 1. Fetch profile
@@ -2063,7 +2354,7 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
         : scope.isManager
           ? 'assigned team'
           : 'salesperson account';
-      return ` *Customer 360 - ${customerName}*\n\nNo matching records found for "${customerName}" under your ${scopeLabel}.`;
+      return `🔍 *Customer 360 - ${customerName}*\n\nNo matching records found for "${customerName}" under your ${scopeLabel}.`;
     }
 
     const officialName =
@@ -2113,16 +2404,16 @@ async function getCustomer360(senderPhone, text, extractedName = null) {
     }
 
     return (
-      ` *Customer 360 Overview: ${officialName}*\n\n` +
-      ` *Phone:* ${phone}\n` +
-      ` *GST:* ${gst}\n` +
-      ` *Address:* ${address}\n\n` +
-      ` *Recent Deals:*\n${dealsSection}\n\n` +
-      ` *Payment Status:*\n${paySection}`
+      `🏢 *Customer 360 Overview: ${officialName}*\n\n` +
+      `📞 *Phone:* ${phone}\n` +
+      `📋 *GST:* ${gst}\n` +
+      `📍 *Address:* ${address}\n\n` +
+      `📦 *Recent Deals:*\n${dealsSection}\n\n` +
+      `💰 *Payment Status:*\n${paySection}`
     );
   } catch (err) {
     console.error('getCustomer360 error:', err.message);
-    return ` Could not fetch Customer 360 for ${customerName || 'customer'}.`;
+    return `❌ Could not fetch Customer 360 for ${customerName || 'customer'}.`;
   }
 }
 
@@ -2161,16 +2452,16 @@ async function getKnowledgeBaseAnswer(senderPhone, queryText) {
     }
 
     if (!chunks || chunks.length === 0) {
-      return ` *Knowledge Base*\n\nI couldn't find specific company policy documentation for "${queryText}". Please check with your sales manager or operations lead.`;
+      return `📚 *Knowledge Base*\n\nI couldn't find specific company policy documentation for "${queryText}". Please check with your sales manager or operations lead.`;
     }
 
     const topChunk = chunks[0];
     const sourceTitle = topChunk.title || 'Company Policy';
 
-    return ` *Enlight Metals Knowledge Base*\n\n${topChunk.content.trim()}\n\n _Source: ${sourceTitle}_`;
+    return `📚 *Enlight Metals Knowledge Base*\n\n${topChunk.content.trim()}\n\n📄 _Source: ${sourceTitle}_`;
   } catch (err) {
     console.error('getKnowledgeBaseAnswer error:', err.message);
-    return ` Could not search company knowledge base: ${err.message}`;
+    return `⚠️ Could not search company knowledge base: ${err.message}`;
   }
 }
 
@@ -2200,7 +2491,7 @@ async function getReorderQueue(senderPhone) {
 
     const { data: accounts, error } = await query;
     if (error || !accounts || accounts.length === 0) {
-      return ` *Reorder Queue*\n\nNo recurring customers currently flagged for reorder under your account.`;
+      return `🔄 *Reorder Queue*\n\nNo recurring customers currently flagged for reorder under your account.`;
     }
 
     const list = accounts
@@ -2208,14 +2499,14 @@ async function getReorderQueue(senderPhone) {
         const lastDate = a.last_order_date
           ? new Date(a.last_order_date).toLocaleDateString('en-IN')
           : 'N/A';
-        return `${i + 1}. *${a.customer_name}*\n    ${a.customer_phone || 'N/A'} | Last Order: ${lastDate}\n   Frequency: Every ${a.avg_order_frequency_days || 30} days`;
+        return `${i + 1}. *${a.customer_name}*\n   📞 ${a.customer_phone || 'N/A'} | Last Order: ${lastDate}\n   Frequency: Every ${a.avg_order_frequency_days || 30} days`;
       })
       .join('\n\n');
 
-    return ` *Recurring Customers Due for Reorder (${accounts.length})*\n\n${list}\n\n_Tip: Reach out to these clients to secure repeat orders this week._`;
+    return `🔄 *Recurring Customers Due for Reorder (${accounts.length})*\n\n${list}\n\n_Tip: Reach out to these clients to secure repeat orders this week._`;
   } catch (err) {
     console.error('getReorderQueue error:', err.message);
-    return ` Could not fetch reorder queue.`;
+    return `❌ Could not fetch reorder queue.`;
   }
 }
 
@@ -2238,7 +2529,7 @@ async function getChurnRadar(senderPhone) {
 
     const { data: accounts, error } = await query;
     if (error || !accounts || accounts.length === 0) {
-      return ` *Churn Radar*\n\nNo accounts currently flagged at churn risk under your account.`;
+      return `⚠️ *Churn Radar*\n\nNo accounts currently flagged at churn risk under your account.`;
     }
 
     const now = Date.now();
@@ -2251,7 +2542,7 @@ async function getChurnRadar(senderPhone) {
     });
 
     if (atRisk.length === 0) {
-      return ` *Churn Radar*\n\nAll your recurring accounts are ordering within their healthy schedule!`;
+      return `✅ *Churn Radar*\n\nAll your recurring accounts are ordering within their healthy schedule!`;
     }
 
     const list = atRisk
@@ -2263,10 +2554,10 @@ async function getChurnRadar(senderPhone) {
       })
       .join('\n\n');
 
-    return ` *Churn Risk Accounts (${atRisk.length})*\n\n${list}\n\n_Action: Schedule immediate retention visits/calls._`;
+    return `🚨 *Churn Risk Accounts (${atRisk.length})*\n\n${list}\n\n_Action: Schedule immediate retention visits/calls._`;
   } catch (err) {
     console.error('getChurnRadar error:', err.message);
-    return ` Could not fetch churn radar.`;
+    return `❌ Could not fetch churn radar.`;
   }
 }
 
@@ -2288,6 +2579,7 @@ async function extractOrderFilters(text) {
   const lower = text.toLowerCase();
 
   const filters = {
+    deal_id: null,
     delivery_location: null,
     customer_name: null,
     product: null,
@@ -2300,6 +2592,13 @@ async function extractOrderFilters(text) {
     year: null,
     target_salesperson: null,
   };
+
+  const idMatch =
+    text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,8})\b/i) ||
+    text.match(/\b([A-F0-9]{6})\b/i);
+  if (idMatch) {
+    filters.deal_id = idMatch[1].toUpperCase();
+  }
 
   // Rule-based fast regex extractors
   // 1. Delivery Location
@@ -2454,7 +2753,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return ` *Order Listing*\n\nNo orders found. You currently have no salespersons assigned to your team.`;
+      return `📋 *Order Listing*\n\nNo orders found. You currently have no salespersons assigned to your team.`;
     }
 
     const filters = await extractOrderFilters(text);
@@ -2520,6 +2819,25 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
     });
 
     // In-memory filters:
+    // 0. Deal / Inquiry ID filter
+    if (filters.deal_id) {
+      const targetCode = filters.deal_id
+        .replace(/^#?(?:DEAL|INQ)-?/i, '')
+        .trim()
+        .toUpperCase();
+      deals = deals.filter(
+        (d) =>
+          (d.id || '').toUpperCase().startsWith(targetCode) ||
+          (d.id || '').replace(/-/g, '').toUpperCase().startsWith(targetCode) ||
+          (d.inquiry_id || '').toUpperCase().startsWith(targetCode) ||
+          (d.inquiry_id || '')
+            .replace(/-/g, '')
+            .toUpperCase()
+            .startsWith(targetCode) ||
+          (d.deal_number && d.deal_number.toUpperCase().includes(targetCode)),
+      );
+    }
+
     // 1. Delivery Location filter
     if (filters.delivery_location) {
       const locQuery = filters.delivery_location.toLowerCase().trim();
@@ -2623,9 +2941,9 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
 
     if (!deals || deals.length === 0) {
       return (
-        ` *No Matching Orders Found*\n\n` +
+        `📋 *No Matching Orders Found*\n\n` +
         `No orders found matching your criteria${headerTag}.\n\n` +
-        ` *Tip*: Try broadening your search or check deal status on Enlight Sales OS.`
+        `💡 *Tip*: Try broadening your search or check deal status on Enlight Sales OS.`
       );
     }
 
@@ -2652,11 +2970,11 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
             return `${name}${qty ? ` (${qty}${rate ? ` ${rate}` : ''})` : ''}`;
           })
           .slice(0, 2);
-        itemsSummary = `    Items: ${itemLines.join(', ')}${items.length > 2 ? ` (+${items.length - 2} more)` : ''}\n`;
+        itemsSummary = `   📦 Items: ${itemLines.join(', ')}${items.length > 2 ? ` (+${items.length - 2} more)` : ''}\n`;
       }
 
       const locStr = d.delivery_location
-        ? `    Location: *${d.delivery_location}*\n`
+        ? `   📍 Location: *${d.delivery_location}*\n`
         : '';
       const dateStr = d.created_at
         ? new Date(d.created_at).toLocaleDateString('en-IN', {
@@ -2669,7 +2987,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
       const repName = phoneToName[d.salesperson_phone];
       const repStr =
         (scope.isAdmin || scope.isManager) && repName
-          ? `    Salesperson: *${repName}*\n`
+          ? `   👤 Salesperson: *${repName}*\n`
           : '';
 
       return (
@@ -2678,7 +2996,7 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
         locStr +
         itemsSummary +
         repStr +
-        `    Date: ${dateStr}`
+        `   📅 Date: ${dateStr}`
       );
     });
 
@@ -2702,19 +3020,19 @@ async function getFilteredOrders(scopeOrPhone, text = '') {
           : 'My Orders';
 
     return (
-      ` *${title}* (${deals.length} found)${headerTag}\n\n` +
+      `📋 *${title}* (${deals.length} found)${headerTag}\n\n` +
       orderCards.join('\n\n') +
       (deals.length > 10
         ? `\n\n_Showing top 10 of ${deals.length} orders_`
         : '') +
-      `\n\n *Summary:* Total Value: *${formatINR(totalMatchingValue)}*` +
+      `\n\n📊 *Summary:* Total Value: *${formatINR(totalMatchingValue)}*` +
       (totalMatchingTonnage > 0
         ? ` | Volume: *${totalMatchingTonnage.toLocaleString('en-IN')} MT*`
         : '')
     );
   } catch (err) {
     console.error('getFilteredOrders error:', err);
-    return ` Could not fetch orders: ${err.message}`;
+    return `❌ Could not fetch orders: ${err.message}`;
   }
 }
 
@@ -2737,7 +3055,7 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
       const dashboardUrl =
         process.env.DASHBOARD_URL ||
         'https://enlight-sales-frontend.vercel.app';
-      return ` *Enlight Sales OS Portal*\n\n ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+      return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
     }
     case 'order_list':
     case 'filtered_orders':
@@ -2761,6 +3079,9 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
       return await generateFullKRAReport(scope, getMonthRangeFromQuery(text));
     case 'deals_this_week':
       return await getDealsThisWeek(scope);
+    case 'deal_id_lookup':
+    case 'deal_ids':
+      return await getDealIdsForCompany(scope, text, extra.customer_name);
     case 'pending_deals':
       return await getPendingDeals(scope);
     case 'pending_inquiries':
@@ -2789,6 +3110,162 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
   }
 }
 
+async function getInquiryOrDealByCode(scopeOrPhone, text, explicitCode = null) {
+  try {
+    const supabase = getSupabase();
+    const codeMatch = explicitCode
+      ? { 1: explicitCode }
+      : text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,8})\b/i) ||
+        text.match(/\b([A-F0-9]{6})\b/i);
+
+    if (!codeMatch) return null;
+    const code = codeMatch[1]
+      .toUpperCase()
+      .replace(/^#?(?:DEAL|INQ)-?/i, '')
+      .trim();
+
+    const [dealsRes, inqsRes] = await Promise.all([
+      supabase
+        .from('deals')
+        .select('*, deal_items(*)')
+        .order('created_at', { ascending: false })
+        .limit(200),
+      supabase
+        .from('inquiries')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200),
+    ]);
+
+    const deals = dealsRes?.data || [];
+    const matchedDeal = deals.find(
+      (d) =>
+        (d.id || '').toUpperCase().startsWith(code) ||
+        (d.id || '').replace(/-/g, '').toUpperCase().startsWith(code) ||
+        (d.inquiry_id || '').toUpperCase().startsWith(code) ||
+        (d.inquiry_id || '').replace(/-/g, '').toUpperCase().startsWith(code) ||
+        (d.deal_number && d.deal_number.toUpperCase().includes(code)),
+    );
+
+    const inquiries = inqsRes?.data || [];
+    const matchedInq = inquiries.find(
+      (i) =>
+        (i.id || '').toUpperCase().startsWith(code) ||
+        (i.id || '').replace(/-/g, '').toUpperCase().startsWith(code),
+    );
+
+    if (!matchedDeal && !matchedInq) {
+      return `Inquiry #${code} was not found in the database. Please check the Inquiry ID.`;
+    }
+
+    const custName =
+      matchedDeal?.customer_name || matchedInq?.sender_name || 'Customer';
+    const displayId = matchedDeal
+      ? matchedDeal.deal_number ||
+        `#INQ-${(matchedDeal.id || '').substring(0, 6).toUpperCase()}`
+      : `#INQ-${(matchedInq.id || '').substring(0, 6).toUpperCase()}`;
+
+    const stageStr = (
+      matchedDeal?.stage ||
+      matchedInq?.status ||
+      'NEW INQUIRY'
+    ).toUpperCase();
+    const dateStr =
+      matchedDeal?.created_at || matchedInq?.created_at
+        ? new Date(
+            matchedDeal?.created_at || matchedInq?.created_at,
+          ).toLocaleDateString('en-IN')
+        : 'Recent';
+
+    const dealItems = matchedDeal?.deal_items || [];
+    const inqAi = matchedInq?.ai_extraction_json || {};
+    const aiLineItems = inqAi.line_items || inqAi.lineItems || [];
+
+    let itemsText = '';
+    if (dealItems.length > 0) {
+      itemsText = dealItems
+        .map((item) => {
+          const spec = item.dimensions ? ` (${item.dimensions})` : '';
+          const unit = item.unit || 'MT';
+          const qty = item.quantity || item.quantity_mt || 0;
+          const rate = Number(item.rate || 0);
+          const rateStr =
+            rate > 0
+              ? ` @ ₹${rate.toLocaleString('en-IN')}/${unit}`
+              : ' (Rate pending)';
+          const amtStr =
+            rate > 0 && qty > 0
+              ? ` = ₹${Math.round(rate * qty).toLocaleString('en-IN')}`
+              : '';
+          return `- ${item.sku_text || 'Item'}${spec}: ${qty} ${unit}${rateStr}${amtStr}`;
+        })
+        .join('\n');
+    } else if (aiLineItems.length > 0) {
+      itemsText = aiLineItems
+        .map((item) => {
+          const spec = item.dimensions ? ` (${item.dimensions})` : '';
+          const unit = item.unit || 'MT';
+          const qty = item.quantity || item.quantity_mt || 0;
+          const rate = Number(item.rate || 0);
+          const rateStr =
+            rate > 0
+              ? ` @ ₹${rate.toLocaleString('en-IN')}/${unit}`
+              : ' (Rate pending)';
+          const amtStr =
+            rate > 0 && qty > 0
+              ? ` = ₹${Math.round(rate * qty).toLocaleString('en-IN')}`
+              : '';
+          return `- ${item.sku_text || item.product_name || 'Item'}${spec}: ${qty} ${unit}${rateStr}${amtStr}`;
+        })
+        .join('\n');
+    } else {
+      itemsText = `- Steel Requirement: Details in active pipeline`;
+    }
+
+    const baseAmt =
+      Number(matchedDeal?.total_amount) ||
+      inqAi.total_amount ||
+      inqAi.totalAmount ||
+      0;
+    const gstAmt = Math.round(baseAmt * 0.18);
+    const grandTotal = baseAmt + gstAmt;
+
+    const loc =
+      matchedDeal?.delivery_location ||
+      inqAi.delivery_location ||
+      inqAi.deliveryLocation ||
+      '';
+    const payTerms =
+      matchedDeal?.payment_terms ||
+      inqAi.payment_terms ||
+      inqAi.paymentTerms ||
+      '';
+
+    let out =
+      `Inquiry Details - ${displayId}\n\n` +
+      `Customer: ${custName}\n` +
+      `Status: ${stageStr}\n` +
+      `Created: ${dateStr}\n\n` +
+      `Line Items:\n${itemsText}\n`;
+
+    if (baseAmt > 0) {
+      out +=
+        `\nFinancial Breakdown:\n` +
+        `- Subtotal: ₹${Number(baseAmt).toLocaleString('en-IN')}\n` +
+        `- GST (18%): ₹${Number(gstAmt).toLocaleString('en-IN')}\n` +
+        `- Grand Total: ₹${Number(grandTotal).toLocaleString('en-IN')}\n`;
+    }
+
+    if (loc) out += `\nDelivery Location: ${loc}`;
+    if (payTerms) out += `\nPayment Terms: ${payTerms}`;
+
+    return out.trim();
+  } catch (err) {
+    console.error('getInquiryOrDealByCode error:', err);
+    return null;
+  }
+}
+
 // Main query router with strict RBAC:
 // - Admin: can view all data or query any salesperson/manager by name
 // - Sales Manager: can view only their assigned salespersons' data; unauthorized to view other salespersons
@@ -2800,6 +3277,27 @@ async function handleQuery(text, senderPhone) {
   // 1. Resolve role and access scope for sender
   const userScope = await getAccessibleSalespersonPhonesForBot(senderPhone);
   let effectiveScope = { ...userScope };
+
+  // Fast path for Direct Inquiry ID lookup (e.g. "check for this inquiry number INQ-F59404", "status of INQ-F59404")
+  const directInqIdMatch = text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,8})\b/i);
+  if (directInqIdMatch) {
+    const directRes = await getInquiryOrDealByCode(
+      effectiveScope,
+      text,
+      directInqIdMatch[1],
+    );
+    if (directRes) return directRes;
+  }
+
+  // Fast path for Deal ID / Deal Code retrieval
+  if (
+    /\b(?:deal\s*(?:ids?|numbers?|codes?)|deals?\s*(?:for|of))\b/i.test(
+      lower,
+    ) ||
+    /^(?:get\s+|show\s+|what\s+is\s+|give\s+me\s+)?deal\s*ids?\b/i.test(lower)
+  ) {
+    return await getDealIdsForCompany(effectiveScope, text);
+  }
 
   // 2. Fetch all employees to check if query mentions a salesperson by name
   let targetSalespersonName = null;
@@ -2839,7 +3337,7 @@ async function handleQuery(text, senderPhone) {
     if (!isSelf) {
       if (userScope.role === 'salesperson') {
         // Salesperson asking about another salesperson -> BLOCK
-        return ` *Access Denied*\n\nYou are not authorized to view the performance or details of other salespeople. You can only query your own performance reports.`;
+        return `⚠️ *Access Denied*\n\nYou are not authorized to view the performance or details of other salespeople. You can only query your own performance reports.`;
       }
 
       if (userScope.isManager) {
@@ -2849,7 +3347,7 @@ async function handleQuery(text, senderPhone) {
         );
 
         if (!isAssigned) {
-          return ` *Access Denied*\n\nSalesperson *${matchedEmp.name}* is not assigned to your team. You can only view data for salespersons assigned under your management.`;
+          return `⚠️ *Access Denied*\n\nSalesperson *${matchedEmp.name}* is not assigned to your team. You can only view data for salespersons assigned under your management.`;
         }
 
         // Assigned -> allow and scope query to this specific rep
@@ -2883,13 +3381,13 @@ async function handleQuery(text, senderPhone) {
           'https://enlight-sales-frontend.vercel.app';
         if (userScope.isAdmin) {
           return (
-            ` *This action requires Dashboard access.*\n\n` +
+            `🔗 *This action requires Dashboard access.*\n\n` +
             `Admin operations like rate sheet management, pricing configuration, product analysis, and CRM admin tasks are available directly on the portal:\n\n` +
-            ` ${dashboardUrl}\n\n` +
+            `👉 ${dashboardUrl}\n\n` +
             `Log in with your admin credentials to proceed.`
           );
         }
-        return ` *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to deals, customers, payments, visits, KRA performance, and steel rates.`;
+        return `⚠️ *Query Not Supported*\n\nThis type of request is outside the bot's scope.\n\nI can only answer queries related to deals, customers, payments, visits, KRA performance, and steel rates.`;
       }
       if (classification.category !== 'general') {
         return await routeToHandler(
@@ -2906,6 +3404,16 @@ async function handleQuery(text, senderPhone) {
   }
 
   // 5. Keyword fallback (backup for low-confidence semantic router)
+  // Deal ID lookup for company or prompt
+  if (
+    /\b(deal\s*(?:ids?|numbers?|codes?)|deals?\s*(?:for|of|from))\b/i.test(
+      lower,
+    ) ||
+    /^(?:get\s+|show\s+|what\s+is\s+|give\s+me\s+)?deal\s*ids?\b/i.test(lower)
+  ) {
+    return await getDealIdsForCompany(effectiveScope, text);
+  }
+
   // Customer 360 / Profile
   if (
     lower.includes('360') ||
@@ -3137,7 +3645,7 @@ async function handleQuery(text, senderPhone) {
   ) {
     const dashboardUrl =
       process.env.DASHBOARD_URL || 'https://enlight-sales-frontend.vercel.app';
-    return ` *Enlight Sales OS Portal*\n\n ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
+    return `🔗 *Enlight Sales OS Portal*\n\n👉 ${dashboardUrl}\n\nEnter your registered WhatsApp number to log in.`;
   }
 
   // 6. Final fallback: route to conversational assistant
@@ -3153,4 +3661,6 @@ module.exports = {
   getFilteredOrders,
   getInquiriesThisMonth,
   getCustomer360,
+  getDealIdsForCompany,
+  getInquiryOrDealByCode,
 };

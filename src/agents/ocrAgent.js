@@ -1,5 +1,5 @@
 /**
- * ocrAgent.js - Dedicated OCR & Document Vision Agent (Backend)
+ * ocrAgent.js - Dedicated OCR & Document Vision Agent
  *
  * Specializes in extracting, interpreting, and structuring data from images,
  * scanned PDFs, and document uploads (Inquiry RFQs, Purchase Orders, Delivery Challans).
@@ -16,6 +16,7 @@ const {
   verifyAndGetCustomerName,
 } = require('../supabase');
 const { extractFromImage } = require('../gemini');
+const { logBotActivity } = require('../utils/activityLogger');
 const {
   calculateLineItems,
   calculateSubtotal,
@@ -42,6 +43,10 @@ async function processSalesImage(
   try {
     const extraction = await extractFromImage(imageBuffer, mimeType);
 
+    if (!extraction || extraction.error || !extraction.customer) {
+      return `⚠️ Could not clearly extract inquiry details from the document image. Please send a clearer picture or type the details (e.g. "Delta Structural Steel 50 MT HR Coil Delivery Mumbai").`;
+    }
+
     const rawCustName =
       extraction.customer && extraction.customer.name
         ? String(extraction.customer.name).trim()
@@ -58,11 +63,11 @@ async function processSalesImage(
     const finalCustomerName = officialCustomerName || custName || null;
     const customerPhone = extraction.customer?.phone || null;
 
-    // Construct raw text representation for inquiries tab
     const itemsText = (extraction.line_items || [])
       .map((i) => {
         const dimStr = i.dimensions ? ` (${i.dimensions})` : '';
-        return `${i.sku_text || 'Steel'}${dimStr} ${i.quantity || 0} MT ${i.rate ? '@ Rs ' + i.rate + '/MT' : ''}`;
+        const unitStr = i.unit || 'MT';
+        return `${i.sku_text || 'Steel'}${dimStr} ${i.quantity || 0} ${unitStr} ${i.rate ? '@ Rs ' + i.rate + '/' + unitStr : ''}`;
       })
       .join(', ');
     const rawSummary = `${itemsText}. Delivery Location: ${extraction.delivery_location || 'Warehouse'}`;
@@ -73,12 +78,12 @@ async function processSalesImage(
     // 1. Differentiate between Purchase Order (PO) and regular Inquiry
     const isPo = Boolean(
       extraction.is_purchase_order === true ||
-        extraction.inquiry_type === 'purchase_order' ||
-        extraction.document_type === 'purchase_order' ||
-        (extraction.po_number &&
-          extraction.po_number !== 'null' &&
-          extraction.po_number !== 'None' &&
-          String(extraction.po_number).trim().length > 2),
+      extraction.inquiry_type === 'purchase_order' ||
+      extraction.document_type === 'purchase_order' ||
+      (extraction.po_number &&
+        extraction.po_number !== 'null' &&
+        extraction.po_number !== 'None' &&
+        String(extraction.po_number).trim().length > 2),
     );
 
     let poNumber = null;
@@ -330,7 +335,7 @@ async function processSalesImage(
         }
       }
     } else {
-      // Create new inquiry deal in new_inquiry stage
+      // Create new inquiry deal in review stage
       const { data: newInqDeal, error: dealErr } = await supabase
         .from('deals')
         .insert({
@@ -338,7 +343,7 @@ async function processSalesImage(
           customer_name: finalCustomerName,
           salesperson_phone: senderPhone,
           customer_phone: customerPhone,
-          stage: 'new_inquiry',
+          stage: 'review',
           total_amount: baseAmt || 0,
           inquiry_type: 'inquiry',
           delivery_location: extraction.delivery_location || null,
@@ -460,6 +465,30 @@ async function processSalesImage(
       }
     }
 
+    // Log to activity_logs
+    try {
+      if (isPo) {
+        logBotActivity({
+          salesperson_phone: senderPhone,
+          description: `New order created for ${finalCustomerName}${poNumber ? ` (PO: ${poNumber})` : ''}`,
+          module: 'Orders',
+          customer_name: finalCustomerName,
+        });
+      } else {
+        logBotActivity({
+          salesperson_phone: senderPhone,
+          description: `New inquiry received from ${finalCustomerName} via WhatsApp Document`,
+          module: 'Inquiries',
+          customer_name: finalCustomerName,
+        });
+      }
+    } catch (actErr) {
+      console.warn(
+        '[OCRAgent] Non-blocking activity log notice:',
+        actErr?.message,
+      );
+    }
+
     let itemsBreakdown = '';
     if (extraction.line_items && extraction.line_items.length > 0) {
       itemsBreakdown = extraction.line_items
@@ -477,11 +506,11 @@ async function processSalesImage(
 
     if (isPo) {
       return (
-        ` *PURCHASE ORDER RECEIVED & DEAL WON!* \n\n` +
+        `🎉 *PURCHASE ORDER RECEIVED & DEAL WON!* 🏆\n\n` +
         `Customer: *${finalCustomerName || '-'}*\n` +
-        `PO Number: *${poNumber}* \n` +
+        `PO Number: *${poNumber}* 📄\n` +
         `PO Date: *${poDate}*\n` +
-        `Stage: *WON / DELIVERED *\n\n` +
+        `Stage: *WON / DELIVERED 🎉*\n\n` +
         (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
         `PO Basic Value: *₹${baseAmt.toLocaleString('en-IN')}*\n` +
         `GST (18%): *₹${gstAmt.toLocaleString('en-IN')}*\n` +
@@ -491,7 +520,7 @@ async function processSalesImage(
         (extraction.delivery_location
           ? `Delivery Location: *${extraction.delivery_location}*\n\n`
           : '\n') +
-        ` Synced live to Orders Tab, Sales Achievement & Payment Tracking! `
+        `✅ Synced live to Orders Tab, Sales Achievement & Payment Tracking! 🚀`
       );
     }
 
@@ -502,21 +531,21 @@ async function processSalesImage(
       : `${frontendUrl}/inquiries`;
 
     return (
-      ` *INQUIRY / SALES DEAL LOGGED!* \n\n` +
+      `📄 *INQUIRY / SALES DEAL LOGGED!* 🏗️\n\n` +
       `Customer: *${finalCustomerName || '-'}*\n` +
-      `Stage: *REVIEW *\n` +
+      `Stage: *REVIEW 📄*\n` +
       (itemsBreakdown ? `Line Items:\n${itemsBreakdown}\n` : '') +
       (baseAmt > 0
         ? `Product Amount: *₹${baseAmt.toLocaleString('en-IN')}*\nGST (18%): *₹${gstAmt.toLocaleString('en-IN')}*\n*Grand Total: ₹${grandTotal.toLocaleString('en-IN')}*\n`
         : '') +
       `Delivery Location: *${extraction.delivery_location || 'Not Specified'}*\n\n` +
-      ` *Review & Finalize Quotation:* \n` +
+      `✏️ *Review & Finalize Quotation:* \n` +
       `${inquiryEditLink}\n\n` +
-      ` Logged live to Inquiries tab & Sales Pipeline!`
+      `✅ Logged live to Inquiries tab & Sales Pipeline!`
     );
   } catch (error) {
     console.error('[OCRAgent] Error processing sales image:', error);
-    return ` Error processing document image: ${error.message}`;
+    return `⚠️ Error processing document image: ${error.message}`;
   }
 }
 
