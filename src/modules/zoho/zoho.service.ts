@@ -44,8 +44,8 @@ const STAGE_MAP: Record<string, string> = {
   lost: 'Closed Lost',
   negotiation: 'Negotiation/Review',
   quoted: 'Proposal/Price Quote',
-  qualified: 'Needs Analysis',
-  new_inquiry: 'Qualification',
+  qualified: 'New Inquiry',
+  new_inquiry: 'New Inquiry',
 };
 
 const REVERSE_STAGE_MAP: Record<string, string> = {
@@ -53,6 +53,9 @@ const REVERSE_STAGE_MAP: Record<string, string> = {
   'Closed Lost': 'lost',
   'Negotiation/Review': 'negotiation',
   'Proposal/Price Quote': 'quoted',
+  'New Inquiry': 'new_inquiry',
+  'Inquiry Received': 'new_inquiry',
+  'Waiting for Inquiry': 'new_inquiry',
   Qualification: 'new_inquiry',
   'Needs Analysis': 'qualified',
 };
@@ -64,6 +67,39 @@ export class ZohoService implements OnModuleInit {
   private tokenExpiry: Date | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
   private readonly processedWebhookEvents = new Set<string>();
+  private cachedLayout: { id: string; name: string; pipeline: string } | null =
+    null;
+
+  async getSalesLayout(
+    headers: any,
+  ): Promise<{ id: string; name: string; pipeline: string }> {
+    if (this.cachedLayout) return this.cachedLayout;
+    try {
+      const res = await firstValueFrom(
+        this.httpService.get(
+          'https://www.zohoapis.in/bigin/v1/settings/layouts?module=Deals',
+          { headers },
+        ),
+      );
+      const layouts = res.data?.layouts || [];
+      const sales = layouts.find((l: any) => /sale/i.test(l.name));
+      if (sales && sales.id) {
+        this.cachedLayout = {
+          id: sales.id,
+          name: sales.name,
+          pipeline: 'Sales Standard',
+        };
+        return this.cachedLayout;
+      }
+    } catch (err: any) {
+      this.logger.warn(`Could not fetch layouts: ${err?.message}`);
+    }
+    return {
+      id: '931435000000644718',
+      name: 'Sales',
+      pipeline: 'Sales Standard',
+    };
+  }
 
   constructor(
     private httpService: HttpService,
@@ -1032,6 +1068,8 @@ export class ZohoService implements OnModuleInit {
 
     // 3. Create Deals
     let dealsCreatedCount = 0;
+    const layoutInfo = await this.getSalesLayout(headers);
+
     for (const deal of deals || []) {
       const custName = (deal.customer_name || '').trim();
       const accountId = accountIdMap.get(custName.toLowerCase());
@@ -1042,7 +1080,8 @@ export class ZohoService implements OnModuleInit {
           Deal_Name: `${custName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
           Stage: STAGE_MAP[deal.stage] || 'Qualification',
           Amount: Number(deal.total_amount) || 0,
-          Pipeline: 'Sales Pipeline Standard',
+          Pipeline: layoutInfo.pipeline || 'Sales Standard',
+          Layout: { id: layoutInfo.id || '931435000000644718' },
           Closing_Date: new Date().toISOString().split('T')[0],
           Description: [
             deal.po_number ? `PO: ${deal.po_number}` : '',
@@ -1166,31 +1205,59 @@ export class ZohoService implements OnModuleInit {
         lastName = parts[parts.length - 1];
       }
 
-      const contactPayload: Record<string, any> = {
-        First_Name: firstName,
-        Last_Name: lastName,
-        Phone: deal.customer_phone || '',
-        Title: 'Purchase / Operations Head',
-      };
-      if (accountId) contactPayload.Account_Name = { id: accountId };
+      // Search existing contact by phone or account
+      if (deal.customer_phone) {
+        try {
+          const searchContact = await firstValueFrom(
+            this.httpService.get(
+              `${baseUrl}/Contacts/search?criteria=(Phone:equals:${encodeURIComponent(deal.customer_phone)})`,
+              { headers },
+            ),
+          );
+          contactId = searchContact.data?.data?.[0]?.id || null;
+        } catch {}
+      }
+      if (!contactId && accountId) {
+        try {
+          const searchContact = await firstValueFrom(
+            this.httpService.get(
+              `${baseUrl}/Contacts/search?criteria=(Account_Name:equals:${accountId})`,
+              { headers },
+            ),
+          );
+          contactId = searchContact.data?.data?.[0]?.id || null;
+        } catch {}
+      }
 
-      try {
-        const contactRes = await firstValueFrom(
-          this.httpService.post(
-            `${baseUrl}/Contacts`,
-            { data: [contactPayload] },
-            { headers },
-          ),
-        );
-        contactId = contactRes.data?.data?.[0]?.details?.id || null;
-      } catch {}
+      if (!contactId) {
+        const contactPayload: Record<string, any> = {
+          First_Name: firstName,
+          Last_Name: lastName,
+          Phone: deal.customer_phone || '',
+          Title: 'Purchase / Operations Head',
+        };
+        if (accountId) contactPayload.Account_Name = { id: accountId };
+
+        try {
+          const contactRes = await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Contacts`,
+              { data: [contactPayload] },
+              { headers },
+            ),
+          );
+          contactId = contactRes.data?.data?.[0]?.details?.id || null;
+        } catch {}
+      }
 
       // 3. Create Deal
+      const layoutInfo = await this.getSalesLayout(headers);
       const dealRecord: Record<string, any> = {
         Deal_Name: `${customerName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
         Stage: STAGE_MAP[deal.stage] || 'Qualification',
         Amount: Number(deal.total_amount) || 0,
-        Pipeline: 'Sales Pipeline Standard',
+        Pipeline: layoutInfo.pipeline || 'Sales Standard',
+        Layout: { id: layoutInfo.id || '931435000000644718' },
         Closing_Date: new Date().toISOString().split('T')[0],
         Description: [
           deal.po_number ? `PO: ${deal.po_number}` : '',
