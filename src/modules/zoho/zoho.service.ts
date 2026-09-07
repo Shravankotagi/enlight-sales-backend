@@ -82,12 +82,21 @@ export class ZohoService implements OnModuleInit {
         ),
       );
       const layouts = res.data?.layouts || [];
-      const sales = layouts.find((l: any) => /sale/i.test(l.name));
+      const sales =
+        layouts.find((l: any) => /sale/i.test(l.name)) || layouts[0];
       if (sales && sales.id) {
+        let pipelineName = 'Sales Pipeline Standard';
+        for (const s of sales.sections || []) {
+          for (const f of s.fields || []) {
+            if (f.api_name === 'Pipeline' && f.pick_list_values?.length) {
+              pipelineName = f.pick_list_values[0].display_value;
+            }
+          }
+        }
         this.cachedLayout = {
           id: sales.id,
           name: sales.name,
-          pipeline: 'Sales Standard',
+          pipeline: pipelineName,
         };
         return this.cachedLayout;
       }
@@ -95,9 +104,9 @@ export class ZohoService implements OnModuleInit {
       this.logger.warn(`Could not fetch layouts: ${err?.message}`);
     }
     return {
-      id: '931435000000644718',
-      name: 'Sales',
-      pipeline: 'Sales Standard',
+      id: '1384628000000000173',
+      name: 'Sales Pipeline',
+      pipeline: 'Sales Pipeline Standard',
     };
   }
 
