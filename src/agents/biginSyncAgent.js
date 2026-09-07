@@ -712,22 +712,20 @@ async function getDealsLayout(token) {
       },
     );
     const layouts = res.data?.layouts || [];
-    const sales = layouts.find((l) => /sale/i.test(l.name));
+    const sales = layouts.find((l) => /sale/i.test(l.name)) || layouts[0];
     if (sales && sales.id) {
+      let pipelineName = 'Sales Pipeline Standard';
+      for (const s of sales.sections || []) {
+        for (const f of s.fields || []) {
+          if (f.api_name === 'Pipeline' && f.pick_list_values?.length) {
+            pipelineName = f.pick_list_values[0].display_value;
+          }
+        }
+      }
       cachedDealsLayout = {
         id: sales.id,
         name: sales.name,
-        pipeline: 'Sales Standard',
-      };
-      return cachedDealsLayout;
-    }
-    const layout = layouts[0];
-    if (layout && layout.id) {
-      cachedDealsLayout = {
-        id: layout.id,
-        name: layout.name,
-        pipeline:
-          layout.name === 'Assigned Accounts' ? 'Accounts' : 'Sales Standard',
+        pipeline: pipelineName,
       };
       return cachedDealsLayout;
     }
@@ -735,9 +733,9 @@ async function getDealsLayout(token) {
     console.error('[BiginSync] getDealsLayout error:', err.message);
   }
   return {
-    id: '931435000000644718',
-    name: 'Sales',
-    pipeline: 'Sales Standard',
+    id: '1384628000000000173',
+    name: 'Sales Pipeline',
+    pipeline: 'Sales Pipeline Standard',
   };
 }
 
