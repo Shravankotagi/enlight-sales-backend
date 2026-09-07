@@ -13,6 +13,7 @@ import axios from 'axios';
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { ZohoService } from '../zoho/zoho.service';
 
 function getCompanyLogoPath(): string | null {
   const possiblePaths = [
@@ -550,6 +551,7 @@ export class InquiriesService implements OnModuleInit {
     private supabaseService: SupabaseService,
     private dealsService: DealsService,
     private activityLogsService: ActivityLogsService,
+    private zohoService: ZohoService,
   ) {}
 
   private get supabase() {
@@ -1514,6 +1516,29 @@ export class InquiriesService implements OnModuleInit {
         }));
 
         await this.supabase.from('deal_items').insert(dealItemsToInsert);
+      }
+
+      // Automatically trigger live Zoho Bigin sync
+      if (dealId) {
+        Promise.resolve(
+          this.supabase
+            .from('deals')
+            .select('*, deal_items(*)')
+            .eq('id', dealId)
+            .single(),
+        )
+          .then(({ data: dealToSync }) => {
+            if (dealToSync) {
+              this.zohoService
+                .syncDealToBigin(dealToSync)
+                .catch((err: any) =>
+                  this.logger.warn(
+                    `Zoho live sync notice for deal ${dealId}: ${err?.message}`,
+                  ),
+                );
+            }
+          })
+          .catch(() => {});
       }
 
       this.logger.log(

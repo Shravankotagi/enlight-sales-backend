@@ -8,6 +8,7 @@ import {
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import { ZohoService } from '../zoho/zoho.service';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -37,6 +38,7 @@ export class DealsService {
   constructor(
     private supabaseService: SupabaseService,
     private activityLogsService: ActivityLogsService,
+    private zohoService: ZohoService,
   ) {}
 
   private get supabase() {
@@ -498,17 +500,14 @@ export class DealsService {
         );
       }
 
-      // Trigger background sync to Zoho Bigin so Web App updates reflect in Bigin immediately
-      const botUrl =
-        process.env.BOT_SERVICE_URL ||
-        'https://enlight-sales-bot-production.up.railway.app';
-      fetch(`${botUrl}/webhook/admin/bigin-sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: 'enlight_admin_2024' }),
-      }).catch((err) =>
-        this.logger.error('Bigin auto-sync notice:', err.message),
-      );
+      // Trigger live sync to Zoho Bigin directly
+      if (data) {
+        this.zohoService
+          .syncDealToBigin(data)
+          .catch((err) =>
+            this.logger.warn(`Bigin live sync notice: ${err?.message}`),
+          );
+      }
 
       // Non-blocking activity log
       try {
@@ -633,6 +632,13 @@ export class DealsService {
           deal.customer_gst,
           deal.contact_person,
         );
+
+        // Trigger live Zoho Bigin deal sync
+        this.zohoService
+          .syncDealToBigin(deal)
+          .catch((err) =>
+            this.logger.warn(`Bigin live sync notice: ${err?.message}`),
+          );
 
         // Non-blocking activity log
         try {
@@ -992,6 +998,15 @@ export class DealsService {
           'Non-blocking follow-up resolution notice:',
           fErr?.message,
         );
+      }
+
+      // Trigger live Zoho Bigin deal sync
+      if (savedDeal) {
+        this.zohoService
+          .syncDealToBigin(savedDeal)
+          .catch((err) =>
+            this.logger.warn(`Bigin live sync notice: ${err?.message}`),
+          );
       }
 
       // Non-blocking activity log

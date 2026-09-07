@@ -4,11 +4,13 @@ import { DealsService } from './deals.service';
 import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { JwtModule } from '@nestjs/jwt';
+import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
   imports: [
     SupabaseModule,
     EmployeesModule,
+    ZohoModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'enlight-sales-jwt-secret-2026',
       signOptions: { expiresIn: '7d' },
