@@ -1259,14 +1259,15 @@ export class ZohoService implements OnModuleInit {
         } catch {}
       }
 
-      // 3. Create Deal
+      // 3. Upsert Deal (PUT if exists, POST if new)
       const layoutInfo = await this.getSalesLayout(headers);
+      const shortId = `[#${deal.id.substring(0, 6).toUpperCase()}]`;
       const dealRecord: Record<string, any> = {
-        Deal_Name: `${customerName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
+        Deal_Name: `${customerName} - ${deal.inquiry_type || 'Steel Order'} ${shortId}`,
         Stage: STAGE_MAP[deal.stage] || 'Qualification',
         Amount: Number(deal.total_amount) || 0,
-        Pipeline: layoutInfo.pipeline || 'Sales Standard',
-        Layout: { id: layoutInfo.id || '931435000000644718' },
+        Pipeline: layoutInfo.pipeline || 'Sales Pipeline Standard',
+        Layout: { id: layoutInfo.id || '1384628000000000173' },
         Closing_Date: new Date().toISOString().split('T')[0],
         Description: [
           deal.po_number ? `PO: ${deal.po_number}` : '',
@@ -1280,22 +1281,69 @@ export class ZohoService implements OnModuleInit {
       if (accountId) dealRecord.Account_Name = { id: accountId };
       if (contactId) dealRecord.Contact_Name = { id: contactId };
 
-      const res = await firstValueFrom(
-        this.httpService.post(
-          `${baseUrl}/Deals`,
-          { data: [dealRecord] },
-          { headers },
-        ),
-      );
-      const biginId = res.data?.data?.[0]?.details?.id;
-      if (biginId) {
+      let existingBiginId = deal.bigin_deal_id || null;
+
+      // If no ID in Supabase, search Bigin by #ID tag
+      if (!existingBiginId) {
+        try {
+          const searchRes = await firstValueFrom(
+            this.httpService.get(
+              `${baseUrl}/Deals/search?word=${encodeURIComponent(deal.id.substring(0, 6).toUpperCase())}`,
+              { headers },
+            ),
+          );
+          existingBiginId = searchRes.data?.data?.[0]?.id || null;
+        } catch {}
+      }
+
+      let finalBiginId: string | null = null;
+
+      if (existingBiginId) {
+        // UPDATE existing deal
+        try {
+          const updateRes = await firstValueFrom(
+            this.httpService.put(
+              `${baseUrl}/Deals/${existingBiginId}`,
+              { data: [dealRecord] },
+              { headers },
+            ),
+          );
+          finalBiginId =
+            updateRes.data?.data?.[0]?.details?.id || existingBiginId;
+          this.logger.log(
+            `Deal updated in Bigin: ${deal.id} -> ${finalBiginId} (Stage: ${dealRecord.Stage}, Amount: ₹${dealRecord.Amount})`,
+          );
+        } catch (updateErr: any) {
+          this.logger.warn(
+            `Could not update deal ${existingBiginId} in Bigin: ${updateErr?.message}`,
+          );
+        }
+      }
+
+      if (!finalBiginId) {
+        // CREATE new deal
+        const res = await firstValueFrom(
+          this.httpService.post(
+            `${baseUrl}/Deals`,
+            { data: [dealRecord] },
+            { headers },
+          ),
+        );
+        finalBiginId = res.data?.data?.[0]?.details?.id || null;
+        if (finalBiginId) {
+          this.logger.log(
+            `Deal created in Bigin: ${deal.id} -> ${finalBiginId}`,
+          );
+        }
+      }
+
+      if (finalBiginId) {
         await this.supabase
           .from('deals')
-          .update({ bigin_deal_id: biginId })
+          .update({ bigin_deal_id: finalBiginId })
           .eq('id', deal.id);
-        this.logger.log(`Deal synced to Bigin: ${deal.id} -> ${biginId}`);
       }
-      return biginId || null;
+      return finalBiginId || null;
     } catch (error: any) {
       this.logger.error('Failed to sync deal to Bigin:', error.message);
       return null;
