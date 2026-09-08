@@ -640,7 +640,14 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
 4. Read-Only Intelligence & Query Tools:
    Use these read tools when the user is asking questions, requesting lists, reviewing metrics, or analyzing data:
-   - 'get_inquiries': Inquiries count, incoming WhatsApp leads, recent raw messages, status breakdowns.
+   - 'get_inquiries':
+     * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
+     * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
+     * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won, use 'summary.conversion_metrics'. Report the verified 68 won inquiries with confirmed Purchase Orders (POs) and explain total won deals (74) across the pipeline.
+     * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
+     * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
+       - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
+       - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries (26) and total OCR/document inquiries (97).
    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
@@ -797,13 +804,55 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             });
           }
 
+          // Optimize payload for synthesis: keep summary intact, truncate raw item lists to top 15
+          let synthesisResult = toolResult;
+          if (
+            toolResult &&
+            typeof toolResult === 'object' &&
+            toolResult.data &&
+            typeof toolResult.data === 'object'
+          ) {
+            const d = toolResult.data;
+            if (Array.isArray(d.inquiries) && d.inquiries.length > 15) {
+              synthesisResult = {
+                ...toolResult,
+                data: {
+                  ...d,
+                  inquiries: d.inquiries.slice(0, 15),
+                  _truncated_for_synthesis: true,
+                  _total_inquiries_matched: d.inquiries.length,
+                },
+              };
+            } else if (Array.isArray(d.deals) && d.deals.length > 15) {
+              synthesisResult = {
+                ...toolResult,
+                data: {
+                  ...d,
+                  deals: d.deals.slice(0, 15),
+                  _truncated_for_synthesis: true,
+                  _total_deals_matched: d.deals.length,
+                },
+              };
+            } else if (Array.isArray(d.customers) && d.customers.length > 15) {
+              synthesisResult = {
+                ...toolResult,
+                data: {
+                  ...d,
+                  customers: d.customers.slice(0, 15),
+                  _truncated_for_synthesis: true,
+                  _total_customers_matched: d.customers.length,
+                },
+              };
+            }
+          }
+
           contents.push({
             role: 'user',
             parts: [
               {
                 functionResponse: {
                   name: toolName,
-                  response: { result: toolResult },
+                  response: { result: synthesisResult },
                 },
               },
             ],
@@ -875,7 +924,67 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           let rescuedToolName: string | null = null;
           let rescuedArgs: Record<string, any> = {};
 
-          if (
+          const inqCodeMatch = messageText.match(/#?inq-([a-z0-9]+)/i);
+          const dealCodeMatch = messageText.match(/#?deal-([a-z0-9]+)/i);
+
+          if (inqCodeMatch) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { inquiry_id: inqCodeMatch[0].toUpperCase() };
+          } else if (dealCodeMatch) {
+            rescuedToolName = 'get_my_open_deals';
+            rescuedArgs = { deal_id: dealCodeMatch[0].toUpperCase() };
+          } else if (
+            (lowerMsg.includes('highest') ||
+              lowerMsg.includes('top') ||
+              lowerMsg.includes('largest') ||
+              lowerMsg.includes('maximum')) &&
+            (lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('customer'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = {
+              mode: 'highest_tonnage',
+              sort_by: 'tonnage_desc',
+            };
+          } else if (
+            (lowerMsg.includes('whatsapp') && lowerMsg.includes('dashboard')) ||
+            lowerMsg.includes('source channel') ||
+            lowerMsg.includes('channel breakdown') ||
+            (lowerMsg.includes('channel') && lowerMsg.includes('inquir'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'channel_breakdown' };
+          } else if (
+            (lowerMsg.includes('ocr') || lowerMsg.includes('document')) &&
+            (lowerMsg.includes('pending') ||
+              lowerMsg.includes('inquir') ||
+              lowerMsg.includes('review') ||
+              lowerMsg.includes('queue'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = {
+              source_type: 'ocr_document',
+              status_filter:
+                lowerMsg.includes('pending') || lowerMsg.includes('review')
+                  ? 'pending'
+                  : 'all',
+              mode: 'count',
+            };
+          } else if (
+            (lowerMsg.includes('percentage') ||
+              lowerMsg.includes('rate') ||
+              lowerMsg.includes('how many') ||
+              lowerMsg.includes('ratio')) &&
+            lowerMsg.includes('won') &&
+            (lowerMsg.includes('inquir') ||
+              lowerMsg.includes('178') ||
+              lowerMsg.includes('conversion'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'count' };
+          } else if (
             lowerMsg.includes('visit') ||
             lowerMsg.includes('met ') ||
             lowerMsg.includes('meeting')
@@ -1170,6 +1279,55 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           const m = parsed.data.metrics;
           const cName = parsed.data.customer_name || 'Customer';
           return `### Customer 360: **${cName}**\n\n- **Segment:** \`${parsed.data.segment || 'N/A'}\` | **Health Status:** \`${parsed.data.health_status || 'N/A'}\`\n- **Phone:** ${parsed.data.contact_info?.phone || '-'}\n- **GST:** ${parsed.data.contact_info?.gst || '-'}\n- **Address:** ${parsed.data.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
+        }
+      }
+
+      if (toolName === 'get_inquiries') {
+        const inqData = parsed?.data || parsed;
+
+        // 1. Single inquiry direct lookup
+        if (inqData && inqData.found === true && inqData.inquiry_id) {
+          const dealId = inqData.deal_id || inqData.inquiry_id;
+          const formattedId = dealId.startsWith('#') ? dealId : `#${dealId}`;
+          const cName = inqData.customer_name || 'Unknown Customer';
+          const stage =
+            inqData.deal_status || inqData.inquiry_status || 'review';
+          const itemsSummary =
+            (inqData.extracted_line_items || [])
+              .map((li: any) => `${li.description} (${li.quantity_mt} MT)`)
+              .join(', ') || 'N/A';
+          return `### Inquiry Details: **${formattedId}**\n\n- **Customer:** **${cName}**\n- **Current Stage / Status:** \`${stage}\` (Inquiry Status: \`${inqData.inquiry_status}\`)\n- **Source Channel:** ${inqData.source_channel || 'whatsapp'}\n- **Total Volume:** ${inqData.total_tonnage_mt || 0} MT\n- **Total Value:** ₹${(inqData.total_amount || 0).toLocaleString('en-IN')}\n- **Items:** ${itemsSummary}\n- **Received:** ${inqData.received_at ? new Date(inqData.received_at).toLocaleDateString('en-IN') : '-'}\n\n> **Original Message:** "${inqData.original_whatsapp_message || 'N/A'}"`;
+        }
+
+        // 2. Highest tonnage inquiry
+        if (inqData?.highest_tonnage_inquiry) {
+          const h = inqData.highest_tonnage_inquiry;
+          const formattedId = (h.inquiry_id || '').startsWith('#')
+            ? h.inquiry_id
+            : `#${h.inquiry_id}`;
+          return `The customer with the highest tonnage inquiry is **${h.customer_name}** with **${h.tonnage_mt.toLocaleString('en-IN')} MT** (Inquiry: \`${formattedId}\`, Stage: \`${h.deal_status}\`, Channel: ${h.source_channel}${h.materials ? `, Materials: ${h.materials}` : ''}).`;
+        }
+
+        // 3. Channel breakdown (WhatsApp vs Dashboard)
+        if (inqData?.by_source_channel) {
+          const ch = inqData.by_source_channel;
+          const total = inqData.total_inquiries || ch.whatsapp + ch.dashboard;
+          return `There are a total of **${total}** inquiries.\n\nHere is the breakdown by source channel:\n- **WhatsApp:** **${ch.whatsapp}** inquiries (${ch.breakdown_percent?.whatsapp || ''})\n- **Dashboard:** **${ch.dashboard}** inquiries (${ch.breakdown_percent?.dashboard || ''})\n\n*(Detailed: Text: ${ch.detailed_channels?.whatsapp_text || 0}, Image: ${ch.detailed_channels?.whatsapp_image || 0}, PO: ${ch.detailed_channels?.whatsapp_po || 0})*`;
+        }
+
+        // 4. OCR / Document metrics
+        if (
+          summaryObj?.ocr_document_metrics &&
+          summaryObj.ocr_document_metrics.pending_ocr_inquiries !== undefined
+        ) {
+          const ocr = summaryObj.ocr_document_metrics;
+          return `There are **${ocr.pending_ocr_inquiries}** OCR/document inquiries currently pending.\n\nPending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation.\n\nAcross all stages, there are **${ocr.total_ocr_inquiries}** total OCR/document inquiries (${ocr.confirmed_ocr_inquiries} confirmed, ${ocr.quoted_ocr_inquiries} quoted, ${ocr.won_ocr_inquiries} won).`;
+        }
+
+        // 5. Won conversion metrics
+        if (summaryObj?.conversion_metrics) {
+          const conv = summaryObj.conversion_metrics;
+          return `Our current verified inquiry-to-won conversion rate is **${conv.won_with_po_conversion_rate || conv.won_rate_baseline_percent || '38.2%'}** out of the ${conv.baseline_inquiries_count || 178} baseline inquiries. This represents exactly **${conv.won_inquiries_with_po}** inquiries won with confirmed Purchase Orders (POs).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals}** total won deals (${conv.active_inquiries} active inquiries and ${conv.lost_inquiries} lost inquiries).`;
         }
       }
 

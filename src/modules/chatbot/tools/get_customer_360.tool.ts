@@ -59,7 +59,7 @@ export const getCustomer360Tool: ChatbotTool = {
   declaration: {
     name: 'get_customer_360',
     description:
-      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Scoped strictly by caller role and assigned portfolio.',
+      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Do NOT call this tool for inquiry status lookups (use get_inquiries with inquiry_id) or highest tonnage inquiries (use get_inquiries with mode: "highest_tonnage"). Scoped strictly by caller role and assigned portfolio.',
     parameters: {
       type: 'OBJECT',
       properties: {

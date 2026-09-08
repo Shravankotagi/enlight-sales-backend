@@ -59,6 +59,11 @@ export const getMyOpenDealsTool: ChatbotTool = {
     parameters: {
       type: 'OBJECT',
       properties: {
+        deal_id: {
+          type: 'STRING',
+          description:
+            'Optional specific Inquiry ID or Deal ID (e.g. "#INQ-XXXXXX", "#DEAL-XXXXXX", or UUID) to fetch a single deal/order directly.',
+        },
         stage_filter: {
           type: 'STRING',
           description:
@@ -67,6 +72,11 @@ export const getMyOpenDealsTool: ChatbotTool = {
         customer_name: {
           type: 'STRING',
           description: 'Optional search filter for customer or company name.',
+        },
+        sort_by: {
+          type: 'STRING',
+          description:
+            'Optional sorting: "date_desc" (default), "tonnage_desc" (highest tonnage first), "value_desc".',
         },
         date_range: {
           type: 'STRING',
@@ -97,6 +107,11 @@ export const getMyOpenDealsTool: ChatbotTool = {
     },
   },
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
+    const rawDealId = (args?.deal_id || args?.inquiry_id || '').trim();
+    const cleanDealId = rawDealId
+      .replace(/^[#]?(?:INQ|DEAL)-?/i, '')
+      .toLowerCase();
+    const sortBy = (args?.sort_by || '').toLowerCase().trim();
     let rawStage = (args?.stage_filter || '').toLowerCase().trim();
     const searchCustomer = (args?.customer_name || '').trim().toLowerCase();
     const searchPo = (args?.po_number || '').trim().toLowerCase();
@@ -350,6 +365,20 @@ export const getMyOpenDealsTool: ChatbotTool = {
       );
     }
 
+    // Filter by specific Inquiry / Deal ID (#INQ-XXXXXX, #DEAL-XXXXXX, or UUID)
+    if (cleanDealId) {
+      filteredDeals = filteredDeals.filter((d: any) => {
+        const idClean = (d.id || '').toLowerCase();
+        const dealIdClean = (d.deal_id || '').toLowerCase();
+        const dealNumClean = (d.deal_number || '').toLowerCase();
+        return (
+          idClean.includes(cleanDealId) ||
+          dealIdClean.includes(cleanDealId) ||
+          dealNumClean.includes(cleanDealId)
+        );
+      });
+    }
+
     // Filter by delivery location search
     if (searchLocation) {
       filteredDeals = filteredDeals.filter(
@@ -359,6 +388,13 @@ export const getMyOpenDealsTool: ChatbotTool = {
           (d.customer_address &&
             d.customer_address.toLowerCase().includes(searchLocation)),
       );
+    }
+
+    // Sort deals
+    if (sortBy === 'tonnage_desc') {
+      filteredDeals.sort((a: any, b: any) => b.tonnage_mt - a.tonnage_mt);
+    } else if (sortBy === 'value_desc') {
+      filteredDeals.sort((a: any, b: any) => b.total_amount - a.total_amount);
     }
 
     const filteredTotalVal = filteredDeals.reduce(
