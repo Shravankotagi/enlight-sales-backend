@@ -41,11 +41,21 @@ const KNOWN_CONTACT_PERSONS: Record<string, string> = {
 
 const STAGE_MAP: Record<string, string> = {
   won: 'Closed Won',
+  'closed won': 'Closed Won',
   lost: 'Closed Lost',
+  'closed lost': 'Closed Lost',
   negotiation: 'Negotiation/Review',
+  review: 'Negotiation/Review',
+  'negotiation/review': 'Negotiation/Review',
+  on_hold: 'On Hold',
+  'on hold': 'On Hold',
+  hold: 'On Hold',
   quoted: 'Proposal/Price Quote',
-  qualified: 'Qualification',
-  new_inquiry: 'Qualification',
+  proposal: 'Proposal/Price Quote',
+  'proposal/price quote': 'Proposal/Price Quote',
+  qualified: 'Proposal/Price Quote',
+  new_inquiry: 'New Inquiry',
+  'new inquiry': 'New Inquiry',
 };
 
 const REVERSE_STAGE_MAP: Record<string, string> = {
@@ -53,11 +63,12 @@ const REVERSE_STAGE_MAP: Record<string, string> = {
   'Closed Lost': 'lost',
   'Negotiation/Review': 'negotiation',
   'Proposal/Price Quote': 'quoted',
+  'On Hold': 'on_hold',
   'New Inquiry': 'new_inquiry',
   'Inquiry Received': 'new_inquiry',
   'Waiting for Inquiry': 'new_inquiry',
   Qualification: 'new_inquiry',
-  'Needs Analysis': 'qualified',
+  'Needs Analysis': 'quoted',
 };
 
 @Injectable()
@@ -1087,7 +1098,7 @@ export class ZohoService implements OnModuleInit {
       try {
         const dealRecord: Record<string, any> = {
           Deal_Name: `${custName} - ${deal.inquiry_type || 'Steel Order'} [#${deal.id.substring(0, 6).toUpperCase()}]`,
-          Stage: STAGE_MAP[deal.stage] || 'Qualification',
+          Stage: STAGE_MAP[deal.stage] || 'New Inquiry',
           Amount: Number(deal.total_amount) || 0,
           Pipeline: layoutInfo.pipeline || 'Sales Standard',
           Layout: { id: layoutInfo.id || '931435000000644718' },
@@ -1264,10 +1275,10 @@ export class ZohoService implements OnModuleInit {
       const shortId = `[#${deal.id.substring(0, 6).toUpperCase()}]`;
       const dealRecord: Record<string, any> = {
         Deal_Name: `${customerName} - ${deal.inquiry_type || 'Steel Order'} ${shortId}`,
-        Stage: STAGE_MAP[deal.stage] || 'Qualification',
+        Stage: STAGE_MAP[deal.stage] || 'New Inquiry',
         Amount: Number(deal.total_amount) || 0,
-        Pipeline: layoutInfo.pipeline || 'Sales Pipeline Standard',
-        Layout: { id: layoutInfo.id || '1384628000000000173' },
+        Pipeline: layoutInfo.pipeline || 'Sales Standard',
+        Layout: { id: layoutInfo.id || '931435000000644718' },
         Closing_Date: new Date().toISOString().split('T')[0],
         Description: [
           deal.po_number ? `PO: ${deal.po_number}` : '',

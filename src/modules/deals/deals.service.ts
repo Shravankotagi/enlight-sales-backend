@@ -312,7 +312,7 @@ export class DealsService {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, salesperson_phone, stage')
+        .select('id, salesperson_phone, stage, po_number')
         .eq('id', id)
         .single();
       if (fetchErr || !existingDeal) {
@@ -336,15 +336,16 @@ export class DealsService {
       const targetStage = (stage || '').toLowerCase().trim();
 
       // Rule: Gated stage transitions:
-      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' or 'lost'.
+      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' without a PO.
       if (
         (currentStage === 'new_inquiry' ||
           currentStage === 'review' ||
           !existingDeal.stage) &&
-        (targetStage === 'won' || targetStage === 'lost')
+        targetStage === 'won' &&
+        !existingDeal.po_number
       ) {
         throw new BadRequestException(
-          `Cannot mark deal as ${targetStage.toUpperCase()} from '${currentStage}' stage. The deal must first be Qualified or Quoted.`,
+          `Cannot mark deal as WON from '${currentStage}' stage without a Purchase Order (PO). The deal must first be Quoted or have PO details.`,
         );
       }
 
@@ -381,6 +382,16 @@ export class DealsService {
           await this.supabase
             .from('inquiries')
             .update({ status: 'quoted' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'negotiation') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'negotiation' })
+            .eq('id', data.inquiry_id);
+        } else if (stage === 'on_hold') {
+          await this.supabase
+            .from('inquiries')
+            .update({ status: 'on_hold' })
             .eq('id', data.inquiry_id);
         } else if (stage === 'qualified') {
           await this.supabase
@@ -534,9 +545,9 @@ export class DealsService {
     try {
       const stages = [
         'new_inquiry',
-        'qualified',
         'quoted',
         'negotiation',
+        'on_hold',
         'won',
         'lost',
       ];
@@ -676,16 +687,21 @@ export class DealsService {
 
       if (error) throw error;
 
-      const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
+      const stages = ['new_inquiry', 'quoted', 'negotiation', 'on_hold'];
 
       const board = stages.reduce(
         (acc, stage) => {
           acc[stage] =
-            data?.filter((d) =>
-              stage === 'new_inquiry'
-                ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
-                : d.stage === stage,
-            ) || [];
+            data?.filter((d) => {
+              const st = (d.stage || 'new_inquiry').toLowerCase().trim();
+              if (stage === 'new_inquiry') {
+                return st === 'new_inquiry' || st === 'review' || !st;
+              }
+              if (stage === 'quoted') {
+                return st === 'quoted' || st === 'qualified';
+              }
+              return st === stage;
+            }) || [];
           return acc;
         },
         {} as Record<string, any[]>,
