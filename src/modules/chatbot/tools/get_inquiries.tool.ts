@@ -305,7 +305,11 @@ export const getInquiriesTool: ChatbotTool = {
 
     let wonInquiriesCount = 0;
     let wonInquiriesWithPoCount = 0;
-    let totalWonDealsCount = 0;
+    const totalWonDealsCount = (dealsData || []).filter(
+      (d: any) =>
+        (d.stage || '').toLowerCase() === 'won' ||
+        (d.status || '').toLowerCase() === 'won',
+    ).length;
 
     const formattedList = rawList.map((inq: any) => {
       const dealsList: any[] = Array.isArray(inq.deals)
@@ -425,7 +429,7 @@ export const getInquiriesTool: ChatbotTool = {
         (d) =>
           ((d.stage || '').toLowerCase() === 'won' ||
             (d.status || '').toLowerCase() === 'won') &&
-          !!d.po_number,
+          Boolean(d.po_number),
       );
       const isWonInquiry =
         isAnyDealWon ||
@@ -441,16 +445,6 @@ export const getInquiriesTool: ChatbotTool = {
       if (isWonWithPo) {
         wonInquiriesWithPoCount++;
       }
-
-      // Count deals won
-      dealsList.forEach((d) => {
-        if (
-          (d.stage || '').toLowerCase() === 'won' ||
-          (d.status || '').toLowerCase() === 'won'
-        ) {
-          totalWonDealsCount++;
-        }
-      });
 
       // Update aggregation counts
       const inqDate = new Date(inq.created_at);
@@ -668,24 +662,19 @@ export const getInquiriesTool: ChatbotTool = {
       conversion_metrics: {
         total_inquiries: totalInquiriesCount,
         won_inquiries: wonInquiriesCount,
-        won_inquiries_with_po: 68,
-        won_orders_count: 68,
-        inquiries_won_count: 68,
+        won_inquiries_with_po: wonInquiriesCount,
+        won_orders_count: wonInquiriesCount,
+        inquiries_won_count: wonInquiriesCount,
         unique_inquiries_with_po: wonInquiriesWithPoCount,
-        total_won_deals: totalWonDealsCount || 74,
-        baseline_inquiries_count: 178,
-        won_rate_baseline_percent: '38.2%',
+        total_won_deals: totalWonDealsCount,
         lost_inquiries: lostCount,
         active_inquiries: totalInquiriesCount - wonInquiriesCount - lostCount,
         inquiry_to_won_conversion_rate: `${conversionRatePercent}%`,
         inquiry_conversion_percent: conversionRatePercent,
-        won_with_po_conversion_rate: '38.2%',
         closed_win_rate:
           wonInquiriesCount + lostCount > 0
             ? `${((wonInquiriesCount / (wonInquiriesCount + lostCount)) * 100).toFixed(1)}%`
             : '0%',
-        verification_note:
-          'In Enlight Metals OS, exactly 68 inquiries/deals are won with confirmed Purchase Orders (POs) out of the 178 baseline inquiries (38.2% conversion rate). Across the entire sales pipeline, there are 74 won deals.',
       },
     };
 
@@ -1124,7 +1113,7 @@ export const getInquiriesTool: ChatbotTool = {
             this_month: {
               month_name: 'September 2026',
               status: 'In Progress (Month-to-Date)',
-              total_inquiries: thisMonthInqs || 20,
+              total_inquiries: thisMonthInqs,
               daily_average: `${thisMonthDailyAvg} inq/day`,
               channels: {
                 whatsapp: thisMonthWhatsapp,
@@ -1135,7 +1124,7 @@ export const getInquiriesTool: ChatbotTool = {
             last_month: {
               month_name: 'August 2026',
               status: 'Closed (Full Month)',
-              total_inquiries: lastMonthInqs || 181,
+              total_inquiries: lastMonthInqs,
               daily_average: `${lastMonthDailyAvg} inq/day`,
               channels: {
                 whatsapp: lastMonthWhatsapp,
@@ -1143,7 +1132,7 @@ export const getInquiriesTool: ChatbotTool = {
               },
               won_conversions: lastMonthWon,
             },
-            insights: `September 2026 is currently active with ${thisMonthInqs || 20} inquiries received MTD (~${thisMonthDailyAvg} inquiries/day pace). August 2026 closed with a total of ${lastMonthInqs || 181} inquiries (~${lastMonthDailyAvg} inquiries/day).`,
+            insights: `September 2026 is currently active with ${thisMonthInqs} inquiries received MTD (~${thisMonthDailyAvg} inquiries/day pace). August 2026 closed with a total of ${lastMonthInqs} inquiries (~${lastMonthDailyAvg} inquiries/day).`,
           },
         },
         rowCount: 2,
@@ -1169,6 +1158,7 @@ export const getInquiriesTool: ChatbotTool = {
       const thisMonthWonOrders = thisMonthDeals.filter(
         (d: any) =>
           (d.stage || '').toLowerCase() === 'won' ||
+          (d.status || '').toLowerCase() === 'won' ||
           (d.stage || '').toLowerCase() === 'order' ||
           Boolean(d.po_number),
       );
@@ -1177,11 +1167,11 @@ export const getInquiriesTool: ChatbotTool = {
         data: {
           month: 'September 2026',
           summary: {
-            total_inquiries_this_month: thisMonthInqsCount || 20,
-            total_deals_created_this_month: thisMonthDeals.length || 21,
-            total_orders_won_this_month: thisMonthWonOrders.length || 8,
-            new_customers_onboarded_this_month: 5,
-            total_active_customer_accounts: 65,
+            total_inquiries_this_month: thisMonthInqsCount,
+            total_deals_created_this_month: thisMonthDeals.length,
+            total_orders_won_this_month: thisMonthWonOrders.length,
+            new_customers_onboarded_this_month: activeCustomers.length,
+            total_active_customer_accounts: activeCustomers.length,
           },
         },
         rowCount: 1,
@@ -1248,11 +1238,10 @@ export const getInquiriesTool: ChatbotTool = {
         data: {
           summary: {
             total_inquiries: totalInquiriesCount,
-            converted_to_orders_count: 68,
-            won_orders_count: 68,
-            baseline_inquiries_count: 178,
-            won_rate_baseline_percent: '38.2%',
-            total_won_deals_in_pipeline: 74,
+            converted_to_orders_count: convertedList.length,
+            won_orders_count: convertedList.length,
+            inquiry_to_won_conversion_rate: `${conversionRatePercent}%`,
+            total_won_deals_in_pipeline: totalWonDealsCount,
             not_converted_lost_count: lostList.length,
             in_progress_pipeline_count: inProgressList.length,
           },

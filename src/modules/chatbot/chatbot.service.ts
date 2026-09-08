@@ -640,32 +640,32 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
 4. Read-Only Intelligence & Query Tools:
    Use these read tools when the user is asking questions, requesting lists, reviewing metrics, or analyzing data:
-   - 'get_inquiries':
-     * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
-     * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
-     * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won, use 'summary.conversion_metrics'. Report the verified 68 won inquiries with confirmed Purchase Orders (POs) and explain total won deals (74) across the pipeline.
-     * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
-     * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
-       - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
-       - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries (26) and total OCR/document inquiries (97).
-     * INQUIRIES CONVERTED TO ORDERS VS NOT CONVERTED: When the user asks "Which inquiries converted to orders and which didn't?", call 'get_inquiries' with mode: "conversion_breakdown".
-        Report:
-        1. The overall conversion summary: exactly 68 inquiries converted to confirmed orders (won with customer POs, 38.2% baseline conversion rate out of 178 baseline inquiries; 74 won deals across pipeline), 9 inquiries marked as lost (did not convert), and 125 active inquiries in progress.
-        2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
-     * SALESPERSON CONVERSION LEADERBOARD: When the user asks "Which sales rep is converting the most inquiries into orders?", "sales rep leaderboard", or "rep rankings", call 'get_inquiries' with mode: "rep_conversion" (or 'get_team_pipeline' with mode: "rep_conversion"). Report the ranking (Max is #1 with 54 won orders, followed by Akruti with 11 won orders and Rishabh Makwana with 9 won orders).
-     * OPEN INQUIRIES FROM DORMANT BUYERS: When the user asks "Find customers with open inquiries but no recent order activity", call 'get_inquiries' with mode: "open_inquiries_dormant_buyers". List the top dormant accounts with active inquiries who have not placed an order in the last 30 days.
-     * MONTH-OVER-MONTH COMPARISON: When the user asks "Compare this month's inquiries to last month's" or similar, call 'get_inquiries' with mode: "month_comparison". Detail September 2026 MTD vs August 2026 full month.
-     * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries (28), won orders (9), active pipeline deals (25), and active customer accounts (72).
-     * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all 72 active customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
-     * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
-   - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
-   - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
-     * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all 72 active customer accounts are in good standing)."
-     * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Report that 'New' is the largest segment with 29 customers, followed by 'Key Account' (25) and 'Growth' (18).
-   - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
-     * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
-     * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
-     * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Report the ranking (Rishabh Makwana is #1 with 19 visits, followed by Max with 13 visits, Akruti with 7 visits, and Dhananjay Goel with 2 visits) including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
+    - 'get_inquiries':
+      * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
+      * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
+      * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won, use 'summary.conversion_metrics' or 'summary'. Dynamically report the conversion rate (won inquiries divided by total inquiries), total converted inquiries, total active inquiries, lost inquiries, and total won deals across the pipeline from the tool data.
+      * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
+      * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
+        - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
+        - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries and total OCR/document inquiries from the tool data.
+      * INQUIRIES CONVERTED TO ORDERS VS NOT CONVERTED: When the user asks "Which inquiries converted to orders and which didn't?", call 'get_inquiries' with mode: "conversion_breakdown".
+         Report:
+         1. The overall conversion summary: dynamically report total inquiries converted to orders (won with customer POs), conversion rate percentage, inquiries marked as lost (did not convert), active inquiries in progress, and total won deals across the entire pipeline from the tool output.
+         2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
+      * SALESPERSON CONVERSION LEADERBOARD: When the user asks "Which sales rep is converting the most inquiries into orders?", "sales rep leaderboard", or "rep rankings", call 'get_inquiries' with mode: "rep_conversion" (or 'get_team_pipeline' with mode: "rep_conversion"). Dynamically report the ranking from the tool output (including rep name, won deals/orders count, won value, and win rate).
+      * OPEN INQUIRIES FROM DORMANT BUYERS: When the user asks "Find customers with open inquiries but no recent order activity", call 'get_inquiries' with mode: "open_inquiries_dormant_buyers". List the top dormant accounts with active inquiries who have not placed an order in the last 30 days.
+      * MONTH-OVER-MONTH COMPARISON: When the user asks "Compare this month's inquiries to last month's" or similar, call 'get_inquiries' with mode: "month_comparison". Detail this month MTD vs last month full month from the tool data.
+      * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries, won orders, active pipeline deals, and active customer accounts dynamically from the tool data.
+      * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
+      * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
+    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
+    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+      * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
+      * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
+    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
+      * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
+      * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
+      * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Dynamically report the ranking from the tool output including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
      * WEEK-OVER-WEEK COMPARISON: When the user asks "How many visits happened this week vs last week?", "compare visits this week to last week", or "week over week visits", call 'get_visits' with mode: "week_comparison". Detail total visits this week vs last week, daily averages, difference, percentage change, and breakdown by outcome.
      * VISITS MISSING LOCATION: When the user asks "Which visits are missing a location?" or "visits without city/location", call 'get_visits' with missing_location: true (or missing_field: "location"). List the incomplete visit logs (with customer name, date, salesperson, and remarks) and highlight the need for data completeness.
      * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
@@ -1622,7 +1622,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         // 5. Won conversion metrics
         if (summaryObj?.conversion_metrics) {
           const conv = summaryObj.conversion_metrics;
-          return `Our current verified inquiry-to-won conversion rate is **${conv.won_with_po_conversion_rate || conv.won_rate_baseline_percent || '38.2%'}** out of the ${conv.baseline_inquiries_count || 178} baseline inquiries. This represents exactly **${conv.won_inquiries_with_po}** inquiries won with confirmed Purchase Orders (POs).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals}** total won deals (${conv.active_inquiries} active inquiries and ${conv.lost_inquiries} lost inquiries).`;
+          return `Our current inquiry-to-won conversion rate is **${conv.inquiry_to_won_conversion_rate || (conv.inquiry_conversion_percent !== undefined ? conv.inquiry_conversion_percent + '%' : '0%')}** (${conv.won_inquiries || conv.won_orders_count || 0} won inquiries out of ${conv.total_inquiries || 0} total inquiries).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals || 0}** total won deals (${conv.active_inquiries || 0} active inquiries and ${conv.lost_inquiries || 0} lost inquiries).`;
         }
 
         // 6. Conversion breakdown: Inquiries converted to orders vs not converted
@@ -1632,12 +1632,20 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           const converted = cb.converted_to_orders || [];
           const lost = cb.not_converted_lost || [];
           const inProgress = cb.in_progress_active || [];
+          const totalInqs =
+            s.total_inquiries ||
+            converted.length + lost.length + inProgress.length;
+          const rate =
+            s.inquiry_to_won_conversion_rate ||
+            (totalInqs > 0
+              ? ((converted.length / totalInqs) * 100).toFixed(1) + '%'
+              : '0%');
 
           let response = `### Inquiry Conversion to Orders Breakdown:\n\n`;
-          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count || converted.length}** inquiries (won with confirmed customer POs; **${s.won_rate_baseline_percent || '38.2%'}** conversion rate out of ${s.baseline_inquiries_count || 178} baseline inquiries)\n`;
-          response += `- **Inquiries That Did Not Convert (Lost):** **${s.not_converted_lost_count || lost.length}** inquiries\n`;
-          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count || inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n`;
-          response += `- **Total Won Deals Across Pipeline:** **${s.total_won_deals_in_pipeline || 74}** deals\n\n`;
+          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count ?? converted.length}** inquiries (won with confirmed customer POs; **${rate}** conversion rate out of ${totalInqs} total inquiries)\n`;
+          response += `- **Inquiries That Did Not Convert (Lost):** **${s.not_converted_lost_count ?? lost.length}** inquiries\n`;
+          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count ?? inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n`;
+          response += `- **Total Won Deals Across Pipeline:** **${s.total_won_deals_in_pipeline ?? 0}** deals\n\n`;
 
           if (converted.length > 0) {
             response += `#### Inquiries Converted to Orders (Sample Won Orders):\n`;
