@@ -545,9 +545,9 @@ export class DealsService {
     try {
       const stages = [
         'new_inquiry',
-        'qualified',
         'quoted',
         'negotiation',
+        'on_hold',
         'won',
         'lost',
       ];
@@ -559,11 +559,19 @@ export class DealsService {
       if (error) throw error;
 
       const summary = stages.map((stage) => {
-        const stageDeals = (data || []).filter((d: any) =>
-          stage === 'new_inquiry'
-            ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
-            : d.stage === stage,
-        );
+        const stageDeals = (data || []).filter((d: any) => {
+          const st = (d.stage || 'new_inquiry').toLowerCase().trim();
+          if (stage === 'new_inquiry') {
+            return st === 'new_inquiry' || st === 'review' || !st;
+          }
+          if (stage === 'quoted') {
+            return st === 'quoted' || st === 'qualified';
+          }
+          if (stage === 'on_hold') {
+            return st === 'on_hold' || st === 'hold';
+          }
+          return st === stage;
+        });
         return {
           stage,
           count: stageDeals.length || 0,
@@ -687,16 +695,24 @@ export class DealsService {
 
       if (error) throw error;
 
-      const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
+      const stages = ['new_inquiry', 'quoted', 'negotiation', 'on_hold'];
 
       const board = stages.reduce(
         (acc, stage) => {
           acc[stage] =
-            data?.filter((d) =>
-              stage === 'new_inquiry'
-                ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
-                : d.stage === stage,
-            ) || [];
+            data?.filter((d) => {
+              const st = (d.stage || 'new_inquiry').toLowerCase().trim();
+              if (stage === 'new_inquiry') {
+                return st === 'new_inquiry' || st === 'review' || !st;
+              }
+              if (stage === 'quoted') {
+                return st === 'quoted' || st === 'qualified';
+              }
+              if (stage === 'on_hold') {
+                return st === 'on_hold' || st === 'hold';
+              }
+              return st === stage;
+            }) || [];
           return acc;
         },
         {} as Record<string, any[]>,
