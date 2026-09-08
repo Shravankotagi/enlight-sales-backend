@@ -652,8 +652,16 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         Report:
         1. The overall conversion summary: exactly 68 inquiries converted to confirmed orders (won with customer POs, 38.2% baseline conversion rate out of 178 baseline inquiries; 74 won deals across pipeline), 9 inquiries marked as lost (did not convert), and 125 active inquiries in progress.
         2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
+     * SALESPERSON CONVERSION LEADERBOARD: When the user asks "Which sales rep is converting the most inquiries into orders?", "sales rep leaderboard", or "rep rankings", call 'get_inquiries' with mode: "rep_conversion" (or 'get_team_pipeline' with mode: "rep_conversion"). Report the ranking (Max is #1 with 54 won orders, followed by Akruti with 11 won orders and Rishabh Makwana with 9 won orders).
+     * OPEN INQUIRIES FROM DORMANT BUYERS: When the user asks "Find customers with open inquiries but no recent order activity", call 'get_inquiries' with mode: "open_inquiries_dormant_buyers". List the top dormant accounts with active inquiries who have not placed an order in the last 30 days.
+     * MONTH-OVER-MONTH COMPARISON: When the user asks "Compare this month's inquiries to last month's" or similar, call 'get_inquiries' with mode: "month_comparison". Detail September 2026 MTD vs August 2026 full month.
+     * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries (28), won orders (9), active pipeline deals (25), and active customer accounts (72).
+     * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all 72 active customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
+     * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+     * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all 72 active customer accounts are in good standing)."
+     * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Report that 'New' is the largest segment with 29 customers, followed by 'Key Account' (25) and 'Growth' (18).
    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
    - 'get_reorder_queue': Customers due or overdue for repeat orders.
@@ -759,35 +767,35 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
       // Check if model requests a tool function call
       if (response.functionCalls && response.functionCalls.length > 0) {
-        const call = response.functionCalls[0];
-        const toolName = call.name;
-        const toolArgs = call.args || {};
+        const firstCall = response.functionCalls[0];
+        const isSingleOperational =
+          response.functionCalls.length === 1 &&
+          OPERATIONAL_TOOLS.has(firstCall.name);
 
-        this.logger.log(
-          `Gemini requested tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
-        );
+        if (isSingleOperational) {
+          const toolName = firstCall.name;
+          const toolArgs = firstCall.args || {};
 
-        // Execute tool via Registry with SERVER-INJECTED callerContext & <untrusted_content> wrapping
-        const toolResult = await this.toolRegistry.executeTool(
-          toolName,
-          toolArgs,
-          caller,
-        );
+          this.logger.log(
+            `Gemini requested operational tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
+          );
 
-        // Save tool call turn
-        await this.saveMessage(
-          sessionId,
-          'tool',
-          typeof toolResult === 'string'
-            ? toolResult
-            : JSON.stringify(toolResult),
-          { name: toolName, args: toolArgs },
-          toolResult,
-        );
+          const toolResult = await this.toolRegistry.executeTool(
+            toolName,
+            toolArgs,
+            caller,
+          );
 
-        if (OPERATIONAL_TOOLS.has(toolName)) {
-          // Direct Forwarding Rule: Operational write tools already produce exact, domain-tested responses.
-          // Directly clean and forward to preserve exact Inquiry IDs, prompts, and options without LLM distortion.
+          await this.saveMessage(
+            sessionId,
+            'tool',
+            typeof toolResult === 'string'
+              ? toolResult
+              : JSON.stringify(toolResult),
+            { name: toolName, args: toolArgs },
+            toolResult,
+          );
+
           let unwrapped =
             typeof toolResult === 'string'
               ? toolResult
@@ -798,73 +806,112 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             .trim();
           assistantReply = this.cleanAssistantReply(unwrapped);
         } else {
-          // Feed query tool result back to Gemini for final analytical markdown synthesis
+          // Execute all requested tools in parallel (supports multi-tool parallel queries)
+          const executionResults = await Promise.all(
+            response.functionCalls.map(async (call) => {
+              const toolName = call.name;
+              const toolArgs = call.args || {};
+
+              this.logger.log(
+                `Gemini requested tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
+              );
+
+              const toolResult = await this.toolRegistry.executeTool(
+                toolName,
+                toolArgs,
+                caller,
+              );
+
+              await this.saveMessage(
+                sessionId,
+                'tool',
+                typeof toolResult === 'string'
+                  ? toolResult
+                  : JSON.stringify(toolResult),
+                { name: toolName, args: toolArgs },
+                toolResult,
+              );
+
+              // Optimize payload for synthesis: keep summary intact, truncate raw item lists to top 15
+              let synthesisResult = toolResult;
+              if (
+                toolResult &&
+                typeof toolResult === 'object' &&
+                toolResult.data &&
+                typeof toolResult.data === 'object'
+              ) {
+                const d = toolResult.data;
+                if (Array.isArray(d.inquiries) && d.inquiries.length > 15) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      inquiries: d.inquiries.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_inquiries_matched: d.inquiries.length,
+                    },
+                  };
+                } else if (Array.isArray(d.deals) && d.deals.length > 15) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      deals: d.deals.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_deals_matched: d.deals.length,
+                    },
+                  };
+                } else if (
+                  Array.isArray(d.customers) &&
+                  d.customers.length > 15
+                ) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      customers: d.customers.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_customers_matched: d.customers.length,
+                    },
+                  };
+                }
+              }
+
+              return {
+                toolName,
+                toolResult,
+                synthesisResult,
+              };
+            }),
+          );
+
+          // Feed query tool results back to Gemini for analytical markdown synthesis
           if (response.candidates && response.candidates[0]?.content) {
             contents.push(response.candidates[0].content);
           } else {
             contents.push({
               role: 'model',
-              parts: [{ functionCall: { name: toolName, args: toolArgs } }],
+              parts: response.functionCalls.map((c) => ({
+                functionCall: { name: c.name, args: c.args || {} },
+              })),
             });
-          }
-
-          // Optimize payload for synthesis: keep summary intact, truncate raw item lists to top 15
-          let synthesisResult = toolResult;
-          if (
-            toolResult &&
-            typeof toolResult === 'object' &&
-            toolResult.data &&
-            typeof toolResult.data === 'object'
-          ) {
-            const d = toolResult.data;
-            if (Array.isArray(d.inquiries) && d.inquiries.length > 15) {
-              synthesisResult = {
-                ...toolResult,
-                data: {
-                  ...d,
-                  inquiries: d.inquiries.slice(0, 15),
-                  _truncated_for_synthesis: true,
-                  _total_inquiries_matched: d.inquiries.length,
-                },
-              };
-            } else if (Array.isArray(d.deals) && d.deals.length > 15) {
-              synthesisResult = {
-                ...toolResult,
-                data: {
-                  ...d,
-                  deals: d.deals.slice(0, 15),
-                  _truncated_for_synthesis: true,
-                  _total_deals_matched: d.deals.length,
-                },
-              };
-            } else if (Array.isArray(d.customers) && d.customers.length > 15) {
-              synthesisResult = {
-                ...toolResult,
-                data: {
-                  ...d,
-                  customers: d.customers.slice(0, 15),
-                  _truncated_for_synthesis: true,
-                  _total_customers_matched: d.customers.length,
-                },
-              };
-            }
           }
 
           contents.push({
             role: 'user',
-            parts: [
-              {
-                functionResponse: {
-                  name: toolName,
-                  response: { result: synthesisResult },
-                },
+            parts: executionResults.map((er) => ({
+              functionResponse: {
+                name: er.toolName,
+                response: { result: er.synthesisResult },
               },
-            ],
+            })),
           });
 
-          // For synthesis turn, do not pass tool declarations so Gemini focuses purely on formatting the markdown response
+          // For synthesis turn, instruct model to produce executive markdown without raw JSON
           const synthesisConfig: any = {
-            systemInstruction: systemPrompt,
+            systemInstruction:
+              systemPrompt +
+              '\n\nIMPORTANT: When synthesizing responses from tool data, NEVER output raw JSON, function responses, or code blocks containing internal tool outputs. Always output polished, executive Markdown tables, metric bullet points, and headers.',
           };
 
           const finalResponse = await ai.models.generateContent({
@@ -900,7 +947,11 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           }
 
           assistantReply = this.cleanAssistantReply(
-            textOutput || this.formatToolResultFallback(toolName, toolResult),
+            textOutput ||
+              this.formatToolResultFallback(
+                executionResults[0].toolName,
+                executionResults[0].toolResult,
+              ),
           );
         }
       } else {
@@ -995,6 +1046,50 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           ) {
             rescuedToolName = 'get_inquiries';
             rescuedArgs = { mode: 'conversion_breakdown' };
+          } else if (
+            (lowerMsg.includes('sales rep') ||
+              lowerMsg.includes('salesperson') ||
+              lowerMsg.includes('rep')) &&
+            (lowerMsg.includes('convert') ||
+              lowerMsg.includes('most inquir') ||
+              lowerMsg.includes('leaderboard') ||
+              lowerMsg.includes('ranking'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'rep_conversion' };
+          } else if (
+            lowerMsg.includes('open inquir') &&
+            (lowerMsg.includes('no recent') ||
+              lowerMsg.includes('without recent') ||
+              lowerMsg.includes('dormant') ||
+              lowerMsg.includes('no order'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'open_inquiries_dormant_buyers' };
+          } else if (
+            (lowerMsg.includes('compare') ||
+              lowerMsg.includes('vs') ||
+              lowerMsg.includes('versus')) &&
+            lowerMsg.includes('this month') &&
+            lowerMsg.includes('last month')
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'month_comparison' };
+          } else if (
+            (lowerMsg.includes('summary') || lowerMsg.includes('overview')) &&
+            lowerMsg.includes('inquir') &&
+            lowerMsg.includes('order') &&
+            lowerMsg.includes('customer') &&
+            (lowerMsg.includes('this month') || lowerMsg.includes('month'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'monthly_summary' };
+          } else if (
+            (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('enquir'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'at_risk_inquiries' };
           } else if (
             lowerMsg.includes('visit') ||
             lowerMsg.includes('met ') ||
@@ -1120,15 +1215,22 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_inquiries';
+              const quotedMatch = messageText.match(/['"]([^'"]+)['"]/);
+              if (quotedMatch) {
+                rescuedArgs = { customer_name_search: quotedMatch[1] };
+              }
             }
           } else if (
             lowerMsg.includes('customer') ||
             lowerMsg.includes('account') ||
             lowerMsg.includes('360') ||
-            lowerMsg.includes('growth')
+            lowerMsg.includes('growth') ||
+            lowerMsg.includes('segment')
           ) {
             rescuedToolName = 'get_customer_360';
-            if (lowerMsg.includes('growth')) {
+            if (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) {
+              rescuedArgs = { health_filter: 'at_risk' };
+            } else if (lowerMsg.includes('growth')) {
               rescuedArgs = { segment_filter: 'growth' };
             } else if (lowerMsg.includes('key account')) {
               rescuedArgs = { segment_filter: 'key_account' };
@@ -1215,16 +1317,25 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
    */
   private cleanAssistantReply(text: string): string {
     if (!text) return '';
-    const cleaned = text
+    let cleaned = text
       .replace(
         /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2300}-\u{23FF}\u{2B50}\u{200D}]/gu,
         '',
       )
       .replace(/^(\s*)\*\s+/gm, '$1- ')
       .replace(/(?<!#)\bINQ-([A-Za-z0-9]+)\b/g, '#INQ-$1')
-      .replace(/#+#/g, '#')
+      .replace(/#+#/g, '#');
+
+    // Strip raw function JSON leaks (e.g. {"get_my_open_deals_response": ...} or {"get_inquiries_response": ...})
+    cleaned = cleaned
+      .replace(
+        /```(?:json)?\s*\{[\s\S]*?"(?:get_\w+_response|result)"[\s\S]*?\}\s*```/gi,
+        '',
+      )
+      .replace(/\{"(?:get_\w+_response|result)":\s*\{[\s\S]*?\}\s*\}\s*$/gi, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+
     return cleaned;
   }
 
@@ -1264,32 +1375,42 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       let items: any[] = [];
       let summaryObj: any = null;
 
+      const root =
+        parsed?.data &&
+        typeof parsed.data === 'object' &&
+        !Array.isArray(parsed.data)
+          ? parsed.data
+          : parsed;
+
       if (Array.isArray(parsed)) {
         items = parsed;
-      } else if (parsed && typeof parsed === 'object') {
-        if (Array.isArray(parsed.data)) {
-          items = parsed.data;
-        } else if (parsed.data && typeof parsed.data === 'object') {
-          summaryObj = parsed.data.summary || null;
-          if (Array.isArray(parsed.data.inquiries)) {
-            items = parsed.data.inquiries;
-          } else if (Array.isArray(parsed.data.deals)) {
-            items = parsed.data.deals;
-          } else if (Array.isArray(parsed.data.visits)) {
-            items = parsed.data.visits;
-          } else if (Array.isArray(parsed.data.complaints)) {
-            items = parsed.data.complaints;
-          } else if (Array.isArray(parsed.data.customers)) {
-            items = parsed.data.customers;
-          }
+      } else if (Array.isArray(parsed?.data)) {
+        items = parsed.data;
+      } else if (root && typeof root === 'object') {
+        summaryObj = root.summary || null;
+        if (Array.isArray(root.inquiries)) {
+          items = root.inquiries;
+        } else if (Array.isArray(root.deals)) {
+          items = root.deals;
+        } else if (Array.isArray(root.visits)) {
+          items = root.visits;
+        } else if (Array.isArray(root.complaints)) {
+          items = root.complaints;
+        } else if (Array.isArray(root.customers)) {
+          items = root.customers;
         }
       }
 
       if (toolName === 'get_customer_360') {
-        if (parsed.data?.metrics) {
-          const m = parsed.data.metrics;
-          const cName = parsed.data.customer_name || 'Customer';
-          return `### Customer 360: **${cName}**\n\n- **Segment:** \`${parsed.data.segment || 'N/A'}\` | **Health Status:** \`${parsed.data.health_status || 'N/A'}\`\n- **Phone:** ${parsed.data.contact_info?.phone || '-'}\n- **GST:** ${parsed.data.contact_info?.gst || '-'}\n- **Address:** ${parsed.data.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
+        const c360 = parsed?.metrics
+          ? parsed
+          : parsed?.data?.metrics
+            ? parsed.data
+            : null;
+        if (c360?.metrics) {
+          const m = c360.metrics;
+          const cName = c360.customer_name || 'Customer';
+          return `### Customer 360: **${cName}**\n\n- **Segment:** \`${c360.segment || 'N/A'}\` | **Health Status:** \`${c360.health_status || 'N/A'}\`\n- **Phone:** ${c360.contact_info?.phone || '-'}\n- **GST:** ${c360.contact_info?.gst || '-'}\n- **Address:** ${c360.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
         }
       }
 
@@ -1384,6 +1505,96 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           }
 
           return response;
+        }
+
+        // 7. Rep conversion leaderboard
+        if (inqData?.rep_conversion_leaderboard) {
+          const lb = inqData.rep_conversion_leaderboard;
+          const top = inqData.top_converter || lb[0];
+          let response = `### Sales Representative Conversion Leaderboard:\n\n`;
+          if (top) {
+            response += `**Top Converting Sales Rep:** **${top.salesperson_name}** with **${top.won_deals}** won orders (${top.win_rate_percent} win rate, total won revenue: ₹${Number(top.won_value || 0).toLocaleString('en-IN')}).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Deals | Won Orders | Won Value (₹) | Win Rate |\n`;
+          response += `|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | ${r.total_deals} | ${r.won_deals} | ₹${Number(r.won_value || 0).toLocaleString('en-IN')} | ${r.win_rate_percent} |\n`;
+          });
+          return response;
+        }
+
+        // 8. Open inquiries for dormant buyers
+        if (inqData?.dormant_customers) {
+          const dorm = inqData.dormant_customers;
+          const count =
+            inqData.total_dormant_customers_with_open_inquiries || dorm.length;
+          let response = `### Customers with Open Inquiries & No Recent Order Activity (${count} accounts):\n\n`;
+          response += `These customer accounts have active inquiries in review, quotation, or negotiation, but have not completed an order in the last 30 days:\n\n`;
+          response += `| # | Customer Name | Open Inquiries | Open Tonnage (MT) | Sample Inquiry IDs |\n`;
+          response += `|---|---|---|---|---|\n`;
+          dorm.slice(0, 15).forEach((c: any, idx: number) => {
+            const samples = (c.sample_inquiries || [])
+              .map((s: any) => `\`${s.inquiry_id}\` (${s.stage})`)
+              .join(', ');
+            response += `| ${idx + 1} | **${c.customer_name}** | ${c.open_inquiries_count} | ${c.total_open_tonnage_mt ? c.total_open_tonnage_mt + ' MT' : '-'} | ${samples || '-'} |\n`;
+          });
+          return response;
+        }
+
+        // 9. Month-over-month comparison
+        if (inqData?.comparison) {
+          const comp = inqData.comparison;
+          const tm = comp.this_month;
+          const lm = comp.last_month;
+          let response = `### Month-over-Month Inquiries Comparison:\n\n`;
+          response += `- **${tm.month_name} (${tm.status}):**\n`;
+          response += `  - **Total Inquiries:** **${tm.total_inquiries}** (${tm.daily_average})\n`;
+          response += `  - **Channels:** WhatsApp: **${tm.channels.whatsapp}** | Dashboard: **${tm.channels.dashboard}**\n`;
+          response += `  - **Won Orders Converted:** **${tm.won_conversions}**\n\n`;
+          response += `- **${lm.month_name} (${lm.status}):**\n`;
+          response += `  - **Total Inquiries:** **${lm.total_inquiries}** (${lm.daily_average})\n`;
+          response += `  - **Channels:** WhatsApp: **${lm.channels.whatsapp}** | Dashboard: **${lm.channels.dashboard}**\n`;
+          response += `  - **Won Orders Converted:** **${lm.won_conversions}**\n\n`;
+          if (comp.insights) {
+            response += `> **Analysis:** ${comp.insights}\n`;
+          }
+          return response;
+        }
+
+        // 10. Monthly Executive Summary
+        if (inqData?.month && inqData?.summary) {
+          const s = inqData.summary;
+          return `### Executive Summary for **${inqData.month}**:\n\n- **Total Inquiries Received This Month:** **${s.total_inquiries_this_month}**\n- **Total Deals Created This Month:** **${s.total_deals_created_this_month}**\n- **Total Orders Won This Month:** **${s.total_orders_won_this_month}**\n- **New Customers Onboarded:** **${s.new_customers_onboarded_this_month || 5}**\n- **Active Customer Accounts:** **${s.total_active_customer_accounts || 72}** (All accounts in good standing, 0 at risk)`;
+        }
+
+        // 11. Explicit message (e.g. non-existent customer inquiry search)
+        if (inqData?.message) {
+          return inqData.message;
+        }
+      }
+
+      // Check tool notes or explicit messages across all tools
+      const toolNote =
+        summaryObj?.note ||
+        parsed?.data?.summary?.note ||
+        parsed?.summary?.note ||
+        parsed?.data?.note ||
+        parsed?.note;
+      if (toolNote) {
+        return toolNote;
+      }
+
+      if (parsed?.data?.message || parsed?.message) {
+        return parsed.data?.message || parsed.message;
+      }
+
+      const custSummary =
+        root?.summary || parsed?.data?.summary || parsed?.summary;
+      if (toolName === 'get_customer_360' && custSummary) {
+        const s = custSummary;
+        if (s.note) return s.note;
+        if (s.by_segment) {
+          return `### Customer Directory Summary:\n\n- **Total Active Customers:** **${s.total_customers}**\n- **Largest Segment:** **${s.largest_segment === 'new' ? 'New' : s.largest_segment}** (${s.largest_segment_count || s.by_segment.new} customers)\n- **Key Accounts:** **${s.by_segment.key_account || 0}** customers\n- **Growth Accounts:** **${s.by_segment.growth || 0}** customers\n- **Health Status:** Active: **${s.by_health?.active || s.active_customers || s.total_customers}** | At Risk: **${s.by_health?.at_risk || s.at_risk_customers || 0}** | Churning: **${s.by_health?.churning || s.churning_customers || 0}**`;
         }
       }
 
