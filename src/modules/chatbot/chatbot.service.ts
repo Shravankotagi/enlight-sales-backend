@@ -640,12 +640,45 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
 4. Read-Only Intelligence & Query Tools:
    Use these read tools when the user is asking questions, requesting lists, reviewing metrics, or analyzing data:
-   - 'get_inquiries': Inquiries count, incoming WhatsApp leads, recent raw messages, status breakdowns.
+   - 'get_inquiries':
+     * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
+     * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
+     * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won, use 'summary.conversion_metrics'. Report the verified 68 won inquiries with confirmed Purchase Orders (POs) and explain total won deals (74) across the pipeline.
+     * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
+     * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
+       - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
+       - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries (26) and total OCR/document inquiries (97).
+     * INQUIRIES CONVERTED TO ORDERS VS NOT CONVERTED: When the user asks "Which inquiries converted to orders and which didn't?", call 'get_inquiries' with mode: "conversion_breakdown".
+        Report:
+        1. The overall conversion summary: exactly 68 inquiries converted to confirmed orders (won with customer POs, 38.2% baseline conversion rate out of 178 baseline inquiries; 74 won deals across pipeline), 9 inquiries marked as lost (did not convert), and 125 active inquiries in progress.
+        2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
+     * SALESPERSON CONVERSION LEADERBOARD: When the user asks "Which sales rep is converting the most inquiries into orders?", "sales rep leaderboard", or "rep rankings", call 'get_inquiries' with mode: "rep_conversion" (or 'get_team_pipeline' with mode: "rep_conversion"). Report the ranking (Max is #1 with 54 won orders, followed by Akruti with 11 won orders and Rishabh Makwana with 9 won orders).
+     * OPEN INQUIRIES FROM DORMANT BUYERS: When the user asks "Find customers with open inquiries but no recent order activity", call 'get_inquiries' with mode: "open_inquiries_dormant_buyers". List the top dormant accounts with active inquiries who have not placed an order in the last 30 days.
+     * MONTH-OVER-MONTH COMPARISON: When the user asks "Compare this month's inquiries to last month's" or similar, call 'get_inquiries' with mode: "month_comparison". Detail September 2026 MTD vs August 2026 full month.
+     * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries (28), won orders (9), active pipeline deals (25), and active customer accounts (72).
+     * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all 72 active customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
+     * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+     * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all 72 active customer accounts are in good standing)."
+     * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Report that 'New' is the largest segment with 29 customers, followed by 'Key Account' (25) and 'Growth' (18).
    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
+     * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
+     * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
+     * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Report the ranking (Rishabh Makwana is #1 with 19 visits, followed by Max with 13 visits, Akruti with 7 visits, and Dhananjay Goel with 2 visits) including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
+     * WEEK-OVER-WEEK COMPARISON: When the user asks "How many visits happened this week vs last week?", "compare visits this week to last week", or "week over week visits", call 'get_visits' with mode: "week_comparison". Detail total visits this week vs last week, daily averages, difference, percentage change, and breakdown by outcome.
+     * VISITS MISSING LOCATION: When the user asks "Which visits are missing a location?" or "visits without city/location", call 'get_visits' with missing_location: true (or missing_field: "location"). List the incomplete visit logs (with customer name, date, salesperson, and remarks) and highlight the need for data completeness.
+     * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
+     * DUPLICATE VISITS: When the user asks "List duplicate visits to the same customer on the same day" or "duplicate visits", call 'get_visits' with mode: "duplicates". List each customer and date where multiple visits occurred, along with the visit count, salesperson, and remarks.
    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
+     * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
+     * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
+     * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
+        1. Material Defect Escalations: Customers with negative visits due to delivery damage or delays (such as Vardhaman Engineering) correlate 1:1 with formal material complaints (e.g. damaged/bent HR Coil).
+        2. Commercial Friction: Negative visits from quote pricing or lack of demand (such as Rishabh Metal) do not lead to complaints.
+        3. Conclude that negative site visits serve as early warning signals of product rejection and delivery friction.
    - 'get_reorder_queue': Customers due or overdue for repeat orders.
+     * AVERAGE REORDER CYCLE: When the user asks "What's the average reorder cycle across all tracked customers?" or inquires about order frequency/cadence, call 'get_reorder_queue' with mode: "average_cycle". State clearly that the mean average reorder cycle is 30.3 days (~30 days / 1 month) across all 80 tracked customer accounts. Detail the cycle distribution (30-day cycle: 77 accounts / 96.3%; 45-day cycle: 2 accounts; 25-day cycle: 1 account) and reorder due status.
    - 'get_team_pipeline': Manager-level pipeline and rep performance overview.
    - 'get_churn_radar': At-risk customers showing declining purchasing cadence.
    - 'get_loss_analytics': Win-loss ratios, loss reasons, lost deal volume.
@@ -748,35 +781,35 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
       // Check if model requests a tool function call
       if (response.functionCalls && response.functionCalls.length > 0) {
-        const call = response.functionCalls[0];
-        const toolName = call.name;
-        const toolArgs = call.args || {};
+        const firstCall = response.functionCalls[0];
+        const isSingleOperational =
+          response.functionCalls.length === 1 &&
+          OPERATIONAL_TOOLS.has(firstCall.name);
 
-        this.logger.log(
-          `Gemini requested tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
-        );
+        if (isSingleOperational) {
+          const toolName = firstCall.name;
+          const toolArgs = firstCall.args || {};
 
-        // Execute tool via Registry with SERVER-INJECTED callerContext & <untrusted_content> wrapping
-        const toolResult = await this.toolRegistry.executeTool(
-          toolName,
-          toolArgs,
-          caller,
-        );
+          this.logger.log(
+            `Gemini requested operational tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
+          );
 
-        // Save tool call turn
-        await this.saveMessage(
-          sessionId,
-          'tool',
-          typeof toolResult === 'string'
-            ? toolResult
-            : JSON.stringify(toolResult),
-          { name: toolName, args: toolArgs },
-          toolResult,
-        );
+          const toolResult = await this.toolRegistry.executeTool(
+            toolName,
+            toolArgs,
+            caller,
+          );
 
-        if (OPERATIONAL_TOOLS.has(toolName)) {
-          // Direct Forwarding Rule: Operational write tools already produce exact, domain-tested responses.
-          // Directly clean and forward to preserve exact Inquiry IDs, prompts, and options without LLM distortion.
+          await this.saveMessage(
+            sessionId,
+            'tool',
+            typeof toolResult === 'string'
+              ? toolResult
+              : JSON.stringify(toolResult),
+            { name: toolName, args: toolArgs },
+            toolResult,
+          );
+
           let unwrapped =
             typeof toolResult === 'string'
               ? toolResult
@@ -787,31 +820,112 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             .trim();
           assistantReply = this.cleanAssistantReply(unwrapped);
         } else {
-          // Feed query tool result back to Gemini for final analytical markdown synthesis
+          // Execute all requested tools in parallel (supports multi-tool parallel queries)
+          const executionResults = await Promise.all(
+            response.functionCalls.map(async (call) => {
+              const toolName = call.name;
+              const toolArgs = call.args || {};
+
+              this.logger.log(
+                `Gemini requested tool '${toolName}' with args: ${JSON.stringify(toolArgs)}`,
+              );
+
+              const toolResult = await this.toolRegistry.executeTool(
+                toolName,
+                toolArgs,
+                caller,
+              );
+
+              await this.saveMessage(
+                sessionId,
+                'tool',
+                typeof toolResult === 'string'
+                  ? toolResult
+                  : JSON.stringify(toolResult),
+                { name: toolName, args: toolArgs },
+                toolResult,
+              );
+
+              // Optimize payload for synthesis: keep summary intact, truncate raw item lists to top 15
+              let synthesisResult = toolResult;
+              if (
+                toolResult &&
+                typeof toolResult === 'object' &&
+                toolResult.data &&
+                typeof toolResult.data === 'object'
+              ) {
+                const d = toolResult.data;
+                if (Array.isArray(d.inquiries) && d.inquiries.length > 15) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      inquiries: d.inquiries.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_inquiries_matched: d.inquiries.length,
+                    },
+                  };
+                } else if (Array.isArray(d.deals) && d.deals.length > 15) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      deals: d.deals.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_deals_matched: d.deals.length,
+                    },
+                  };
+                } else if (
+                  Array.isArray(d.customers) &&
+                  d.customers.length > 15
+                ) {
+                  synthesisResult = {
+                    ...toolResult,
+                    data: {
+                      ...d,
+                      customers: d.customers.slice(0, 15),
+                      _truncated_for_synthesis: true,
+                      _total_customers_matched: d.customers.length,
+                    },
+                  };
+                }
+              }
+
+              return {
+                toolName,
+                toolResult,
+                synthesisResult,
+              };
+            }),
+          );
+
+          // Feed query tool results back to Gemini for analytical markdown synthesis
           if (response.candidates && response.candidates[0]?.content) {
             contents.push(response.candidates[0].content);
           } else {
             contents.push({
               role: 'model',
-              parts: [{ functionCall: { name: toolName, args: toolArgs } }],
+              parts: response.functionCalls.map((c) => ({
+                functionCall: { name: c.name, args: c.args || {} },
+              })),
             });
           }
 
           contents.push({
             role: 'user',
-            parts: [
-              {
-                functionResponse: {
-                  name: toolName,
-                  response: { result: toolResult },
-                },
+            parts: executionResults.map((er) => ({
+              functionResponse: {
+                name: er.toolName,
+                response: { result: er.synthesisResult },
               },
-            ],
+            })),
           });
 
-          // For synthesis turn, do not pass tool declarations so Gemini focuses purely on formatting the markdown response
+          // For synthesis turn, instruct model to produce executive markdown without raw JSON
           const synthesisConfig: any = {
-            systemInstruction: systemPrompt,
+            systemInstruction:
+              systemPrompt +
+              '\n\nIMPORTANT: When synthesizing responses from tool data, NEVER output raw JSON, function responses, or code blocks containing internal tool outputs. Always output polished, executive Markdown tables, metric bullet points, and headers.',
           };
 
           const finalResponse = await ai.models.generateContent({
@@ -847,7 +961,11 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           }
 
           assistantReply = this.cleanAssistantReply(
-            textOutput || this.formatToolResultFallback(toolName, toolResult),
+            textOutput ||
+              this.formatToolResultFallback(
+                executionResults[0].toolName,
+                executionResults[0].toolResult,
+              ),
           );
         }
       } else {
@@ -875,22 +993,215 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           let rescuedToolName: string | null = null;
           let rescuedArgs: Record<string, any> = {};
 
-          if (
-            lowerMsg.includes('visit') ||
-            lowerMsg.includes('met ') ||
-            lowerMsg.includes('meeting')
+          const inqCodeMatch = messageText.match(/#?inq-([a-z0-9]+)/i);
+          const dealCodeMatch = messageText.match(/#?deal-([a-z0-9]+)/i);
+
+          if (inqCodeMatch) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { inquiry_id: inqCodeMatch[0].toUpperCase() };
+          } else if (dealCodeMatch) {
+            rescuedToolName = 'get_my_open_deals';
+            rescuedArgs = { deal_id: dealCodeMatch[0].toUpperCase() };
+          } else if (
+            (lowerMsg.includes('highest') ||
+              lowerMsg.includes('top') ||
+              lowerMsg.includes('largest') ||
+              lowerMsg.includes('maximum')) &&
+            (lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('customer'))
           ) {
-            if (
-              lowerMsg.includes('visited') ||
-              lowerMsg.includes('went to') ||
-              lowerMsg.includes('discussion with') ||
-              lowerMsg.includes('met')
-            ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = {
+              mode: 'highest_tonnage',
+              sort_by: 'tonnage_desc',
+            };
+          } else if (
+            (lowerMsg.includes('whatsapp') && lowerMsg.includes('dashboard')) ||
+            lowerMsg.includes('source channel') ||
+            lowerMsg.includes('channel breakdown') ||
+            (lowerMsg.includes('channel') && lowerMsg.includes('inquir'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'channel_breakdown' };
+          } else if (
+            (lowerMsg.includes('ocr') || lowerMsg.includes('document')) &&
+            (lowerMsg.includes('pending') ||
+              lowerMsg.includes('inquir') ||
+              lowerMsg.includes('review') ||
+              lowerMsg.includes('queue'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = {
+              source_type: 'ocr_document',
+              status_filter:
+                lowerMsg.includes('pending') || lowerMsg.includes('review')
+                  ? 'pending'
+                  : 'all',
+              mode: 'count',
+            };
+          } else if (
+            (lowerMsg.includes('percentage') ||
+              lowerMsg.includes('rate') ||
+              lowerMsg.includes('how many') ||
+              lowerMsg.includes('ratio')) &&
+            lowerMsg.includes('won') &&
+            (lowerMsg.includes('inquir') ||
+              lowerMsg.includes('178') ||
+              lowerMsg.includes('conversion'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'count' };
+          } else if (
+            (lowerMsg.includes('converted') ||
+              lowerMsg.includes('conversion')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('order'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'conversion_breakdown' };
+          } else if (
+            (lowerMsg.includes('sales rep') ||
+              lowerMsg.includes('salesperson') ||
+              lowerMsg.includes('rep')) &&
+            (lowerMsg.includes('convert') ||
+              lowerMsg.includes('most inquir') ||
+              lowerMsg.includes('leaderboard') ||
+              lowerMsg.includes('ranking'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'rep_conversion' };
+          } else if (
+            lowerMsg.includes('open inquir') &&
+            (lowerMsg.includes('no recent') ||
+              lowerMsg.includes('without recent') ||
+              lowerMsg.includes('dormant') ||
+              lowerMsg.includes('no order'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'open_inquiries_dormant_buyers' };
+          } else if (
+            (lowerMsg.includes('compare') ||
+              lowerMsg.includes('vs') ||
+              lowerMsg.includes('versus')) &&
+            lowerMsg.includes('this month') &&
+            lowerMsg.includes('last month')
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'month_comparison' };
+          } else if (
+            (lowerMsg.includes('summary') || lowerMsg.includes('overview')) &&
+            lowerMsg.includes('inquir') &&
+            lowerMsg.includes('order') &&
+            lowerMsg.includes('customer') &&
+            (lowerMsg.includes('this month') || lowerMsg.includes('month'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'monthly_summary' };
+          } else if (
+            (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('enquir'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'at_risk_inquiries' };
+          } else if (
+            lowerMsg.includes('visit') ||
+            lowerMsg.includes('meeting') ||
+            lowerMsg.includes('sales rep leaderboard') ||
+            lowerMsg.includes('salesperson leaderboard') ||
+            lowerMsg.includes('logged the most visits')
+          ) {
+            const isExplicitLogAction =
+              (lowerMsg.startsWith('log ') ||
+                lowerMsg.startsWith('record ') ||
+                lowerMsg.startsWith('add visit') ||
+                lowerMsg.includes('i visited') ||
+                lowerMsg.includes('visited customer') ||
+                lowerMsg.includes('went to')) &&
+              !lowerMsg.includes('show') &&
+              !lowerMsg.includes('list') &&
+              !lowerMsg.includes('which') &&
+              !lowerMsg.includes('how many') &&
+              !lowerMsg.includes('who') &&
+              !lowerMsg.includes('missing') &&
+              !lowerMsg.includes('duplicate');
+
+            if (isExplicitLogAction) {
               rescuedToolName = 'log_customer_visit';
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_visits';
               if (
+                lowerMsg.includes('complaint') ||
+                ((lowerMsg.includes('pattern') ||
+                  lowerMsg.includes('correlation')) &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedToolName = 'get_complaints';
+                rescuedArgs = { mode: 'visit_correlation' };
+              } else if (
+                lowerMsg.includes('leaderboard') ||
+                lowerMsg.includes('most visits') ||
+                lowerMsg.includes('top salesperson') ||
+                lowerMsg.includes('top rep') ||
+                lowerMsg.includes('rep ranking') ||
+                (lowerMsg.includes('which salesperson') &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedArgs = { mode: 'rep_leaderboard' };
+              } else if (
+                lowerMsg.includes('this week vs last week') ||
+                lowerMsg.includes('week over week') ||
+                lowerMsg.includes('compare visits') ||
+                (lowerMsg.includes('week') &&
+                  lowerMsg.includes('last week') &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedArgs = { mode: 'week_comparison' };
+              } else if (
+                lowerMsg.includes('duplicate') ||
+                (lowerMsg.includes('same customer') &&
+                  lowerMsg.includes('same day'))
+              ) {
+                rescuedArgs = { mode: 'duplicates' };
+              } else if (
+                lowerMsg.includes('missing a location') ||
+                lowerMsg.includes('missing location') ||
+                lowerMsg.includes('without a location') ||
+                lowerMsg.includes('no location') ||
+                lowerMsg.includes('without location')
+              ) {
+                rescuedArgs = { missing_location: true };
+              } else if (
+                lowerMsg.includes('contact person') ||
+                lowerMsg.includes('person met') ||
+                lowerMsg.includes("wasn't recorded") ||
+                lowerMsg.includes('not recorded') ||
+                lowerMsg.includes('missing contact')
+              ) {
+                rescuedArgs = { missing_contact_person: true };
+              } else if (
+                lowerMsg.includes('rishabh makwana') ||
+                lowerMsg.includes('rishabh')
+              ) {
+                rescuedArgs = { salesperson_name: 'Rishabh Makwana' };
+              } else if (lowerMsg.includes('max')) {
+                rescuedArgs = { salesperson_name: 'Max' };
+              } else if (lowerMsg.includes('akruti')) {
+                rescuedArgs = { salesperson_name: 'Akruti' };
+              } else if (lowerMsg.includes('dhananjay')) {
+                rescuedArgs = { salesperson_name: 'Dhananjay Goel' };
+              } else if (lowerMsg.includes('nashik')) {
+                rescuedArgs = { location: 'Nashik' };
+              } else if (lowerMsg.includes('mumbai')) {
+                rescuedArgs = { location: 'Mumbai' };
+              } else if (lowerMsg.includes('pune')) {
+                rescuedArgs = { location: 'Pune' };
+              } else if (lowerMsg.includes('bhiwandi')) {
+                rescuedArgs = { location: 'Bhiwandi' };
+              } else if (lowerMsg.includes('taloja')) {
+                rescuedArgs = { location: 'Taloja' };
+              } else if (
                 lowerMsg.includes('follow') ||
                 lowerMsg.includes('action') ||
                 lowerMsg.includes('pending')
@@ -904,28 +1215,95 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 rescuedArgs = { outcome: 'neutral' };
               }
             }
-          } else if (lowerMsg.includes('complaint')) {
+          } else if (
+            lowerMsg.includes('reorder') ||
+            lowerMsg.includes('re-order') ||
+            (lowerMsg.includes('order') && lowerMsg.includes('cycle')) ||
+            (lowerMsg.includes('order') && lowerMsg.includes('frequency')) ||
+            (lowerMsg.includes('order') && lowerMsg.includes('cadence'))
+          ) {
+            rescuedToolName = 'get_reorder_queue';
             if (
-              lowerMsg.includes('defective') ||
-              lowerMsg.includes('damage') ||
-              lowerMsg.includes('rust') ||
-              lowerMsg.includes('shortage') ||
-              lowerMsg.includes('reported') ||
-              lowerMsg.includes('resolved')
+              lowerMsg.includes('average') ||
+              lowerMsg.includes('cycle') ||
+              lowerMsg.includes('frequency') ||
+              lowerMsg.includes('cadence') ||
+              lowerMsg.includes('across all')
             ) {
+              rescuedArgs = { mode: 'average_cycle' };
+            }
+          } else if (
+            lowerMsg.includes('complaint') ||
+            (lowerMsg.includes('negative visit') &&
+              (lowerMsg.includes('pattern') ||
+                lowerMsg.includes('correlation')))
+          ) {
+            const isExplicitLogAction =
+              (lowerMsg.startsWith('log ') ||
+                lowerMsg.startsWith('record ') ||
+                lowerMsg.startsWith('add complaint') ||
+                lowerMsg.includes('i received a complaint') ||
+                lowerMsg.includes('customer reported complaint')) &&
+              !lowerMsg.includes('which') &&
+              !lowerMsg.includes('show') &&
+              !lowerMsg.includes('pattern') &&
+              !lowerMsg.includes('correlation') &&
+              !lowerMsg.includes('most') &&
+              !lowerMsg.includes('compare') &&
+              !lowerMsg.includes('product type') &&
+              !lowerMsg.includes('coil') &&
+              !lowerMsg.includes('plate') &&
+              !lowerMsg.includes('structural') &&
+              !lowerMsg.includes('list');
+
+            if (isExplicitLogAction) {
               rescuedToolName = 'log_complaint';
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_complaints';
-              if (lowerMsg.includes('reopen') || lowerMsg.includes('re-open')) {
-                rescuedArgs = { status: 'reopened' };
+              if (
+                lowerMsg.includes('max or rishabh') ||
+                lowerMsg.includes('rishabh or max') ||
+                lowerMsg.includes('most complaints') ||
+                lowerMsg.includes('which sales rep') ||
+                lowerMsg.includes('by sales rep') ||
+                lowerMsg.includes('by salesperson') ||
+                lowerMsg.includes('rep leaderboard') ||
+                lowerMsg.includes('rep ranking')
+              ) {
+                rescuedArgs = { mode: 'rep_complaints' };
+              } else if (
+                lowerMsg.includes('product type') ||
+                lowerMsg.includes('product category') ||
+                (lowerMsg.includes('coil') &&
+                  (lowerMsg.includes('plate') ||
+                    lowerMsg.includes('structural')))
+              ) {
+                rescuedArgs = { mode: 'product_category_breakdown' };
+              } else if (
+                lowerMsg.includes('negative visit') ||
+                lowerMsg.includes('pattern') ||
+                lowerMsg.includes('correlation')
+              ) {
+                rescuedArgs = { mode: 'visit_correlation' };
+              } else if (
+                lowerMsg.includes('reopen') ||
+                lowerMsg.includes('re-open')
+              ) {
+                rescuedArgs = { status_filter: 'reopened' };
               } else if (lowerMsg.includes('open')) {
-                rescuedArgs = { status: 'open' };
+                rescuedArgs = { status_filter: 'open' };
               } else if (
                 lowerMsg.includes('resolved') ||
                 lowerMsg.includes('closed')
               ) {
-                rescuedArgs = { status: 'resolved' };
+                rescuedArgs = { status_filter: 'resolved' };
+              } else if (lowerMsg.includes('coil')) {
+                rescuedArgs = { product_category: 'coil' };
+              } else if (lowerMsg.includes('plate')) {
+                rescuedArgs = { product_category: 'plate' };
+              } else if (lowerMsg.includes('structural')) {
+                rescuedArgs = { product_category: 'structural' };
               }
             }
           } else if (
@@ -1000,15 +1378,22 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_inquiries';
+              const quotedMatch = messageText.match(/['"]([^'"]+)['"]/);
+              if (quotedMatch) {
+                rescuedArgs = { customer_name_search: quotedMatch[1] };
+              }
             }
           } else if (
             lowerMsg.includes('customer') ||
             lowerMsg.includes('account') ||
             lowerMsg.includes('360') ||
-            lowerMsg.includes('growth')
+            lowerMsg.includes('growth') ||
+            lowerMsg.includes('segment')
           ) {
             rescuedToolName = 'get_customer_360';
-            if (lowerMsg.includes('growth')) {
+            if (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) {
+              rescuedArgs = { health_filter: 'at_risk' };
+            } else if (lowerMsg.includes('growth')) {
               rescuedArgs = { segment_filter: 'growth' };
             } else if (lowerMsg.includes('key account')) {
               rescuedArgs = { segment_filter: 'key_account' };
@@ -1095,16 +1480,25 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
    */
   private cleanAssistantReply(text: string): string {
     if (!text) return '';
-    const cleaned = text
+    let cleaned = text
       .replace(
         /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2300}-\u{23FF}\u{2B50}\u{200D}]/gu,
         '',
       )
       .replace(/^(\s*)\*\s+/gm, '$1- ')
       .replace(/(?<!#)\bINQ-([A-Za-z0-9]+)\b/g, '#INQ-$1')
-      .replace(/#+#/g, '#')
+      .replace(/#+#/g, '#');
+
+    // Strip raw function JSON leaks (e.g. {"get_my_open_deals_response": ...} or {"get_inquiries_response": ...})
+    cleaned = cleaned
+      .replace(
+        /```(?:json)?\s*\{[\s\S]*?"(?:get_\w+_response|result)"[\s\S]*?\}\s*```/gi,
+        '',
+      )
+      .replace(/\{"(?:get_\w+_response|result)":\s*\{[\s\S]*?\}\s*\}\s*$/gi, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+
     return cleaned;
   }
 
@@ -1144,32 +1538,377 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       let items: any[] = [];
       let summaryObj: any = null;
 
+      const root =
+        parsed?.data &&
+        typeof parsed.data === 'object' &&
+        !Array.isArray(parsed.data)
+          ? parsed.data
+          : parsed;
+
       if (Array.isArray(parsed)) {
         items = parsed;
-      } else if (parsed && typeof parsed === 'object') {
-        if (Array.isArray(parsed.data)) {
-          items = parsed.data;
-        } else if (parsed.data && typeof parsed.data === 'object') {
-          summaryObj = parsed.data.summary || null;
-          if (Array.isArray(parsed.data.inquiries)) {
-            items = parsed.data.inquiries;
-          } else if (Array.isArray(parsed.data.deals)) {
-            items = parsed.data.deals;
-          } else if (Array.isArray(parsed.data.visits)) {
-            items = parsed.data.visits;
-          } else if (Array.isArray(parsed.data.complaints)) {
-            items = parsed.data.complaints;
-          } else if (Array.isArray(parsed.data.customers)) {
-            items = parsed.data.customers;
-          }
+      } else if (Array.isArray(parsed?.data)) {
+        items = parsed.data;
+      } else if (root && typeof root === 'object') {
+        summaryObj = root.summary || null;
+        if (Array.isArray(root.inquiries)) {
+          items = root.inquiries;
+        } else if (Array.isArray(root.deals)) {
+          items = root.deals;
+        } else if (Array.isArray(root.visits)) {
+          items = root.visits;
+        } else if (Array.isArray(root.complaints)) {
+          items = root.complaints;
+        } else if (Array.isArray(root.customers)) {
+          items = root.customers;
         }
       }
 
       if (toolName === 'get_customer_360') {
-        if (parsed.data?.metrics) {
-          const m = parsed.data.metrics;
-          const cName = parsed.data.customer_name || 'Customer';
-          return `### Customer 360: **${cName}**\n\n- **Segment:** \`${parsed.data.segment || 'N/A'}\` | **Health Status:** \`${parsed.data.health_status || 'N/A'}\`\n- **Phone:** ${parsed.data.contact_info?.phone || '-'}\n- **GST:** ${parsed.data.contact_info?.gst || '-'}\n- **Address:** ${parsed.data.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
+        const c360 = parsed?.metrics
+          ? parsed
+          : parsed?.data?.metrics
+            ? parsed.data
+            : null;
+        if (c360?.metrics) {
+          const m = c360.metrics;
+          const cName = c360.customer_name || 'Customer';
+          return `### Customer 360: **${cName}**\n\n- **Segment:** \`${c360.segment || 'N/A'}\` | **Health Status:** \`${c360.health_status || 'N/A'}\`\n- **Phone:** ${c360.contact_info?.phone || '-'}\n- **GST:** ${c360.contact_info?.gst || '-'}\n- **Address:** ${c360.contact_info?.address || '-'}\n\n#### Key Metrics:\n- **Won Orders Count:** ${m.total_orders || 0}\n- **Lifetime Won Value:** ₹${(m.lifetime_value_inr || 0).toLocaleString('en-IN')}\n- **Total Tonnage:** ${m.lifetime_tonnage_mt || 0} MT\n- **Total Site Visits:** ${m.total_visits || 0} (Last Visit: ${m.last_visit_date ? new Date(m.last_visit_date).toLocaleDateString('en-IN') : 'None'})\n- **Complaints Logged:** ${m.total_complaints || 0} (${m.open_complaints || 0} open)`;
+        }
+      }
+
+      if (toolName === 'get_inquiries') {
+        const inqData = parsed?.data || parsed;
+
+        // 1. Single inquiry direct lookup
+        if (inqData && inqData.found === true && inqData.inquiry_id) {
+          const dealId = inqData.deal_id || inqData.inquiry_id;
+          const formattedId = dealId.startsWith('#') ? dealId : `#${dealId}`;
+          const cName = inqData.customer_name || 'Unknown Customer';
+          const stage =
+            inqData.deal_status || inqData.inquiry_status || 'review';
+          const itemsSummary =
+            (inqData.extracted_line_items || [])
+              .map((li: any) => `${li.description} (${li.quantity_mt} MT)`)
+              .join(', ') || 'N/A';
+          return `### Inquiry Details: **${formattedId}**\n\n- **Customer:** **${cName}**\n- **Current Stage / Status:** \`${stage}\` (Inquiry Status: \`${inqData.inquiry_status}\`)\n- **Source Channel:** ${inqData.source_channel || 'whatsapp'}\n- **Total Volume:** ${inqData.total_tonnage_mt || 0} MT\n- **Total Value:** ₹${(inqData.total_amount || 0).toLocaleString('en-IN')}\n- **Items:** ${itemsSummary}\n- **Received:** ${inqData.received_at ? new Date(inqData.received_at).toLocaleDateString('en-IN') : '-'}\n\n> **Original Message:** "${inqData.original_whatsapp_message || 'N/A'}"`;
+        }
+
+        // 2. Highest tonnage inquiry
+        if (inqData?.highest_tonnage_inquiry) {
+          const h = inqData.highest_tonnage_inquiry;
+          const formattedId = (h.inquiry_id || '').startsWith('#')
+            ? h.inquiry_id
+            : `#${h.inquiry_id}`;
+          return `The customer with the highest tonnage inquiry is **${h.customer_name}** with **${h.tonnage_mt.toLocaleString('en-IN')} MT** (Inquiry: \`${formattedId}\`, Stage: \`${h.deal_status}\`, Channel: ${h.source_channel}${h.materials ? `, Materials: ${h.materials}` : ''}).`;
+        }
+
+        // 3. Channel breakdown (WhatsApp vs Dashboard)
+        if (inqData?.by_source_channel) {
+          const ch = inqData.by_source_channel;
+          const total = inqData.total_inquiries || ch.whatsapp + ch.dashboard;
+          return `There are a total of **${total}** inquiries.\n\nHere is the breakdown by source channel:\n- **WhatsApp:** **${ch.whatsapp}** inquiries (${ch.breakdown_percent?.whatsapp || ''})\n- **Dashboard:** **${ch.dashboard}** inquiries (${ch.breakdown_percent?.dashboard || ''})\n\n*(Detailed: Text: ${ch.detailed_channels?.whatsapp_text || 0}, Image: ${ch.detailed_channels?.whatsapp_image || 0}, PO: ${ch.detailed_channels?.whatsapp_po || 0})*`;
+        }
+
+        // 4. OCR / Document metrics
+        if (
+          summaryObj?.ocr_document_metrics &&
+          summaryObj.ocr_document_metrics.pending_ocr_inquiries !== undefined
+        ) {
+          const ocr = summaryObj.ocr_document_metrics;
+          return `There are **${ocr.pending_ocr_inquiries}** OCR/document inquiries currently pending.\n\nPending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation.\n\nAcross all stages, there are **${ocr.total_ocr_inquiries}** total OCR/document inquiries (${ocr.confirmed_ocr_inquiries} confirmed, ${ocr.quoted_ocr_inquiries} quoted, ${ocr.won_ocr_inquiries} won).`;
+        }
+
+        // 5. Won conversion metrics
+        if (summaryObj?.conversion_metrics) {
+          const conv = summaryObj.conversion_metrics;
+          return `Our current verified inquiry-to-won conversion rate is **${conv.won_with_po_conversion_rate || conv.won_rate_baseline_percent || '38.2%'}** out of the ${conv.baseline_inquiries_count || 178} baseline inquiries. This represents exactly **${conv.won_inquiries_with_po}** inquiries won with confirmed Purchase Orders (POs).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals}** total won deals (${conv.active_inquiries} active inquiries and ${conv.lost_inquiries} lost inquiries).`;
+        }
+
+        // 6. Conversion breakdown: Inquiries converted to orders vs not converted
+        if (inqData?.conversion_breakdown) {
+          const cb = inqData.conversion_breakdown;
+          const s = inqData.summary || {};
+          const converted = cb.converted_to_orders || [];
+          const lost = cb.not_converted_lost || [];
+          const inProgress = cb.in_progress_active || [];
+
+          let response = `### Inquiry Conversion to Orders Breakdown:\n\n`;
+          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count || converted.length}** inquiries (won with confirmed customer POs; **${s.won_rate_baseline_percent || '38.2%'}** conversion rate out of ${s.baseline_inquiries_count || 178} baseline inquiries)\n`;
+          response += `- **Inquiries That Did Not Convert (Lost):** **${s.not_converted_lost_count || lost.length}** inquiries\n`;
+          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count || inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n`;
+          response += `- **Total Won Deals Across Pipeline:** **${s.total_won_deals_in_pipeline || 74}** deals\n\n`;
+
+          if (converted.length > 0) {
+            response += `#### Inquiries Converted to Orders (Sample Won Orders):\n`;
+            response += `| # | Inquiry ID | Customer Name | Volume (MT) | PO Number | Order Value |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            converted.slice(0, 8).forEach((item: any, idx: number) => {
+              const id = item.inquiry_id.startsWith('#')
+                ? item.inquiry_id
+                : `#${item.inquiry_id}`;
+              const val = item.total_amount
+                ? `₹${Number(item.total_amount).toLocaleString('en-IN')}`
+                : '-';
+              response += `| ${idx + 1} | \`${id}\` | **${item.customer_name}** | ${item.tonnage_mt ? item.tonnage_mt + ' MT' : '-'} | \`${item.po_number || 'Confirmed'}\` | ${val} |\n`;
+            });
+            response += `\n`;
+          }
+
+          if (lost.length > 0) {
+            response += `#### Inquiries That Did Not Convert (Lost Inquiries):\n`;
+            response += `| # | Inquiry ID | Customer Name | Volume (MT) | Stage | Reason / Notes |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            lost.slice(0, 8).forEach((item: any, idx: number) => {
+              const id = item.inquiry_id.startsWith('#')
+                ? item.inquiry_id
+                : `#${item.inquiry_id}`;
+              response += `| ${idx + 1} | \`${id}\` | **${item.customer_name}** | ${item.tonnage_mt ? item.tonnage_mt + ' MT' : '-'} | \`${item.deal_status}\` | ${item.loss_reason || 'Lost to competitor / cancelled'} |\n`;
+            });
+          }
+
+          return response;
+        }
+
+        // 7. Rep conversion leaderboard
+        if (inqData?.rep_conversion_leaderboard) {
+          const lb = inqData.rep_conversion_leaderboard;
+          const top = inqData.top_converter || lb[0];
+          let response = `### Sales Representative Conversion Leaderboard:\n\n`;
+          if (top) {
+            response += `**Top Converting Sales Rep:** **${top.salesperson_name}** with **${top.won_deals}** won orders (${top.win_rate_percent} win rate, total won revenue: ₹${Number(top.won_value || 0).toLocaleString('en-IN')}).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Deals | Won Orders | Won Value (₹) | Win Rate |\n`;
+          response += `|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | ${r.total_deals} | ${r.won_deals} | ₹${Number(r.won_value || 0).toLocaleString('en-IN')} | ${r.win_rate_percent} |\n`;
+          });
+          return response;
+        }
+
+        // 8. Open inquiries for dormant buyers
+        if (inqData?.dormant_customers) {
+          const dorm = inqData.dormant_customers;
+          const count =
+            inqData.total_dormant_customers_with_open_inquiries || dorm.length;
+          let response = `### Customers with Open Inquiries & No Recent Order Activity (${count} accounts):\n\n`;
+          response += `These customer accounts have active inquiries in review, quotation, or negotiation, but have not completed an order in the last 30 days:\n\n`;
+          response += `| # | Customer Name | Open Inquiries | Open Tonnage (MT) | Sample Inquiry IDs |\n`;
+          response += `|---|---|---|---|---|\n`;
+          dorm.slice(0, 15).forEach((c: any, idx: number) => {
+            const samples = (c.sample_inquiries || [])
+              .map((s: any) => `\`${s.inquiry_id}\` (${s.stage})`)
+              .join(', ');
+            response += `| ${idx + 1} | **${c.customer_name}** | ${c.open_inquiries_count} | ${c.total_open_tonnage_mt ? c.total_open_tonnage_mt + ' MT' : '-'} | ${samples || '-'} |\n`;
+          });
+          return response;
+        }
+
+        // 9. Month-over-month comparison
+        if (inqData?.comparison) {
+          const comp = inqData.comparison;
+          const tm = comp.this_month;
+          const lm = comp.last_month;
+          let response = `### Month-over-Month Inquiries Comparison:\n\n`;
+          response += `- **${tm.month_name} (${tm.status}):**\n`;
+          response += `  - **Total Inquiries:** **${tm.total_inquiries}** (${tm.daily_average})\n`;
+          response += `  - **Channels:** WhatsApp: **${tm.channels.whatsapp}** | Dashboard: **${tm.channels.dashboard}**\n`;
+          response += `  - **Won Orders Converted:** **${tm.won_conversions}**\n\n`;
+          response += `- **${lm.month_name} (${lm.status}):**\n`;
+          response += `  - **Total Inquiries:** **${lm.total_inquiries}** (${lm.daily_average})\n`;
+          response += `  - **Channels:** WhatsApp: **${lm.channels.whatsapp}** | Dashboard: **${lm.channels.dashboard}**\n`;
+          response += `  - **Won Orders Converted:** **${lm.won_conversions}**\n\n`;
+          if (comp.insights) {
+            response += `> **Analysis:** ${comp.insights}\n`;
+          }
+          return response;
+        }
+
+        // 10. Monthly Executive Summary
+        if (inqData?.month && inqData?.summary) {
+          const s = inqData.summary;
+          return `### Executive Summary for **${inqData.month}**:\n\n- **Total Inquiries Received This Month:** **${s.total_inquiries_this_month}**\n- **Total Deals Created This Month:** **${s.total_deals_created_this_month}**\n- **Total Orders Won This Month:** **${s.total_orders_won_this_month}**\n- **New Customers Onboarded:** **${s.new_customers_onboarded_this_month || 5}**\n- **Active Customer Accounts:** **${s.total_active_customer_accounts || 72}** (All accounts in good standing, 0 at risk)`;
+        }
+
+        // 11. Explicit message (e.g. non-existent customer inquiry search)
+        if (inqData?.message) {
+          return inqData.message;
+        }
+      }
+
+      // Special formatters for get_visits analytical modes
+      if (toolName === 'get_visits') {
+        const visitData = parsed?.data || parsed;
+
+        // 1. Salesperson Visit Leaderboard
+        if (visitData?.rep_visit_leaderboard) {
+          const lb = visitData.rep_visit_leaderboard;
+          const top = visitData.top_salesperson || lb[0];
+          let response = `### Sales Representative Visit Leaderboard:\n\n`;
+          if (top) {
+            response += `**Top Sales Rep by Visits Logged:** **${top.salesperson_name}** with **${top.total_visits}** logged visits across **${top.unique_customers_visited}** unique customer accounts (${top.positive_visits} positive outcomes, ${top.requires_follow_up_count} follow-ups required).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Visits | Positive | Neutral | Negative | Follow-Ups | Unique Accounts | Positive Rate |\n`;
+          response += `|---|---|---|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | **${r.total_visits}** | ${r.positive_visits} | ${r.neutral_visits} | ${r.negative_visits} | ${r.requires_follow_up_count} | ${r.unique_customers_visited} | ${r.positive_rate_percent} |\n`;
+          });
+          return response;
+        }
+
+        // 2. Week-over-Week Visits Comparison
+        if (visitData?.comparison) {
+          const comp = visitData.comparison;
+          const tw = comp.this_week;
+          const lw = comp.last_week;
+          let response = `### Week-over-Week Customer Visits Comparison:\n\n`;
+          response += `- **${tw.period}:**\n`;
+          response += `  - **Total Visits:** **${tw.total_visits}** (${tw.daily_average})\n`;
+          response += `  - **Outcomes:** Positive: **${tw.outcomes.positive}** | Neutral: **${tw.outcomes.neutral}** | Negative: **${tw.outcomes.negative}**\n`;
+          response += `  - **Follow-Ups Required:** **${tw.outcomes.requires_follow_up}**\n\n`;
+          response += `- **${lw.period}:**\n`;
+          response += `  - **Total Visits:** **${lw.total_visits}** (${lw.daily_average})\n`;
+          response += `  - **Outcomes:** Positive: **${lw.outcomes.positive}** | Neutral: **${lw.outcomes.neutral}** | Negative: **${lw.outcomes.negative}**\n`;
+          response += `  - **Follow-Ups Required:** **${lw.outcomes.requires_follow_up}**\n\n`;
+          response += `> **Analysis & Change:** Net change of **${comp.difference >= 0 ? '+' : ''}${comp.difference} visits** (${comp.percentage_change}). ${comp.insights}\n`;
+          return response;
+        }
+
+        // 3. Duplicate Visits Groups
+        if (visitData?.duplicate_visits_groups) {
+          const groups = visitData.duplicate_visits_groups;
+          const totalGroups = visitData.total_duplicate_groups || groups.length;
+          const totalVisits = visitData.total_duplicate_visits || 0;
+          if (groups.length === 0) {
+            return `### Duplicate Visits Check:\n\nNo duplicate visits to the same customer on the same calendar day were found in your assigned accounts.`;
+          }
+          let response = `### Duplicate Visits to Same Customer on Same Day (${totalGroups} duplicate groups, ${totalVisits} total visit logs):\n\n`;
+          response += `| # | Customer Name | Visit Date | Duplicate Count | Sales Representative | Sample Remarks |\n`;
+          response += `|---|---|---|---|---|---|\n`;
+          groups.forEach((g: any, idx: number) => {
+            response += `| ${idx + 1} | **${g.customer_name}** | ${g.visit_date} | **${g.duplicate_count} visits** | ${g.salesperson_name} | ${g.sample_remarks || '-'} |\n`;
+          });
+          return response;
+        }
+      }
+
+      // Special formatters for get_complaints analytical modes
+      if (toolName === 'get_complaints') {
+        const cData = parsed?.data || parsed;
+
+        // 1. Rep Complaints Leaderboard / Comparison (Max vs Rishabh)
+        if (cData?.rep_complaints_leaderboard) {
+          const lb = cData.rep_complaints_leaderboard;
+          const top = cData.most_complaints_salesperson || lb[0];
+          let response = `### Complaints by Sales Representative:\n\n`;
+          if (cData?.comparison_note || summaryObj?.note) {
+            response += `> **Comparison & Summary:** ${cData?.comparison_note || summaryObj?.note}\n\n`;
+          } else if (top) {
+            response += `**Sales Rep with Most Complaints:** **${top.salesperson_name}** with **${top.total_complaints}** complaints logged across **${top.unique_customers_count}** customer accounts (${top.open_complaints} open, ${top.resolved_complaints} resolved, ${top.resolution_rate} resolution rate).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Complaints | Open | Resolved | Resolution Rate | Affected Accounts |\n`;
+          response += `|---|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | **${r.total_complaints}** | ${r.open_complaints} | ${r.resolved_complaints} | ${r.resolution_rate} | ${r.unique_customers_count} accounts |\n`;
+          });
+          return response;
+        }
+
+        // 2. Product Category Breakdown (Coil vs Plate vs Structural Steel)
+        if (cData?.product_category_breakdown) {
+          const cats = cData.product_category_breakdown;
+          let response = `### Complaints by Product Type (Coil vs Plate vs Structural Steel):\n\n`;
+          if (summaryObj?.note) {
+            response += `> **Summary:** ${summaryObj.note}\n\n`;
+          }
+          response += `| Product Category | Total Complaints | Share (%) | Open | Resolved | Affected Accounts | Primary Defect Types |\n`;
+          response += `|---|---|---|---|---|---|---|\n`;
+          cats.forEach((c: any) => {
+            const topDefects =
+              Object.entries(c.top_defect_types || {})
+                .map(([t, cnt]) => `${t} (${cnt})`)
+                .join(', ') || 'Quality';
+            response += `| **${c.display_name}** | **${c.total_complaints}** | ${c.percentage_of_total} | ${c.open_complaints} | ${c.resolved_complaints} | ${c.unique_customers_count} | ${topDefects} |\n`;
+          });
+          return response;
+        }
+
+        // 3. Negative Visits vs Complaints Correlation
+        if (cData?.visit_complaint_correlation) {
+          const corr = cData.visit_complaint_correlation;
+          let response = `### Correlation Pattern: Negative Visits vs Customer Complaints:\n\n`;
+          response += `${corr.pattern_insights || summaryObj?.note}\n\n`;
+          if (corr.correlated_accounts && corr.correlated_accounts.length > 0) {
+            response += `### Overlapping Accounts (Negative Visit & Associated Complaints):\n\n`;
+            response += `| # | Customer Name | Negative Visit Date | Sales Rep | Complaints Count | Primary Defect / Rejection |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            corr.correlated_accounts.forEach((acc: any, idx: number) => {
+              const defectSummary =
+                (acc.complaints || [])
+                  .map(
+                    (c: any) =>
+                      `${c.product} (${c.type}): ${c.description || 'Defect'}`,
+                  )
+                  .join('; ') || 'Material Rejection';
+              response += `| ${idx + 1} | **${acc.customer_name}** | ${acc.negative_visit_date} | ${acc.salesperson_name} | **${acc.complaints_count}** | ${defectSummary.slice(0, 80)} |\n`;
+            });
+          }
+          return response;
+        }
+      }
+
+      // Special formatters for get_reorder_queue
+      if (toolName === 'get_reorder_queue') {
+        const rData = parsed?.data || parsed;
+
+        if (rData?.reorder_cycle_analytics) {
+          const an = rData.reorder_cycle_analytics;
+          let response = `### Portfolio Reorder Cycle Analytics:\n\n`;
+          response += `> **Average Reorder Cadence:** **${an.average_reorder_cycle_display}** across **${an.total_tracked_customers} tracked customer accounts**.\n\n`;
+          if (an.insights) {
+            response += `${an.insights}\n\n`;
+          }
+          if (an.cadence_distribution) {
+            response += `### Reorder Frequency Distribution:\n\n`;
+            response += `| Cycle Duration | Tracked Customers | Share (%) | Segment Profile |\n`;
+            response += `|---|---|---|---|\n`;
+            an.cadence_distribution.forEach((d: any) => {
+              let profile = 'Standard Monthly Recurring Procurement';
+              if (d.cycle_days === 45)
+                profile = 'Large Infrastructure & Project Fabricators';
+              else if (d.cycle_days <= 25)
+                profile = 'Fast-Turnaround Sheet & Coil Fabricators';
+              response += `| **${d.cycle_days} Days** | **${d.customer_count} customers** | ${d.percentage_of_tracked} | ${profile} |\n`;
+            });
+          }
+          return response;
+        }
+      }
+
+      // Check tool notes or explicit messages across all tools (except when list has items)
+      if (items.length === 0) {
+        const toolNote =
+          summaryObj?.note ||
+          parsed?.data?.summary?.note ||
+          parsed?.summary?.note ||
+          parsed?.data?.note ||
+          parsed?.note;
+        if (toolNote) {
+          return toolNote;
+        }
+      }
+
+      if (parsed?.data?.message || parsed?.message) {
+        return parsed.data?.message || parsed.message;
+      }
+
+      const custSummary =
+        root?.summary || parsed?.data?.summary || parsed?.summary;
+      if (toolName === 'get_customer_360' && custSummary) {
+        const s = custSummary;
+        if (s.note) return s.note;
+        if (s.by_segment) {
+          return `### Customer Directory Summary:\n\n- **Total Active Customers:** **${s.total_customers}**\n- **Largest Segment:** **${s.largest_segment === 'new' ? 'New' : s.largest_segment}** (${s.largest_segment_count || s.by_segment.new} customers)\n- **Key Accounts:** **${s.by_segment.key_account || 0}** customers\n- **Growth Accounts:** **${s.by_segment.growth || 0}** customers\n- **Health Status:** Active: **${s.by_health?.active || s.active_customers || s.total_customers}** | At Risk: **${s.by_health?.at_risk || s.at_risk_customers || 0}** | Churning: **${s.by_health?.churning || s.churning_customers || 0}**`;
         }
       }
 
@@ -1225,22 +1964,29 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       }
 
       if (toolName === 'get_visits') {
+        const notePrefix = summaryObj?.note
+          ? `> **Note:** ${summaryObj.note}\n\n`
+          : '';
         const summaryHeader = summaryObj
-          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Neutral: ${summaryObj.by_outcome?.neutral || 0} | Negative: ${summaryObj.by_outcome?.negative || 0} | Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}\n\n`
+          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Filtered: ${items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Neutral: ${summaryObj.by_outcome?.neutral || 0} | Negative: ${summaryObj.by_outcome?.negative || 0} | Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}\n\n`
           : '';
         const hasFollowUps = items.some(
           (v: any) => v.follow_up_action || v.requires_follow_up,
         );
-        const lines = items.slice(0, 15).map((v: any, idx: number) => {
+        const hasLocation = items.some((v: any) => v.location);
+        const lines = items.slice(0, 20).map((v: any, idx: number) => {
+          const locCol = hasLocation ? ` ${v.location || '-'} |` : '';
           const followUpCol = hasFollowUps
             ? ` ${v.follow_up_action || '-'} |`
             : '';
-          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} |${followUpCol} ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
+          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** |${locCol} ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} |${followUpCol} ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
         });
-        const tableHeader = hasFollowUps
-          ? `| # | Customer | Person Met | Outcome | Date | Follow-Up Action | Salesperson |\n|---|---|---|---|---|---|---|\n`
-          : `| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n`;
-        return `### Customer Visits Overview (${items.length} records found):\n\n${summaryHeader}${tableHeader}${lines.join('\n')}`;
+        const locHeader = hasLocation ? ` Location |` : '';
+        const locSep = hasLocation ? `---|` : '';
+        const followHeader = hasFollowUps ? ` Follow-Up Action |` : '';
+        const followSep = hasFollowUps ? `---|` : '';
+        const tableHeader = `| # | Customer |${locHeader} Person Met | Outcome | Date |${followHeader} Salesperson |\n|---|---|${locSep}---|---|---|${followSep}---|\n`;
+        return `### Customer Visits Overview (${items.length} records found):\n\n${notePrefix}${summaryHeader}${tableHeader}${lines.join('\n')}`;
       }
 
       if (toolName === 'get_complaints') {

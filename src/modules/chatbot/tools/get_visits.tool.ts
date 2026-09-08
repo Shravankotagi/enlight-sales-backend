@@ -32,9 +32,31 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     startOfWeek.setHours(0, 0, 0, 0);
     return { from: startOfWeek };
   }
+  if (lower === 'last_week') {
+    const endOfLastWeek = new Date(now);
+    endOfLastWeek.setDate(endOfLastWeek.getDate() - 7);
+    endOfLastWeek.setHours(23, 59, 59, 999);
+    const startOfLastWeek = new Date(now);
+    startOfLastWeek.setDate(startOfLastWeek.getDate() - 14);
+    startOfLastWeek.setHours(0, 0, 0, 0);
+    return { from: startOfLastWeek, to: endOfLastWeek };
+  }
   if (lower === 'this_month' || lower === 'month') {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return { from: startOfMonth };
+  }
+  if (lower === 'last_month') {
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    return { from: startOfLastMonth, to: endOfLastMonth };
   }
   const parsed = new Date(dateFilter);
   if (!isNaN(parsed.getTime())) {
@@ -142,12 +164,12 @@ export function parseVisitRemarks(remarks?: string | null): {
 export const getVisitsTool: ChatbotTool = {
   name: 'get_visits',
   description:
-    'Retrieves customer site visit logs, meeting outcomes (positive, neutral, negative), remarks, and follow-up actions from customer_visits (KRA 9). Can filter by outcome (positive/neutral/negative), requires_follow_up (true/false for visits requiring follow-up), customer name, or date range. Scoped strictly by caller role.',
+    'Retrieves customer site visit logs, meeting outcomes (positive, neutral, negative), remarks, follow-up actions, salesperson visit leaderboard, week-over-week comparison, location filtering, missing fields filtering, and duplicate visits grouping from customer_visits (KRA 9). Scoped strictly by caller role.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_visits',
     description:
-      'Retrieves customer site visits and field visit reports. Can filter by customer name, outcome (positive/neutral/negative), requires_follow_up (true for visits needing follow-up actions), or date range (today, this_week, this_month). Scoped by caller role.',
+      'Retrieves customer site visits and field visit reports. Can filter by customer name, salesperson name, location (city/address), outcome (positive/neutral/negative), requires_follow_up (true for visits needing follow-up), missing_location (true for visits missing city), missing_contact_person (true for visits missing contact person), date_range (today, yesterday, this_week, last_week, this_month, last_month), or query mode (rep_leaderboard, week_comparison, duplicates). Scoped by caller role.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -155,6 +177,16 @@ export const getVisitsTool: ChatbotTool = {
           type: 'STRING',
           description:
             'Optional filter by customer or company name (e.g. "Supreme Steel", "Tata").',
+        },
+        salesperson_name: {
+          type: 'STRING',
+          description:
+            'Optional filter by sales representative name or phone (e.g. "Rishabh Makwana", "Max", "Akruti"). Scoped by caller role.',
+        },
+        location: {
+          type: 'STRING',
+          description:
+            'Optional filter by visit city, region, or plant address (e.g. "Nashik", "Bhiwandi", "Pune", "Taloja", "Mumbai").',
         },
         outcome: {
           type: 'STRING',
@@ -166,15 +198,30 @@ export const getVisitsTool: ChatbotTool = {
           description:
             'Optional filter. When true, returns only visits that require follow-up actions or remarks.',
         },
+        missing_field: {
+          type: 'STRING',
+          description:
+            'Optional filter for incomplete visit logs: "location" (visits missing city/location) or "contact_person" (visits missing person met or contact phone).',
+        },
+        missing_location: {
+          type: 'BOOLEAN',
+          description:
+            'Optional filter. When true, returns only visits where location was not recorded.',
+        },
+        missing_contact_person: {
+          type: 'BOOLEAN',
+          description:
+            'Optional filter. When true, returns only visits where the contact person / person met was not recorded.',
+        },
         date_range: {
           type: 'STRING',
           description:
-            'Optional date filter. Valid values: "today", "yesterday", "this_week", "this_month", "all", or specific ISO date.',
+            'Optional date filter. Valid values: "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "all", or specific ISO date.',
         },
         mode: {
           type: 'STRING',
           description:
-            'Query mode. Valid values: "list" (default, returns records with summary), "summary" (returns only counts and statistics).',
+            'Query mode. Valid values: "list" (default), "summary", "rep_leaderboard" / "salesperson_leaderboard" (ranks reps by visits logged), "week_comparison" / "week_over_week" (this week vs last week comparative), "duplicates" / "duplicate_visits" (detects same-day visits to same customer).',
         },
         limit: {
           type: 'INTEGER',
@@ -186,6 +233,10 @@ export const getVisitsTool: ChatbotTool = {
   },
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
     const searchCustomer = (args?.customer_name || '').trim().toLowerCase();
+    const searchSalesperson = (args?.salesperson_name || '')
+      .trim()
+      .toLowerCase();
+    const searchLocation = (args?.location || '').trim().toLowerCase();
     const rawOutcome = (args?.outcome || '').toLowerCase().trim();
     const dateRange = args?.date_range;
     const mode = (args?.mode || 'list').toLowerCase().trim();
@@ -297,6 +348,9 @@ export const getVisitsTool: ChatbotTool = {
 
     let visitsTodayCount = 0;
     let followUpCount = 0;
+    let missingLocationCount = 0;
+    let missingContactPersonCount = 0;
+
     const outcomeCounts: Record<string, number> = {
       positive: 0,
       neutral: 0,
@@ -341,12 +395,24 @@ export const getVisitsTool: ChatbotTool = {
       const repName =
         empMap.get(cleanPhone) || v.salesperson_name || 'Assigned Rep';
 
+      const resolvedLoc =
+        v.location || v.customer_address || parsed.location || null;
+      if (!resolvedLoc) {
+        missingLocationCount++;
+      }
+
+      const resolvedPerson = v.person_met || null;
+      const resolvedContactPhone = v.contact_phone || v.contact_no || null;
+      if (!resolvedPerson && !resolvedContactPhone) {
+        missingContactPersonCount++;
+      }
+
       return {
         id: v.id,
         customer_name: cName,
-        person_met: v.person_met || null,
-        contact_phone: v.contact_phone || v.contact_no || null,
-        location: v.location || v.customer_address || parsed.location || null,
+        person_met: resolvedPerson,
+        contact_phone: resolvedContactPhone,
+        location: resolvedLoc,
         outcome: out,
         visited_at: v.visited_at || v.created_at,
         remarks: parsed.clean_remarks || v.remarks || null,
@@ -361,6 +427,203 @@ export const getVisitsTool: ChatbotTool = {
         salesperson_phone: v.salesperson_phone || '',
       };
     });
+
+    // ─── Mode: Rep Leaderboard / Salesperson Rankings ───────────────────────
+    const repStatsMap = new Map<string, any>();
+    formattedList.forEach((v: any) => {
+      const repKey = (v.salesperson_name || 'Assigned Rep')
+        .toLowerCase()
+        .trim();
+      if (!repStatsMap.has(repKey)) {
+        repStatsMap.set(repKey, {
+          salesperson_name: v.salesperson_name || 'Sales Rep',
+          salesperson_phone: v.salesperson_phone || '',
+          total_visits: 0,
+          positive_visits: 0,
+          neutral_visits: 0,
+          negative_visits: 0,
+          requires_follow_up_count: 0,
+          visited_customers: new Set<string>(),
+        });
+      }
+      const st = repStatsMap.get(repKey);
+      if (!st.salesperson_phone && v.salesperson_phone) {
+        st.salesperson_phone = v.salesperson_phone;
+      }
+      st.total_visits++;
+      if (v.outcome === 'positive') st.positive_visits++;
+      else if (v.outcome === 'negative') st.negative_visits++;
+      else st.neutral_visits++;
+
+      if (v.requires_follow_up) st.requires_follow_up_count++;
+      if (v.customer_name) st.visited_customers.add(v.customer_name);
+    });
+
+    const repLeaderboard = Array.from(repStatsMap.values())
+      .map((r: any) => ({
+        salesperson_name: r.salesperson_name,
+        salesperson_phone: r.salesperson_phone,
+        total_visits: r.total_visits,
+        positive_visits: r.positive_visits,
+        neutral_visits: r.neutral_visits,
+        negative_visits: r.negative_visits,
+        requires_follow_up_count: r.requires_follow_up_count,
+        unique_customers_visited: r.visited_customers.size,
+        positive_rate_percent:
+          r.total_visits > 0
+            ? `${((r.positive_visits / r.total_visits) * 100).toFixed(1)}%`
+            : '0%',
+      }))
+      .sort((a, b) => b.total_visits - a.total_visits);
+
+    const topRep = repLeaderboard[0] || null;
+
+    if (
+      mode === 'rep_leaderboard' ||
+      mode === 'salesperson_leaderboard' ||
+      mode === 'most_visits' ||
+      mode === 'rep_ranking'
+    ) {
+      return {
+        data: {
+          summary: {
+            total_visits: rawList.length,
+            rep_visit_leaderboard: repLeaderboard,
+            top_salesperson: topRep,
+          },
+          rep_visit_leaderboard: repLeaderboard,
+          top_salesperson: topRep,
+        },
+        rowCount: repLeaderboard.length,
+      };
+    }
+
+    // ─── Mode: Week-over-Week Comparison ───────────────────────────────────
+    if (
+      mode === 'week_comparison' ||
+      mode === 'week_over_week' ||
+      mode === 'weekly_comparison'
+    ) {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
+
+      const thisWeekVisits = formattedList.filter((v: any) => {
+        const d = new Date(v.visited_at);
+        return d >= sevenDaysAgo && d <= now;
+      });
+
+      const lastWeekVisits = formattedList.filter((v: any) => {
+        const d = new Date(v.visited_at);
+        return d >= fourteenDaysAgo && d < sevenDaysAgo;
+      });
+
+      const countOutcomes = (list: any[]) => ({
+        positive: list.filter((v) => v.outcome === 'positive').length,
+        neutral: list.filter((v) => v.outcome === 'neutral').length,
+        negative: list.filter((v) => v.outcome === 'negative').length,
+        requires_follow_up: list.filter((v) => v.requires_follow_up).length,
+      });
+
+      const thisWeekOutcomes = countOutcomes(thisWeekVisits);
+      const lastWeekOutcomes = countOutcomes(lastWeekVisits);
+
+      const diff = thisWeekVisits.length - lastWeekVisits.length;
+      const pctChange =
+        lastWeekVisits.length > 0
+          ? `${(((thisWeekVisits.length - lastWeekVisits.length) / lastWeekVisits.length) * 100).toFixed(1)}%`
+          : 'N/A';
+
+      const comparison = {
+        this_week: {
+          period: 'This Week (Last 7 Days)',
+          total_visits: thisWeekVisits.length,
+          daily_average: `${(thisWeekVisits.length / 7).toFixed(1)} visits/day`,
+          outcomes: thisWeekOutcomes,
+          sample_visits: thisWeekVisits.slice(0, 5),
+        },
+        last_week: {
+          period: 'Last Week (Days 8-14)',
+          total_visits: lastWeekVisits.length,
+          daily_average: `${(lastWeekVisits.length / 7).toFixed(1)} visits/day`,
+          outcomes: lastWeekOutcomes,
+          sample_visits: lastWeekVisits.slice(0, 5),
+        },
+        difference: diff,
+        percentage_change: pctChange,
+        insights: `There have been ${thisWeekVisits.length} visits logged this week (~${(thisWeekVisits.length / 7).toFixed(1)} visits/day) compared to ${lastWeekVisits.length} visits logged last week (~${(lastWeekVisits.length / 7).toFixed(1)} visits/day). ${thisWeekOutcomes.positive} visits this week had a positive outcome and ${thisWeekOutcomes.requires_follow_up} require follow-up actions.`,
+      };
+
+      return {
+        data: {
+          comparison,
+          summary: {
+            total_visits: rawList.length,
+            this_week_visits: thisWeekVisits.length,
+            last_week_visits: lastWeekVisits.length,
+            note: comparison.insights,
+          },
+        },
+        rowCount: 2,
+      };
+    }
+
+    // ─── Mode: Duplicate Visits Grouping ───────────────────────────────────
+    if (mode === 'duplicates' || mode === 'duplicate_visits') {
+      const groupsMap = new Map<string, any[]>();
+      formattedList.forEach((v: any) => {
+        const vDate = v.visited_at
+          ? new Date(v.visited_at).toISOString().split('T')[0]
+          : 'unknown_date';
+        const key = `${v.customer_name.toLowerCase().trim()}::${vDate}`;
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, []);
+        }
+        groupsMap.get(key)!.push(v);
+      });
+
+      const duplicateGroups: any[] = [];
+      let totalDuplicateVisitsCount = 0;
+
+      for (const vList of groupsMap.values()) {
+        if (vList.length > 1) {
+          totalDuplicateVisitsCount += vList.length;
+          const vDateStr = vList[0].visited_at
+            ? new Date(vList[0].visited_at).toLocaleDateString('en-IN')
+            : '-';
+          duplicateGroups.push({
+            customer_name: vList[0].customer_name,
+            visit_date: vDateStr,
+            duplicate_count: vList.length,
+            salesperson_name: Array.from(
+              new Set(vList.map((x) => x.salesperson_name)),
+            ).join(', '),
+            salesperson_phone: vList[0].salesperson_phone,
+            sample_remarks: vList
+              .map((x, i) => `Visit ${i + 1}: "${x.remarks || 'No remarks'}"`)
+              .join(' | '),
+            visit_ids: vList.map((x) => x.id),
+          });
+        }
+      }
+
+      duplicateGroups.sort((a, b) => b.duplicate_count - a.duplicate_count);
+
+      return {
+        data: {
+          duplicate_visits_groups: duplicateGroups,
+          total_duplicate_groups: duplicateGroups.length,
+          total_duplicate_visits: totalDuplicateVisitsCount,
+          summary: {
+            total_visits: rawList.length,
+            total_duplicate_groups: duplicateGroups.length,
+            total_duplicate_visits: totalDuplicateVisitsCount,
+            note: `Found ${duplicateGroups.length} customer instances where multiple visits (${totalDuplicateVisitsCount} total duplicate visit logs) occurred on the same calendar day.`,
+          },
+        },
+        rowCount: duplicateGroups.length,
+      };
+    }
 
     // 4. Filtering
     let filteredList = formattedList;
@@ -402,18 +665,100 @@ export const getVisitsTool: ChatbotTool = {
       );
     }
 
+    // Salesperson filter & RBAC verification
+    if (searchSalesperson) {
+      if (isSalespersonRole(callerContext.role)) {
+        const callerName = (callerContext.name || '').toLowerCase().trim();
+        if (
+          callerName &&
+          !callerName.includes(searchSalesperson) &&
+          !searchSalesperson.includes(callerName)
+        ) {
+          return {
+            data: {
+              notFound: true,
+              summary: {
+                total_visits: 0,
+                filtered_visits_count: 0,
+                message: `You do not have access to view visit logs for "${args.salesperson_name}". As a sales representative, you can only access visits for your own assigned accounts.`,
+              },
+              visits: [],
+            },
+            rowCount: 0,
+          };
+        }
+      }
+
+      filteredList = filteredList.filter((v: any) => {
+        const sName = (v.salesperson_name || '').toLowerCase();
+        const sPhone = (v.salesperson_phone || '').toLowerCase();
+        return (
+          sName.includes(searchSalesperson) ||
+          sPhone.includes(searchSalesperson)
+        );
+      });
+    }
+
+    // Location filter
+    if (searchLocation) {
+      filteredList = filteredList.filter((v: any) => {
+        const loc = (v.location || '').toLowerCase();
+        const rem = (v.remarks || '').toLowerCase();
+        return loc.includes(searchLocation) || rem.includes(searchLocation);
+      });
+    }
+
+    // Missing location filter
+    const filterMissingLocation =
+      args?.missing_location === true ||
+      args?.missing_field === 'location' ||
+      args?.without_location === true;
+    if (filterMissingLocation) {
+      filteredList = filteredList.filter((v: any) => {
+        return (
+          !v.location && !(v.remarks || '').toLowerCase().includes('[location:')
+        );
+      });
+    }
+
+    // Missing contact person filter
+    const filterMissingContact =
+      args?.missing_contact_person === true ||
+      args?.missing_field === 'contact_person' ||
+      args?.missing_contact === true;
+    if (filterMissingContact) {
+      filteredList = filteredList.filter((v: any) => {
+        return !v.person_met && !v.contact_phone;
+      });
+    }
+
     const topCustomers = Object.entries(customerVisitCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([customer, count]) => ({ customer, visits_count: count }));
+
+    let filterNote = '';
+    if (filterMissingLocation) {
+      filterNote = `Showing ${filteredList.length} visits where location/city was not recorded.`;
+    } else if (filterMissingContact) {
+      filterNote = `Showing ${filteredList.length} visits where the contact person / person met was not recorded.`;
+    } else if (searchLocation) {
+      filterNote = `Showing ${filteredList.length} visits located in ${args.location}.`;
+    } else if (searchSalesperson) {
+      filterNote = `Showing ${filteredList.length} visits handled by ${args.salesperson_name}.`;
+    }
 
     const summary = {
       total_visits: rawList.length,
       filtered_visits_count: filteredList.length,
       visits_today: visitsTodayCount,
       visits_requiring_follow_up: followUpCount,
+      visits_missing_location_count: missingLocationCount,
+      visits_missing_contact_person_count: missingContactPersonCount,
       by_outcome: outcomeCounts,
       top_visited_customers: topCustomers,
+      top_salesperson: topRep,
+      note: filterNote || undefined,
     };
 
     if (mode === 'summary' || mode === 'count') {
