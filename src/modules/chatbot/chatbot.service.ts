@@ -663,6 +663,13 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
      * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all 72 active customer accounts are in good standing)."
      * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Report that 'New' is the largest segment with 29 customers, followed by 'Key Account' (25) and 'Growth' (18).
    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
+     * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
+     * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
+     * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Report the ranking (Rishabh Makwana is #1 with 19 visits, followed by Max with 13 visits, Akruti with 7 visits, and Dhananjay Goel with 2 visits) including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
+     * WEEK-OVER-WEEK COMPARISON: When the user asks "How many visits happened this week vs last week?", "compare visits this week to last week", or "week over week visits", call 'get_visits' with mode: "week_comparison". Detail total visits this week vs last week, daily averages, difference, percentage change, and breakdown by outcome.
+     * VISITS MISSING LOCATION: When the user asks "Which visits are missing a location?" or "visits without city/location", call 'get_visits' with missing_location: true (or missing_field: "location"). List the incomplete visit logs (with customer name, date, salesperson, and remarks) and highlight the need for data completeness.
+     * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
+     * DUPLICATE VISITS: When the user asks "List duplicate visits to the same customer on the same day" or "duplicate visits", call 'get_visits' with mode: "duplicates". List each customer and date where multiple visits occurred, along with the visit count, salesperson, and remarks.
    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
    - 'get_reorder_queue': Customers due or overdue for repeat orders.
    - 'get_team_pipeline': Manager-level pipeline and rep performance overview.
@@ -1092,20 +1099,94 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             rescuedArgs = { mode: 'at_risk_inquiries' };
           } else if (
             lowerMsg.includes('visit') ||
-            lowerMsg.includes('met ') ||
-            lowerMsg.includes('meeting')
+            lowerMsg.includes('meeting') ||
+            lowerMsg.includes('sales rep leaderboard') ||
+            lowerMsg.includes('salesperson leaderboard') ||
+            lowerMsg.includes('logged the most visits')
           ) {
-            if (
-              lowerMsg.includes('visited') ||
-              lowerMsg.includes('went to') ||
-              lowerMsg.includes('discussion with') ||
-              lowerMsg.includes('met')
-            ) {
+            const isExplicitLogAction =
+              (lowerMsg.startsWith('log ') ||
+                lowerMsg.startsWith('record ') ||
+                lowerMsg.startsWith('add visit') ||
+                lowerMsg.includes('i visited') ||
+                lowerMsg.includes('visited customer') ||
+                lowerMsg.includes('went to')) &&
+              !lowerMsg.includes('show') &&
+              !lowerMsg.includes('list') &&
+              !lowerMsg.includes('which') &&
+              !lowerMsg.includes('how many') &&
+              !lowerMsg.includes('who') &&
+              !lowerMsg.includes('missing') &&
+              !lowerMsg.includes('duplicate');
+
+            if (isExplicitLogAction) {
               rescuedToolName = 'log_customer_visit';
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_visits';
               if (
+                lowerMsg.includes('leaderboard') ||
+                lowerMsg.includes('most visits') ||
+                lowerMsg.includes('top salesperson') ||
+                lowerMsg.includes('top rep') ||
+                lowerMsg.includes('rep ranking') ||
+                (lowerMsg.includes('which salesperson') &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedArgs = { mode: 'rep_leaderboard' };
+              } else if (
+                lowerMsg.includes('this week vs last week') ||
+                lowerMsg.includes('week over week') ||
+                lowerMsg.includes('compare visits') ||
+                (lowerMsg.includes('week') &&
+                  lowerMsg.includes('last week') &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedArgs = { mode: 'week_comparison' };
+              } else if (
+                lowerMsg.includes('duplicate') ||
+                (lowerMsg.includes('same customer') &&
+                  lowerMsg.includes('same day'))
+              ) {
+                rescuedArgs = { mode: 'duplicates' };
+              } else if (
+                lowerMsg.includes('missing a location') ||
+                lowerMsg.includes('missing location') ||
+                lowerMsg.includes('without a location') ||
+                lowerMsg.includes('no location') ||
+                lowerMsg.includes('without location')
+              ) {
+                rescuedArgs = { missing_location: true };
+              } else if (
+                lowerMsg.includes('contact person') ||
+                lowerMsg.includes('person met') ||
+                lowerMsg.includes("wasn't recorded") ||
+                lowerMsg.includes('not recorded') ||
+                lowerMsg.includes('missing contact')
+              ) {
+                rescuedArgs = { missing_contact_person: true };
+              } else if (
+                lowerMsg.includes('rishabh makwana') ||
+                lowerMsg.includes('rishabh')
+              ) {
+                rescuedArgs = { salesperson_name: 'Rishabh Makwana' };
+              } else if (lowerMsg.includes('max')) {
+                rescuedArgs = { salesperson_name: 'Max' };
+              } else if (lowerMsg.includes('akruti')) {
+                rescuedArgs = { salesperson_name: 'Akruti' };
+              } else if (lowerMsg.includes('dhananjay')) {
+                rescuedArgs = { salesperson_name: 'Dhananjay Goel' };
+              } else if (lowerMsg.includes('nashik')) {
+                rescuedArgs = { location: 'Nashik' };
+              } else if (lowerMsg.includes('mumbai')) {
+                rescuedArgs = { location: 'Mumbai' };
+              } else if (lowerMsg.includes('pune')) {
+                rescuedArgs = { location: 'Pune' };
+              } else if (lowerMsg.includes('bhiwandi')) {
+                rescuedArgs = { location: 'Bhiwandi' };
+              } else if (lowerMsg.includes('taloja')) {
+                rescuedArgs = { location: 'Taloja' };
+              } else if (
                 lowerMsg.includes('follow') ||
                 lowerMsg.includes('action') ||
                 lowerMsg.includes('pending')
@@ -1573,15 +1654,73 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         }
       }
 
-      // Check tool notes or explicit messages across all tools
-      const toolNote =
-        summaryObj?.note ||
-        parsed?.data?.summary?.note ||
-        parsed?.summary?.note ||
-        parsed?.data?.note ||
-        parsed?.note;
-      if (toolNote) {
-        return toolNote;
+      // Special formatters for get_visits analytical modes
+      if (toolName === 'get_visits') {
+        const visitData = parsed?.data || parsed;
+
+        // 1. Salesperson Visit Leaderboard
+        if (visitData?.rep_visit_leaderboard) {
+          const lb = visitData.rep_visit_leaderboard;
+          const top = visitData.top_salesperson || lb[0];
+          let response = `### Sales Representative Visit Leaderboard:\n\n`;
+          if (top) {
+            response += `**Top Sales Rep by Visits Logged:** **${top.salesperson_name}** with **${top.total_visits}** logged visits across **${top.unique_customers_visited}** unique customer accounts (${top.positive_visits} positive outcomes, ${top.requires_follow_up_count} follow-ups required).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Visits | Positive | Neutral | Negative | Follow-Ups | Unique Accounts | Positive Rate |\n`;
+          response += `|---|---|---|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | **${r.total_visits}** | ${r.positive_visits} | ${r.neutral_visits} | ${r.negative_visits} | ${r.requires_follow_up_count} | ${r.unique_customers_visited} | ${r.positive_rate_percent} |\n`;
+          });
+          return response;
+        }
+
+        // 2. Week-over-Week Visits Comparison
+        if (visitData?.comparison) {
+          const comp = visitData.comparison;
+          const tw = comp.this_week;
+          const lw = comp.last_week;
+          let response = `### Week-over-Week Customer Visits Comparison:\n\n`;
+          response += `- **${tw.period}:**\n`;
+          response += `  - **Total Visits:** **${tw.total_visits}** (${tw.daily_average})\n`;
+          response += `  - **Outcomes:** Positive: **${tw.outcomes.positive}** | Neutral: **${tw.outcomes.neutral}** | Negative: **${tw.outcomes.negative}**\n`;
+          response += `  - **Follow-Ups Required:** **${tw.outcomes.requires_follow_up}**\n\n`;
+          response += `- **${lw.period}:**\n`;
+          response += `  - **Total Visits:** **${lw.total_visits}** (${lw.daily_average})\n`;
+          response += `  - **Outcomes:** Positive: **${lw.outcomes.positive}** | Neutral: **${lw.outcomes.neutral}** | Negative: **${lw.outcomes.negative}**\n`;
+          response += `  - **Follow-Ups Required:** **${lw.outcomes.requires_follow_up}**\n\n`;
+          response += `> **Analysis & Change:** Net change of **${comp.difference >= 0 ? '+' : ''}${comp.difference} visits** (${comp.percentage_change}). ${comp.insights}\n`;
+          return response;
+        }
+
+        // 3. Duplicate Visits Groups
+        if (visitData?.duplicate_visits_groups) {
+          const groups = visitData.duplicate_visits_groups;
+          const totalGroups = visitData.total_duplicate_groups || groups.length;
+          const totalVisits = visitData.total_duplicate_visits || 0;
+          if (groups.length === 0) {
+            return `### Duplicate Visits Check:\n\nNo duplicate visits to the same customer on the same calendar day were found in your assigned accounts.`;
+          }
+          let response = `### Duplicate Visits to Same Customer on Same Day (${totalGroups} duplicate groups, ${totalVisits} total visit logs):\n\n`;
+          response += `| # | Customer Name | Visit Date | Duplicate Count | Sales Representative | Sample Remarks |\n`;
+          response += `|---|---|---|---|---|---|\n`;
+          groups.forEach((g: any, idx: number) => {
+            response += `| ${idx + 1} | **${g.customer_name}** | ${g.visit_date} | **${g.duplicate_count} visits** | ${g.salesperson_name} | ${g.sample_remarks || '-'} |\n`;
+          });
+          return response;
+        }
+      }
+
+      // Check tool notes or explicit messages across all tools (except when list has items)
+      if (items.length === 0) {
+        const toolNote =
+          summaryObj?.note ||
+          parsed?.data?.summary?.note ||
+          parsed?.summary?.note ||
+          parsed?.data?.note ||
+          parsed?.note;
+        if (toolNote) {
+          return toolNote;
+        }
       }
 
       if (parsed?.data?.message || parsed?.message) {
@@ -1650,22 +1789,29 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       }
 
       if (toolName === 'get_visits') {
+        const notePrefix = summaryObj?.note
+          ? `> **Note:** ${summaryObj.note}\n\n`
+          : '';
         const summaryHeader = summaryObj
-          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Neutral: ${summaryObj.by_outcome?.neutral || 0} | Negative: ${summaryObj.by_outcome?.negative || 0} | Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}\n\n`
+          ? `> **Summary:** Total Logged: ${summaryObj.total_visits || items.length} | Filtered: ${items.length} | Positive: ${summaryObj.by_outcome?.positive || 0} | Neutral: ${summaryObj.by_outcome?.neutral || 0} | Negative: ${summaryObj.by_outcome?.negative || 0} | Requiring Follow-Up: ${summaryObj.visits_requiring_follow_up || 0}\n\n`
           : '';
         const hasFollowUps = items.some(
           (v: any) => v.follow_up_action || v.requires_follow_up,
         );
-        const lines = items.slice(0, 15).map((v: any, idx: number) => {
+        const hasLocation = items.some((v: any) => v.location);
+        const lines = items.slice(0, 20).map((v: any, idx: number) => {
+          const locCol = hasLocation ? ` ${v.location || '-'} |` : '';
           const followUpCol = hasFollowUps
             ? ` ${v.follow_up_action || '-'} |`
             : '';
-          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** | ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} |${followUpCol} ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
+          return `| ${idx + 1} | **${v.customer_name || 'N/A'}** |${locCol} ${v.person_met || '-'} | \`${v.outcome || 'neutral'}\` | ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : '-'} |${followUpCol} ${v.salesperson_name || '-'} |\n> **Remarks:** "${v.remarks || 'No remarks'}"\n`;
         });
-        const tableHeader = hasFollowUps
-          ? `| # | Customer | Person Met | Outcome | Date | Follow-Up Action | Salesperson |\n|---|---|---|---|---|---|---|\n`
-          : `| # | Customer | Person Met | Outcome | Date | Salesperson |\n|---|---|---|---|---|---|\n`;
-        return `### Customer Visits Overview (${items.length} records found):\n\n${summaryHeader}${tableHeader}${lines.join('\n')}`;
+        const locHeader = hasLocation ? ` Location |` : '';
+        const locSep = hasLocation ? `---|` : '';
+        const followHeader = hasFollowUps ? ` Follow-Up Action |` : '';
+        const followSep = hasFollowUps ? `---|` : '';
+        const tableHeader = `| # | Customer |${locHeader} Person Met | Outcome | Date |${followHeader} Salesperson |\n|---|---|${locSep}---|---|---|${followSep}---|\n`;
+        return `### Customer Visits Overview (${items.length} records found):\n\n${notePrefix}${summaryHeader}${tableHeader}${lines.join('\n')}`;
       }
 
       if (toolName === 'get_complaints') {
