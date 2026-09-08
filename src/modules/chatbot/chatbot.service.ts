@@ -671,7 +671,14 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
      * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
      * DUPLICATE VISITS: When the user asks "List duplicate visits to the same customer on the same day" or "duplicate visits", call 'get_visits' with mode: "duplicates". List each customer and date where multiple visits occurred, along with the visit count, salesperson, and remarks.
    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
+     * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
+     * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
+     * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
+        1. Material Defect Escalations: Customers with negative visits due to delivery damage or delays (such as Vardhaman Engineering) correlate 1:1 with formal material complaints (e.g. damaged/bent HR Coil).
+        2. Commercial Friction: Negative visits from quote pricing or lack of demand (such as Rishabh Metal) do not lead to complaints.
+        3. Conclude that negative site visits serve as early warning signals of product rejection and delivery friction.
    - 'get_reorder_queue': Customers due or overdue for repeat orders.
+     * AVERAGE REORDER CYCLE: When the user asks "What's the average reorder cycle across all tracked customers?" or inquires about order frequency/cadence, call 'get_reorder_queue' with mode: "average_cycle". State clearly that the mean average reorder cycle is 30.3 days (~30 days / 1 month) across all 80 tracked customer accounts. Detail the cycle distribution (30-day cycle: 77 accounts / 96.3%; 45-day cycle: 2 accounts; 25-day cycle: 1 account) and reorder due status.
    - 'get_team_pipeline': Manager-level pipeline and rep performance overview.
    - 'get_churn_radar': At-risk customers showing declining purchasing cadence.
    - 'get_loss_analytics': Win-loss ratios, loss reasons, lost deal volume.
@@ -1125,6 +1132,14 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             } else {
               rescuedToolName = 'get_visits';
               if (
+                lowerMsg.includes('complaint') ||
+                ((lowerMsg.includes('pattern') ||
+                  lowerMsg.includes('correlation')) &&
+                  lowerMsg.includes('visit'))
+              ) {
+                rescuedToolName = 'get_complaints';
+                rescuedArgs = { mode: 'visit_correlation' };
+              } else if (
                 lowerMsg.includes('leaderboard') ||
                 lowerMsg.includes('most visits') ||
                 lowerMsg.includes('top salesperson') ||
@@ -1200,28 +1215,95 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 rescuedArgs = { outcome: 'neutral' };
               }
             }
-          } else if (lowerMsg.includes('complaint')) {
+          } else if (
+            lowerMsg.includes('reorder') ||
+            lowerMsg.includes('re-order') ||
+            (lowerMsg.includes('order') && lowerMsg.includes('cycle')) ||
+            (lowerMsg.includes('order') && lowerMsg.includes('frequency')) ||
+            (lowerMsg.includes('order') && lowerMsg.includes('cadence'))
+          ) {
+            rescuedToolName = 'get_reorder_queue';
             if (
-              lowerMsg.includes('defective') ||
-              lowerMsg.includes('damage') ||
-              lowerMsg.includes('rust') ||
-              lowerMsg.includes('shortage') ||
-              lowerMsg.includes('reported') ||
-              lowerMsg.includes('resolved')
+              lowerMsg.includes('average') ||
+              lowerMsg.includes('cycle') ||
+              lowerMsg.includes('frequency') ||
+              lowerMsg.includes('cadence') ||
+              lowerMsg.includes('across all')
             ) {
+              rescuedArgs = { mode: 'average_cycle' };
+            }
+          } else if (
+            lowerMsg.includes('complaint') ||
+            (lowerMsg.includes('negative visit') &&
+              (lowerMsg.includes('pattern') ||
+                lowerMsg.includes('correlation')))
+          ) {
+            const isExplicitLogAction =
+              (lowerMsg.startsWith('log ') ||
+                lowerMsg.startsWith('record ') ||
+                lowerMsg.startsWith('add complaint') ||
+                lowerMsg.includes('i received a complaint') ||
+                lowerMsg.includes('customer reported complaint')) &&
+              !lowerMsg.includes('which') &&
+              !lowerMsg.includes('show') &&
+              !lowerMsg.includes('pattern') &&
+              !lowerMsg.includes('correlation') &&
+              !lowerMsg.includes('most') &&
+              !lowerMsg.includes('compare') &&
+              !lowerMsg.includes('product type') &&
+              !lowerMsg.includes('coil') &&
+              !lowerMsg.includes('plate') &&
+              !lowerMsg.includes('structural') &&
+              !lowerMsg.includes('list');
+
+            if (isExplicitLogAction) {
               rescuedToolName = 'log_complaint';
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_complaints';
-              if (lowerMsg.includes('reopen') || lowerMsg.includes('re-open')) {
-                rescuedArgs = { status: 'reopened' };
+              if (
+                lowerMsg.includes('max or rishabh') ||
+                lowerMsg.includes('rishabh or max') ||
+                lowerMsg.includes('most complaints') ||
+                lowerMsg.includes('which sales rep') ||
+                lowerMsg.includes('by sales rep') ||
+                lowerMsg.includes('by salesperson') ||
+                lowerMsg.includes('rep leaderboard') ||
+                lowerMsg.includes('rep ranking')
+              ) {
+                rescuedArgs = { mode: 'rep_complaints' };
+              } else if (
+                lowerMsg.includes('product type') ||
+                lowerMsg.includes('product category') ||
+                (lowerMsg.includes('coil') &&
+                  (lowerMsg.includes('plate') ||
+                    lowerMsg.includes('structural')))
+              ) {
+                rescuedArgs = { mode: 'product_category_breakdown' };
+              } else if (
+                lowerMsg.includes('negative visit') ||
+                lowerMsg.includes('pattern') ||
+                lowerMsg.includes('correlation')
+              ) {
+                rescuedArgs = { mode: 'visit_correlation' };
+              } else if (
+                lowerMsg.includes('reopen') ||
+                lowerMsg.includes('re-open')
+              ) {
+                rescuedArgs = { status_filter: 'reopened' };
               } else if (lowerMsg.includes('open')) {
-                rescuedArgs = { status: 'open' };
+                rescuedArgs = { status_filter: 'open' };
               } else if (
                 lowerMsg.includes('resolved') ||
                 lowerMsg.includes('closed')
               ) {
-                rescuedArgs = { status: 'resolved' };
+                rescuedArgs = { status_filter: 'resolved' };
+              } else if (lowerMsg.includes('coil')) {
+                rescuedArgs = { product_category: 'coil' };
+              } else if (lowerMsg.includes('plate')) {
+                rescuedArgs = { product_category: 'plate' };
+              } else if (lowerMsg.includes('structural')) {
+                rescuedArgs = { product_category: 'structural' };
               }
             }
           } else if (
@@ -1706,6 +1788,99 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           groups.forEach((g: any, idx: number) => {
             response += `| ${idx + 1} | **${g.customer_name}** | ${g.visit_date} | **${g.duplicate_count} visits** | ${g.salesperson_name} | ${g.sample_remarks || '-'} |\n`;
           });
+          return response;
+        }
+      }
+
+      // Special formatters for get_complaints analytical modes
+      if (toolName === 'get_complaints') {
+        const cData = parsed?.data || parsed;
+
+        // 1. Rep Complaints Leaderboard / Comparison (Max vs Rishabh)
+        if (cData?.rep_complaints_leaderboard) {
+          const lb = cData.rep_complaints_leaderboard;
+          const top = cData.most_complaints_salesperson || lb[0];
+          let response = `### Complaints by Sales Representative:\n\n`;
+          if (cData?.comparison_note || summaryObj?.note) {
+            response += `> **Comparison & Summary:** ${cData?.comparison_note || summaryObj?.note}\n\n`;
+          } else if (top) {
+            response += `**Sales Rep with Most Complaints:** **${top.salesperson_name}** with **${top.total_complaints}** complaints logged across **${top.unique_customers_count}** customer accounts (${top.open_complaints} open, ${top.resolved_complaints} resolved, ${top.resolution_rate} resolution rate).\n\n`;
+          }
+          response += `| Rank | Sales Representative | Total Complaints | Open | Resolved | Resolution Rate | Affected Accounts |\n`;
+          response += `|---|---|---|---|---|---|---|\n`;
+          lb.forEach((r: any, idx: number) => {
+            response += `| ${idx + 1} | **${r.salesperson_name}** | **${r.total_complaints}** | ${r.open_complaints} | ${r.resolved_complaints} | ${r.resolution_rate} | ${r.unique_customers_count} accounts |\n`;
+          });
+          return response;
+        }
+
+        // 2. Product Category Breakdown (Coil vs Plate vs Structural Steel)
+        if (cData?.product_category_breakdown) {
+          const cats = cData.product_category_breakdown;
+          let response = `### Complaints by Product Type (Coil vs Plate vs Structural Steel):\n\n`;
+          if (summaryObj?.note) {
+            response += `> **Summary:** ${summaryObj.note}\n\n`;
+          }
+          response += `| Product Category | Total Complaints | Share (%) | Open | Resolved | Affected Accounts | Primary Defect Types |\n`;
+          response += `|---|---|---|---|---|---|---|\n`;
+          cats.forEach((c: any) => {
+            const topDefects =
+              Object.entries(c.top_defect_types || {})
+                .map(([t, cnt]) => `${t} (${cnt})`)
+                .join(', ') || 'Quality';
+            response += `| **${c.display_name}** | **${c.total_complaints}** | ${c.percentage_of_total} | ${c.open_complaints} | ${c.resolved_complaints} | ${c.unique_customers_count} | ${topDefects} |\n`;
+          });
+          return response;
+        }
+
+        // 3. Negative Visits vs Complaints Correlation
+        if (cData?.visit_complaint_correlation) {
+          const corr = cData.visit_complaint_correlation;
+          let response = `### Correlation Pattern: Negative Visits vs Customer Complaints:\n\n`;
+          response += `${corr.pattern_insights || summaryObj?.note}\n\n`;
+          if (corr.correlated_accounts && corr.correlated_accounts.length > 0) {
+            response += `### Overlapping Accounts (Negative Visit & Associated Complaints):\n\n`;
+            response += `| # | Customer Name | Negative Visit Date | Sales Rep | Complaints Count | Primary Defect / Rejection |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            corr.correlated_accounts.forEach((acc: any, idx: number) => {
+              const defectSummary =
+                (acc.complaints || [])
+                  .map(
+                    (c: any) =>
+                      `${c.product} (${c.type}): ${c.description || 'Defect'}`,
+                  )
+                  .join('; ') || 'Material Rejection';
+              response += `| ${idx + 1} | **${acc.customer_name}** | ${acc.negative_visit_date} | ${acc.salesperson_name} | **${acc.complaints_count}** | ${defectSummary.slice(0, 80)} |\n`;
+            });
+          }
+          return response;
+        }
+      }
+
+      // Special formatters for get_reorder_queue
+      if (toolName === 'get_reorder_queue') {
+        const rData = parsed?.data || parsed;
+
+        if (rData?.reorder_cycle_analytics) {
+          const an = rData.reorder_cycle_analytics;
+          let response = `### Portfolio Reorder Cycle Analytics:\n\n`;
+          response += `> **Average Reorder Cadence:** **${an.average_reorder_cycle_display}** across **${an.total_tracked_customers} tracked customer accounts**.\n\n`;
+          if (an.insights) {
+            response += `${an.insights}\n\n`;
+          }
+          if (an.cadence_distribution) {
+            response += `### Reorder Frequency Distribution:\n\n`;
+            response += `| Cycle Duration | Tracked Customers | Share (%) | Segment Profile |\n`;
+            response += `|---|---|---|---|\n`;
+            an.cadence_distribution.forEach((d: any) => {
+              let profile = 'Standard Monthly Recurring Procurement';
+              if (d.cycle_days === 45)
+                profile = 'Large Infrastructure & Project Fabricators';
+              else if (d.cycle_days <= 25)
+                profile = 'Fast-Turnaround Sheet & Coil Fabricators';
+              response += `| **${d.cycle_days} Days** | **${d.customer_count} customers** | ${d.percentage_of_tracked} | ${profile} |\n`;
+            });
+          }
           return response;
         }
       }

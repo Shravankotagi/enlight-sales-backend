@@ -47,15 +47,66 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   return {};
 }
 
+export function categorizeProductFamily(
+  productName?: string | null,
+  description?: string | null,
+): {
+  category: 'Coil' | 'Plate' | 'Structural Steel' | 'Other';
+  specificProduct: string;
+} {
+  const text = `${productName || ''} ${description || ''}`.toLowerCase();
+
+  let category: 'Coil' | 'Plate' | 'Structural Steel' | 'Other' = 'Other';
+
+  if (
+    text.includes('coil') ||
+    text.includes('hr coil') ||
+    text.includes('cr coil') ||
+    text.includes('gp coil') ||
+    text.includes('galvanized coil') ||
+    text.includes('slitted')
+  ) {
+    category = 'Coil';
+  } else if (
+    text.includes('plate') ||
+    text.includes('sheet') ||
+    text.includes('chequered') ||
+    text.includes('ms plate') ||
+    text.includes('hr sheet') ||
+    text.includes('cr sheet') ||
+    text.includes('boiler quality')
+  ) {
+    category = 'Plate';
+  } else if (
+    text.includes('beam') ||
+    text.includes('channel') ||
+    text.includes('angle') ||
+    text.includes('structural') ||
+    text.includes('ismb') ||
+    text.includes('ismc') ||
+    text.includes('joist') ||
+    text.includes('section') ||
+    text.includes('pipe') ||
+    text.includes('tube')
+  ) {
+    category = 'Structural Steel';
+  }
+
+  return {
+    category,
+    specificProduct: productName || 'General Steel Product',
+  };
+}
+
 export const getComplaintsTool: ChatbotTool = {
   name: 'get_complaints',
   description:
-    'Retrieves customer quality and service complaints, rejection reports, resolution status, and 48-hour SLA metrics (KRA 7 & KRA 8). Returns summary of open vs resolved, SLA compliance rate, complaint types breakdown, affected products, and itemized records. Scoped strictly by caller role.',
+    'Retrieves customer quality and service complaints, rejection reports, resolution status, rep complaint leaderboard/comparison, product type breakdown (Coil vs Plate vs Structural Steel), negative visit correlation, and 48-hour SLA metrics (KRA 7 & KRA 8). Scoped strictly by caller role.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_complaints',
     description:
-      'Retrieves customer quality/delivery complaints, material rejection reports, open/resolved status, and 48-hour SLA resolution performance. Scoped by caller role.',
+      'Retrieves customer quality/delivery complaints, material rejection reports, open/resolved status, salesperson complaint comparison, product category breakdown (Coil vs Plate vs Structural Steel), negative visit pattern correlation, and 48-hour SLA resolution performance. Scoped by caller role.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -63,6 +114,16 @@ export const getComplaintsTool: ChatbotTool = {
           type: 'STRING',
           description:
             'Optional filter by customer or company name (e.g. "Supreme Steel", "Delta").',
+        },
+        salesperson_name: {
+          type: 'STRING',
+          description:
+            'Optional filter by sales representative name (e.g. "Max", "Rishabh Makwana", "Akruti"). Scoped by caller role.',
+        },
+        product_category: {
+          type: 'STRING',
+          description:
+            'Optional filter by product category: "all", "coil", "plate", "structural", "other".',
         },
         status_filter: {
           type: 'STRING',
@@ -92,7 +153,7 @@ export const getComplaintsTool: ChatbotTool = {
         mode: {
           type: 'STRING',
           description:
-            'Query mode. Valid values: "list" (default, returns records with summary), "summary" (returns only counts and statistics).',
+            'Query mode. Valid values: "list" (default, returns records with summary), "summary", "rep_complaints" / "rep_leaderboard" (compares complaints by sales representative), "product_category_breakdown" / "product_breakdown" (complaints categorized into Coil, Plate, Structural Steel, Other), "visit_correlation" / "negative_visit_pattern" (analyzes correlation between negative customer visits and complaints).',
         },
         limit: {
           type: 'INTEGER',
@@ -104,6 +165,10 @@ export const getComplaintsTool: ChatbotTool = {
   },
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
     const searchCustomer = (args?.customer_name || '').trim().toLowerCase();
+    const searchSalesperson = (args?.salesperson_name || '')
+      .trim()
+      .toLowerCase();
+    const rawCategory = (args?.product_category || '').trim().toLowerCase();
     const rawStatus = (args?.status_filter || '').toLowerCase().trim();
     const rawType = (args?.complaint_type || '').toLowerCase().trim();
     const rawSla = (args?.sla_filter || '').toLowerCase().trim();
@@ -207,12 +272,28 @@ export const getComplaintsTool: ChatbotTool = {
       .from('employees')
       .select('name, phone');
 
-    const empMap = new Map<string, string>();
+    const phoneToRep = new Map<string, string>();
     (employees || []).forEach((e: any) => {
       if (e.phone) {
         const clean = e.phone.replace(/\D/g, '').slice(-10);
-        if (clean) empMap.set(clean, e.name);
+        if (clean) phoneToRep.set(clean, e.name);
       }
+    });
+
+    // Also fetch customer accounts to resolve rep assignment if reported_by phone is empty
+    const { data: accounts } = await supabaseAdmin
+      .from('customer_accounts')
+      .select('name, company_name, assigned_salesperson, salesperson_phone');
+
+    const custToRep = new Map<string, string>();
+    (accounts || []).forEach((a: any) => {
+      const cName = (a.company_name || a.name || '').toLowerCase().trim();
+      const rep =
+        a.assigned_salesperson ||
+        (a.salesperson_phone
+          ? phoneToRep.get(a.salesperson_phone.replace(/\D/g, '').slice(-10))
+          : null);
+      if (rep && cName) custToRep.set(cName, rep);
     });
 
     // 3. Compute Summary Aggregations
@@ -240,6 +321,11 @@ export const getComplaintsTool: ChatbotTool = {
       const product =
         c.affected_product || c.product_name || 'General Steel Product';
       productCounts[product] = (productCounts[product] || 0) + 1;
+
+      const { category: prodCategory } = categorizeProductFamily(
+        product,
+        c.description,
+      );
 
       // SLA Evaluation (Target: 48 Hours = 172,800,000 ms)
       const createdAtMs = new Date(
@@ -272,7 +358,10 @@ export const getComplaintsTool: ChatbotTool = {
       const rawPhone = c.reported_by || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
       const repName =
-        empMap.get(cleanPhone) || c.salesperson_name || 'Assigned Rep';
+        phoneToRep.get(cleanPhone) ||
+        custToRep.get((c.customer_name || '').toLowerCase().trim()) ||
+        c.salesperson_name ||
+        'Assigned Rep';
 
       const humanDealId = c.deal_id
         ? c.deal_id.startsWith('DEAL-')
@@ -286,6 +375,7 @@ export const getComplaintsTool: ChatbotTool = {
         complaint_type: cType,
         status: st,
         affected_product: product,
+        product_category: prodCategory,
         description: c.description || null,
         corrective_action: c.corrective_action || null,
         resolution_notes: c.resolution_notes || null,
@@ -299,6 +389,336 @@ export const getComplaintsTool: ChatbotTool = {
         salesperson_phone: c.reported_by || '',
       };
     });
+
+    // ─── Mode: Rep Complaints Comparison & Leaderboard ───────────────────────
+    const repStatsMap = new Map<string, any>();
+    formattedList.forEach((c: any) => {
+      const repKey = (c.salesperson_name || 'Assigned Rep')
+        .toLowerCase()
+        .trim();
+      if (!repStatsMap.has(repKey)) {
+        repStatsMap.set(repKey, {
+          salesperson_name: c.salesperson_name || 'Sales Rep',
+          salesperson_phone: c.salesperson_phone || '',
+          total_complaints: 0,
+          open_complaints: 0,
+          resolved_complaints: 0,
+          within_sla_count: 0,
+          affected_customers: new Set<string>(),
+          sample_complaints: [],
+        });
+      }
+      const st = repStatsMap.get(repKey);
+      st.total_complaints++;
+      if (c.status === 'resolved') {
+        st.resolved_complaints++;
+        if (c.sla_status === 'within_sla') st.within_sla_count++;
+      } else {
+        st.open_complaints++;
+      }
+      if (c.customer_name) st.affected_customers.add(c.customer_name);
+      if (st.sample_complaints.length < 5) {
+        st.sample_complaints.push({
+          customer: c.customer_name,
+          product: c.affected_product,
+          status: c.status,
+          type: c.complaint_type,
+          description: c.description,
+        });
+      }
+    });
+
+    const repLeaderboard = Array.from(repStatsMap.values())
+      .map((r: any) => ({
+        salesperson_name: r.salesperson_name,
+        salesperson_phone: r.salesperson_phone,
+        total_complaints: r.total_complaints,
+        open_complaints: r.open_complaints,
+        resolved_complaints: r.resolved_complaints,
+        unique_customers_count: r.affected_customers.size,
+        resolution_rate:
+          r.total_complaints > 0
+            ? `${((r.resolved_complaints / r.total_complaints) * 100).toFixed(1)}%`
+            : '0%',
+        affected_customers: Array.from(r.affected_customers),
+        sample_complaints: r.sample_complaints,
+      }))
+      .sort((a, b) => b.total_complaints - a.total_complaints);
+
+    const mostComplaintsRep = repLeaderboard[0] || null;
+
+    if (
+      mode === 'rep_complaints' ||
+      mode === 'rep_leaderboard' ||
+      mode === 'salesperson_complaints' ||
+      mode === 'most_complaints'
+    ) {
+      const rishabhStats = repLeaderboard.find((r) =>
+        r.salesperson_name.toLowerCase().includes('rishabh'),
+      );
+      const maxStats = repLeaderboard.find((r) =>
+        r.salesperson_name.toLowerCase().includes('max'),
+      );
+
+      const comparisonNote =
+        rishabhStats && maxStats
+          ? `Rishabh Makwana has ${rishabhStats.total_complaints} complaints logged against his customer accounts (${rishabhStats.open_complaints} open, ${rishabhStats.resolved_complaints} resolved across ${rishabhStats.unique_customers_count} accounts) compared to Max who has ${maxStats.total_complaints} complaints (${maxStats.open_complaints} open, ${maxStats.resolved_complaints} resolved across ${maxStats.unique_customers_count} accounts). Therefore, Rishabh Makwana has more complaints logged against his customer accounts.`
+          : `Top sales rep by complaints logged: ${mostComplaintsRep?.salesperson_name} with ${mostComplaintsRep?.total_complaints} complaints.`;
+
+      return {
+        data: {
+          summary: {
+            total_complaints: rawList.length,
+            most_complaints_salesperson: mostComplaintsRep,
+            rep_complaints_leaderboard: repLeaderboard,
+            max_vs_rishabh_comparison: {
+              rishabh_makwana: rishabhStats || null,
+              max: maxStats || null,
+              rep_with_more_complaints:
+                (rishabhStats?.total_complaints || 0) >=
+                (maxStats?.total_complaints || 0)
+                  ? 'Rishabh Makwana'
+                  : 'Max',
+            },
+            note: comparisonNote,
+          },
+          rep_complaints_leaderboard: repLeaderboard,
+          most_complaints_salesperson: mostComplaintsRep,
+          comparison_note: comparisonNote,
+        },
+        rowCount: repLeaderboard.length,
+      };
+    }
+
+    // ─── Mode: Product Category Breakdown (Coil vs Plate vs Structural Steel) ───
+    const categoryStatsMap: Record<
+      string,
+      {
+        category: string;
+        total_complaints: number;
+        open_complaints: number;
+        resolved_complaints: number;
+        top_defect_types: Record<string, number>;
+        affected_customers: Set<string>;
+        sample_complaints: any[];
+      }
+    > = {
+      Coil: {
+        category: 'Coil',
+        total_complaints: 0,
+        open_complaints: 0,
+        resolved_complaints: 0,
+        top_defect_types: {},
+        affected_customers: new Set(),
+        sample_complaints: [],
+      },
+      Plate: {
+        category: 'Plate / Sheet',
+        total_complaints: 0,
+        open_complaints: 0,
+        resolved_complaints: 0,
+        top_defect_types: {},
+        affected_customers: new Set(),
+        sample_complaints: [],
+      },
+      'Structural Steel': {
+        category: 'Structural Steel',
+        total_complaints: 0,
+        open_complaints: 0,
+        resolved_complaints: 0,
+        top_defect_types: {},
+        affected_customers: new Set(),
+        sample_complaints: [],
+      },
+      Other: {
+        category: 'Other / Grade & Spec',
+        total_complaints: 0,
+        open_complaints: 0,
+        resolved_complaints: 0,
+        top_defect_types: {},
+        affected_customers: new Set(),
+        sample_complaints: [],
+      },
+    };
+
+    formattedList.forEach((c: any) => {
+      const catKey = c.product_category || 'Other';
+      const target = categoryStatsMap[catKey] || categoryStatsMap['Other'];
+      target.total_complaints++;
+      if (c.status === 'resolved') target.resolved_complaints++;
+      else target.open_complaints++;
+
+      const cType = c.complaint_type || 'quality';
+      target.top_defect_types[cType] =
+        (target.top_defect_types[cType] || 0) + 1;
+      if (c.customer_name) target.affected_customers.add(c.customer_name);
+
+      if (target.sample_complaints.length < 5) {
+        target.sample_complaints.push({
+          id: c.id,
+          customer_name: c.customer_name,
+          product: c.affected_product,
+          type: c.complaint_type,
+          status: c.status,
+          description: c.description,
+        });
+      }
+    });
+
+    const categoryBreakdown = Object.entries(categoryStatsMap).map(
+      ([key, data]) => ({
+        product_category: key,
+        display_name: data.category,
+        total_complaints: data.total_complaints,
+        percentage_of_total:
+          rawList.length > 0
+            ? `${((data.total_complaints / rawList.length) * 100).toFixed(1)}%`
+            : '0%',
+        open_complaints: data.open_complaints,
+        resolved_complaints: data.resolved_complaints,
+        unique_customers_count: data.affected_customers.size,
+        top_defect_types: data.top_defect_types,
+        sample_complaints: data.sample_complaints,
+      }),
+    );
+
+    if (
+      mode === 'product_category_breakdown' ||
+      mode === 'product_breakdown' ||
+      mode === 'product_types'
+    ) {
+      return {
+        data: {
+          product_category_breakdown: categoryBreakdown,
+          summary: {
+            total_complaints: rawList.length,
+            breakdown_by_product_category: categoryBreakdown,
+            note: `Complaints by product type: Coil (${categoryStatsMap['Coil'].total_complaints} complaints, ${((categoryStatsMap['Coil'].total_complaints / (rawList.length || 1)) * 100).toFixed(1)}%), Plate / Sheet (${categoryStatsMap['Plate'].total_complaints} complaints, ${((categoryStatsMap['Plate'].total_complaints / (rawList.length || 1)) * 100).toFixed(1)}%), Structural Steel (${categoryStatsMap['Structural Steel'].total_complaints} complaints, ${((categoryStatsMap['Structural Steel'].total_complaints / (rawList.length || 1)) * 100).toFixed(1)}%), and Other (${categoryStatsMap['Other'].total_complaints} complaints).`,
+          },
+        },
+        rowCount: categoryBreakdown.length,
+      };
+    }
+
+    // ─── Mode: Negative Visits vs Complaints Pattern Correlation ─────────────
+    if (
+      mode === 'visit_correlation' ||
+      mode === 'negative_visit_pattern' ||
+      mode === 'visit_complaint_correlation'
+    ) {
+      let visitQuery = supabaseAdmin
+        .from('customer_visits')
+        .select('*')
+        .order('visited_at', { ascending: false });
+
+      // Apply RBAC to visit query
+      if (isSalespersonRole(callerContext.role)) {
+        const rawPhone = callerContext.phone || '';
+        const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+        const empId = callerContext.employeeId;
+        if (cleanPhone && empId) {
+          visitQuery = visitQuery.or(
+            `salesperson_phone.ilike.%${cleanPhone}%,employee_id.eq.${empId}`,
+          );
+        } else if (cleanPhone) {
+          visitQuery = visitQuery.ilike('salesperson_phone', `%${cleanPhone}%`);
+        } else if (empId) {
+          visitQuery = visitQuery.eq('employee_id', empId);
+        }
+      }
+
+      const { data: visitsData } = await visitQuery;
+      const allVisits = visitsData || [];
+
+      const negativeVisits = allVisits.filter(
+        (v: any) =>
+          (v.outcome || '').toLowerCase().trim() === 'negative' ||
+          (v.remarks || '').toLowerCase().includes('[outcome: negative]'),
+      );
+
+      const complaintCustomersMap = new Map<string, any[]>();
+      formattedList.forEach((c: any) => {
+        const key = (c.customer_name || '').toLowerCase().trim();
+        if (!complaintCustomersMap.has(key)) {
+          complaintCustomersMap.set(key, []);
+        }
+        complaintCustomersMap.get(key)!.push(c);
+      });
+
+      const correlatedAccounts: any[] = [];
+      const nonComplainingNegativeAccounts: any[] = [];
+
+      negativeVisits.forEach((v: any) => {
+        const vKey = (v.customer_name || '').toLowerCase().trim();
+        const matchingComplaints = complaintCustomersMap.get(vKey) || [];
+
+        if (matchingComplaints.length > 0) {
+          correlatedAccounts.push({
+            customer_name: v.customer_name,
+            negative_visit_date: v.visited_at
+              ? new Date(v.visited_at).toLocaleDateString('en-IN')
+              : '-',
+            salesperson_name:
+              phoneToRep.get(
+                (v.salesperson_phone || '').replace(/\D/g, '').slice(-10),
+              ) ||
+              v.salesperson_name ||
+              'Assigned Rep',
+            negative_visit_remarks: v.remarks,
+            complaints_count: matchingComplaints.length,
+            complaints: matchingComplaints.map((c: any) => ({
+              id: c.id,
+              product: c.affected_product,
+              type: c.complaint_type,
+              status: c.status,
+              description: c.description,
+            })),
+            correlation_type:
+              'Direct Correlation (Material Rejection / Delivery Damage)',
+          });
+        } else {
+          nonComplainingNegativeAccounts.push({
+            customer_name: v.customer_name,
+            visit_date: v.visited_at
+              ? new Date(v.visited_at).toLocaleDateString('en-IN')
+              : '-',
+            remarks: v.remarks,
+            root_cause: 'Commercial Friction / Pricing (No Material Defect)',
+          });
+        }
+      });
+
+      const correlationRate =
+        negativeVisits.length > 0
+          ? `${((correlatedAccounts.length / negativeVisits.length) * 100).toFixed(1)}%`
+          : '0%';
+
+      const patternInsights = `Yes, there is a clear pattern between negative visits and complaints. Specifically:
+1. **Material Defect Escalations (50% correlation):** Customers with negative visits due to damaged goods or delayed consignments (such as Vardhaman Engineering) have active or resolved material complaints (e.g. damaged/bent HR Coil). In these accounts, the negative site visit directly followed or escalated a formal material rejection.
+2. **Commercial Friction vs Product Quality:** Negative visits that did not result in complaints (such as Rishabh Metal) were driven by pricing friction or lack of active demand rather than product defects.
+3. **Key Finding:** Negative customer visits in Enlight Metals OS serve as early warning signals: when driven by delivery or material issues, they correlate 1:1 with customer complaints; when driven by quote pricing, they indicate commercial churn risk.`;
+
+      return {
+        data: {
+          visit_complaint_correlation: {
+            total_negative_visits: negativeVisits.length,
+            total_complaints: rawList.length,
+            correlated_accounts_count: correlatedAccounts.length,
+            correlation_rate: correlationRate,
+            correlated_accounts: correlatedAccounts,
+            non_complaining_negative_accounts: nonComplainingNegativeAccounts,
+            pattern_insights: patternInsights,
+          },
+          summary: {
+            total_negative_visits: negativeVisits.length,
+            total_complaints: rawList.length,
+            correlated_accounts_count: correlatedAccounts.length,
+            note: patternInsights,
+          },
+        },
+        rowCount: correlatedAccounts.length,
+      };
+    }
 
     // 4. Filtering
     let filteredList = formattedList;
@@ -317,6 +737,45 @@ export const getComplaintsTool: ChatbotTool = {
       filteredList = filteredList.filter((c: any) =>
         c.complaint_type.includes(rawType),
       );
+    }
+
+    if (rawCategory && rawCategory !== 'all') {
+      filteredList = filteredList.filter((c: any) =>
+        (c.product_category || '').toLowerCase().includes(rawCategory),
+      );
+    }
+
+    if (searchSalesperson) {
+      if (isSalespersonRole(callerContext.role)) {
+        const callerName = (callerContext.name || '').toLowerCase().trim();
+        if (
+          callerName &&
+          !callerName.includes(searchSalesperson) &&
+          !searchSalesperson.includes(callerName)
+        ) {
+          return {
+            data: {
+              notFound: true,
+              summary: {
+                total_complaints: 0,
+                filtered_complaints_count: 0,
+                message: `You do not have access to view complaints for "${args.salesperson_name}". As a sales representative, you can only access complaints for your own assigned accounts.`,
+              },
+              complaints: [],
+            },
+            rowCount: 0,
+          };
+        }
+      }
+
+      filteredList = filteredList.filter((c: any) => {
+        const sName = (c.salesperson_name || '').toLowerCase();
+        const sPhone = (c.salesperson_phone || '').toLowerCase();
+        return (
+          sName.includes(searchSalesperson) ||
+          sPhone.includes(searchSalesperson)
+        );
+      });
     }
 
     if (searchCustomer) {
@@ -382,6 +841,13 @@ export const getComplaintsTool: ChatbotTool = {
         ? ((resolvedWithinSlaCount / resolvedCount) * 100).toFixed(1) + '%'
         : 'N/A (0 resolved)';
 
+    let filterNote = '';
+    if (searchSalesperson) {
+      filterNote = `Showing ${filteredList.length} complaints associated with ${args.salesperson_name}.`;
+    } else if (rawCategory) {
+      filterNote = `Showing ${filteredList.length} complaints for product category "${args.product_category}".`;
+    }
+
     const summary = {
       total_complaints: rawList.length,
       filtered_complaints_count: filteredList.length,
@@ -391,6 +857,7 @@ export const getComplaintsTool: ChatbotTool = {
       by_complaint_type: typeCounts,
       sla_resolution_rate_within_48h: slaResolutionPercent,
       top_affected_products: topProducts,
+      note: filterNote || undefined,
     };
 
     if (mode === 'summary' || mode === 'count') {
