@@ -545,9 +545,9 @@ export class DealsService {
     try {
       const stages = [
         'new_inquiry',
+        'qualified',
         'quoted',
         'negotiation',
-        'on_hold',
         'won',
         'lost',
       ];
@@ -687,21 +687,16 @@ export class DealsService {
 
       if (error) throw error;
 
-      const stages = ['new_inquiry', 'quoted', 'negotiation', 'on_hold'];
+      const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
 
       const board = stages.reduce(
         (acc, stage) => {
           acc[stage] =
-            data?.filter((d) => {
-              const st = (d.stage || 'new_inquiry').toLowerCase().trim();
-              if (stage === 'new_inquiry') {
-                return st === 'new_inquiry' || st === 'review' || !st;
-              }
-              if (stage === 'quoted') {
-                return st === 'quoted' || st === 'qualified';
-              }
-              return st === stage;
-            }) || [];
+            data?.filter((d) =>
+              stage === 'new_inquiry'
+                ? d.stage === 'new_inquiry' || d.stage === 'review' || !d.stage
+                : d.stage === stage,
+            ) || [];
           return acc;
         },
         {} as Record<string, any[]>,
