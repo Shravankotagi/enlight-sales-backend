@@ -135,8 +135,15 @@ export const getMyOpenDealsTool: ChatbotTool = {
       rawStage = 'new_inquiry';
     } else if (rawStage === 'negotiating') {
       rawStage = 'negotiation';
-    } else if (rawStage === 'orders' || rawStage === 'order') {
+    } else if (
+      rawStage === 'orders' ||
+      rawStage === 'order' ||
+      rawStage === 'converted' ||
+      rawStage === 'converted_to_orders'
+    ) {
       rawStage = 'won';
+    } else if (rawStage === 'not_converted' || rawStage === 'unconverted') {
+      rawStage = 'lost';
     }
 
     let query = supabaseAdmin

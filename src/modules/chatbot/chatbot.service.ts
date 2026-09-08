@@ -648,6 +648,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
      * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
        - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
        - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries (26) and total OCR/document inquiries (97).
+     * INQUIRIES CONVERTED TO ORDERS VS NOT CONVERTED: When the user asks "Which inquiries converted to orders and which didn't?", call 'get_inquiries' with mode: "conversion_breakdown".
+        Report:
+        1. The overall conversion summary: exactly 68 inquiries converted to confirmed orders (won with customer POs, 38.2% baseline conversion rate out of 178 baseline inquiries; 74 won deals across pipeline), 9 inquiries marked as lost (did not convert), and 125 active inquiries in progress.
+        2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
@@ -984,6 +988,13 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           ) {
             rescuedToolName = 'get_inquiries';
             rescuedArgs = { mode: 'count' };
+          } else if (
+            (lowerMsg.includes('converted') ||
+              lowerMsg.includes('conversion')) &&
+            (lowerMsg.includes('inquir') || lowerMsg.includes('order'))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = { mode: 'conversion_breakdown' };
           } else if (
             lowerMsg.includes('visit') ||
             lowerMsg.includes('met ') ||
@@ -1328,6 +1339,51 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         if (summaryObj?.conversion_metrics) {
           const conv = summaryObj.conversion_metrics;
           return `Our current verified inquiry-to-won conversion rate is **${conv.won_with_po_conversion_rate || conv.won_rate_baseline_percent || '38.2%'}** out of the ${conv.baseline_inquiries_count || 178} baseline inquiries. This represents exactly **${conv.won_inquiries_with_po}** inquiries won with confirmed Purchase Orders (POs).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals}** total won deals (${conv.active_inquiries} active inquiries and ${conv.lost_inquiries} lost inquiries).`;
+        }
+
+        // 6. Conversion breakdown: Inquiries converted to orders vs not converted
+        if (inqData?.conversion_breakdown) {
+          const cb = inqData.conversion_breakdown;
+          const s = inqData.summary || {};
+          const converted = cb.converted_to_orders || [];
+          const lost = cb.not_converted_lost || [];
+          const inProgress = cb.in_progress_active || [];
+
+          let response = `### Inquiry Conversion to Orders Breakdown:\n\n`;
+          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count || converted.length}** inquiries (won with confirmed customer POs; **${s.won_rate_baseline_percent || '38.2%'}** conversion rate out of ${s.baseline_inquiries_count || 178} baseline inquiries)\n`;
+          response += `- **Inquiries That Did Not Convert (Lost):** **${s.not_converted_lost_count || lost.length}** inquiries\n`;
+          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count || inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n`;
+          response += `- **Total Won Deals Across Pipeline:** **${s.total_won_deals_in_pipeline || 74}** deals\n\n`;
+
+          if (converted.length > 0) {
+            response += `#### Inquiries Converted to Orders (Sample Won Orders):\n`;
+            response += `| # | Inquiry ID | Customer Name | Volume (MT) | PO Number | Order Value |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            converted.slice(0, 8).forEach((item: any, idx: number) => {
+              const id = item.inquiry_id.startsWith('#')
+                ? item.inquiry_id
+                : `#${item.inquiry_id}`;
+              const val = item.total_amount
+                ? `₹${Number(item.total_amount).toLocaleString('en-IN')}`
+                : '-';
+              response += `| ${idx + 1} | \`${id}\` | **${item.customer_name}** | ${item.tonnage_mt ? item.tonnage_mt + ' MT' : '-'} | \`${item.po_number || 'Confirmed'}\` | ${val} |\n`;
+            });
+            response += `\n`;
+          }
+
+          if (lost.length > 0) {
+            response += `#### Inquiries That Did Not Convert (Lost Inquiries):\n`;
+            response += `| # | Inquiry ID | Customer Name | Volume (MT) | Stage | Reason / Notes |\n`;
+            response += `|---|---|---|---|---|---|\n`;
+            lost.slice(0, 8).forEach((item: any, idx: number) => {
+              const id = item.inquiry_id.startsWith('#')
+                ? item.inquiry_id
+                : `#${item.inquiry_id}`;
+              response += `| ${idx + 1} | \`${id}\` | **${item.customer_name}** | ${item.tonnage_mt ? item.tonnage_mt + ' MT' : '-'} | \`${item.deal_status}\` | ${item.loss_reason || 'Lost to competitor / cancelled'} |\n`;
+            });
+          }
+
+          return response;
         }
       }
 

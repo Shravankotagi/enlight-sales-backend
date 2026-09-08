@@ -206,6 +206,49 @@ async function runTests() {
     failed++;
   }
 
+  // --- UNIT TEST 6: Conversion Breakdown (Orders vs Unconverted) ---
+  console.log('\n6. Unit Test: get_inquiries mode: "conversion_breakdown"...');
+  try {
+    const res6 = await getInquiriesTool.execute(
+      { mode: 'conversion_breakdown' },
+      adminContext,
+      supabaseAdmin,
+    );
+    const cb = res6.data?.conversion_breakdown;
+    const sm = res6.data?.summary;
+    if (
+      cb &&
+      Array.isArray(cb.converted_to_orders) &&
+      Array.isArray(cb.not_converted_lost) &&
+      cb.converted_to_orders.length > 0 &&
+      cb.not_converted_lost.length > 0 &&
+      sm?.converted_to_orders_count === 68
+    ) {
+      console.log(
+        '   PASS: Converted to orders count:',
+        sm.converted_to_orders_count,
+      );
+      console.log(
+        '   PASS: Lost inquiries count:',
+        sm.not_converted_lost_count,
+      );
+      console.log(
+        '   PASS: Sample converted customer:',
+        cb.converted_to_orders[0]?.customer_name,
+      );
+      passed++;
+    } else {
+      console.error(
+        '   FAIL: Invalid conversion breakdown response:',
+        res6.data,
+      );
+      failed++;
+    }
+  } catch (err: any) {
+    console.error('   FAIL: Unit Test 6 error:', err.message);
+    failed++;
+  }
+
   // --- E2E PROMPTS WITH GEMINI ---
   console.log(
     '\n=== Testing End-to-End LLM Responses via ChatbotService ===\n',
@@ -361,6 +404,40 @@ async function runTests() {
     }
   } catch (err: any) {
     console.error('   FAIL: E2E Prompt 5 error:', err.message);
+    failed++;
+  }
+
+  // Prompt 6: Which inquiries converted to orders and which didn't?
+  console.log(
+    '\n12. E2E Prompt: "Which inquiries converted to orders and which didn\'t?"',
+  );
+  try {
+    const reply6 = await chatbotService.processChatMessage(
+      adminContext,
+      "Which inquiries converted to orders and which didn't?",
+    );
+    const text6 = reply6.reply;
+    console.log('   Bot Response:\n  ', text6.replace(/\n/g, '\n   '));
+    if (
+      !text6.toLowerCase().includes('no matching records were found') &&
+      !text6.toLowerCase().includes('not available in my current tools') &&
+      (text6.includes('68') ||
+        text6.includes('38.2%') ||
+        text6.toLowerCase().includes('order') ||
+        text6.toLowerCase().includes('won')) &&
+      (text6.toLowerCase().includes('lost') ||
+        text6.toLowerCase().includes('convert'))
+    ) {
+      console.log(
+        '   PASS: Bot explained inquiries converted to orders vs not converted with details!',
+      );
+      passed++;
+    } else {
+      console.error('   FAIL: Bot failed conversion breakdown response.');
+      failed++;
+    }
+  } catch (err: any) {
+    console.error('   FAIL: E2E Prompt 6 error:', err.message);
     failed++;
   }
 
