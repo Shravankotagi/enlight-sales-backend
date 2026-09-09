@@ -37,15 +37,15 @@ Input message can be English, Hindi, or Hinglish.
 
 Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 {
-  "action": "inquiry|stage_update|purchase_order|deal_update", // Use "stage_update" whenever moving stage, updating status, or marking as won/lost/negotiation/quoted/qualified. Use "inquiry" for ALL new customer requirements, notes, RFQs, quotes. Use "purchase_order" ONLY if text explicitly contains "PO", "PO-...", "Purchase order", "Order confirmed", "Order placed", or "Won".
+  "action": "inquiry|stage_update|purchase_order|deal_update", // Use "inquiry" for ALL new customer requirements, RFQs, quote requests, inquiries, or price queries (even in Hinglish e.g. "rate bhejo", "30 MT chahiye", "want ..."). Use "stage_update" whenever moving stage, updating status, or marking as won/lost/negotiation/quoted/qualified. Use "purchase_order" ONLY if text explicitly contains "PO", "PO-...", "Purchase order", "Order confirmed", "Order placed", or "Won". Use "deal_update" ONLY if updating existing fields for a specific deal ID or explicit field update command without new product requirements.
   "deal_id": "<inquiry ID if mentioned e.g. #INQ-C538B6, INQ-C538B6, #DEAL-C538B6, or C538B6, else null>",
   "customer_name": "<exact company/customer name requesting material or placing order, else null>",
   "contact_person": "<full name of customer contact person/owner/proprietor if mentioned e.g. Rajesh Mehta, else null>",
   "target_stage": "new_inquiry|qualified|negotiation|quoted|won|lost", // Stage if explicitly requested to update e.g. "update to negotiation", "mark as negotiation", "mark as won", "deal lost", else null
   "line_items": [
     {
-      "product_requirement": "<specific product name from 9 categories e.g. CR Coil, HR Coil, HRPO Coil, MS Round Bar, MS Square Pipe, MS Angle, MS Beam, MS Channel, MS Plate, Chequered Plate, TMT Bar>",
-      "dimensions": "<exact dimensions/spec/thickness/gauge e.g. 0.80mm x 320mm Slit, 20G, 3.15mm HRPO, 25mm Dia, 50x50x2mm, 50x50x6mm, ISMB 200, ISMC 100, 12mm 5ft x 20ft, 8mm Fe550D, else null>",
+      "product_requirement": "<specific product name: CR Sheet, HR Sheet, MS Sheet, CR Coil, HR Coil, HRPO Coil, MS Plate, Chequered Plate, MS Round Bar, MS Square Pipe, MS Angle, MS Beam, MS Channel, TMT Bar>",
+      "dimensions": "<exact dimensions/spec/thickness/gauge specifically for this item e.g. 10mm, 12mm, 50x50x2mm, ISMB 200, else null>",
       "hsn_code": "<HSN or SAC code if mentioned e.g. 72085110, 7208, 7214, 7306, else null>",
       "quantity": <numeric quantity e.g. 300, 200, 20>,
       "quantity_mt": <numeric quantity in MT or same as quantity>,
@@ -54,9 +54,9 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
     }
   ],
   "total_amount": <numeric total deal value in rupees ONLY if explicitly mentioned in text, else 0>,
-  "delivery_location": "<full exact address/city/location if mentioned e.g. Plot 42, MIDC Chakan, Pune - 410501, Uchgaon, Kolhapur, else null>",
+  "delivery_location": "<full exact address/city/location if mentioned in THIS message e.g. Pune, Nashik, Chakan, else null>",
   "delivery_date": "<delivery deadline in YYYY-MM-DD format using current year 2026 if mentioned e.g. 2026-08-25 for 'before 25 August', else null>",
-  "payment_terms": "<payment terms e.g. 30 days credit, 45 days, 100% advance, PDC, else null>",
+  "payment_terms": "<payment terms if mentioned in THIS message e.g. 30 days credit, 45 days, 100% advance, PDC, else null>",
   "preferred_make": "<preferred make/brand if stated e.g. Tata, JSW, SAIL, Jindal, RINL, else null>",
   "po_number": "<PO number if mentioned, else null>",
   "po_date": "<PO date / target PO date in YYYY-MM-DD format using year 2026 e.g. 2026-08-28 for '28 August', else null>",
@@ -64,105 +64,108 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "confidence": <float 0.0 to 1.0>
 }
 
-CRITICAL RULES FOR THE 9 CORE STEEL PRODUCT CATEGORIES:
-1. CR COILS:
-   - Handle Gauges (e.g. "20 Gauge" -> 0.90mm, "24 Gauge" -> 0.60mm, "16 Gauge" -> 1.60mm).
-   - Handle Slit Coils (e.g. "slit width 320mm thk 1.2mm" -> product_requirement: "CR Coil", dimensions: "1.20mm x 320mm Slit").
-   - Extract grades (EDD, IF, D) and surface condition (Oiled, Unoiled).
+CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
+1. PRODUCT PRESERVATION (CR SHEET vs CR COIL / HR SHEET vs HR COIL):
+   - "CR Sheet" / "Cold Rolled Sheet" MUST be extracted as "CR Sheet" (STRICTLY DO NOT convert to "CR Coil").
+   - "HR Sheet" / "Hot Rolled Sheet" MUST be extracted as "HR Sheet" (STRICTLY DO NOT convert to "HR Coil").
+   - "MS Sheet" MUST be extracted as "MS Sheet".
+   - "HRPO Coil" / "Pickled & Oiled" MUST be extracted as "HRPO Coil".
+   - "MS Plate" MUST be extracted as "MS Plate".
+   - "MS Beam" / "Structural Beams" MUST be extracted as "MS Beam".
+   - STRICTLY extract ONLY the products explicitly mentioned in the user message. Do NOT add phantom products (such as MS Beam or anything else) that are not in the prompt!
 
-2. HR COILS & HRPO:
-   - Recognize "HRPO" as Hot Rolled Pickled & Oiled coil (product_requirement: "HRPO Coil").
-   - Extract high-strength grades (E350, SAILMA, Corten).
-   - Note Mill Edge vs Trimmed Edge in dimensions.
+2. ZERO DIMENSION HALLUCINATION / NO CROSS-ITEM BORROWING:
+   - If a line item does NOT have a stated thickness, dimension, or spec in the text (e.g. "HR Pickled Coil 12000 kgs" or "Structural beams 15 MT" or "CR Sheet - 100 nos"), its "dimensions" MUST BE null!
+   - STRICTLY NEVER copy or borrow a thickness (e.g. "10mm") from one line item to other line items in the message.
 
-3. MS ROUND BARS:
-   - Recognize diameter notations ("25mm dia", "32ø", "1.5 inch bar" -> dimensions: "25mm Dia").
-   - Distinguish Bright Bars ("EN8 Bright Bar") from black hot rolled rounds.
-   - Accept units in "Pcs", "Lengths", or "MT".
+3. ZERO DELIVERY LOCATION & PAYMENT TERMS HALLUCINATION:
+   - If the user message does NOT state a delivery location, "delivery_location" MUST BE null.
+   - If the user message does NOT state payment terms, "payment_terms" MUST BE null.
+   - STRICTLY NEVER invent or assume a delivery location or payment terms.
 
-4. MS SQUARE PIPE & RHS (BOX PIPES):
-   - Recognize box pipe dimensions (e.g. "50x50x2mm square pipe", "80x40x2.5mm RHS").
-   - Convert inches & gauges (e.g. "2x2 inch 16 gauge" -> dimensions: "50x50x1.6mm").
-   - Recognize GP / Pre-Galvanized square pipes ("GP Square Pipe").
+4. MULTI-ITEM EXTRACTION:
+   - When a message lists multiple items (e.g. "1) HR Coil 10mm - 20 MT 2) MS Plate 12mm - 30 MT 3) CR Sheet - 100 nos" or "HR Pickled Coil 12000 kgs, MS Plate 10mm 40 MT, and Structural beams 15 MT"):
+     Extract EACH item as a separate object in the line_items array with its own product, dimensions (if stated), quantity, and unit.
 
-5. MS ANGLES:
-   - Shorthand equal angles: "Angle 50x6" -> dimensions: "50x50x6 mm Equal Angle".
-   - Unequal angles: "75x50x6 mm".
-   - Tower Quality (TQ) grade.
-
-6. MS BEAMS | JOISTS:
-   - Standard sections: ISMB 100, 150, 200, 250, 300, 400, 500, 600.
-   - Height in inches notation: "8 inch girder" -> dimensions: "ISMB 200 (8 inch)".
-   - Heavy parallel flange sections: NPB, WPB, UB, UC.
-
-7. MS CHANNEL:
-   - Standard sections: ISMC 75, 100, 125, 150, 200, 250, 300, 400.
-   - Shutter & Gate Channel profiles.
-
-8. MS SHEETS & PLATES:
-   - Dimensions in feet or mm: "12mm 5x20 ft" -> dimensions: "12mm x 1500x6000mm (5x20 ft)".
-   - Chequered / Tear Drop Plates: product_requirement: "Chequered Plate".
-   - Boiler / High Tensile Plates: BQ SA 516 Gr 70, Hardox, E350.
-
-9. MS TMT BARS (MULTI-DIAMETER ASSORTMENT LISTS):
-   - When a message lists multiple TMT diameters (e.g. "8mm-5MT, 10mm-10MT, 12mm-15MT, 16mm-10MT, 20mm-5MT Tata Tiscon Fe550D"):
-     Extract EACH diameter as a SEPARATE object in the line_items array with its own quantity and dimensions!
-   - Extract Ductile grades (Fe500D, Fe550D) and units (Bundles, MT, Pcs).
-
-10. RATE UPDATES & PRICE LISTS:
-   - When a message says "update rates", "update the rates", "upadte the rates", "rates for", "new rates", or provides product rates (e.g. "CR Sheet 1mm - 15\nCR Sheet 1.2mm - 18\nHR sheet 1.6mm -12" or "MS Sheet 5MM THK - 10"):
+5. RATE UPDATES & PRICE LISTS:
+   - When a message says "update rates", "rates for", "new rates", or provides product rates (e.g. "CR Sheet 1mm - 15\nCR Sheet 1.2mm - 18"):
      The numbers after hyphens/colons/at-signs are unit RATES (rate_per_mt: 15), NOT quantities!
-     Set action: "deal_update" and extract EACH product with its product_requirement, dimensions, and rate_per_mt.
-   - If an inquiry code, deal code or customer name is provided, extract deal_id (e.g. "INQ-F91CAB" or "DEAL-F91CAB") and customer_name.
+     Set action: "deal_update" and extract EACH product with its rate_per_mt.
 
-11. FIELD & SPECIFICATION UPDATES (DELIVERY ADDRESS, PAYMENT TERMS, HSN/SAC, UNIT):
-   - When a message updates delivery location or address (e.g. "update delivery address to Plot 42, MIDC Chakan, Pune"), payment terms (e.g. "payment terms 30 days credit"), HSN/SAC code (e.g. "HSN code of MS Plate is 72085110"), or unit (e.g. "change unit of MS Plate to Pcs"):
-     Set action: "deal_update" and extract the corresponding deal_id, delivery_location, payment_terms, and line_items with updated hsn_code, unit, etc.
-
-12. UNIT CONVERSION & DIMENSION PRESERVATION:
-   - For sheets, plates, and coils, ALWAYS extract full dimensions including thickness, width, and length (e.g. "5mm (1250 x 2500 mm)", "6mm 1250x2500", "12mm 5ft x 20ft").
-   - When unit is Nos, Pcs, Sheets, or Plates for sheets/plates, convert quantity to MT using:
+6. UNIT CONVERSION & DIMENSION PRESERVATION:
+   - When unit is Nos, Pcs, Sheets, or Plates for sheets/plates:
      Length (m) × Width (m) × Thickness (mm) × 8 × number of pieces / 1000 = Metric Tons (MT).
-   - If length/width are omitted for sheet/plate items, default to standard sheet size 1.25m × 2.5m (1250 × 2500 mm).
+   - If length/width are omitted for sheet/plate items with thickness, default to standard sheet size 1.25m × 2.5m (1250 × 2500 mm).
    - When unit is Kg: MT = Kg / 1000.
 
 Return ONLY the JSON object.
 `;
 
 const PRODUCT_FAMILIES = {
+  cr_sheet: [
+    'cr sheet',
+    'cold rolled sheet',
+    'cr sheets',
+    'cold rolled sheets',
+    'crca sheet',
+    'crca sheets',
+    'cr patra',
+  ],
   cr_coil: [
     'cr coil',
+    'cr coils',
     'cold rolled coil',
+    'cold rolled coils',
     'cr slit coil',
     'crca coil',
+    'crca coils',
     'cr strip',
     'cr2',
     'cr1',
     'edd cr',
-    'cr sheet',
+  ],
+  hr_sheet: [
+    'hr sheet',
+    'hot rolled sheet',
+    'hr sheets',
+    'hot rolled sheets',
+    'hr patra',
   ],
   hr_coil: [
     'hr coil',
+    'hr coils',
     'hot rolled coil',
+    'hot rolled coils',
     'hrpo',
     'hrpo coil',
+    'hrpo coils',
+    'pickled coil',
+    'pickled coils',
+    'hr pickled coil',
+    'hr pickled coils',
+    'hr pickled',
     'pickled and oiled',
     'pickled & oiled',
+    'pickled',
     'hr strip',
     'e350 hr',
     'sailma',
-    'hr sheet',
   ],
   ms_round_bar: [
     'round bar',
+    'round bars',
     'ms round bar',
     'bright bar',
     'round rod',
+    'round rods',
     'en8',
     'en19',
     'c45',
     'ms rod',
     'bright round',
+    'rod',
+    'rods',
+    'round',
   ],
   ms_square_pipe: [
     'square pipe',
@@ -174,10 +177,16 @@ const PRODUCT_FAMILIES = {
     'gp square pipe',
     'hollow section',
     'box tube',
+    'pipe',
+    'pipes',
+    'tube',
+    'tubes',
   ],
   ms_angle: [
     'angle',
+    'angles',
     'ms angle',
+    'ms angles',
     'equal angle',
     'unequal angle',
     'l-angle',
@@ -186,21 +195,31 @@ const PRODUCT_FAMILIES = {
   ],
   ms_beam: [
     'beam',
+    'beams',
+    'structural beam',
+    'structural beams',
+    'structural',
     'ms beam',
+    'ms beams',
     'ismb',
     'joist',
+    'joists',
     'i-beam',
     'h-beam',
     'girder',
+    'girders',
     'npb',
     'wpb',
     'uc',
     'ub',
     'column',
+    'columns',
   ],
   ms_channel: [
     'channel',
+    'channels',
     'ms channel',
+    'ms channels',
     'ismc',
     'c-channel',
     'u-channel',
@@ -210,14 +229,18 @@ const PRODUCT_FAMILIES = {
   ms_plate: [
     'ms plate',
     'ms plates',
-    'ms sheet',
+    'plate',
+    'plates',
     'chequered plate',
     'checkered plate',
+    'chequered',
+    'checkered',
     'boiler plate',
     'bq plate',
     'hardox',
     'e350 plate',
   ],
+  ms_sheet: ['ms sheet', 'ms sheets', 'sheet', 'sheets', 'patra'],
   tmt_bar: [
     'tmt bar',
     'tmt bars',
@@ -230,6 +253,7 @@ const PRODUCT_FAMILIES = {
     'fe 550d',
     'fe 600',
     'sariya',
+    'saria',
   ],
 };
 
@@ -2231,6 +2255,241 @@ function extractDeterministicRateItems(text) {
   return items;
 }
 
+function isProductActuallyMentionedInText(pName, text) {
+  if (!pName || !text) return false;
+  const tLower = text.toLowerCase();
+  const pLower = pName.toLowerCase();
+
+  // 1. Direct substring match
+  if (tLower.includes(pLower)) return true;
+
+  // 2. Product family alias check
+  const fam = getProductFamily(pName);
+  if (fam && PRODUCT_FAMILIES[fam]) {
+    const hasAlias = PRODUCT_FAMILIES[fam].some((alias) =>
+      tLower.includes(alias.toLowerCase()),
+    );
+    if (hasAlias) return true;
+  }
+
+  // 3. Significant product token overlap
+  const coreTokens = pLower
+    .split(/\s+/)
+    .filter(
+      (w) => !['ms', 'is', 'standard', 'grade', 'prime', 'fe'].includes(w),
+    );
+  if (coreTokens.some((token) => token.length > 2 && tLower.includes(token))) {
+    return true;
+  }
+
+  return false;
+}
+
+function parseSingleItemChunk(chunk) {
+  if (!chunk || typeof chunk !== 'string') return null;
+  const cleanChunk = chunk.trim();
+  if (!cleanChunk) return null;
+
+  // 1. Identify product
+  const lower = cleanChunk.toLowerCase();
+  let pName = null;
+
+  if (
+    /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
+      lower,
+    )
+  ) {
+    pName = 'HRPO Coil';
+  } else if (
+    /\b(cr\s*sheet|cold\s*rolled\s*sheet|crca\s*sheet)\b/i.test(lower)
+  ) {
+    pName = 'CR Sheet';
+  } else if (
+    /\b(cr\s*coil|cold\s*rolled\s*coil|crca\s*coil|crca|cr\s*slit)\b/i.test(
+      lower,
+    )
+  ) {
+    pName = 'CR Coil';
+  } else if (/\b(hr\s*sheet|hot\s*rolled\s*sheet)\b/i.test(lower)) {
+    pName = 'HR Sheet';
+  } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(lower)) {
+    pName = 'HR Coil';
+  } else if (/\b(chequered|checkered)\s*(?:plate|sheet)?\b/i.test(lower)) {
+    pName = 'Chequered Plate';
+  } else if (
+    /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i.test(lower)
+  ) {
+    pName = 'MS Plate';
+  } else if (/\b(ms\s*sheet)\b/i.test(lower)) {
+    pName = 'MS Sheet';
+  } else if (
+    /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod|ms\s*rod)\b/i.test(lower)
+  ) {
+    pName = 'MS Round Bar';
+  } else if (
+    /\b(square\s*pipe|box\s*pipe|shs|square\s*tube|rectangular\s*pipe|rhs|gp\s*pipe)\b/i.test(
+      lower,
+    )
+  ) {
+    pName = 'MS Square Pipe';
+  } else if (
+    /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle|isa)\b/i.test(lower)
+  ) {
+    pName = 'MS Angle';
+  } else if (
+    /\b(structural\s*beams?|beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb|uc|ub)\b/i.test(
+      lower,
+    )
+  ) {
+    pName = 'MS Beam';
+  } else if (/\b(channel|channels|ismc|c-channel|u-channel)\b/i.test(lower)) {
+    pName = 'MS Channel';
+  } else if (
+    /\b(tmt\s*bar|tmt|sariya|rebar|fe\s*500|fe\s*550)\b/i.test(lower)
+  ) {
+    pName = 'TMT Bar';
+  }
+
+  if (!pName) return null;
+
+  // 2. Identify dimensions ONLY within this specific item chunk
+  let specDim = null;
+  const ismbM = cleanChunk.match(
+    /\b(ismb\s*\d+|ismc\s*\d+|npb\s*[\dx]+|wpb\s*[\dx]+|uc\s*[\dx]+|ub\s*[\dx]+)\b/i,
+  );
+  const boxM = cleanChunk.match(/(\d+\s*x\s*\d+(?:\s*x\s*[\d.]+)?\s*mm)/i);
+  const mmM = cleanChunk.match(
+    /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft|'|"|x\s*[\d.]+)+)/i,
+  );
+  if (ismbM) {
+    specDim = ismbM[0].toUpperCase();
+  } else if (boxM) {
+    specDim = boxM[0];
+  } else if (mmM) {
+    specDim = mmM[0].trim();
+  }
+
+  // 3. Identify quantity & unit
+  let qty = 0;
+  let unit = 'MT';
+
+  // Indian lakh format: "2 lakh kg", "1.5 lac mt", "2 lakh nos"
+  const lakhMatch = cleanChunk.match(
+    /(\d+(?:\.\d+)?)\s*(?:lakh|lac|lacs|lakhs)\s*(kg|kgs|mt|ton|tons|tonne|nos|pcs|sheets?|plates?|coils?|bars?)?/i,
+  );
+  if (lakhMatch) {
+    const rawVal = parseFloat(lakhMatch[1]) * 100000;
+    qty = rawVal;
+    if (lakhMatch[2]) {
+      const u = lakhMatch[2].toLowerCase();
+      if (/kg/.test(u)) unit = 'Kg';
+      else if (/mt|ton/.test(u)) unit = 'MT';
+      else if (/sheet/.test(u)) unit = 'Sheets';
+      else if (/plate/.test(u)) unit = 'Plates';
+      else if (/coil/.test(u)) unit = 'Coil';
+      else if (/bar/.test(u)) unit = 'Bars';
+      else if (/nos|pcs/.test(u)) unit = 'Nos';
+    } else {
+      unit = 'Kg';
+    }
+  } else {
+    const qtyMatch = cleanChunk.match(
+      /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|piece|pieces|nos|sheet|sheets|plate|plates|coil|coils|bar|bars|lengths|bundles)\b/i,
+    );
+    if (qtyMatch) {
+      qty = parseFloat(qtyMatch[1]);
+      const u = qtyMatch[2].toLowerCase();
+      if (/mt|ton/.test(u)) unit = 'MT';
+      else if (/kg/.test(u)) unit = 'Kg';
+      else if (/sheet/.test(u)) unit = 'Sheets';
+      else if (/plate/.test(u)) unit = 'Plates';
+      else if (/coil/.test(u)) unit = 'Coil';
+      else if (/bar/.test(u)) unit = 'Bars';
+      else if (/bundle/.test(u)) unit = 'Bundles';
+      else if (/length/.test(u)) unit = 'Lengths';
+      else unit = 'Nos';
+    }
+  }
+
+  // 4. Rate per MT (if mentioned)
+  let rate = null;
+  const rateMatch = cleanChunk.match(
+    /(?:@|rate\s*(?:is|to|of)?|price\s*(?:is|to|of)?)\s*₹?\s*([\d,.]+)/i,
+  );
+  if (rateMatch) {
+    rate = parseFloat(rateMatch[1].replace(/,/g, ''));
+  }
+
+  // Calculate quantity_mt
+  let qtyMt = qty;
+  if (unit === 'Kg') {
+    qtyMt = qty / 1000;
+  } else if (['Nos', 'Sheets', 'Plates', 'Pcs'].includes(unit)) {
+    const conv = convertLineItemToMt({
+      sku_text: pName,
+      dimensions: specDim,
+      quantity: qty,
+      unit,
+      raw_text: cleanChunk,
+    });
+    qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : qty;
+  }
+
+  return {
+    product_requirement: pName,
+    dimensions: specDim,
+    quantity: qty,
+    quantity_mt: qtyMt,
+    unit: unit,
+    rate_per_mt: rate,
+  };
+}
+
+function extractMultiItemsFromRequirementText(rawText) {
+  if (!rawText || typeof rawText !== 'string') return [];
+  const text = rawText.trim();
+  const items = [];
+
+  // Pattern 1: Numbered lists e.g. "1) HR Coil 10mm - 20 MT 2) MS Plate 12mm - 30 MT 3) CR Sheet - 100 nos"
+  if (/(?:^|\s)\d+[\).]\s+/i.test(text)) {
+    const chunks = text.split(/(?:^|\s)\d+[\).]\s+/).filter(Boolean);
+    for (const chunk of chunks) {
+      const parsed = parseSingleItemChunk(chunk);
+      if (parsed) items.push(parsed);
+    }
+    if (items.length > 0) return items;
+  }
+
+  // Pattern 2: Bullet points or newline separated
+  const lines = text.split(/[\r\n]+/);
+  if (lines.length > 1) {
+    for (const line of lines) {
+      const cleanLine = line.replace(/^[-•*]\s*/, '').trim();
+      const parsed = parseSingleItemChunk(cleanLine);
+      if (parsed) items.push(parsed);
+    }
+    if (items.length > 0) return items;
+  }
+
+  // Pattern 3: Comma / 'and' separated items e.g. "HR Pickled Coil 12000 kgs, MS Plate 10mm 40 MT, and Structural beams 15 MT"
+  if (text.includes(',') || /\s+and\s+/i.test(text)) {
+    const chunks = text.split(/(?:,\s*and\s+|\s+and\s+|,)/i).filter(Boolean);
+    for (const chunk of chunks) {
+      const parsed = parseSingleItemChunk(chunk);
+      if (parsed) items.push(parsed);
+    }
+    if (items.length > 0) return items;
+  }
+
+  // Pattern 4: Single item
+  const single = parseSingleItemChunk(text);
+  if (single) {
+    items.push(single);
+  }
+
+  return items;
+}
+
 /**
  * Main text message handler.
  */
@@ -2489,41 +2748,59 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         if (structComp) {
           ruleCustomer = structComp[1].trim().replace(/^['"]|['"]$/g, '');
         } else {
-          const reqMatch =
-            textClean.match(
-              /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+before|\.|$)/i,
-            ) ||
-            textClean.match(
-              /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
-            ) ||
-            textClean.match(
-              /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
-            ) ||
-            textClean.match(
-              /^(?!new\b|log\b|create\b|add\b)([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
-            ) ||
-            textClean.match(
-              /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
-            );
-          if (reqMatch) {
-            const cand = reqMatch[1].trim();
-            if (
-              ![
-                'new',
-                'log',
-                'create',
-                'add',
-                'a',
-                'the',
-                'this',
-                'that',
-                'deal',
-                'customer',
-                'unknown',
-                'max',
-              ].includes(cand.toLowerCase())
-            ) {
-              ruleCustomer = cand;
+          const trailingDashMatch = textRaw.match(
+            /(?:—|--|-)\s*([A-Za-z0-9\s&.-]{2,40})$/,
+          );
+          const hinglishMatch = textRaw.match(
+            /\b([A-Za-z0-9\s&.-]{2,30}?)\s+se\s+(?:bol\s+raha\s+hu|bol\s+rahe\s+hai|hu|baat\s+kar\s+raha\s+hu)\b/i,
+          );
+          if (
+            trailingDashMatch &&
+            !isInvalidCustomerName(trailingDashMatch[1].trim())
+          ) {
+            ruleCustomer = trailingDashMatch[1].trim();
+          } else if (
+            hinglishMatch &&
+            !isInvalidCustomerName(hinglishMatch[1].trim())
+          ) {
+            ruleCustomer = hinglishMatch[1].trim();
+          } else {
+            const reqMatch =
+              textClean.match(
+                /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+before|\.|$)/i,
+              ) ||
+              textClean.match(
+                /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
+              ) ||
+              textClean.match(
+                /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
+              ) ||
+              textClean.match(
+                /^(?!new\b|log\b|create\b|add\b)([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
+              ) ||
+              textClean.match(
+                /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
+              );
+            if (reqMatch) {
+              const cand = reqMatch[1].trim();
+              if (
+                ![
+                  'new',
+                  'log',
+                  'create',
+                  'add',
+                  'a',
+                  'the',
+                  'this',
+                  'that',
+                  'deal',
+                  'customer',
+                  'unknown',
+                  'max',
+                ].includes(cand.toLowerCase())
+              ) {
+                ruleCustomer = cand;
+              }
             }
           }
         }
@@ -2544,24 +2821,32 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           ruleStage = stageUpdateMatch[1].toLowerCase();
         }
 
+        // Check quote request intent vs deal update intent
+        const isQuoteRequest =
+          /\b(?:rate|price|pricing|quotation|quote)\s*(?:bhejo|batao|chahiye|do|dena|chahie|asap|please|request|karo|bataiye|de do)\b/i.test(
+            textRaw,
+          ) ||
+          /\b(?:please\s+quote|quote\s+asap|quote\s+please|quote\s+bhejo|rate\s+bhejo|bhai\s+.*rate)\b/i.test(
+            textRaw,
+          );
+
         // Check multi-item rate update list / inline updates / field updates
-        const multiItemsParsed = [];
+        let multiItemsParsed = [];
         const isExplicitInquiryMsg =
-          /^\s*(?:inquiry|new\s+inquiry|rfq|lead|log\s+inquiry)\b/i.test(
+          isQuoteRequest ||
+          /^\s*(?:inquiry|new\s+inquiry|rfq|lead|log\s+inquiry|need\s+the\s+following|order\s+requirement|want)\b/i.test(
             textRaw,
           );
         const isRateUpdateContext =
+          !isQuoteRequest &&
           !isExplicitInquiryMsg &&
-          (/\b(upadte|updt|updte|update|set|new|give|change)\s+(?:the\s+)?(?:rates?|prices?|pricing)|(?:rates?|prices?)\s+for|rates?:/i.test(
+          (/\b(upadte|updt|updte|update|set|change)\s+(?:the\s+)?(?:rates?|prices?|pricing)\b/i.test(
             textRaw,
           ) ||
-            /\b(?:rates?|prices?)\b/i.test(textRaw));
+            /\b(?:rates?|prices?)\s+for\s+#?(?:DEAL|INQ)-/i.test(textRaw) ||
+            /^(?:rates?|prices?)\s*:/i.test(textRaw));
 
-        if (
-          isRateUpdateContext ||
-          (!isExplicitInquiryMsg &&
-            /\b(?:rate|price|qty|quantity|unit)\b/i.test(textRaw))
-        ) {
+        if (isRateUpdateContext) {
           ruleAction = 'deal_update';
 
           // 1. Process line by line
@@ -2667,21 +2952,30 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
               }
             }
           }
+        } else {
+          // Rule-based requirement parser for new inquiry items
+          const extractedReqItems =
+            extractMultiItemsFromRequirementText(textRaw);
+          if (extractedReqItems.length > 0) {
+            multiItemsParsed = extractedReqItems;
+          }
         }
 
         // Check multi-item TMT list e.g. "8mm - 5 MT, 10mm - 10 MT, 12mm - 15 MT"
-        const tmtMultiRegex =
-          /(\d+(?:\.\d+)?\s*mm)\s*(?:[-:]|–)?\s*(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|bundles|pcs)?/gi;
-        let tmtM;
-        while ((tmtM = tmtMultiRegex.exec(textRaw)) !== null) {
-          multiItemsParsed.push({
-            product_requirement: 'TMT Bar',
-            dimensions: tmtM[1].replace(/\s+/g, ''),
-            quantity_mt: parseFloat(tmtM[2]),
-            quantity: parseFloat(tmtM[2]),
-            unit: tmtM[3] ? tmtM[3].toUpperCase() : 'MT',
-            rate_per_mt: null,
-          });
+        if (multiItemsParsed.length === 0) {
+          const tmtMultiRegex =
+            /(\d+(?:\.\d+)?\s*mm)\s*(?:[-:]|–)?\s*(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|bundles|pcs)?/gi;
+          let tmtM;
+          while ((tmtM = tmtMultiRegex.exec(textRaw)) !== null) {
+            multiItemsParsed.push({
+              product_requirement: 'TMT Bar',
+              dimensions: tmtM[1].replace(/\s+/g, ''),
+              quantity_mt: parseFloat(tmtM[2]),
+              quantity: parseFloat(tmtM[2]),
+              unit: tmtM[3] ? tmtM[3].toUpperCase() : 'MT',
+              rate_per_mt: null,
+            });
+          }
         }
 
         let qty = 0;
@@ -2737,7 +3031,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             specDim && !mVal.toLowerCase().includes(specDim.toLowerCase())
               ? `${mVal} ${specDim}`
               : mVal;
-        } else if (/\b(hrpo|pickled\s*&\s*oiled)\b/i.test(textLower)) {
+        } else if (
+          /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
+            textLower,
+          )
+        ) {
           pReq = 'HRPO Coil';
         } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLower)) {
           pReq = 'HR Coil';
@@ -2892,11 +3190,31 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       customerName = null;
     }
 
+    if (!customerName) {
+      const trailingDashMatch = cleanTextToInspect.match(
+        /(?:—|--|-)\s*([A-Za-z0-9\s&.-]{2,40})$/,
+      );
+      const hinglishMatch = cleanTextToInspect.match(
+        /\b([A-Za-z0-9\s&.-]{2,30}?)\s+se\s+(?:bol\s+raha\s+hu|bol\s+rahe\s+hai|hu|baat\s+kar\s+raha\s+hu)\b/i,
+      );
+      if (
+        trailingDashMatch &&
+        !isInvalidCustomerName(trailingDashMatch[1].trim())
+      ) {
+        customerName = trailingDashMatch[1].trim();
+      } else if (
+        hinglishMatch &&
+        !isInvalidCustomerName(hinglishMatch[1].trim())
+      ) {
+        customerName = hinglishMatch[1].trim();
+      }
+    }
+
     if (!customerName && targetExplicitDeal) {
       customerName = targetExplicitDeal.customer_name;
     }
 
-    // If still no customer name in message, check active conversation session or recent active deal
+    // If still no customer name in message, check active conversation session or recent active deal (for updates only)
     if (!customerName) {
       const activeSessionCustomer = await getActiveSession(senderPhone);
       if (
@@ -2904,7 +3222,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         !isInvalidCustomerName(activeSessionCustomer)
       ) {
         customerName = activeSessionCustomer;
-      } else {
+      } else if (data.action !== 'inquiry' && !explicitDealIdMatch) {
         const { data: recentDeals } = await supabase
           .from('deals')
           .select('*, deal_items(*)')
@@ -2959,6 +3277,20 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       }
     }
 
+    // Fallback: If rawItems has only 1 item or 0 items, but message actually contains multiple items
+    const inspectedMsgText = effectiveTextForLLM || text || '';
+    if (
+      (!rawItems || rawItems.length <= 1) &&
+      data.action !== 'stage_update' &&
+      !isExplicitRateUpdateIntent
+    ) {
+      const parsedMulti =
+        extractMultiItemsFromRequirementText(inspectedMsgText);
+      if (parsedMulti.length > rawItems.length) {
+        rawItems = parsedMulti;
+      }
+    }
+
     const GENERIC_PRODUCT_REGEX =
       /^(steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined|address|delivery|delivery address|delivery location|location|destination|payment|payment terms|terms|credit|hsn|sac|unit)$/i;
 
@@ -2979,6 +3311,38 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         pName = null;
       }
 
+      // Check product name accuracy against user text: CR Sheet vs CR Coil, HR Sheet vs HR Coil
+      if (pName) {
+        const textLow = inspectedMsgText.toLowerCase();
+        if (
+          /\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i.test(textLow) &&
+          !/\b(cr\s*coil|cold\s*rolled\s*coil)\b/i.test(textLow)
+        ) {
+          if (
+            pName.toLowerCase().includes('cr coil') ||
+            pName.toLowerCase().includes('cold rolled coil')
+          ) {
+            pName = 'CR Sheet';
+          }
+        }
+        if (
+          /\b(hr\s*sheet|hot\s*rolled\s*sheet)\b/i.test(textLow) &&
+          !/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLow)
+        ) {
+          if (
+            pName.toLowerCase().includes('hr coil') ||
+            pName.toLowerCase().includes('hot rolled coil')
+          ) {
+            pName = 'HR Sheet';
+          }
+        }
+
+        // Filter out phantom products that are not present anywhere in the user message
+        if (!isProductActuallyMentionedInText(pName, inspectedMsgText)) {
+          continue;
+        }
+      }
+
       const qty =
         Number(item.quantity || item.quantity_mt || item.qty || 0) || 0;
       const unit = item.unit || 'MT';
@@ -2991,17 +3355,14 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             ? Number(item.rate)
             : null;
       const rate = rawRate && rawRate > 0 ? rawRate : null;
+      // STRICT: Only use item dimensions or dimension attached directly to pName. NEVER search the entire message string.
       const rawDim =
         item.dimensions ||
         (pName?.match(/(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i)
           ? pName.match(
               /(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i,
             )[0]
-          : text.match(/(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i)
-            ? text.match(
-                /(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i,
-              )[0]
-            : null);
+          : null);
 
       if (pName) {
         const convRes = convertLineItemToMt({
@@ -3388,25 +3749,40 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     }
 
     // Disambiguation check for any deal update/rate update/field update without an explicit Deal ID
-    const isRateUpdateContext =
-      /\b(upadte|updt|updte|update|set|new|give)\s+(?:the\s+)?(?:rates?|prices?)|(?:rates?|prices?)\s+for|rates?:/i.test(
+    const isQuoteRequest =
+      /\b(?:rate|price|pricing|quotation|quote)\s*(?:bhejo|batao|chahiye|do|dena|chahie|asap|please|request|karo|bataiye|de do)\b/i.test(
         effectiveTextForLLM || text,
       ) ||
-      /\b(?:rates?|prices?|target\s+price)\b/i.test(
+      /\b(?:please\s+quote|quote\s+asap|quote\s+please|quote\s+bhejo|rate\s+bhejo|bhai\s+.*rate)\b/i.test(
         effectiveTextForLLM || text,
       );
-    const isRateOrPriceUpdate = isRateUpdateContext || hasRateUpdate;
+
+    const isRateUpdateContext =
+      !isQuoteRequest &&
+      (/\b(upadte|updt|updte|update|set|change)\s+(?:the\s+)?(?:rates?|prices?|pricing)\b/i.test(
+        effectiveTextForLLM || text,
+      ) ||
+        /\b(?:rates?|prices?)\s+for\s+#?(?:DEAL|INQ)-/i.test(
+          effectiveTextForLLM || text,
+        ) ||
+        /^(?:rates?|prices?)\s*:/i.test(effectiveTextForLLM || text));
+
+    const isRateOrPriceUpdate =
+      !isQuoteRequest && (isRateUpdateContext || hasRateUpdate);
     const isFieldUpdate =
-      hasDeliveryUpdate ||
-      hasPaymentUpdate ||
-      hasHsnUpdate ||
-      hasUnitUpdate ||
-      !!data.delivery_date ||
-      !!data.contact_person;
+      !isQuoteRequest &&
+      (hasDeliveryUpdate ||
+        hasPaymentUpdate ||
+        hasHsnUpdate ||
+        hasUnitUpdate ||
+        (!!data.delivery_date && !hasAnyProductName) ||
+        (!!data.contact_person && !hasAnyProductName));
 
     if (
       !targetExplicitDeal &&
       customerName &&
+      !isQuoteRequest &&
+      data.action !== 'inquiry' &&
       (isRateOrPriceUpdate ||
         isFieldUpdate ||
         data.action === 'deal_update' ||
@@ -3990,9 +4366,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       !data.po_number &&
       dbStage !== 'won' &&
       data.action !== 'purchase_order' &&
-      /^\s*(?:inquiry\s+from|inquiry\s+for|inquiry:|inquiry\b|log\s+new\s+inquiry|new\s+inquiry|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry)\b/i.test(
-        text,
-      );
+      (data.action === 'inquiry' ||
+        processedItems.some((p) => p.qty > 0 || p.qtyMt > 0) ||
+        /^\s*(?:inquiry\s+from|inquiry\s+for|inquiry:|inquiry\b|log\s+new\s+inquiry|new\s+inquiry|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry|need\s+the\s+following|order\s+requirement|want|bhai)\b/i.test(
+          text,
+        ));
 
     if (dealIdMatch && openDeals.length > 0) {
       const targetCode = dealIdMatch[1]
@@ -4025,14 +4403,19 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     const finalDeliveryLoc =
       extractedDeliveryLoc ||
       data.delivery_location ||
-      existingDeal?.delivery_location ||
+      (!isExplicitNewInquiry ? existingDeal?.delivery_location : null) ||
       null;
 
     const finalDeliveryDate =
-      data.delivery_date || existingDeal?.delivery_date || null;
+      data.delivery_date ||
+      (!isExplicitNewInquiry ? existingDeal?.delivery_date : null) ||
+      null;
 
     const finalPaymentTerms =
-      data.payment_terms || existingDeal?.payment_terms || null;
+      extractedPaymentTermsVal ||
+      data.payment_terms ||
+      (!isExplicitNewInquiry ? existingDeal?.payment_terms : null) ||
+      null;
 
     const finalPhone =
       actualCustomerPhone ||
@@ -4236,14 +4619,21 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           const itm = existingDealItems[idx];
           const matchedP =
             matchedMap.get(idx) ||
-            (processedItems.length === 1 ? processedItems[0] : null);
+            (existingDealItems.length === 1 && !hasAnyProductName
+              ? processedItems[0]
+              : null);
           const itemUpdates = {};
           const matchedRate =
             matchedP?.rate ||
             matchedP?.rate_per_mt ||
-            (processedItems.length === 1 ? firstRate : null);
+            (existingDealItems.length === 1 && !hasAnyProductName
+              ? firstRate
+              : null);
           const matchedQty = hasExplicitQtyInMsg
-            ? matchedP?.qty || (processedItems.length === 1 ? firstQty : null)
+            ? matchedP?.qty ||
+              (existingDealItems.length === 1 && !hasAnyProductName
+                ? firstQty
+                : null)
             : null;
 
           if (matchedRate && Number(matchedRate) > 0) {
