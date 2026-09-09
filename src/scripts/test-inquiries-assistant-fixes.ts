@@ -105,9 +105,9 @@ async function runTests() {
     failed++;
   }
 
-  // --- UNIT TEST 3: Won Inquiries Metrics (68 with PO) ---
+  // --- UNIT TEST 3: Won Inquiries Metrics ---
   console.log(
-    '\n3. Unit Test: get_inquiries conversion metrics (won inquiries with PO)...',
+    '\n3. Unit Test: get_inquiries conversion metrics (won inquiries / orders)...',
   );
   try {
     const res3 = await getInquiriesTool.execute(
@@ -120,15 +120,15 @@ async function runTests() {
       conv &&
       typeof conv.won_inquiries === 'number' &&
       conv.won_inquiries > 0 &&
-      typeof conv.total_won_deals === 'number' &&
-      conv.total_won_deals > 0
+      typeof conv.total_inquiries === 'number' &&
+      conv.total_inquiries > 0
     ) {
-      console.log('   PASS: Won Inquiries:', conv.won_inquiries);
+      console.log('   PASS: Total Inquiries:', conv.total_inquiries);
+      console.log('   PASS: Won Inquiries (Orders):', conv.won_inquiries);
       console.log(
         '   PASS: Inquiry Conversion Rate:',
         conv.inquiry_to_won_conversion_rate,
       );
-      console.log('   PASS: Total Won Deals:', conv.total_won_deals);
       passed++;
     } else {
       console.error('   FAIL: Won Inquiries metrics invalid:', conv);

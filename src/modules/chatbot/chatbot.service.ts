@@ -643,15 +643,19 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
     - 'get_inquiries':
       * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
       * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
-      * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won, use 'summary.conversion_metrics' or 'summary'. Dynamically report the conversion rate (won inquiries divided by total inquiries), total converted inquiries, total active inquiries, lost inquiries, and total won deals across the pipeline from the tool data.
+      * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won (e.g. "What is our team's inquiry to won conversion rate?", "What is our conversion rate?"), use 'summary.conversion_metrics' or 'summary'.
+        - Calculate and report conversion rate strictly as: Won Inquiries divided by Total Inquiries (Conversion Rate = (Won Inquiries / Total Inquiries) * 100).
+        - Won Inquiries are equivalent to converted Orders (won inquiries == orders).
+        - Do NOT mention or calculate "confirmed with purchase orders", "(with confirmed Purchase Orders)", or separate "total won deals across pipeline" counts in inquiry conversion responses.
+        - Provide a clean and simple breakdown: Total Inquiries, Won Inquiries (Orders), and Conversion Rate (plus active/lost inquiries if relevant).
       * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
       * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
         - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
         - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries and total OCR/document inquiries from the tool data.
       * INQUIRIES CONVERTED TO ORDERS VS NOT CONVERTED: When the user asks "Which inquiries converted to orders and which didn't?", call 'get_inquiries' with mode: "conversion_breakdown".
          Report:
-         1. The overall conversion summary: dynamically report total inquiries converted to orders (won with customer POs), conversion rate percentage, inquiries marked as lost (did not convert), active inquiries in progress, and total won deals across the entire pipeline from the tool output.
-         2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages, and PO numbers) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
+         1. The overall conversion summary: dynamically report total inquiries converted to orders (won inquiries), conversion rate percentage, inquiries marked as lost (did not convert), and active inquiries in progress from the tool output. Do NOT include "won with confirmed customer POs" or separate "total won deals across pipeline".
+         2. Present representative tables or lists of inquiries that converted to orders (with #INQ-XXXXXX IDs, customer names, tonnages) AND inquiries that did not convert (lost deals and open negotiations). Never reply with "No matching records were found"!
       * SALESPERSON CONVERSION LEADERBOARD: When the user asks "Which sales rep is converting the most inquiries into orders?", "sales rep leaderboard", or "rep rankings", call 'get_inquiries' with mode: "rep_conversion" (or 'get_team_pipeline' with mode: "rep_conversion"). Dynamically report the ranking from the tool output (including rep name, won deals/orders count, won value, and win rate).
       * OPEN INQUIRIES FROM DORMANT BUYERS: When the user asks "Find customers with open inquiries but no recent order activity", call 'get_inquiries' with mode: "open_inquiries_dormant_buyers". List the top dormant accounts with active inquiries who have not placed an order in the last 30 days.
       * MONTH-OVER-MONTH COMPARISON: When the user asks "Compare this month's inquiries to last month's" or similar, call 'get_inquiries' with mode: "month_comparison". Detail this month MTD vs last month full month from the tool data.
@@ -1622,7 +1626,16 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         // 5. Won conversion metrics
         if (summaryObj?.conversion_metrics) {
           const conv = summaryObj.conversion_metrics;
-          return `Our current inquiry-to-won conversion rate is **${conv.inquiry_to_won_conversion_rate || (conv.inquiry_conversion_percent !== undefined ? conv.inquiry_conversion_percent + '%' : '0%')}** (${conv.won_inquiries || conv.won_orders_count || 0} won inquiries out of ${conv.total_inquiries || 0} total inquiries).\n\nAcross the entire sales pipeline, there are **${conv.total_won_deals || 0}** total won deals (${conv.active_inquiries || 0} active inquiries and ${conv.lost_inquiries || 0} lost inquiries).`;
+          const wonCount = conv.won_inquiries || conv.won_orders_count || 0;
+          const totalCount = conv.total_inquiries || 0;
+          const rate =
+            conv.inquiry_to_won_conversion_rate ||
+            (conv.inquiry_conversion_percent !== undefined
+              ? conv.inquiry_conversion_percent + '%'
+              : totalCount > 0
+                ? ((wonCount / totalCount) * 100).toFixed(1) + '%'
+                : '0%');
+          return `Our team's inquiry-to-won conversion rate is **${rate}**.\n\nHere's a breakdown:\n- **Total Inquiries:** ${totalCount}\n- **Won Inquiries (Orders):** ${wonCount}\n- **Active Inquiries:** ${conv.active_inquiries || 0}\n- **Lost Inquiries:** ${conv.lost_inquiries || 0}`;
         }
 
         // 6. Conversion breakdown: Inquiries converted to orders vs not converted
@@ -1642,10 +1655,9 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               : '0%');
 
           let response = `### Inquiry Conversion to Orders Breakdown:\n\n`;
-          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count ?? converted.length}** inquiries (won with confirmed customer POs; **${rate}** conversion rate out of ${totalInqs} total inquiries)\n`;
+          response += `- **Inquiries Converted to Orders:** **${s.converted_to_orders_count ?? converted.length}** inquiries (**${rate}** conversion rate out of ${totalInqs} total inquiries)\n`;
           response += `- **Inquiries That Did Not Convert (Lost):** **${s.not_converted_lost_count ?? lost.length}** inquiries\n`;
-          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count ?? inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n`;
-          response += `- **Total Won Deals Across Pipeline:** **${s.total_won_deals_in_pipeline ?? 0}** deals\n\n`;
+          response += `- **Active Inquiries in Pipeline:** **${s.in_progress_pipeline_count ?? inProgress.length}** inquiries (currently in negotiation, quoted, or review)\n\n`;
 
           if (converted.length > 0) {
             response += `#### Inquiries Converted to Orders (Sample Won Orders):\n`;

@@ -304,12 +304,6 @@ export const getInquiriesTool: ChatbotTool = {
     let wonOcrDocumentCount = 0;
 
     let wonInquiriesCount = 0;
-    let wonInquiriesWithPoCount = 0;
-    const totalWonDealsCount = (dealsData || []).filter(
-      (d: any) =>
-        (d.stage || '').toLowerCase() === 'won' ||
-        (d.status || '').toLowerCase() === 'won',
-    ).length;
 
     const formattedList = rawList.map((inq: any) => {
       const dealsList: any[] = Array.isArray(inq.deals)
@@ -425,25 +419,14 @@ export const getInquiriesTool: ChatbotTool = {
           (d.stage || '').toLowerCase() === 'won' ||
           (d.status || '').toLowerCase() === 'won',
       );
-      const isAnyDealWithPo = dealsList.some(
-        (d) =>
-          ((d.stage || '').toLowerCase() === 'won' ||
-            (d.status || '').toLowerCase() === 'won') &&
-          Boolean(d.po_number),
-      );
       const isWonInquiry =
         isAnyDealWon ||
         inquiryStatus === 'order_created' ||
         inquiryStatus === 'won' ||
         dealStage === 'won';
-      const isWonWithPo =
-        isAnyDealWithPo || (isWonInquiry && Boolean(deal?.po_number));
 
       if (isWonInquiry) {
         wonInquiriesCount++;
-      }
-      if (isWonWithPo) {
-        wonInquiriesWithPoCount++;
       }
 
       // Update aggregation counts
@@ -534,7 +517,6 @@ export const getInquiriesTool: ChatbotTool = {
         deal_status: dealStage,
         inquiry_status: inquiryStatus,
         is_won: isWonInquiry,
-        is_won_with_po: isWonWithPo,
         po_number: deal?.po_number || null,
         customer_name: resolvedCustomerName,
         customer_phone: resolvedCustomerPhone,
@@ -662,11 +644,8 @@ export const getInquiriesTool: ChatbotTool = {
       conversion_metrics: {
         total_inquiries: totalInquiriesCount,
         won_inquiries: wonInquiriesCount,
-        won_inquiries_with_po: wonInquiriesCount,
         won_orders_count: wonInquiriesCount,
         inquiries_won_count: wonInquiriesCount,
-        unique_inquiries_with_po: wonInquiriesWithPoCount,
-        total_won_deals: totalWonDealsCount,
         lost_inquiries: lostCount,
         active_inquiries: totalInquiriesCount - wonInquiriesCount - lostCount,
         inquiry_to_won_conversion_rate: `${conversionRatePercent}%`,
@@ -1241,7 +1220,6 @@ export const getInquiriesTool: ChatbotTool = {
             converted_to_orders_count: convertedList.length,
             won_orders_count: convertedList.length,
             inquiry_to_won_conversion_rate: `${conversionRatePercent}%`,
-            total_won_deals_in_pipeline: totalWonDealsCount,
             not_converted_lost_count: lostList.length,
             in_progress_pipeline_count: inProgressList.length,
           },
