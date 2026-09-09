@@ -88,8 +88,394 @@ async function autoOnboardProspect(customerName, senderPhone, extractedData) {
   }
 }
 
+const CORRECTION_EXTRACTION_PROMPT = `
+You are the Specialized Operational AI Agent for Enlight Metals CRM (Customer Site Visits - KRA 9).
+The user is requesting to correct or update details of a previously logged customer site visit or meeting.
+
+Input message can be English, Hindi, or Hinglish.
+
+Extract the correction request into ONLY a valid JSON object (no markdown, no backticks):
+{
+  "customer_name": "<exact customer/company name if explicitly mentioned in message, else null>",
+  "target_field": "person_met|contact_no|customer_address|visit_outcome|remarks",
+  "new_value": "<the new/corrected value to set>",
+  "old_value": "<the old/incorrect value mentioned to be replaced, else null>",
+  "is_last_visit_reference": <true if message refers to 'my last visit', 'recent visit', 'previous visit', etc., else false>
+}
+
+Rules:
+- "target_field":
+  * "person_met" if updating contact person, person met, who they met (e.g. "Suresh Patel instead of Rajesh Sharma")
+  * "contact_no" if updating phone number or mobile number
+  * "customer_address" if updating location, city, or address (e.g. "Nashik not Pune")
+  * "visit_outcome" if updating visit outcome (positive, neutral, negative)
+  * "remarks" if updating discussion notes or remarks
+- "new_value": The value it SHOULD be (e.g. "Suresh Patel")
+- "old_value": The value it should NOT be / was previously (e.g. "Rajesh Sharma")
+- "customer_name": Extract exact company name if mentioned, otherwise null.
+
+Return ONLY the JSON object.
+`;
+
+/**
+ * Handles ambiguous or explicit visit corrections and disambiguation
+ */
+async function handleVisitCorrection(text, senderPhone) {
+  try {
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+    const response = await invokeWithFallback([
+      new SystemMessage(CORRECTION_EXTRACTION_PROMPT),
+      new HumanMessage('User correction request:\n' + text),
+    ]);
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const { safeParseJSON } = require('../utils/jsonUtils');
+    const data = safeParseJSON(cleaned, null);
+
+    // Fallback regex parsing if LLM JSON parse failed
+    let customerName = data?.customer_name || null;
+    let targetField = data?.target_field || 'person_met';
+    let newValue = data?.new_value || null;
+    let oldValue = data?.old_value || null;
+
+    if (!newValue) {
+      const matchShouldBe = text.match(
+        /(?:it\s*should\s*be|should\s*be|set\s*to|is)\s+([A-Za-z0-9\s]+?)(?:\s+(?:not|instead\s*of)\s+([A-Za-z0-9\s]+))?$/i,
+      );
+      if (matchShouldBe) {
+        newValue = matchShouldBe[1].trim();
+        if (matchShouldBe[2]) oldValue = matchShouldBe[2].trim();
+      }
+    }
+
+    if (!newValue) {
+      return `⚠️ *Visit Correction*\n\nPlease specify the corrected detail (e.g. _"Correct the contact person for my last visit, it should be Suresh Patel not Rajesh Sharma"_).`;
+    }
+
+    const {
+      saveActiveSession,
+      verifyAndGetCustomerName,
+    } = require('../supabase');
+
+    // Fetch recent visits to resolve target
+    let query = supabase
+      .from('customer_visits')
+      .select(
+        'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone',
+      )
+      .order('visited_at', { ascending: false })
+      .limit(10);
+
+    if (senderPhone) {
+      query = query.or(
+        `salesperson_phone.eq.${senderPhone},salesperson_phone.is.null`,
+      );
+    }
+
+    const { data: recentVisits, error: fetchErr } = await query;
+    if (fetchErr) {
+      console.error(
+        '[VisitAgent] Error fetching recent visits for correction:',
+        fetchErr.message,
+      );
+    }
+
+    const visitsList = recentVisits || [];
+    if (visitsList.length === 0) {
+      return `⚠️ No recent customer visit records were found to update. Please log the visit first or specify the customer name.`;
+    }
+
+    let targetVisit = null;
+
+    // 1. If customerName was mentioned, resolve by customer
+    if (customerName) {
+      const matchedCustName = await verifyAndGetCustomerName(
+        customerName,
+        senderPhone,
+      );
+      const custFilterName = matchedCustName || customerName;
+      const custVisits = visitsList.filter(
+        (v) =>
+          v.customer_name &&
+          v.customer_name.toLowerCase().includes(custFilterName.toLowerCase()),
+      );
+
+      if (custVisits.length === 1) {
+        targetVisit = custVisits[0];
+      } else if (custVisits.length > 1) {
+        if (oldValue) {
+          const matchedByOld = custVisits.filter(
+            (v) =>
+              (v.person_met &&
+                v.person_met.toLowerCase().includes(oldValue.toLowerCase())) ||
+              (v.remarks &&
+                v.remarks.toLowerCase().includes(oldValue.toLowerCase())),
+          );
+          if (matchedByOld.length === 1) {
+            targetVisit = matchedByOld[0];
+          }
+        }
+        if (!targetVisit) {
+          // Multiple visits for customer -> present choices
+          const candidateSummaries = custVisits.slice(0, 4).map((v, idx) => ({
+            index: idx + 1,
+            id: v.id,
+            customer_name: v.customer_name,
+            date: new Date(v.visited_at).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            }),
+            person_met: v.person_met || 'Not recorded',
+            remarks: v.remarks ? v.remarks.slice(0, 60) : 'No remarks',
+          }));
+
+          const choicesText = candidateSummaries
+            .map(
+              (c) =>
+                `${c.index}. *${c.customer_name}* (${c.date}) - Person Met: ${c.person_met}`,
+            )
+            .join('\n');
+
+          const sessionPayload = {
+            target_field: targetField,
+            new_value: newValue,
+            old_value: oldValue,
+            candidates: candidateSummaries,
+          };
+
+          await saveActiveSession(
+            senderPhone,
+            custVisits[0].customer_name,
+            `waiting_for_visit_update_selection|${JSON.stringify(sessionPayload)}`,
+          );
+
+          return (
+            `🔍 *Which visit to ${custVisits[0].customer_name} would you like to update?*\n\n` +
+            `Please select which visit to update the contact person to *${newValue}*:\n` +
+            `${choicesText}\n\n` +
+            `Reply with the number (e.g. "1") or visit date.`
+          );
+        }
+      }
+    }
+
+    // 2. If targetVisit not resolved yet, check oldValue across all recent visits
+    if (!targetVisit && oldValue) {
+      const matchedByOld = visitsList.filter(
+        (v) =>
+          (v.person_met &&
+            v.person_met.toLowerCase().includes(oldValue.toLowerCase())) ||
+          (v.remarks &&
+            v.remarks.toLowerCase().includes(oldValue.toLowerCase())),
+      );
+      if (matchedByOld.length === 1) {
+        targetVisit = matchedByOld[0];
+      } else if (matchedByOld.length > 1) {
+        const candidateSummaries = matchedByOld.slice(0, 4).map((v, idx) => ({
+          index: idx + 1,
+          id: v.id,
+          customer_name: v.customer_name,
+          date: new Date(v.visited_at).toLocaleDateString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          }),
+          person_met: v.person_met || 'Not recorded',
+          remarks: v.remarks ? v.remarks.slice(0, 60) : 'No remarks',
+        }));
+
+        const choicesText = candidateSummaries
+          .map(
+            (c) =>
+              `${c.index}. *${c.customer_name}* (${c.date}) - Person Met: ${c.person_met}`,
+          )
+          .join('\n');
+
+        const sessionPayload = {
+          target_field: targetField,
+          new_value: newValue,
+          old_value: oldValue,
+          candidates: candidateSummaries,
+        };
+
+        await saveActiveSession(
+          senderPhone,
+          'Multiple',
+          `waiting_for_visit_update_selection|${JSON.stringify(sessionPayload)}`,
+        );
+
+        return (
+          `🔍 *Which visit would you like to update?*\n\n` +
+          `Multiple recent visits had *${oldValue}* recorded. Please select which visit to update the contact person to *${newValue}*:\n` +
+          `${choicesText}\n\n` +
+          `Reply with the number (e.g. "1") or company name.`
+        );
+      }
+    }
+
+    // 3. If still not resolved:
+    // If only 1 recent visit exists total, use that
+    if (!targetVisit) {
+      if (visitsList.length === 1) {
+        targetVisit = visitsList[0];
+      } else {
+        // Disambiguate among top recent visits
+        const candidateSummaries = visitsList.slice(0, 4).map((v, idx) => ({
+          index: idx + 1,
+          id: v.id,
+          customer_name: v.customer_name,
+          date: new Date(v.visited_at).toLocaleDateString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          }),
+          person_met: v.person_met || 'Not recorded',
+          remarks: v.remarks ? v.remarks.slice(0, 60) : 'No remarks',
+        }));
+
+        const choicesText = candidateSummaries
+          .map(
+            (c) =>
+              `${c.index}. *${c.customer_name}* (${c.date}) - Person Met: ${c.person_met}`,
+          )
+          .join('\n');
+
+        const sessionPayload = {
+          target_field: targetField,
+          new_value: newValue,
+          old_value: oldValue,
+          candidates: candidateSummaries,
+        };
+
+        await saveActiveSession(
+          senderPhone,
+          'Multiple',
+          `waiting_for_visit_update_selection|${JSON.stringify(sessionPayload)}`,
+        );
+
+        return (
+          `🔍 *Which visit would you like to update?*\n\n` +
+          `Please select the visit you want to update the contact person to *${newValue}*:\n` +
+          `${choicesText}\n\n` +
+          `Reply with the number (e.g. "1") or company name.`
+        );
+      }
+    }
+
+    // 4. Apply update to targetVisit
+    const updatePayload = {};
+    let fieldLabel = 'Contact Person';
+
+    if (targetField === 'person_met') {
+      updatePayload.person_met = newValue;
+      fieldLabel = 'Contact Person';
+    } else if (targetField === 'contact_no') {
+      updatePayload.contact_no = newValue;
+      fieldLabel = 'Contact Phone';
+    } else if (targetField === 'customer_address') {
+      updatePayload.customer_address = newValue;
+      fieldLabel = 'Location';
+    } else if (targetField === 'remarks') {
+      updatePayload.remarks = newValue;
+      fieldLabel = 'Discussion Notes';
+    } else {
+      updatePayload.person_met = newValue;
+    }
+
+    const { error: updateErr } = await supabase
+      .from('customer_visits')
+      .update(updatePayload)
+      .eq('id', targetVisit.id);
+
+    if (updateErr) {
+      console.error(
+        '[VisitAgent] customer_visits update error:',
+        updateErr.message,
+      );
+      return `⚠️ Could not update visit record: ${updateErr.message}`;
+    }
+
+    // Update customer master profile if contact info was changed
+    if (
+      targetField === 'person_met' ||
+      targetField === 'contact_no' ||
+      targetField === 'customer_address'
+    ) {
+      const custUpdate = { updated_at: new Date().toISOString() };
+      if (targetField === 'person_met') custUpdate.contact_person = newValue;
+      if (targetField === 'contact_no') custUpdate.customer_phone = newValue;
+      if (targetField === 'customer_address') custUpdate.city = newValue;
+
+      await supabase
+        .from('recurring_customers')
+        .update(custUpdate)
+        .ilike('customer_name', `%${targetVisit.customer_name}%`);
+    }
+
+    // Log to activity_logs
+    try {
+      await supabase.from('activity_logs').insert({
+        timestamp: new Date().toISOString(),
+        salesperson_name: 'Sales Team',
+        salesperson_phone: senderPhone,
+        description: `Visit updated for ${targetVisit.customer_name}: ${fieldLabel} changed to "${newValue}"${oldValue ? ` (was "${oldValue}")` : ''}`,
+        module: 'Visits',
+        customer_name: targetVisit.customer_name,
+        source: 'bot',
+        action_type: 'visit_updated',
+      });
+    } catch (e) {
+      console.warn('[VisitAgent] activity_logs notice:', e.message);
+    }
+
+    await saveActiveSession(senderPhone, targetVisit.customer_name, 'general');
+
+    const visitDateStr = new Date(targetVisit.visited_at).toLocaleDateString(
+      'en-IN',
+      {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      },
+    );
+
+    return (
+      `✅ *Customer Visit Updated!*\n\n` +
+      `Customer: *${targetVisit.customer_name}*\n` +
+      `Visit Date: *${visitDateStr}*\n` +
+      `Updated ${fieldLabel}: *${newValue}*${oldValue ? ` (was *${oldValue}*)` : ''}\n\n` +
+      `Updated Customer Visits Card! ✅`
+    );
+  } catch (err) {
+    console.error('[VisitAgent] handleVisitCorrection error:', err.message);
+    return `⚠️ Error updating visit details: ${err.message}`;
+  }
+}
+
 async function processVisitMessage(text, senderPhone) {
   try {
+    const isCorrection =
+      /(?:correct|correction|update|change|fix|modify)\b.*?\b(?:contact\s*person|person\s*met|outcome|remarks?|location|phone|number|last\s*visit|visit)\b/i.test(
+        text,
+      ) ||
+      /(?:it\s*should\s*be|should\s*be)\b.*?\b(?:not|instead\s*of)\b/i.test(
+        text,
+      );
+
+    if (isCorrection) {
+      return await handleVisitCorrection(text, senderPhone);
+    }
+
     const { invokeWithFallback } = require('../core/modelRouter');
     const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
     const response = await invokeWithFallback([
@@ -491,4 +877,4 @@ async function processVisitMessage(text, senderPhone) {
   }
 }
 
-module.exports = { processVisitMessage };
+module.exports = { processVisitMessage, handleVisitCorrection };

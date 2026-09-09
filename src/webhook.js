@@ -648,6 +648,126 @@ router.post('/', async (req, res) => {
             await sendTextMessage(senderPhone, reply);
             return;
           }
+
+          if (
+            activeSession?.last_intent?.startsWith(
+              'waiting_for_visit_update_selection|',
+            )
+          ) {
+            const payloadStr = activeSession.last_intent.slice(
+              'waiting_for_visit_update_selection|'.length,
+            );
+            const { safeParseJSON } = require('./utils/jsonUtils');
+            const sessionData = safeParseJSON(payloadStr, null);
+
+            if (
+              sessionData &&
+              Array.isArray(sessionData.candidates) &&
+              sessionData.candidates.length > 0
+            ) {
+              const candidates = sessionData.candidates;
+              const cleanMsg = raw_text.trim().toLowerCase();
+              let selectedCandidate = null;
+
+              const numMatch = cleanMsg.match(/^(?:option\s*|#\s*)?(\d+)/i);
+              if (numMatch) {
+                const idx = parseInt(numMatch[1], 10);
+                if (idx >= 1 && idx <= candidates.length) {
+                  selectedCandidate = candidates[idx - 1];
+                }
+              }
+
+              if (!selectedCandidate) {
+                selectedCandidate = candidates.find(
+                  (c) =>
+                    (c.customer_name &&
+                      cleanMsg.includes(c.customer_name.toLowerCase())) ||
+                    (c.date && cleanMsg.includes(c.date.toLowerCase())),
+                );
+              }
+
+              if (selectedCandidate) {
+                const targetField = sessionData.target_field || 'person_met';
+                const newValue = sessionData.new_value;
+                const oldValue = sessionData.old_value;
+
+                const updatePayload = {};
+                let fieldLabel = 'Contact Person';
+
+                if (targetField === 'person_met') {
+                  updatePayload.person_met = newValue;
+                  fieldLabel = 'Contact Person';
+                } else if (targetField === 'contact_no') {
+                  updatePayload.contact_no = newValue;
+                  fieldLabel = 'Contact Phone';
+                } else if (targetField === 'customer_address') {
+                  updatePayload.customer_address = newValue;
+                  fieldLabel = 'Location';
+                } else if (targetField === 'remarks') {
+                  updatePayload.remarks = newValue;
+                  fieldLabel = 'Discussion Notes';
+                } else {
+                  updatePayload.person_met = newValue;
+                }
+
+                await supabase
+                  .from('customer_visits')
+                  .update(updatePayload)
+                  .eq('id', selectedCandidate.id);
+
+                if (
+                  targetField === 'person_met' ||
+                  targetField === 'contact_no' ||
+                  targetField === 'customer_address'
+                ) {
+                  const custUpdate = { updated_at: new Date().toISOString() };
+                  if (targetField === 'person_met')
+                    custUpdate.contact_person = newValue;
+                  if (targetField === 'contact_no')
+                    custUpdate.customer_phone = newValue;
+                  if (targetField === 'customer_address')
+                    custUpdate.city = newValue;
+
+                  await supabase
+                    .from('recurring_customers')
+                    .update(custUpdate)
+                    .ilike(
+                      'customer_name',
+                      `%${selectedCandidate.customer_name}%`,
+                    );
+                }
+
+                try {
+                  await supabase.from('activity_logs').insert({
+                    timestamp: new Date().toISOString(),
+                    salesperson_name: 'Sales Team',
+                    salesperson_phone: senderPhone,
+                    description: `Visit updated for ${selectedCandidate.customer_name}: ${fieldLabel} changed to "${newValue}"${oldValue ? ` (was "${oldValue}")` : ''}`,
+                    module: 'Visits',
+                    customer_name: selectedCandidate.customer_name,
+                    source: 'bot',
+                    action_type: 'visit_updated',
+                  });
+                } catch {}
+
+                await saveActiveSession(
+                  senderPhone,
+                  selectedCandidate.customer_name,
+                  'general',
+                );
+
+                const reply =
+                  `✅ *Customer Visit Updated!*\n\n` +
+                  `Customer: *${selectedCandidate.customer_name}*\n` +
+                  `Visit Date: *${selectedCandidate.date}*\n` +
+                  `Updated ${fieldLabel}: *${newValue}*${oldValue ? ` (was *${oldValue}*)` : ''}\n\n` +
+                  `Updated Customer Visits Card! ✅`;
+
+                await sendTextMessage(senderPhone, reply);
+                return;
+              }
+            }
+          }
         }
 
         // ── OPERATIONAL AGENTIC ORCHESTRATOR (LangGraph + Specialized Write Agents) ──
