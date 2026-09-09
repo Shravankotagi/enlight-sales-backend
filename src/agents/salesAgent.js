@@ -1346,12 +1346,23 @@ async function syncInquiryFromDeal(inquiryId, dealObj, dealItems) {
         existingAi.lineItems?.[idx]?.hsn_code;
       const hsn = di.hsn_code || existingHsn || detectHsnCode(skuText, dim);
 
+      const conv = convertLineItemToMt({
+        sku_text: skuText,
+        dimensions: dim,
+        quantity: qty,
+        unit: unit,
+      });
+      const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : qty;
+
       return {
         sku_text: skuText,
         dimensions: dim,
         hsn_code: hsn,
-        quantity: qty,
-        unit: unit,
+        quantity: qtyMt > 0 ? Math.round(qtyMt * 1000) / 1000 : qty,
+        quantity_mt: qtyMt > 0 ? Math.round(qtyMt * 1000) / 1000 : qty,
+        original_quantity: qty,
+        original_unit: unit,
+        unit: 'MT',
         rate: rate > 0 ? rate : null,
         amount: amount > 0 ? amount : null,
       };
@@ -1362,9 +1373,10 @@ async function syncInquiryFromDeal(inquiryId, dealObj, dealItems) {
       0,
     );
     const quantityTons = formattedLineItems.reduce(
-      (s, i) => s + (i.unit === 'MT' ? i.quantity : 0),
+      (s, i) => s + (Number(i.quantity_mt || i.quantity) || 0),
       0,
     );
+    const roundedQuantityTons = Math.round(quantityTons * 1000) / 1000;
 
     const updatedAi = {
       ...existingAi,
@@ -1411,7 +1423,13 @@ async function syncInquiryFromDeal(inquiryId, dealObj, dealItems) {
       totalAmount:
         totalAmount > 0 ? totalAmount : existingAi.totalAmount || null,
       quantityTons:
-        quantityTons > 0 ? quantityTons : existingAi.quantityTons || 0,
+        roundedQuantityTons > 0
+          ? roundedQuantityTons
+          : existingAi.quantityTons || 0,
+      total_tonnage:
+        roundedQuantityTons > 0
+          ? roundedQuantityTons
+          : existingAi.total_tonnage || 0,
       subtotal: totalAmount > 0 ? totalAmount : existingAi.subtotal || null,
       gst_amount:
         totalAmount > 0
@@ -2006,6 +2024,8 @@ const {
   calculateGst,
   calculateGrandTotal,
   calculatePricingSummary,
+  convertLineItemToMt,
+  convertToMt,
 } = require('../utils/pricingEngine');
 
 /**
@@ -2463,10 +2483,10 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         } else {
           const reqMatch =
             textClean.match(
-              /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars)|\s+requires|\s+needs|\s+before|\.|$)/i,
+              /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+before|\.|$)/i,
             ) ||
             textClean.match(
-              /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
+              /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
             ) ||
             textClean.match(
               /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
@@ -2518,14 +2538,21 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
         // Check multi-item rate update list / inline updates / field updates
         const multiItemsParsed = [];
-        const isRateUpdateContext =
-          /\b(upadte|updt|updte|update|set|new|give|change)\s+(?:the\s+)?(?:rates?|prices?|pricing)|(?:rates?|prices?)\s+for|rates?:/i.test(
+        const isExplicitInquiryMsg =
+          /^\s*(?:inquiry|new\s+inquiry|rfq|lead|log\s+inquiry)\b/i.test(
             textRaw,
-          ) || /\b(?:rates?|prices?)\b/i.test(textRaw);
+          );
+        const isRateUpdateContext =
+          !isExplicitInquiryMsg &&
+          (/\b(upadte|updt|updte|update|set|new|give|change)\s+(?:the\s+)?(?:rates?|prices?|pricing)|(?:rates?|prices?)\s+for|rates?:/i.test(
+            textRaw,
+          ) ||
+            /\b(?:rates?|prices?)\b/i.test(textRaw));
 
         if (
           isRateUpdateContext ||
-          /\b(?:rate|price|qty|quantity|unit)\b/i.test(textRaw)
+          (!isExplicitInquiryMsg &&
+            /\b(?:rate|price|qty|quantity|unit)\b/i.test(textRaw))
         ) {
           ruleAction = 'deal_update';
 
@@ -2965,6 +2992,15 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             : null);
 
       if (pName) {
+        const convRes = convertLineItemToMt({
+          sku_text: pName,
+          dimensions: rawDim,
+          quantity: qty,
+          unit,
+        });
+        const qtyMt =
+          convRes.canConvert && convRes.mt !== null ? convRes.mt : qty;
+
         if (qty > 0 && rate && rate > 0) {
           const lineCalc = calculateLineItem({ quantity: qty, rate, unit });
           calculatedTotal += lineCalc.amount;
@@ -2973,6 +3009,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             dimensions: rawDim,
             qty,
             unit,
+            qtyMt,
             rate: lineCalc.rate || rate,
             itemAmount: lineCalc.amount,
           });
@@ -2982,6 +3019,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             dimensions: rawDim,
             qty,
             unit,
+            qtyMt,
             rate: rate || null,
             itemAmount: null,
           });
@@ -3932,7 +3970,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       !data.po_number &&
       dbStage !== 'won' &&
       data.action !== 'purchase_order' &&
-      /^\s*(?:log\s+new\s+inquiry|new\s+inquiry|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry)\b/i.test(
+      /^\s*(?:inquiry\s+from|inquiry\s+for|inquiry:|inquiry\b|log\s+new\s+inquiry|new\s+inquiry|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry)\b/i.test(
         text,
       );
 
@@ -4019,10 +4057,22 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       poNumber = null;
     }
 
-    const totalQty = processedItems.reduce((s, i) => s + i.qty, 0);
+    const totalQtyMt = processedItems.reduce(
+      (s, i) =>
+        s +
+        (i.qtyMt !== undefined
+          ? i.qtyMt
+          : convertLineItemToMt(i).mt || i.qty || 0),
+      0,
+    );
+    const roundedTotalQtyMt = Math.round(totalQtyMt * 1000) / 1000;
     const pricingSummary = calculatePricingSummary({
       line_items: processedItems.map((pi) => ({
+        sku_text: pi.pName,
+        dimensions: pi.dimensions || '',
         quantity: pi.qty,
+        quantity_mt: pi.qtyMt,
+        unit: pi.unit || 'MT',
         rate: pi.rate,
         amount: pi.itemAmount,
       })),
@@ -4039,7 +4089,16 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       payment_terms: finalPaymentTerms,
       paymentTerms: finalPaymentTerms,
       productType: processedItems[0]?.pName || data.product_requirement || null,
-      quantityTons: totalQty || processedItems[0]?.qty || 0,
+      quantityTons:
+        roundedTotalQtyMt ||
+        processedItems[0]?.qtyMt ||
+        processedItems[0]?.qty ||
+        0,
+      total_tonnage:
+        roundedTotalQtyMt ||
+        processedItems[0]?.qtyMt ||
+        processedItems[0]?.qty ||
+        0,
       unitPrice: processedItems[0]?.rate > 0 ? processedItems[0]?.rate : null,
       total_amount:
         dealAmount > 0
@@ -4047,15 +4106,24 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           : pricingSummary.subtotal > 0
             ? pricingSummary.subtotal
             : null,
-      line_items: processedItems.map((pi) => ({
-        sku_text: pi.pName,
-        dimensions: pi.dimensions || '',
-        hsn_code: detectHsnCode(pi.pName, pi.dimensions),
-        quantity: pi.qty,
-        unit: pi.unit || 'MT',
-        rate: pi.rate > 0 ? pi.rate : null,
-        amount: pi.itemAmount > 0 ? pi.itemAmount : null,
-      })),
+      line_items: processedItems.map((pi) => {
+        const itemQtyMt =
+          pi.qtyMt !== undefined ? pi.qtyMt : convertLineItemToMt(pi).mt;
+        return {
+          sku_text: pi.pName,
+          dimensions: pi.dimensions || '',
+          hsn_code: detectHsnCode(pi.pName, pi.dimensions),
+          quantity:
+            itemQtyMt !== null ? Math.round(itemQtyMt * 1000) / 1000 : pi.qty,
+          quantity_mt:
+            itemQtyMt !== null ? Math.round(itemQtyMt * 1000) / 1000 : pi.qty,
+          original_quantity: pi.qty,
+          original_unit: pi.unit || 'MT',
+          unit: 'MT',
+          rate: pi.rate > 0 ? pi.rate : null,
+          amount: pi.itemAmount > 0 ? pi.itemAmount : null,
+        };
+      }),
       preferred_make: data.preferred_make || null,
       overall_confidence: data.confidence || 0.95,
     };
@@ -4191,18 +4259,29 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         }
       } else if (processedItems.length > 0) {
         for (const pItem of processedItems) {
+          const finalDim =
+            pItem.dimensions ||
+            (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
+              ? pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
+              : null);
+          const itemQtyMt =
+            pItem.qtyMt !== undefined
+              ? pItem.qtyMt
+              : convertLineItemToMt(pItem).mt;
+          const finalQty =
+            itemQtyMt !== null && itemQtyMt > 0
+              ? Math.round(itemQtyMt * 1000) / 1000
+              : pItem.qty > 0
+                ? pItem.qty
+                : null;
           const { data: insItem } = await supabase
             .from('deal_items')
             .insert({
               deal_id: dealId,
               sku_text: pItem.pName,
-              dimensions:
-                pItem.dimensions ||
-                (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
-                  ? pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
-                  : null),
-              quantity: pItem.qty > 0 ? pItem.qty : null,
-              unit: pItem.unit || 'MT',
+              dimensions: finalDim,
+              quantity: finalQty,
+              unit: 'MT',
               rate: pItem.rate > 0 ? pItem.rate : null,
               amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
               created_at: new Date().toISOString(),
@@ -4268,18 +4347,29 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         dealId = newDeal.id;
         activeDealObj = newDeal;
         for (const pItem of processedItems) {
+          const finalDim =
+            pItem.dimensions ||
+            (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
+              ? pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
+              : null);
+          const itemQtyMt =
+            pItem.qtyMt !== undefined
+              ? pItem.qtyMt
+              : convertLineItemToMt(pItem).mt;
+          const finalQty =
+            itemQtyMt !== null && itemQtyMt > 0
+              ? Math.round(itemQtyMt * 1000) / 1000
+              : pItem.qty > 0
+                ? pItem.qty
+                : null;
           const { data: insItem } = await supabase
             .from('deal_items')
             .insert({
               deal_id: dealId,
               sku_text: pItem.pName,
-              dimensions:
-                pItem.dimensions ||
-                (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
-                  ? pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
-                  : null),
-              quantity: pItem.qty > 0 ? pItem.qty : null,
-              unit: pItem.unit || 'MT',
+              dimensions: finalDim,
+              quantity: finalQty,
+              unit: 'MT',
               rate: pItem.rate > 0 ? pItem.rate : null,
               amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
               created_at: new Date().toISOString(),
@@ -4348,15 +4438,45 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       activeDealObj.id &&
       finalPersistedItems &&
       finalPersistedItems.length > 0
-        ? finalPersistedItems.map((f) => ({
-            pName: f.sku_text || f.product_requirement,
-            dimensions: f.dimensions,
-            qty: Number(f.quantity) || 0,
-            unit: f.unit || 'MT',
-            rate: Number(f.rate) || null,
-            itemAmount: Number(f.amount) || null,
-          }))
+        ? finalPersistedItems.map((f, idx) => {
+            const matchedProcessed = processedItems[idx] || {};
+            const origQty =
+              matchedProcessed.qty !== undefined
+                ? matchedProcessed.qty
+                : Number(f.quantity) || 0;
+            const origUnit = matchedProcessed.unit || f.unit || 'MT';
+            const mtCalc = convertLineItemToMt({
+              sku_text: f.sku_text || f.product_requirement,
+              dimensions: f.dimensions,
+              quantity: origQty,
+              unit: origUnit,
+            });
+            const qtyMt =
+              mtCalc.canConvert && mtCalc.mt !== null
+                ? mtCalc.mt
+                : Number(f.quantity) || 0;
+            return {
+              pName: f.sku_text || f.product_requirement,
+              dimensions: f.dimensions,
+              qty: origQty,
+              unit: origUnit,
+              qtyMt: qtyMt,
+              rate: Number(f.rate) || null,
+              itemAmount: Number(f.amount) || null,
+            };
+          })
         : processedItems;
+
+    const totalTonnageCalculated = activeItemsForSummary.reduce(
+      (s, i) =>
+        s +
+        (i.qtyMt !== undefined
+          ? i.qtyMt
+          : convertLineItemToMt(i).mt || i.qty || 0),
+      0,
+    );
+    const totalTonnageDisplay =
+      Math.round(totalTonnageCalculated * 1000) / 1000;
 
     const activeTotalForSummary =
       activeDealObj && Number(activeDealObj.total_amount) > 0
@@ -4390,10 +4510,17 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         .map((pi) => {
           const dimStr = pi.dimensions ? ` (${pi.dimensions})` : '';
           const unitStr = pi.unit || 'MT';
-          const qtyStr = pi.qty > 0 ? `: ${pi.qty} ${unitStr}` : '';
+          const isNonMt = unitStr.toUpperCase() !== 'MT';
+          const mtVal =
+            pi.qtyMt !== undefined ? pi.qtyMt : convertLineItemToMt(pi).mt;
+          const mtStr =
+            isNonMt && mtVal !== null
+              ? ` (${Math.round(mtVal * 1000) / 1000} MT)`
+              : '';
+          const qtyStr = pi.qty > 0 ? `: ${pi.qty} ${unitStr}${mtStr}` : '';
           const rateStr =
             pi.rate > 0
-              ? ` @ Rs. ${Number(pi.rate).toLocaleString('en-IN')}/${unitStr}`
+              ? ` @ Rs. ${Number(pi.rate).toLocaleString('en-IN')}/${isNonMt && mtVal ? 'MT' : unitStr}`
               : '';
           const amtStr =
             pi.itemAmount > 0
@@ -4411,6 +4538,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         `Customer: ${finalCustomerName}\n` +
         `Stage: NEW INQUIRY\n` +
         `Line Items:\n${itemsBreakdownStr}\n` +
+        (totalTonnageDisplay > 0
+          ? `Total Tonnage: ${totalTonnageDisplay} MT\n`
+          : '') +
         (data.preferred_make
           ? `Preferred Make: ${data.preferred_make}\n`
           : '') +
@@ -4427,7 +4557,15 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     let itemSummary = activeItemsForSummary
       .map((pi) => {
         const dimStr = pi.dimensions ? ` (${pi.dimensions})` : '';
-        const qtyStr = pi.qty > 0 ? ` - ${pi.qty} ${pi.unit || 'MT'}` : '';
+        const unitStr = pi.unit || 'MT';
+        const isNonMt = unitStr.toUpperCase() !== 'MT';
+        const mtVal =
+          pi.qtyMt !== undefined ? pi.qtyMt : convertLineItemToMt(pi).mt;
+        const mtStr =
+          isNonMt && mtVal !== null
+            ? ` (${Math.round(mtVal * 1000) / 1000} MT)`
+            : '';
+        const qtyStr = pi.qty > 0 ? ` - ${pi.qty} ${unitStr}${mtStr}` : '';
         const rateStr =
           pi.rate > 0
             ? ` @ Rs. ${Number(pi.rate).toLocaleString('en-IN')}`
@@ -4435,6 +4573,10 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         return `• ${pi.pName}${dimStr}${qtyStr}${rateStr}`;
       })
       .join('\n');
+
+    if (totalTonnageDisplay > 0) {
+      itemSummary += `\n• Total Tonnage: ${totalTonnageDisplay} MT`;
+    }
 
     return (
       `Inquiry Logged - Inquiry ID: ${dealCode}\n\n` +

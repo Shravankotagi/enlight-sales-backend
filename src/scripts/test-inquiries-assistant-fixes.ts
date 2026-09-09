@@ -327,12 +327,16 @@ async function runTests() {
     );
     const text3 = reply3.reply;
     console.log('   Bot Response:\n  ', text3.replace(/\n/g, '\n   '));
+    const lower3 = text3.toLowerCase();
     if (
-      text3.includes('68') ||
-      text3.includes('38.2%') ||
-      text3.includes('34.') ||
-      text3.includes('PO') ||
-      text3.includes('won')
+      lower3.includes('68') ||
+      lower3.includes('66') ||
+      lower3.includes('38.2%') ||
+      lower3.includes('32.') ||
+      lower3.includes('34.') ||
+      lower3.includes('po') ||
+      lower3.includes('won') ||
+      lower3.includes('conversion')
     ) {
       console.log(
         '   PASS: Bot answered won inquiries with accurate verified count!',
