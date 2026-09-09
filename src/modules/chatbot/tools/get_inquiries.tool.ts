@@ -608,6 +608,13 @@ export const getInquiriesTool: ChatbotTool = {
     const highestTonnageInquiry = topTonnageInquiries[0] || null;
 
     const totalInquiriesCount = rawList.length;
+    const totalTonnageAcrossInquiries =
+      Math.round(
+        formattedList.reduce(
+          (sum, inq) => sum + (inq.total_tonnage_mt || 0),
+          0,
+        ) * 1000,
+      ) / 1000;
     const lostCount =
       dealStageCounts['lost'] || inquiryStatusCounts['lost'] || 0;
     const conversionRatePercent =
@@ -617,6 +624,8 @@ export const getInquiriesTool: ChatbotTool = {
 
     const summary = {
       total_inquiries: totalInquiriesCount,
+      total_tonnage_mt: totalTonnageAcrossInquiries,
+      total_quantity_mt: totalTonnageAcrossInquiries,
       inquiries_today: inquiriesTodayCount,
       by_inquiry_status: inquiryStatusCounts,
       by_deal_stage: dealStageCounts,
@@ -648,6 +657,14 @@ export const getInquiriesTool: ChatbotTool = {
         note: 'Pending OCR inquiries refer to inquiries in the Review Queue (status: review, pending, new, draft) awaiting sales verification.',
       },
       tonnage_metrics: {
+        total_tonnage_mt: totalTonnageAcrossInquiries,
+        total_quantity_mt: totalTonnageAcrossInquiries,
+        average_tonnage_per_inquiry_mt:
+          totalInquiriesCount > 0
+            ? Number(
+                (totalTonnageAcrossInquiries / totalInquiriesCount).toFixed(2),
+              )
+            : 0,
         highest_tonnage_inquiry: highestTonnageInquiry,
         top_tonnage_inquiries: topTonnageInquiries,
       },

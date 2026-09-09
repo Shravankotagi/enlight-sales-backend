@@ -98,6 +98,10 @@ CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
    - If length/width are omitted for sheet/plate items with thickness, default to standard sheet size 1.25m × 2.5m (1250 × 2500 mm).
    - When unit is Kg: MT = Kg / 1000.
 
+7. EXACT CUSTOMER NAME PRESERVATION:
+   - Extract the EXACT company/customer name stated in the user message (e.g. "ABC Steel", "Company 5", "Company 6", "Tata Motors").
+   - NEVER alter, guess, abbreviate, or substitute company names.
+
 Return ONLY the JSON object.
 `;
 
@@ -3753,9 +3757,21 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       /\b(?:rate|price|pricing|quotation|quote)\s*(?:bhejo|batao|chahiye|do|dena|chahie|asap|please|request|karo|bataiye|de do)\b/i.test(
         effectiveTextForLLM || text,
       ) ||
-      /\b(?:please\s+quote|quote\s+asap|quote\s+please|quote\s+bhejo|rate\s+bhejo|bhai\s+.*rate)\b/i.test(
+      /\b(?:please\s+quote|quote\s+asap|quote\s+please|quote\s+bhejo|rate\s+bhejo|bhai\s+.*rate|rate\s+kya\s+hai|rate\s+batao)\b/i.test(
+        effectiveTextForLLM || text,
+      ) ||
+      /\b(?:chahiye|chahie|need\s+the\s+following|order\s+requirement|material\s+requirement|want)\b/i.test(
         effectiveTextForLLM || text,
       );
+
+    if (
+      !explicitDealIdMatch &&
+      !data.deal_id &&
+      (isQuoteRequest || data.action === 'inquiry')
+    ) {
+      targetExplicitDeal = null;
+      data.action = 'inquiry';
+    }
 
     const isRateUpdateContext =
       !isQuoteRequest &&
@@ -4251,6 +4267,61 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         updatedLabels.length > 0
           ? `Updated: ${updatedLabels.join(', ')}\n\n`
           : '';
+
+      // Check if this was a rate reduction / negotiation request without a specific price provided
+      const isRateReductionRequest =
+        /\b(?:reduce\s+(?:the\s+)?(?:rates?|prices?|quote)|discount|concession|kam\s+(?:karo|kijiye|karna|hoga)|better\s+price|lower\s+rate|lower\s+price|price\s+drop|revise\s+quote|negotiat(?:e|ion))\b/i.test(
+          textToInspect,
+        );
+
+      if (isRateReductionRequest && updatedLabels.length === 0) {
+        // Move deal to negotiation stage if currently in new_inquiry or quoted
+        const currStage = (refreshedDeal.stage || 'new_inquiry').toLowerCase();
+        if (currStage !== 'won' && currStage !== 'lost') {
+          await supabase
+            .from('deals')
+            .update({ stage: 'negotiation' })
+            .eq('id', dealId);
+        }
+
+        await saveActiveSession(
+          senderPhone,
+          company,
+          `waiting_for_negotiation_target_rate|${dealId}|${company}`,
+        );
+
+        const prodName =
+          processedItems[0]?.pName ||
+          existingItems[0]?.sku_text ||
+          'the material';
+
+        return (
+          `Inquiry Moved to Negotiation - ${dealCode}\n\n` +
+          `Customer: ${company}\n` +
+          `Stage: NEGOTIATION\n\n` +
+          `Current Line Items:\n` +
+          itemBreakdownLines.join('\n') +
+          `\n\n` +
+          `What revised target rate or discount per MT is ${company} looking for on ${prodName}? Please specify the target price (e.g. ₹52,000/MT or ₹500 discount) so I can update the quote.`
+        );
+      }
+
+      if (
+        updatedLabels.length === 0 &&
+        Object.keys(updateFields).length === 0
+      ) {
+        return (
+          `Inquiry Details - ${dealCode}\n\n` +
+          `Customer: ${company}\n` +
+          `Stage: ${(refreshedDeal.stage || 'NEW INQUIRY').toUpperCase()}\n\n` +
+          `Current Line Items:\n` +
+          itemBreakdownLines.join('\n') +
+          `\n` +
+          financialSummary +
+          termsSection +
+          `\nNo changes were applied as no new rates, quantities, or details were specified.`
+        );
+      }
 
       if (completeness.isComplete) {
         return (

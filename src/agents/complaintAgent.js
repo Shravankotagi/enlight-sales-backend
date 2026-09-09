@@ -44,6 +44,7 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 }
 
 Rules:
+- "customer_name": Extract the EXACT company/customer name stated in the message (e.g. "ABC Steel", "Dynamic Engineering", "Tech Industries"). NEVER alter, guess, or substitute company names.
 - "action": "report" -> new issue, defect, rejection, wrong material, shortage, delivery delay, billing dispute.
 - "action": "resolve" -> issue settled, sorted, material replaced, customer accepted, resolved.
 - If multiple companies or separate complaint sentences exist, CREATE A SEPARATE ENTRY IN THE "complaints" ARRAY FOR EACH ONE!

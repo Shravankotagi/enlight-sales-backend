@@ -537,6 +537,152 @@ export class ChatbotService {
           return { sessionId, reply };
         }
       }
+
+      // Multi-turn Flow C: Pending Negotiation Target Rate Response
+      if (
+        activeSession &&
+        activeSession.last_intent &&
+        activeSession.last_intent.startsWith(
+          'waiting_for_negotiation_target_rate|',
+        )
+      ) {
+        const parts = activeSession.last_intent.split('|');
+        const dealId = parts[1];
+        const customerName = parts[2] || 'Customer';
+
+        // Extract numeric price or discount from user message
+        const textClean = messageText.trim();
+        const discountMatch =
+          textClean.match(
+            /\b(?:discount|reduce|less|discount\s+of|concession)\s*(?:of|by)?\s*₹?\s*([\d,.]+)/i,
+          ) || textClean.match(/₹?\s*([\d,.]+)\s*(?:discount|less|kam)/i);
+        const rateMatch = textClean.match(
+          /₹?\s*([\d,.]+)\s*(?:k\b|\/mt|\/ton|per\s*mt|per\s*ton)?/i,
+        );
+
+        let targetRate: number | null = null;
+        let discountPerMt: number | null = null;
+
+        if (discountMatch) {
+          discountPerMt = parseFloat(discountMatch[1].replace(/,/g, ''));
+        } else if (rateMatch) {
+          let numVal = parseFloat(rateMatch[1].replace(/,/g, ''));
+          if (/\d+k\b/i.test(rateMatch[0])) {
+            numVal *= 1000;
+          }
+          if (numVal > 0) {
+            targetRate = numVal;
+          }
+        }
+
+        if (targetRate !== null || discountPerMt !== null) {
+          const { data: dealArr } = await supabase
+            .from('deals')
+            .select('*, deal_items(*)')
+            .eq('id', dealId)
+            .limit(1);
+
+          const dealRow = dealArr?.[0];
+          if (dealRow) {
+            const dealCode = dealRow.inquiry_id
+              ? `#INQ-${dealRow.inquiry_id.slice(-6).toUpperCase()}`
+              : `#DEAL-${dealRow.id.slice(-6).toUpperCase()}`;
+
+            const existingItems = dealRow.deal_items || [];
+            const updatedItems: any[] = [];
+            let totalAmount = 0;
+
+            for (const item of existingItems) {
+              let newRate = targetRate;
+              if (discountPerMt !== null && item.rate) {
+                newRate = Math.max(0, Number(item.rate) - discountPerMt);
+              } else if (newRate === null && item.rate) {
+                newRate = Number(item.rate);
+              }
+
+              const qty = Number(item.quantity_mt || item.quantity || 1);
+              const itemAmount =
+                newRate && newRate > 0 ? Math.round(newRate * qty) : 0;
+              totalAmount += itemAmount;
+
+              await supabase
+                .from('deal_items')
+                .update({
+                  rate: newRate,
+                  amount: itemAmount > 0 ? itemAmount : null,
+                })
+                .eq('id', item.id);
+
+              updatedItems.push({
+                ...item,
+                rate: newRate,
+                amount: itemAmount,
+              });
+            }
+
+            await supabase
+              .from('deals')
+              .update({
+                stage: 'negotiation',
+                total_amount:
+                  totalAmount > 0 ? totalAmount : dealRow.total_amount,
+              })
+              .eq('id', dealId);
+
+            if (dealRow.inquiry_id) {
+              await supabase
+                .from('inquiries')
+                .update({ status: 'negotiation' })
+                .eq('id', dealRow.inquiry_id);
+            }
+
+            await saveActiveSession(callerPhone, customerName, 'general');
+
+            const itemBreakdownLines = updatedItems.map((item) => {
+              const rateDisplay =
+                item.rate > 0
+                  ? ` @ ₹${Number(item.rate).toLocaleString('en-IN')}/${item.unit || 'MT'}`
+                  : ' (Rate pending)';
+              const amountDisplay =
+                item.amount > 0
+                  ? ` = ₹${Number(item.amount).toLocaleString('en-IN')}`
+                  : '';
+              return `- ${item.sku_text || 'Item'}${item.dimensions ? ` (${item.dimensions})` : ''}: ${item.quantity || item.quantity_mt || 0} ${item.unit || 'MT'}${rateDisplay}${amountDisplay}`;
+            });
+
+            const subtotalVal = totalAmount;
+            const gstVal = Math.round(subtotalVal * 0.18);
+            const grandTotalVal = subtotalVal + gstVal;
+
+            const financialSummary =
+              subtotalVal > 0
+                ? `\n\nFinancial Breakdown:\n- Subtotal: ₹${subtotalVal.toLocaleString('en-IN')}\n- GST (18%): ₹${gstVal.toLocaleString('en-IN')}\n- Grand Total: ₹${grandTotalVal.toLocaleString('en-IN')}`
+                : '';
+
+            const replyRaw =
+              `*Inquiry Rate Updated - ${dealCode}*\n\n` +
+              `Customer: *${customerName}*\n` +
+              `Stage: *NEGOTIATION*\n\n` +
+              `Updated Line Items:\n` +
+              itemBreakdownLines.join('\n') +
+              financialSummary +
+              `\n\nRevised quote recorded in Deals & Orders Pipeline!`;
+
+            const reply = this.cleanAssistantReply(replyRaw);
+            await this.saveMessage(sessionId, 'assistant', reply);
+
+            try {
+              const { addChatHistory } = require('../../core/memory');
+              await addChatHistory(callerPhone, messageText, reply, {
+                customer_name: customerName,
+                deal_id: dealId,
+              });
+            } catch {}
+
+            return { sessionId, reply };
+          }
+        }
+      }
     } catch (sessionErr: any) {
       this.logger.warn(`Active session check error: ${sessionErr.message}`);
     }
@@ -612,9 +758,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
    B. Customer Site & Field Visits (Customer Site Visits Card - KRA 9):
       - Call 'log_customer_visit' whenever the user reports:
-        * Visiting a customer factory, office, godown, or site (e.g. "Visited Supreme Steel today, met Mr. Rajesh, discussed 20 MT HR Plates requirement, positive outcome")
+        * Visiting a customer factory, office, godown, or site (e.g. "Met Rajesh Sharma at ABC Steel, Mumbai today. Discussed HR coil requirement. Positive meeting, need to send rate quotation.", "Visited Supreme Steel today, met Mr. Rajesh, discussed 20 MT HR Plates requirement, positive outcome")
         * In-person meetings, market rounds, plant visits, or field inspections.
       - This tool automatically records discussion remarks, person met, materials required, visit outcome, follow-up actions, and updates the customer profile.
+      - STRICTLY NEVER call 'get_visits' when the user is reporting or logging a visit that took place! 'get_visits' is exclusively a read-only query tool for searching past visit history.
 
    C. Customer Complaints & Quality Rejections (Customer Complaints Card - KRA 7 & 8):
       - Call 'log_complaint' whenever the user reports:
@@ -651,6 +798,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 5. Read-Only Intelligence & Query Tools:
    Use these read tools when the user is asking questions, requesting lists, reviewing metrics, or analyzing data:
     - 'get_inquiries':
+      * TOTAL INQUIRED TONNAGE FOR THE MONTH / SUMMARY: When the user asks "What's the total quantity I've inquired for this month?", "total inquired tonnage", or asks for overall inquiry tonnage, call 'get_inquiries'. The tool calculates and returns total tonnage in 'summary.total_tonnage_mt' (and 'summary.tonnage_metrics'). Report BOTH the total number of inquiries AND the total tonnage in Metric Tons (MT) clearly (e.g. "Total Inquiries: X, Total Inquired Quantity: Y MT").
       * SPECIFIC INQUIRY ID LOOKUP: When the user asks for the status or details of a specific inquiry ID (e.g. "What's the status of INQ-2C788F?", "Status of #INQ-2C788F", "Check INQ-922CBC"), IMMEDIATELY call 'get_inquiries' with 'inquiry_id'. NEVER ask the user for a customer name when an Inquiry ID is provided!
       * CHANNEL BREAKDOWN: When the user asks for inquiries by channel (e.g. "How many inquiries came through WhatsApp vs Dashboard?"), call 'get_inquiries' with mode: "channel_breakdown" or mode: "count" and report the exact counts from 'by_source_channel' (WhatsApp vs Dashboard).
       * INQUIRY CONVERSION & WON METRICS: When the user asks what percentage or how many inquiries were won (e.g. "What is our team's inquiry to won conversion rate?", "What is our conversion rate?"), use 'summary.conversion_metrics' or 'summary'.
@@ -1119,8 +1267,24 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             rescuedToolName = 'get_inquiries';
             rescuedArgs = { mode: 'at_risk_inquiries' };
           } else if (
+            (lowerMsg.includes('total') ||
+              lowerMsg.includes('quantity') ||
+              lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight')) &&
+            (lowerMsg.includes('inquir') ||
+              lowerMsg.includes('this month') ||
+              lowerMsg.includes('how much') ||
+              lowerMsg.includes("what's the total"))
+          ) {
+            rescuedToolName = 'get_inquiries';
+            rescuedArgs = {};
+          } else if (
             lowerMsg.includes('visit') ||
             lowerMsg.includes('meeting') ||
+            lowerMsg.startsWith('met ') ||
+            lowerMsg.startsWith('visited ') ||
+            lowerMsg.includes('met with ') ||
             lowerMsg.includes('sales rep leaderboard') ||
             lowerMsg.includes('salesperson leaderboard') ||
             lowerMsg.includes('logged the most visits')
@@ -1129,16 +1293,25 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               (lowerMsg.startsWith('log ') ||
                 lowerMsg.startsWith('record ') ||
                 lowerMsg.startsWith('add visit') ||
+                lowerMsg.startsWith('met ') ||
+                lowerMsg.startsWith('visited ') ||
+                lowerMsg.includes('met with ') ||
                 lowerMsg.includes('i visited') ||
                 lowerMsg.includes('visited customer') ||
-                lowerMsg.includes('went to')) &&
+                lowerMsg.includes('went to') ||
+                lowerMsg.includes('had a meeting') ||
+                lowerMsg.includes('had meeting') ||
+                (lowerMsg.includes('discussed ') &&
+                  lowerMsg.includes('meeting'))) &&
               !lowerMsg.includes('show') &&
               !lowerMsg.includes('list') &&
               !lowerMsg.includes('which') &&
               !lowerMsg.includes('how many') &&
               !lowerMsg.includes('who') &&
               !lowerMsg.includes('missing') &&
-              !lowerMsg.includes('duplicate');
+              !lowerMsg.includes('duplicate') &&
+              !lowerMsg.includes('compare') &&
+              !lowerMsg.includes('what');
 
             if (isExplicitLogAction) {
               rescuedToolName = 'log_customer_visit';

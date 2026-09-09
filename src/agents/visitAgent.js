@@ -52,6 +52,7 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 }
 
 Rules:
+- "customer_name": Extract the EXACT company/customer name stated in the message (e.g. "ABC Steel", "Supreme Infrastructure", "Tata Motors"). NEVER alter, guess, or substitute company suffixes or names.
 - "is_new_prospect": true if message says "introduced", "first meeting", "new contact", "business card collected", "new lead", etc.
 - "visit_outcome":
   - "positive" → interest shown, products discussed, quotation asked, deal progressed, business card exchanged, positive discussion
@@ -149,7 +150,7 @@ async function processVisitMessage(text, senderPhone) {
       .from('customer_visits')
       .select('id, visited_at, person_met, remarks')
       .eq('salesperson_phone', senderPhone)
-      .ilike('customer_name', `%${finalCustomerName}%`)
+      .ilike('customer_name', finalCustomerName)
       .gte('visited_at', thirtyMinutesAgo)
       .order('visited_at', { ascending: false })
       .limit(1);

@@ -164,12 +164,12 @@ export function parseVisitRemarks(remarks?: string | null): {
 export const getVisitsTool: ChatbotTool = {
   name: 'get_visits',
   description:
-    'Retrieves customer site visit logs, meeting outcomes (positive, neutral, negative), remarks, follow-up actions, salesperson visit leaderboard, week-over-week comparison, location filtering, missing fields filtering, and duplicate visits grouping from customer_visits (KRA 9). Scoped strictly by caller role.',
+    'READ-ONLY search tool: Retrieves past customer site visit logs, meeting outcomes (positive, neutral, negative), remarks, follow-up actions, salesperson visit leaderboard, week-over-week comparison, location filtering, missing fields filtering, and duplicate visits grouping from customer_visits (KRA 9). Scoped strictly by caller role. NEVER use to log or report a new visit!',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_visits',
     description:
-      'Retrieves customer site visits and field visit reports. Can filter by customer name, salesperson name, location (city/address), outcome (positive/neutral/negative), requires_follow_up (true for visits needing follow-up), missing_location (true for visits missing city), missing_contact_person (true for visits missing contact person), date_range (today, yesterday, this_week, last_week, this_month, last_month), or query mode (rep_leaderboard, week_comparison, duplicates). Scoped by caller role.',
+      'READ-ONLY QUERY TOOL: Searches and lists past customer site visits and field visit reports. Use ONLY when the user asks to see, view, search, count, or list past visits (e.g. "Show my visits", "List visits in Mumbai", "How many visits did I do?"). NEVER call this tool when the user is reporting or logging a visit that took place (e.g. "Met [Name]...", "Visited [Company]...") — for reporting visits, call log_customer_visit instead.',
     parameters: {
       type: 'OBJECT',
       properties: {
