@@ -5,6 +5,7 @@ import {
   isManagerRole,
   isSalespersonRole,
 } from './chatbot-tool.interface';
+import { convertLineItemToMt } from '../../pricing/pricing.engine';
 
 function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   if (!dateFilter || dateFilter === 'all') return {};
@@ -457,8 +458,14 @@ export const getInquiriesTool: ChatbotTool = {
         formattedItems = rawDealItems.map((di: any) => {
           const rawQty = Number(di.quantity) || 0;
           const u = (di.unit || 'MT').trim();
-          const isKg = u.toLowerCase() === 'kg' || u.toLowerCase() === 'kgs';
-          const qtyMt = isKg ? rawQty / 1000 : rawQty;
+          const conv = convertLineItemToMt({
+            sku_text: di.sku_text,
+            dimensions: di.dimensions,
+            quantity: rawQty,
+            unit: u,
+            raw_text: inq.raw_text || '',
+          });
+          const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : rawQty;
           const amount = Number(di.amount) || 0;
           totalInqTonnageMt += qtyMt;
           totalInqAmount += amount;
@@ -476,8 +483,14 @@ export const getInquiriesTool: ChatbotTool = {
         formattedItems = rawAiItems.map((li: any) => {
           const rawQty = Number(li.quantity) || Number(li.quantity_tons) || 0;
           const u = (li.unit || 'MT').trim();
-          const isKg = u.toLowerCase() === 'kg' || u.toLowerCase() === 'kgs';
-          const qtyMt = isKg ? rawQty / 1000 : rawQty;
+          const conv = convertLineItemToMt({
+            sku_text: li.sku_text || li.description || li.product,
+            dimensions: li.dimensions || li.specs,
+            quantity: rawQty,
+            unit: u,
+            raw_text: inq.raw_text || '',
+          });
+          const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : rawQty;
           const amount = Number(li.amount) || 0;
           totalInqTonnageMt += qtyMt;
           totalInqAmount += amount;

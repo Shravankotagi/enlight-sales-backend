@@ -137,6 +137,8 @@ function convertLineItemToMt(item) {
     item.product || '',
     item.product_requirement || '',
     item.pName || '',
+    item.raw_text || '',
+    item.text || '',
   ]
     .join(' ')
     .toLowerCase();
@@ -308,6 +310,25 @@ function convertLineItemToMt(item) {
         lengthM = l > 20 ? l / 1000 : l;
       }
     }
+  }
+
+  // Fallback to standard sheet dimensions (1.25m x 2.5m = 1250mm x 2500mm) if thickness is known
+  // and length/width are omitted for sheet/plate items
+  const isSheetOrPlate =
+    combinedText.includes('sheet') ||
+    combinedText.includes('plate') ||
+    combinedText.includes('chequered') ||
+    combinedText.includes('cr ') ||
+    combinedText.includes('hr ') ||
+    combinedText.includes('hrpo') ||
+    normUnit === 'Sheets' ||
+    normUnit === 'Plates' ||
+    normUnit === 'Nos' ||
+    normUnit === 'Pcs';
+
+  if (thickness && (!widthM || !lengthM) && isSheetOrPlate) {
+    widthM = 1.25;
+    lengthM = 2.5;
   }
 
   if (thickness && widthM && lengthM) {

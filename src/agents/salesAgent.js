@@ -119,6 +119,13 @@ CRITICAL RULES FOR THE 9 CORE STEEL PRODUCT CATEGORIES:
    - When a message updates delivery location or address (e.g. "update delivery address to Plot 42, MIDC Chakan, Pune"), payment terms (e.g. "payment terms 30 days credit"), HSN/SAC code (e.g. "HSN code of MS Plate is 72085110"), or unit (e.g. "change unit of MS Plate to Pcs"):
      Set action: "deal_update" and extract the corresponding deal_id, delivery_location, payment_terms, and line_items with updated hsn_code, unit, etc.
 
+12. UNIT CONVERSION & DIMENSION PRESERVATION:
+   - For sheets, plates, and coils, ALWAYS extract full dimensions including thickness, width, and length (e.g. "5mm (1250 x 2500 mm)", "6mm 1250x2500", "12mm 5ft x 20ft").
+   - When unit is Nos, Pcs, Sheets, or Plates for sheets/plates, convert quantity to MT using:
+     Length (m) × Width (m) × Thickness (mm) × 8 × number of pieces / 1000 = Metric Tons (MT).
+   - If length/width are omitted for sheet/plate items, default to standard sheet size 1.25m × 2.5m (1250 × 2500 mm).
+   - When unit is Kg: MT = Kg / 1000.
+
 Return ONLY the JSON object.
 `;
 
@@ -1351,6 +1358,7 @@ async function syncInquiryFromDeal(inquiryId, dealObj, dealItems) {
         dimensions: dim,
         quantity: qty,
         unit: unit,
+        raw_text: inq.raw_text || '',
       });
       const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : qty;
 
@@ -2985,10 +2993,14 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const rate = rawRate && rawRate > 0 ? rawRate : null;
       const rawDim =
         item.dimensions ||
-        (pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
-          ? pName.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
-          : text.match(/(\d+(?:\.\d+)?)\s*mm/i)
-            ? text.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
+        (pName?.match(/(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i)
+          ? pName.match(
+              /(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i,
+            )[0]
+          : text.match(/(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i)
+            ? text.match(
+                /(\d+(?:\.\d+)?)\s*(?:mm|m|ft|'|"|gauge|g\b)[^,\n]*/i,
+              )[0]
             : null);
 
       if (pName) {
@@ -2997,6 +3009,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           dimensions: rawDim,
           quantity: qty,
           unit,
+          raw_text: text || '',
         });
         const qtyMt =
           convRes.canConvert && convRes.mt !== null ? convRes.mt : qty;
@@ -4450,6 +4463,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
               dimensions: f.dimensions,
               quantity: origQty,
               unit: origUnit,
+              raw_text: text || '',
             });
             const qtyMt =
               mtCalc.canConvert && mtCalc.mt !== null
