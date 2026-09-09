@@ -9,7 +9,7 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
@@ -915,8 +915,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-            Array.isArray(row.media_urls) &&
-            row.media_urls.length > 0,
+          Array.isArray(row.media_urls) &&
+          row.media_urls.length > 0,
         );
         return {
           ...row,

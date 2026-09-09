@@ -10,18 +10,15 @@ async function runGuardrailsTestSuite() {
     '=== Phase 4 Guardrails, Safety & Spend Cap Verification Suite ===\n',
   );
 
-  const { SupabaseService } = await import(
-    '../infrastructure/supabase/supabase.service'
-  );
+  const { SupabaseService } =
+    await import('../infrastructure/supabase/supabase.service');
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
   const { ChatbotService } = await import('../modules/chatbot/chatbot.service');
-  const { ToolRegistryService } = await import(
-    '../modules/chatbot/tools/tool-registry.service'
-  );
-  const { GuardrailsService } = await import(
-    '../modules/chatbot/guardrails/guardrails.service'
-  );
+  const { ToolRegistryService } =
+    await import('../modules/chatbot/tools/tool-registry.service');
+  const { GuardrailsService } =
+    await import('../modules/chatbot/guardrails/guardrails.service');
   const { KbService } = await import('../modules/chatbot/kb/kb.service');
 
   const configService = new ConfigService(new NestConfigService());

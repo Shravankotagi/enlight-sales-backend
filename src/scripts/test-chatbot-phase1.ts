@@ -10,9 +10,8 @@ async function runPhase1Tests() {
   // Test 1: Unauthenticated Fail-Closed Check
   console.log('Test 1: Unauthenticated Request Check (Fail-Closed)...');
   try {
-    const { ChatbotService } = await import(
-      '../modules/chatbot/chatbot.service'
-    );
+    const { ChatbotService } =
+      await import('../modules/chatbot/chatbot.service');
     // Mock service instance for testing unit methods
     const mockSupabase: any = {
       getAdminClient: () => ({
@@ -55,21 +54,17 @@ async function runPhase1Tests() {
   // Test 2: Live Chatbot Service Processing & Turn Persistence Test
   console.log('\nTest 2: Live Chatbot Service & Gemini Connectivity Test...');
   try {
-    const { SupabaseService } = await import(
-      '../infrastructure/supabase/supabase.service'
-    );
+    const { SupabaseService } =
+      await import('../infrastructure/supabase/supabase.service');
     const { ConfigService } = await import('../config/config.service');
     const { ConfigService: NestConfigService } = await import('@nestjs/config');
-    const { ChatbotService } = await import(
-      '../modules/chatbot/chatbot.service'
-    );
-    const { ToolRegistryService } = await import(
-      '../modules/chatbot/tools/tool-registry.service'
-    );
+    const { ChatbotService } =
+      await import('../modules/chatbot/chatbot.service');
+    const { ToolRegistryService } =
+      await import('../modules/chatbot/tools/tool-registry.service');
 
-    const { GuardrailsService } = await import(
-      '../modules/chatbot/guardrails/guardrails.service'
-    );
+    const { GuardrailsService } =
+      await import('../modules/chatbot/guardrails/guardrails.service');
 
     const configService = new ConfigService(new NestConfigService());
     const supabaseService = new SupabaseService(configService);
