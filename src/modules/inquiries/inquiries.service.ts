@@ -51,6 +51,7 @@ function getAssetFontPath(fontFilename: string): string | null {
 import { DealsService } from '../deals/deals.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
+  calculateLineItem,
   calculateQuotationBreakdown,
   calculateTotalTonnageMt,
   formatIndianCurrency,
@@ -1422,11 +1423,17 @@ export class InquiriesService implements OnModuleInit {
 
       if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) {
         subtotal = lineItemsSrc.reduce((s: number, item: any) => {
-          const q = Number(item.quantity) || 0;
+          const rawQty = Number(item.original_quantity ?? item.quantity) || 0;
+          const rawUnit = item.original_unit || item.unit || 'MT';
           const r = Number(item.rate) || 0;
           if (r > 0) hasValidRates = true;
-          const amt = Number(item.amount) || Math.round(q * r);
-          return s + amt;
+          const calc = calculateLineItem({
+            ...item,
+            quantity: rawQty,
+            unit: rawUnit,
+            rate: r,
+          });
+          return s + (Number(item.amount) || calc.amount);
         }, 0);
       }
 
@@ -1501,19 +1508,28 @@ export class InquiriesService implements OnModuleInit {
         // Delete old items if any to avoid duplication
         await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
 
-        const dealItemsToInsert = lineItemsSrc.map((item: any) => ({
-          deal_id: dealId,
-          sku_text: item.sku_text || item.description || 'Material',
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity) || 0,
-          unit: item.unit || 'MT',
-          rate: Number(item.rate) || 0,
-          amount:
-            Number(item.amount) ||
-            Math.round(Number(item.quantity || 0) * Number(item.rate || 0)),
-          confidence: Number(item.confidence) || 0.95,
-          created_at: new Date().toISOString(),
-        }));
+        const dealItemsToInsert = lineItemsSrc.map((item: any) => {
+          const rawQty = Number(item.original_quantity ?? item.quantity) || 0;
+          const rawUnit = item.original_unit || item.unit || 'MT';
+          const r = Number(item.rate) || 0;
+          const calc = calculateLineItem({
+            ...item,
+            quantity: rawQty,
+            unit: rawUnit,
+            rate: r,
+          });
+          return {
+            deal_id: dealId,
+            sku_text: item.sku_text || item.description || 'Material',
+            dimensions: item.dimensions || null,
+            quantity: rawQty,
+            unit: rawUnit,
+            rate: r,
+            amount: Number(item.amount) || calc.amount,
+            confidence: Number(item.confidence) || 0.95,
+            created_at: new Date().toISOString(),
+          };
+        });
 
         await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }

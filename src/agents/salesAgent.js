@@ -3015,7 +3015,14 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           convRes.canConvert && convRes.mt !== null ? convRes.mt : qty;
 
         if (qty > 0 && rate && rate > 0) {
-          const lineCalc = calculateLineItem({ quantity: qty, rate, unit });
+          const lineCalc = calculateLineItem({
+            sku_text: pName,
+            dimensions: rawDim,
+            quantity: qty,
+            rate,
+            unit,
+            raw_text: text || '',
+          });
           calculatedTotal += lineCalc.amount;
           processedItems.push({
             pName,
@@ -4126,13 +4133,12 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           sku_text: pi.pName,
           dimensions: pi.dimensions || '',
           hsn_code: detectHsnCode(pi.pName, pi.dimensions),
-          quantity:
-            itemQtyMt !== null ? Math.round(itemQtyMt * 1000) / 1000 : pi.qty,
+          quantity: pi.qty,
+          unit: pi.unit || 'MT',
           quantity_mt:
             itemQtyMt !== null ? Math.round(itemQtyMt * 1000) / 1000 : pi.qty,
           original_quantity: pi.qty,
           original_unit: pi.unit || 'MT',
-          unit: 'MT',
           rate: pi.rate > 0 ? pi.rate : null,
           amount: pi.itemAmount > 0 ? pi.itemAmount : null,
         };
