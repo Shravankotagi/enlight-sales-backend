@@ -285,7 +285,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
         lostCount++;
       }
 
-      const rawInq = d.inquiry_id || d.id || '';
+      const rawInq = d.id || d.inquiry_id || '';
       const cleanNum = rawInq
         .replace(/^#?(?:DEAL|INQ)-?/i, '')
         .replace(/-/g, '')

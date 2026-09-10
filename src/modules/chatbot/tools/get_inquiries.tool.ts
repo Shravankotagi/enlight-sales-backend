@@ -519,8 +519,8 @@ export const getInquiriesTool: ChatbotTool = {
 
       totalInqTonnageMt = Math.round(totalInqTonnageMt * 1000) / 1000;
 
-      // Determine single human inquiry ID: #INQ-XXXXXX
-      const rawInqId = inq.id || deal?.inquiry_id || deal?.id || '';
+      // Determine single human inquiry ID: #INQ-XXXXXX (prioritize deal.id to match dashboard)
+      const rawInqId = deal?.id || inq.id || deal?.inquiry_id || '';
       const inqShort = rawInqId
         ? '#INQ-' + rawInqId.replace(/-/g, '').substring(0, 6).toUpperCase()
         : null;
