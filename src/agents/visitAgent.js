@@ -159,7 +159,7 @@ function resolveVisitDate(text, dateFromLlm) {
     lowerLlm.includes('day before yesterday') ||
     lowerLlm.includes('parso') ||
     lowerText.includes('day before yesterday') ||
-    /\bparso(?:n)?\b/.test(lowerText)
+    /\bparso\b/.test(lowerText)
   ) {
     const d = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
     return formatResolvedDate(d);
@@ -168,7 +168,6 @@ function resolveVisitDate(text, dateFromLlm) {
   if (
     lowerLlm.includes('tarso') ||
     lowerText.includes('tarso') ||
-    /\btarso(?:n)?\b/.test(lowerText) ||
     lowerText.includes('3 days ago') ||
     lowerLlm.includes('3 days ago')
   ) {
@@ -198,7 +197,7 @@ function resolveVisitDate(text, dateFromLlm) {
     return formatResolvedDate(d);
   }
 
-  // 2. Relative Weekdays: "last Monday", "last week Monday", "this Monday", "on Monday", "Monday ko", "pichle somwar"
+  // 2. Relative Weekdays: "last Monday", "this Monday", "on Monday", "Monday ko"
   const weekdayMap = {
     sunday: 0,
     raviwar: 0,
@@ -219,7 +218,7 @@ function resolveVisitDate(text, dateFromLlm) {
   };
 
   const weekdayRegex =
-    /\b(?:(last(?:\s+week)?|past(?:\s+week)?|previous(?:\s+week)?|this(?:\s+week)?|on|pichle(?:\s+hafte)?)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|somwar|mangalwar|budhwar|guruwar|veervar|shukrawar|shaniwar|raviwar|itwar)(?:\s+ko)?\b/i;
+    /\b(?:(last|past|previous|this|on|pichle)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|somwar|mangalwar|budhwar|guruwar|veervar|shukrawar|shaniwar|raviwar|itwar)\b/i;
   const matchWeekday =
     lowerText.match(weekdayRegex) || lowerLlm.match(weekdayRegex);
 
@@ -232,10 +231,10 @@ function resolveVisitDate(text, dateFromLlm) {
       const currentDay = now.getDay(); // 0-6 (0 is Sunday, 4 is Thursday)
       let diff = currentDay - targetDay;
       if (
-        prefix.includes('last') ||
-        prefix.includes('past') ||
-        prefix.includes('previous') ||
-        prefix.includes('pichle')
+        prefix === 'last' ||
+        prefix === 'past' ||
+        prefix === 'previous' ||
+        prefix === 'pichle'
       ) {
         if (diff <= 0) {
           diff += 7;
@@ -262,19 +261,7 @@ function resolveVisitDate(text, dateFromLlm) {
     }
   }
 
-  // 4. Regex for ISO format YYYY-MM-DD
-  const isoMatch = lowerText.match(/\b(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})\b/);
-  if (isoMatch) {
-    const year = parseInt(isoMatch[1], 10);
-    const month = parseInt(isoMatch[2], 10) - 1;
-    const day = parseInt(isoMatch[3], 10);
-    const d = new Date(year, month, day);
-    if (!isNaN(d.getTime())) {
-      return formatResolvedDate(d);
-    }
-  }
-
-  // 5. Regex for DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  // 4. Regex for DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
   const dmyMatch = lowerText.match(
     /\b(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\b/,
   );
@@ -289,23 +276,8 @@ function resolveVisitDate(text, dateFromLlm) {
     }
   }
 
-  const monthNames = [
-    'jan',
-    'feb',
-    'mar',
-    'apr',
-    'may',
-    'jun',
-    'jul',
-    'aug',
-    'sep',
-    'oct',
-    'nov',
-    'dec',
-  ];
-
-  // 6. Regex for Day Month: "10th September", "9th Sep", "9 September", "5th September 2026"
-  const dayMonthMatch =
+  // 5. Regex for "10th September", "9th Sep", "9 September", etc.
+  const naturalMatch =
     lowerText.match(
       /\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(\d{2,4}))?\b/i,
     ) ||
@@ -313,39 +285,27 @@ function resolveVisitDate(text, dateFromLlm) {
       /\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(\d{2,4}))?\b/i,
     );
 
-  if (dayMonthMatch) {
-    const day = parseInt(dayMonthMatch[1], 10);
+  if (naturalMatch) {
+    const day = parseInt(naturalMatch[1], 10);
+    const monthNames = [
+      'jan',
+      'feb',
+      'mar',
+      'apr',
+      'may',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'oct',
+      'nov',
+      'dec',
+    ];
     const month = monthNames.findIndex((m) =>
-      dayMonthMatch[2].toLowerCase().startsWith(m),
+      naturalMatch[2].toLowerCase().startsWith(m),
     );
-    let year = dayMonthMatch[3]
-      ? parseInt(dayMonthMatch[3], 10)
-      : now.getFullYear();
-    if (year < 100) year += 2000;
-    if (month >= 0) {
-      const d = new Date(year, month, day);
-      if (!isNaN(d.getTime())) {
-        return formatResolvedDate(d);
-      }
-    }
-  }
-
-  // 7. Regex for Month Day: "September 5th", "Sep 5", "September 5, 2026"
-  const monthDayMatch =
-    lowerText.match(
-      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i,
-    ) ||
-    lowerLlm.match(
-      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i,
-    );
-
-  if (monthDayMatch) {
-    const month = monthNames.findIndex((m) =>
-      monthDayMatch[1].toLowerCase().startsWith(m),
-    );
-    const day = parseInt(monthDayMatch[2], 10);
-    let year = monthDayMatch[3]
-      ? parseInt(monthDayMatch[3], 10)
+    let year = naturalMatch[3]
+      ? parseInt(naturalMatch[3], 10)
       : now.getFullYear();
     if (year < 100) year += 2000;
     if (month >= 0) {
@@ -485,42 +445,11 @@ async function saveCompletedVisit(visitState, senderPhone) {
   }
   const finalCustomerName = officialCustomerName || customer_name;
 
-  // Infer outcome from remarks if visit_outcome is not explicitly provided
-  let finalOutcome = visit_outcome ? visit_outcome.toLowerCase() : null;
-  if (!finalOutcome && remarks) {
-    const lowerRem = remarks.toLowerCase();
-    if (
-      /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
-        lowerRem,
-      ) ||
-      /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      finalOutcome = 'negative';
-    } else if (
-      /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
-        lowerRem,
-      ) &&
-      !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      finalOutcome = 'positive';
-    } else if (
-      /\b(?:neutral|routine|okay|ok|normal|general\s+visit|courtesy\s+visit|check-?in|introductory|introduction)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      finalOutcome = 'neutral';
-    }
-  }
-
   // Format metaTags in remarks
   const metaTags = [];
-  if (finalOutcome)
+  if (visit_outcome)
     metaTags.push(
-      `[Outcome: ${finalOutcome.charAt(0).toUpperCase() + finalOutcome.slice(1)}]`,
+      `[Outcome: ${visit_outcome.charAt(0).toUpperCase() + visit_outcome.slice(1)}]`,
     );
   if (city) metaTags.push(`[Location: ${city}]`);
   if (material_requirement)
@@ -529,11 +458,7 @@ async function saveCompletedVisit(visitState, senderPhone) {
   if (product_interests) metaTags.push(`[Interests: ${product_interests}]`);
 
   const fullRemarks =
-    metaTags.length > 0
-      ? remarks
-        ? `${metaTags.join(' ')} ${remarks}`
-        : metaTags.join(' ')
-      : remarks || null;
+    metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
 
   // Insert into customer_visits
   const { error: visitErr } = await supabase.from('customer_visits').insert({
@@ -542,7 +467,6 @@ async function saveCompletedVisit(visitState, senderPhone) {
     customer_address: city,
     person_met: person_met,
     contact_no: contact_no,
-    outcome: finalOutcome,
     remarks: fullRemarks,
     visited_at: visit_date_iso || new Date().toISOString(),
   });
@@ -571,11 +495,11 @@ async function saveCompletedVisit(visitState, senderPhone) {
     city ? `Location: ${city}` : null,
     isNew ? 'NEW PROSPECT' : null,
     person_met ? `Met: ${person_met}` : null,
-    finalOutcome ? `Outcome: ${finalOutcome}` : null,
+    visit_outcome ? `Outcome: ${visit_outcome}` : null,
     product_interests ? `Interests: ${product_interests}` : null,
     material_requirement ? `Requirement: ${material_requirement}` : null,
     follow_up_action ? `Follow-up: ${follow_up_action}` : null,
-    remarks ? `Notes: ${remarks}` : null,
+    `Notes: ${remarks}`,
   ]
     .filter(Boolean)
     .join(' | ');
@@ -647,7 +571,7 @@ async function saveCompletedVisit(visitState, senderPhone) {
 
   // Schedule follow-up task if positive outcome and interest
   const interestProducts = product_interests || material_requirement;
-  if (finalOutcome === 'positive' && interestProducts) {
+  if (visit_outcome === 'positive' && interestProducts) {
     try {
       const { extractFollowupDays } = require('../kra3');
       const promisedDays = extractFollowupDays(
@@ -696,7 +620,7 @@ async function saveCompletedVisit(visitState, senderPhone) {
     customerName: finalCustomerName,
     personMet: person_met,
     remarks,
-    visitOutcome: finalOutcome,
+    visitOutcome: visit_outcome,
     materialRequirement: material_requirement,
     followUpAction: follow_up_action,
     productInterests: product_interests,
@@ -716,8 +640,8 @@ async function saveCompletedVisit(visitState, senderPhone) {
   if (city) reply += `- Location: ${city}\n`;
   if (person_met) reply += `- Person Met: ${person_met}\n`;
   if (contact_no) reply += `- Contact Phone: ${contact_no}\n`;
-  if (finalOutcome)
-    reply += `- Outcome: ${finalOutcome.charAt(0).toUpperCase() + finalOutcome.slice(1)}\n`;
+  if (visit_outcome)
+    reply += `- Outcome: ${visit_outcome.charAt(0).toUpperCase() + visit_outcome.slice(1)}\n`;
   if (remarks) reply += `- Discussion Notes: ${remarks}\n`;
   if (product_interests) reply += `- Product Interests: ${product_interests}\n`;
   if (material_requirement) reply += `- Requirement: ${material_requirement}\n`;
@@ -781,29 +705,13 @@ async function handlePendingVisitContinuation(text, senderPhone, storedState) {
   }
 
   if (!extracted.visit_outcome) {
-    if (
-      /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
-        text,
-      ) ||
-      /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
-        text,
-      )
-    ) {
-      extracted.visit_outcome = 'negative';
-    } else if (
-      /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
-        text,
-      ) &&
-      !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
-        text,
-      )
-    ) {
+    if (/\b(positive|good|great|successful|favorable)\b/i.test(text)) {
       extracted.visit_outcome = 'positive';
     } else if (
-      /\b(?:neutral|routine|okay|ok|normal|general\s+visit|courtesy\s+visit|check-?in|introductory|introduction)\b/i.test(
-        text,
-      )
+      /\b(negative|bad|rejected|unsuccessful|not interested)\b/i.test(text)
     ) {
+      extracted.visit_outcome = 'negative';
+    } else if (/\b(neutral|routine|normal|okay|check[- ]in)\b/i.test(text)) {
       extracted.visit_outcome = 'neutral';
     }
   }
@@ -937,7 +845,7 @@ async function handleVisitCorrection(text, senderPhone) {
     let query = supabase
       .from('customer_visits')
       .select(
-        'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone, outcome',
+        'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone',
       )
       .order('visited_at', { ascending: false })
       .limit(15);
@@ -1008,18 +916,13 @@ async function handleVisitCorrection(text, senderPhone) {
 
     // 3. If old_value mentioned, filter by old_value
     if (!targetVisit && oldValue) {
-      const oldLower = oldValue.toLowerCase().trim();
       const matchedByOld = candidateVisits.filter((v) => {
         const pMet = (v.person_met || '').toLowerCase();
         const rem = (v.remarks || '').toLowerCase();
-        const vOut = (v.outcome || '').toLowerCase();
-        const outTagMatch = rem.match(/\[Outcome:\s*([^\]]+)\]/i);
-        const outTag = outTagMatch ? outTagMatch[1].toLowerCase().trim() : '';
+        const oldLower = oldValue.toLowerCase();
         return (
           pMet.includes(oldLower) ||
           rem.includes(oldLower) ||
-          vOut === oldLower ||
-          outTag === oldLower ||
           rem.includes(`[outcome: ${oldLower}]`)
         );
       });
@@ -1055,17 +958,11 @@ async function handleVisitCorrection(text, senderPhone) {
           'Dec',
         ];
         const dateStr = `${day} ${monthNames[vDate.getMonth()]} ${vDate.getFullYear()}`;
-        const outTagMatch = (v.remarks || '').match(/\[Outcome:\s*([^\]]+)\]/i);
-        const recordedOutcome =
-          v.outcome || (outTagMatch ? outTagMatch[1] : null) || 'Not recorded';
-        const formattedOutcome =
-          recordedOutcome.charAt(0).toUpperCase() + recordedOutcome.slice(1);
         return {
           index: idx + 1,
           id: v.id,
           customer_name: v.customer_name,
           date: dateStr,
-          outcome: formattedOutcome,
           person_met: v.person_met || 'Not recorded',
           remarks: v.remarks ? v.remarks.slice(0, 60) : 'No remarks',
         };
@@ -1074,7 +971,7 @@ async function handleVisitCorrection(text, senderPhone) {
       const choicesText = candidateSummaries
         .map(
           (c) =>
-            `${c.index}. ${c.customer_name} (${c.date}) - Outcome: ${c.outcome} - Contact: ${c.person_met}`,
+            `${c.index}. ${c.customer_name} (${c.date}) - Person Met: ${c.person_met}`,
         )
         .join('\n');
 
@@ -1145,7 +1042,6 @@ async function applyVisitFieldUpdate(
     const normOut =
       newValue.charAt(0).toUpperCase() + newValue.slice(1).toLowerCase();
     newValue = normOut;
-    updatePayload.outcome = normOut.toLowerCase();
     // Update outcome tag in remarks
     let updatedRemarks = targetVisit.remarks || '';
     if (/\[Outcome:\s*[^\]]+\]/i.test(updatedRemarks)) {
@@ -1299,230 +1195,6 @@ async function handleVisitUpdateSelection(text, senderPhone, sessionPayload) {
 }
 
 /**
- * Defense-in-depth Sanitizer: Strictly eliminates any unmentioned or hallucinated fields.
- */
-function sanitizeExtractedVisitData(data, rawText) {
-  const text = (rawText || '').toLowerCase();
-  const res = { ...data };
-
-  // 1. Follow-up action: if no explicit follow-up phrases in raw text, force null
-  if (res.follow_up_action) {
-    const hasFollowUpKeyword =
-      /\b(?:follow\s*up|next\s*step|send|share|dispatch|mail|email|sample|samples|quote|quotation|proposal|call\s+back|meet\s+again|discuss\s+again)\b/i.test(
-        text,
-      );
-    const isGenericHallucination =
-      /collect required quantity|follow up for upcoming material|routine follow-up|follow up with customer/i.test(
-        res.follow_up_action,
-      );
-    if (!hasFollowUpKeyword || isGenericHallucination) {
-      res.follow_up_action = null;
-    }
-  }
-
-  // 2. Visit outcome: if not explicitly stated, force null
-  if (res.visit_outcome) {
-    const norm = res.visit_outcome.toLowerCase().trim();
-    if (!['positive', 'neutral', 'negative'].includes(norm)) {
-      res.visit_outcome = null;
-    } else {
-      const hasNegativeIndicator =
-        /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
-          text,
-        ) ||
-        /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
-          text,
-        );
-      const hasPositiveIndicator =
-        /\b(?:positive|good|great|successful|well|went well|deal|closed|interested|interest|favorable|ordered|order)\b/i.test(
-          text,
-        ) && !hasNegativeIndicator;
-      const hasNeutralIndicator =
-        /\b(?:neutral|routine|check\s*in|okay|ok|normal|average|no immediate)\b/i.test(
-          text,
-        );
-
-      if (norm === 'positive' && !hasPositiveIndicator) {
-        res.visit_outcome = null;
-      } else if (norm === 'negative' && !hasNegativeIndicator) {
-        res.visit_outcome = null;
-      } else if (norm === 'neutral' && !hasNeutralIndicator) {
-        res.visit_outcome = null;
-      }
-    }
-  }
-
-  // 3. Remarks: check for generic filler hallucinations
-  if (res.remarks) {
-    const isFiller =
-      /^(?:site visit conducted|visited|meeting conducted|on-site meeting|routine visit|field visit|visit conducted|market presence)\b/i.test(
-        res.remarks.trim(),
-      );
-    if (isFiller && text.trim().length <= 40) {
-      res.remarks = null;
-    }
-  }
-
-  // 4. Contact number: ensure it matches an actual phone number in raw text
-  if (res.contact_no) {
-    const digits = res.contact_no.replace(/\D/g, '');
-    if (!text.replace(/\D/g, '').includes(digits) || digits.length < 10) {
-      res.contact_no = null;
-    }
-  }
-
-  // 5. Person met: ensure not identical to customer company name
-  if (
-    res.person_met &&
-    res.customer_name &&
-    res.person_met.toLowerCase() === res.customer_name.toLowerCase()
-  ) {
-    res.person_met = null;
-  }
-
-  return res;
-}
-
-/**
- * Deterministic Regex-based Extraction Fallback (when LLM is unreachable)
- */
-function extractVisitDeterministic(text) {
-  const lower = (text || '').toLowerCase();
-  const raw = text || '';
-
-  // Customer Name
-  let customerName = null;
-  const custMatch =
-    raw.match(
-      /(?:visited|field visit to|meeting at|met with|visit with|met)\s+([A-Za-z0-9&.,\s'-]+?)(?:\s+(?:in|at|today|yesterday|spoke|met|discussed|outcome|neutral|positive|negative|contact|,|\.|$))/i,
-    ) ||
-    raw.match(
-      /(?:visited|field visit to|meeting at|met with|visit with|met)\s+([A-Za-z0-9&.,\s'-]+)/i,
-    );
-  if (custMatch) {
-    customerName = custMatch[1]
-      .replace(
-        /\b(?:today|yesterday|spoke|met|discussed|outcome|in|at)\b.*$/i,
-        '',
-      )
-      .trim();
-  }
-
-  // City / Location
-  let city = null;
-  const cityMatch = raw.match(
-    /\b(?:in|at)\s+(Kolhapur|Mumbai|Pune|Nashik|Bhiwandi|Taloja|Navi Mumbai|Nagpur|Thane|Aurangabad|Surat|Ahmedabad|Delhi|Rajkot|Indore|Goa|Chennai|Bengaluru|Hyderabad|Jaipur|Vadodara)\b/i,
-  );
-  if (cityMatch) {
-    city = cityMatch[1].trim();
-  }
-
-  // Person Met
-  let personMet = null;
-  const personMatch =
-    raw.match(
-      /(?:spoke with|met their purchase manager|met purchase manager|met|contact person is|spoke to)\s+((?:Mr\.|Ms\.|Mrs\.|Dr\.)?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
-    ) ||
-    raw.match(
-      /(?:spoke with|met)\s+([A-Za-z\s]+?)(?:\s*(?:\.|\,|-|\(|contact|phone|number|outcome))/i,
-    );
-  if (personMatch) {
-    personMet = personMatch[1].trim();
-  }
-
-  // Phone
-  let contactNo = null;
-  const phoneMatch = raw.match(/(?:\+91[\-\s]?)?([6-9]\d{9})\b/);
-  if (phoneMatch) {
-    contactNo = phoneMatch[1];
-  }
-
-  // Outcome
-  let visitOutcome = null;
-  if (
-    /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
-      lower,
-    ) ||
-    /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
-      lower,
-    )
-  ) {
-    visitOutcome = 'negative';
-  } else if (
-    /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
-      lower,
-    ) &&
-    !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
-      lower,
-    )
-  ) {
-    visitOutcome = 'positive';
-  } else if (
-    /\b(?:neutral|routine|okay|ok|normal|general\s+visit|courtesy\s+visit|check-?in|introductory|introduction)\b/i.test(
-      lower,
-    )
-  ) {
-    visitOutcome = 'neutral';
-  }
-
-  // Follow-up
-  let followUpAction = null;
-  const followUpMatch = raw.match(
-    /(?:follow-up needed to|follow up needed to|next step is to|next step:|follow-up:|follow up:)\s*([^.,]+)/i,
-  );
-  if (followUpMatch) {
-    followUpAction = followUpMatch[1].trim();
-  }
-
-  // Material Requirement / Product Interests
-  let materialRequirement = null;
-  let productInterests = null;
-  const reqMatch = raw.match(
-    /(?:discussed|requirement for|needs|requires|order for)\s+([^.,]+?(?:order|requirement|coils?|plates?|sheets?|bars?|ton|mt|kg|tonnes?))/i,
-  );
-  if (reqMatch) {
-    materialRequirement = reqMatch[1].trim();
-  }
-  const prodMatch = raw.match(
-    /\b(HR Coils?|CR Sheets?|MS Plates?|GI Sheets?|TMT Bars?|Structural Steel|Plates?|Sheets?|Coils?)\b/i,
-  );
-  if (prodMatch) {
-    productInterests = prodMatch[0].trim();
-  }
-
-  // Remarks
-  let remarks = null;
-  if (
-    lower.includes('discussed') ||
-    lower.includes('requirement') ||
-    lower.includes('response')
-  ) {
-    const remMatch = raw.match(
-      /(?:discussed|neutral response|positive discussion|response,)\s*([^.,]+)/i,
-    );
-    if (remMatch) {
-      remarks = remMatch[0].trim();
-    }
-  }
-
-  return {
-    customer_name: customerName,
-    is_new_prospect: false,
-    person_met: personMet,
-    contact_no: contactNo,
-    city: city,
-    visit_date: 'today',
-    product_interests: productInterests,
-    remarks: remarks,
-    visit_outcome: visitOutcome,
-    material_requirement: materialRequirement,
-    follow_up_action: followUpAction,
-    followup_days: null,
-    confidence: 0.8,
-  };
-}
-
-/**
  * Main entry point for processing salesperson visit reports
  */
 async function processVisitMessage(text, senderPhone) {
@@ -1595,46 +1267,29 @@ async function processVisitMessage(text, senderPhone) {
       return await handleVisitCorrection(text, senderPhone);
     }
 
-    // 2. Extract visit data using LLM with deterministic fallback
-    let data = null;
-    try {
-      const { invokeWithFallback } = require('../core/modelRouter');
-      const {
-        HumanMessage,
-        SystemMessage,
-      } = require('@langchain/core/messages');
-      const response = await invokeWithFallback([
-        new SystemMessage(VISIT_AGENT_PROMPT),
-        new HumanMessage('Salesperson message:\n' + text),
-      ]);
-      const rawText = (
-        typeof response.content === 'string'
-          ? response.content
-          : JSON.stringify(response.content)
-      ).trim();
-      const cleaned = rawText
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-      const { safeParseJSON } = require('../utils/jsonUtils');
-      data = safeParseJSON(cleaned, null);
-    } catch (llmErr) {
-      console.warn(
-        '[VisitAgent] LLM extraction failed, using deterministic fallback:',
-        llmErr.message,
-      );
-    }
-
-    if (!data || !data.customer_name) {
-      const fallbackData = extractVisitDeterministic(text);
-      if (fallbackData && fallbackData.customer_name) {
-        data = { ...(data || {}), ...fallbackData };
-      }
-    }
+    // 2. Extract visit data using LLM
+    const { invokeWithFallback } = require('../core/modelRouter');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+    const response = await invokeWithFallback([
+      new SystemMessage(VISIT_AGENT_PROMPT),
+      new HumanMessage('Salesperson message:\n' + text),
+    ]);
+    const rawText = (
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content)
+    ).trim();
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const { safeParseJSON } = require('../utils/jsonUtils');
+    const data = safeParseJSON(cleaned, null);
+    if (!data) throw new Error('Could not parse visit JSON from LLM response');
 
     // 3. Customer name validation
-    if (!data || !data.customer_name) {
+    if (!data.customer_name) {
       return `Customer Visit - Customer Name Missing\n\nPlease specify the Customer or Company you visited.\nExample: Visited Mehta Engineering in Pune, met Mr. Sharma (9876543210), outcome positive, discussed CR Sheets.`;
     }
 
@@ -1719,11 +1374,22 @@ async function processVisitMessage(text, senderPhone) {
       followup_days: data.followup_days || null,
     };
 
-    // 8. Sanitize extracted fields against raw user text
-    const sanitizedState = sanitizeExtractedVisitData(currentVisitState, text);
+    // 8. Validate required fields
+    const missingFields = getMissingRequiredFields(currentVisitState);
 
-    // 9. Save completed visit directly!
-    return await saveCompletedVisit(sanitizedState, senderPhone);
+    if (missingFields.length > 0) {
+      // Save pending multi-turn session
+      await saveActiveSession(
+        senderPhone,
+        currentVisitState.customer_name,
+        `pending_visit_details|${currentVisitState.customer_name}|${JSON.stringify(currentVisitState)}`,
+      );
+
+      return buildMissingFieldsPrompt(currentVisitState, missingFields);
+    }
+
+    // 9. All required fields are present -> Save completed visit!
+    return await saveCompletedVisit(currentVisitState, senderPhone);
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
     return `Could not process site visit update: ${error.message}`;
@@ -1736,6 +1402,4 @@ module.exports = {
   handlePendingVisitContinuation,
   handleVisitUpdateSelection,
   resolveVisitDate,
-  sanitizeExtractedVisitData,
-  extractVisitDeterministic,
 };

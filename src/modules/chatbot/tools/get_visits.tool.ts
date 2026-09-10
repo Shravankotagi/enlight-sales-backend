@@ -70,7 +70,7 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
 }
 
 export function parseVisitRemarks(remarks?: string | null): {
-  outcome: 'positive' | 'neutral' | 'negative' | null;
+  outcome: 'positive' | 'neutral' | 'negative';
   follow_up_action: string | null;
   requires_follow_up: boolean;
   material_requirement: string | null;
@@ -80,7 +80,7 @@ export function parseVisitRemarks(remarks?: string | null): {
 } {
   if (!remarks) {
     return {
-      outcome: null,
+      outcome: 'neutral',
       follow_up_action: null,
       requires_follow_up: false,
       material_requirement: null,
@@ -91,7 +91,7 @@ export function parseVisitRemarks(remarks?: string | null): {
   }
 
   // 1. Parse Outcome tag [Outcome: Positive | Neutral | Negative]
-  let outcome: 'positive' | 'neutral' | 'negative' | null = null;
+  let outcome: 'positive' | 'neutral' | 'negative' = 'neutral';
   const outcomeMatch = remarks.match(/\[Outcome:\s*([^\]]+)\]/i);
   if (outcomeMatch) {
     const rawOut = outcomeMatch[1].toLowerCase().trim();
@@ -103,39 +103,11 @@ export function parseVisitRemarks(remarks?: string | null): {
       outcome = rawOut;
     }
   }
-  if (!outcome) {
-    const lowerRem = remarks.toLowerCase();
-    if (
-      /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
-        lowerRem,
-      ) ||
-      /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      outcome = 'negative';
-    } else if (
-      /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
-        lowerRem,
-      ) &&
-      !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      outcome = 'positive';
-    } else if (
-      /\b(?:neutral|routine|okay|ok|normal|general\s+visit|courtesy\s+visit|check-?in|introductory|introduction)\b/i.test(
-        lowerRem,
-      )
-    ) {
-      outcome = 'neutral';
-    }
-  }
 
-  // 2. Parse Follow-up Action tag [FollowUp: ...] or [Follow-up: ...]
+  // 2. Parse Follow-up Action tag [FollowUp: ...]
   let follow_up_action: string | null = null;
   let requires_follow_up = false;
-  const followUpMatch = remarks.match(/\[Follow-?Up:\s*([^\]]+)\]/i);
+  const followUpMatch = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
   if (followUpMatch) {
     const text = followUpMatch[1].trim();
     if (
@@ -149,11 +121,9 @@ export function parseVisitRemarks(remarks?: string | null): {
     }
   }
 
-  // 3. Parse Material Requirement tag [Requirement: ...] or [Material Requirements: ...]
+  // 3. Parse Material Requirement tag [Requirement: ...]
   let material_requirement: string | null = null;
-  const reqMatch = remarks.match(
-    /\[(?:Material )?Requirements?:\s*([^\]]+)\]/i,
-  );
+  const reqMatch = remarks.match(/\[Requirement:\s*([^\]]+)\]/i);
   if (reqMatch) {
     material_requirement = reqMatch[1].trim();
   }
@@ -175,7 +145,7 @@ export function parseVisitRemarks(remarks?: string | null): {
   // 6. Clean Remarks by removing metadata bracket tags
   const clean_remarks = remarks
     .replace(
-      /\[(?:Outcome|Location|Follow-?Up|(?:Material )?Requirements?|Interests):[^\]]*\]\s*/gi,
+      /\[(?:Outcome|Location|FollowUp|Requirement|Interests):[^\]]*\]\s*/gi,
       '',
     )
     .trim();
@@ -395,17 +365,18 @@ export const getVisitsTool: ChatbotTool = {
       }
 
       const parsed = parseVisitRemarks(v.remarks);
-      const rawOut =
+      const out =
         v.outcome &&
         ['positive', 'neutral', 'negative'].includes(
           v.outcome.toLowerCase().trim(),
         )
           ? v.outcome.toLowerCase().trim()
           : parsed.outcome;
-      const out = rawOut || null;
 
-      if (out && outcomeCounts[out] !== undefined) {
+      if (outcomeCounts[out] !== undefined) {
         outcomeCounts[out]++;
+      } else {
+        outcomeCounts[out] = 1;
       }
 
       const followUpAction =
@@ -481,8 +452,8 @@ export const getVisitsTool: ChatbotTool = {
       }
       st.total_visits++;
       if (v.outcome === 'positive') st.positive_visits++;
-      else if (v.outcome === 'neutral') st.neutral_visits++;
       else if (v.outcome === 'negative') st.negative_visits++;
+      else st.neutral_visits++;
 
       if (v.requires_follow_up) st.requires_follow_up_count++;
       if (v.customer_name) st.visited_customers.add(v.customer_name);
@@ -658,7 +629,9 @@ export const getVisitsTool: ChatbotTool = {
     let filteredList = formattedList;
 
     if (rawOutcome && rawOutcome !== 'all') {
-      filteredList = filteredList.filter((v: any) => v.outcome === rawOutcome);
+      filteredList = filteredList.filter((v: any) =>
+        v.outcome.toLowerCase().includes(rawOutcome),
+      );
     }
 
     if (requiresFollowUp) {
@@ -785,18 +758,6 @@ export const getVisitsTool: ChatbotTool = {
       by_outcome: outcomeCounts,
       top_visited_customers: topCustomers,
       top_salesperson: topRep,
-      multiple_visits_for_customer: Boolean(
-        searchCustomer && filteredList.length > 1,
-      ),
-      customer_visits_breakdown:
-        searchCustomer && filteredList.length > 1
-          ? filteredList
-              .map(
-                (v, i) =>
-                  `${i + 1}. Date: ${v.visited_at ? new Date(v.visited_at).toLocaleDateString('en-IN') : 'N/A'}, Outcome: ${v.outcome || 'Not recorded'}, Contact: ${v.person_met || 'Not recorded'}`,
-              )
-              .join(' | ')
-          : undefined,
       note: filterNote || undefined,
     };
 
