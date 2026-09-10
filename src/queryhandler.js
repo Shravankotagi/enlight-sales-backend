@@ -1828,7 +1828,7 @@ async function getVisitList(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📍 No visits logged for ${label}. You currently have no salespersons assigned to your team.`;
+      return `No visits logged for ${label}. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1842,16 +1842,16 @@ async function getVisitList(scopeOrPhone, text = '') {
     const { data: visits } = await query;
 
     if (!visits || visits.length === 0) {
-      return `📍 No visits logged for ${label}.`;
+      return `No visits logged for ${label}.`;
     }
 
     const lines = visits.map(
       (v, i) =>
-        `${i + 1}. *${v.customer_name || 'Customer'}*\n` +
-        `   📅 ${new Date(v.visited_at).toLocaleDateString('en-IN')}\n` +
-        (v.person_met ? `   👤 Contact: ${v.person_met}\n` : '') +
-        (v.customer_address ? `   📍 Location: ${v.customer_address}\n` : '') +
-        `   📝 Remarks: ${v.remarks || 'Visit completed'}`,
+        `${i + 1}. ${v.customer_name || 'Customer'}\n` +
+        `   Date: ${new Date(v.visited_at).toLocaleDateString('en-IN')}\n` +
+        (v.person_met ? `   Contact: ${v.person_met}\n` : '') +
+        (v.customer_address ? `   Location: ${v.customer_address}\n` : '') +
+        `   Remarks: ${v.remarks || 'Visit completed'}`,
     );
 
     const title = scope.targetRepName
@@ -1863,12 +1863,11 @@ async function getVisitList(scopeOrPhone, text = '') {
           : 'Customer Visits';
 
     return (
-      `📍 *${title} - ${label}* (${visits.length} visits)\n\n` +
-      lines.join('\n\n')
+      `${title} - ${label} (${visits.length} visits)\n\n` + lines.join('\n\n')
     );
   } catch (err) {
     console.error('getVisitList error:', err.message);
-    return '❌ Could not fetch visit list.';
+    return 'Could not fetch visit list.';
   }
 }
 
@@ -1883,7 +1882,7 @@ async function getVisitSummary(scopeOrPhone, text = '') {
         : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
 
     if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
-      return `📊 *Customer Visits Card (Team) - ${label}*\n\nNo visits logged. You currently have no salespersons assigned to your team.`;
+      return `Customer Visits (Team) - ${label}\n\nNo visits logged. You currently have no salespersons assigned to your team.`;
     }
 
     let query = supabase
@@ -1897,14 +1896,14 @@ async function getVisitSummary(scopeOrPhone, text = '') {
     const { data: visits } = await query;
 
     if (!visits || visits.length === 0) {
-      return `📊 *Customer Visits Card - ${label}*\n\nNo visits logged in this period.\n\nLog a visit:\n"visited ABC Fabricators today, met Rahul, discussed pricing"`;
+      return `Customer Visits - ${label}\n\nNo visits logged in this period.`;
     }
 
     const visitList = visits
       .slice(0, 15)
       .map(
         (v, i) =>
-          `${i + 1}. *${v.customer_name || 'Unknown'}* - ${new Date(v.visited_at).toLocaleDateString('en-IN')}${v.customer_address ? ` (${v.customer_address})` : ''}`,
+          `${i + 1}. ${v.customer_name || 'Unknown'} - ${new Date(v.visited_at).toLocaleDateString('en-IN')}${v.customer_address ? ` (${v.customer_address})` : ''}`,
       )
       .join('\n');
 
@@ -1914,17 +1913,16 @@ async function getVisitSummary(scopeOrPhone, text = '') {
         ? 'Company Customer Visits'
         : scope.isManager
           ? 'Team Customer Visits'
-          : 'Customer Visits Card';
+          : 'Customer Visits';
 
     return (
-      `📊 *${title} - ${label}*\n\n` +
-      `Total visits: *${visits.length}*\n\n` +
-      `Recent visits:\n${visitList}\n\n` +
-      `_Target: 10 visits/week, 3 field days/week_`
+      `${title} - ${label}\n\n` +
+      `Total visits: ${visits.length}\n\n` +
+      `Recent visits:\n${visitList}`
     );
   } catch (error) {
     console.error('getVisitSummary error:', error);
-    return '❌ Could not fetch visit summary.';
+    return 'Could not fetch visit summary.';
   }
 }
 
@@ -1957,7 +1955,7 @@ function classifyFollowUp(visit) {
   const remarks = visit.remarks || '';
 
   if (!rawFollowUp && remarks) {
-    const match = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
+    const match = remarks.match(/\[Follow-?Up:\s*([^\]]+)\]/i);
     if (match) {
       rawFollowUp = match[1].trim();
     } else {
@@ -2068,8 +2066,7 @@ async function getVisitsPendingFollowup(scopeOrPhone, text = '') {
     if (totalPending === 0) {
       return (
         `Customer Visits Pending Follow-up\n\n` +
-        `No visits currently have pending follow-up actions. All visit follow-ups are up to date!\n\n` +
-        `Tracked under Customer Visits Card`
+        `No visits currently have pending follow-up actions. All visit follow-ups are up to date!`
       );
     }
 
@@ -2097,8 +2094,7 @@ async function getVisitsPendingFollowup(scopeOrPhone, text = '') {
     return (
       `Customer Visits Pending Follow-up\n\n` +
       sections.join('\n\n') +
-      `\n\nTotal Pending Follow-up Visits: ${totalPending}\n\n` +
-      `Tracked under Customer Visits Card`
+      `\n\nTotal Pending Follow-up Visits: ${totalPending}`
     );
   } catch (err) {
     console.error('getVisitsPendingFollowup error:', err.message);
@@ -2202,16 +2198,20 @@ async function getVisitCountComparison(scopeOrPhone, text = '') {
     }
 
     const getOutcomeBreakdown = (visitsList) => {
-      const counts = { positive: 0, neutral: 0, negative: 0 };
+      const counts = { positive: 0, neutral: 0, negative: 0, unspecified: 0 };
       (visitsList || []).forEach((v) => {
         const rem = v.remarks || '';
         const match = rem.match(/\[Outcome:\s*([^\]]+)\]/i);
-        let out =
-          v.outcome || (match ? match[1].toLowerCase().trim() : 'neutral');
-        out = out.toLowerCase().trim();
-        if (out.includes('pos')) counts.positive++;
-        else if (out.includes('neg')) counts.negative++;
-        else counts.neutral++;
+        let out = v.outcome || (match ? match[1].toLowerCase().trim() : null);
+        if (out) {
+          out = out.toLowerCase().trim();
+          if (out === 'positive') counts.positive++;
+          else if (out === 'neutral') counts.neutral++;
+          else if (out === 'negative') counts.negative++;
+          else counts.unspecified++;
+        } else {
+          counts.unspecified++;
+        }
       });
       return counts;
     };
@@ -2245,8 +2245,7 @@ async function getVisitCountComparison(scopeOrPhone, text = '') {
       `- Negative: ${thisOutcomes.negative}\n\n` +
       `Comparison:\n` +
       `- Net Change: ${netChangeStr}\n` +
-      `- Positive Outcome Trend: ${posTrendStr}\n\n` +
-      `Tracked under Customer Visits Card`
+      `- Positive Outcome Trend: ${posTrendStr}`
     );
   } catch (err) {
     console.error('getVisitCountComparison error:', err.message);
