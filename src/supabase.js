@@ -455,8 +455,6 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
   }
 }
 
-/**
- * Uses Google Gemini to fuzzy match a customer name from a list of customer names.
 const DISTINCTIVE_INDUSTRY_WORDS = [
   'steel',
   'steels',
