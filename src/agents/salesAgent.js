@@ -27,7 +27,69 @@ const {
 } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 const { logBotActivity } = require('../utils/activityLogger');
-const { detectHsnCode } = require('../utils/hsnDetector');
+const {
+  detectHsnCode,
+  normalizeProductToCatalog,
+  isValidCatalogProduct,
+  getUnknownProductClarificationMessage,
+  MASTER_PRODUCTS_CATALOG,
+} = require('../utils/hsnDetector');
+
+function extractDealIdFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const clean = text.replace(/[*_~`]/g, '').trim();
+
+  // 1. Explicit ID indicators e.g. "for id INQ-FB873E", "inquiry id INQ-B76516", "inquiry with id B76516", "deal id: #INQ-B76516", "id: FB873E", "id FB873E"
+  const structuredMatch = clean.match(
+    /(?:(?:for\s+)?(?:inquiry|inq|deal|order|record|file)\s*(?:with\s+)?(?:id|no|num|number)?\s*[:=-]?\s*|(?:for\s+)?(?:id|ref)\s*[:=-]?\s*)#?((?:(?:DEAL|INQ)[-_:#\s]*)?[A-Fa-f0-9_-]{4,36})\b/i,
+  );
+  if (structuredMatch) {
+    const code = structuredMatch[1]
+      .replace(/^(?:DEAL|INQ)[-_:#\s]*/i, '')
+      .replace(/^#+/, '')
+      .trim();
+    if (
+      code &&
+      code.length >= 3 &&
+      !/^(?:uiry|uire|status|update|stage|rate|details?|notes?|with|from|for)$/i.test(
+        code,
+      )
+    ) {
+      return code.toUpperCase();
+    }
+  }
+
+  // 2. Direct prefixed pattern: #INQ-XXXXXX, INQ-XXXXXX, DEAL-XXXXXX, #DEAL-XXXXXX (requires at least one separator: -, _, :, #)
+  const prefixMatch = clean.match(
+    /(?:^|[\s#(,])(?:DEAL|INQ)[-_:#]+([A-Za-z0-9_-]{4,36})\b/i,
+  );
+  if (prefixMatch) {
+    const code = prefixMatch[1].replace(/^#+/, '').trim();
+    if (
+      code &&
+      code.length >= 3 &&
+      !/^(?:uiry|uire|status|update|stage|rate|details?|notes?)$/i.test(code)
+    ) {
+      return code.toUpperCase();
+    }
+  }
+
+  // 3. Raw standard UUID
+  const uuidMatch = clean.match(
+    /\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b/,
+  );
+  if (uuidMatch) {
+    return uuidMatch[1].toUpperCase();
+  }
+
+  // 4. Hex code with hash e.g. #B76516 or #C538B6 or #FB873E
+  const hashHexMatch = clean.match(/#([A-Fa-f0-9]{4,8})\b/i);
+  if (hashHexMatch) {
+    return hashHexMatch[1].toUpperCase();
+  }
+
+  return null;
+}
 
 const SALES_AGENT_PROMPT = `
 You are the Specialized Sales Achievement & Pipeline Agent for Enlight Metals (B2B Steel Distributor).
@@ -38,10 +100,10 @@ Input message can be English, Hindi, or Hinglish.
 Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 {
   "action": "inquiry|stage_update|purchase_order|deal_update", // Use "stage_update" whenever moving stage, updating status, or marking as won/lost/negotiation/quoted/on_hold. Use "inquiry" for ALL new customer requirements, notes, RFQs, quotes. Use "purchase_order" ONLY if text explicitly contains "PO", "PO-...", "Purchase order", "Order confirmed", "Order placed", or "Won".
-  "deal_id": "<inquiry ID if mentioned e.g. #INQ-C538B6, INQ-C538B6, #DEAL-C538B6, or C538B6, else null>",
+  "deal_id": "<exact alphanumeric inquiry/deal ID code if mentioned e.g. INQ-B76516, DEAL-B76516, #INQ-B76516, or B76516. Must NEVER be words like 'uiry', 'inquiry', 'deal', or 'null'>",
   "customer_name": "<exact company/customer name requesting material or placing order, else null>",
   "contact_person": "<full name of customer contact person/owner/proprietor if mentioned e.g. Rajesh Mehta, else null>",
-  "target_stage": "new_inquiry|quoted|negotiation|on_hold|won|lost", // Stage if explicitly requested to update e.g. "update to negotiation", "mark as negotiation", "mark as won", "deal lost", "put on hold", else null
+  "target_stage": "new_inquiry|quoted|negotiation|on_hold|won|lost", // Stage if explicitly requested to update e.g. "update to negotiation", "mark as negotiation", "mark as won", "deal lost", "put on hold", "is on hold", else null
   "line_items": [
     {
       "product_requirement": "<specific product name from 9 categories e.g. CR Coil, HR Coil, HRPO Coil, MS Round Bar, MS Square Pipe, MS Angle, MS Beam, MS Channel, MS Plate, Chequered Plate, TMT Bar>",
@@ -63,6 +125,40 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "loss_reason": "<inferred reason if deal was lost, else null>",
   "confidence": <float 0.0 to 1.0>
 }
+
+CRITICAL CONTEXT WINDOW RULE:
+The conversation history is provided ONLY to resolve ambiguous references (e.g. "it", "that deal", "same customer", "update it").
+NEVER extract or infer customer_name, product_requirement, dimensions, quantity, delivery_location, payment_terms, or rate_per_mt from conversation history.
+These fields must ONLY come from the CURRENT message being processed.
+If a field is not explicitly stated in the current message — set it to null.
+History is for identity resolution only — NOT for data extraction.
+
+CRITICAL DIMENSION RULE:
+If a product does not have dimensions specified in its own segment, set dimensions to null.
+
+CRITICAL COMPLETENESS RULE:
+Read the ENTIRE message from start to finish before extracting anything.
+Count how many distinct products are mentioned — extract ALL of them.
+If a message mentions 5 products, line_items array must have 5 entries.
+Never stop at the first product found.
+
+CRITICAL FIELD PURITY RULES:
+- customer_name: ONLY company or person name. Never a city, product, or deal ID.
+- product_requirement: ONLY a steel product name. Never a city, company name, or deal ID.
+- delivery_location: ONLY a delivery address or city. Never a product or company name.
+- Each field must contain ONLY what its label says — nothing else.
+
+STRICT NULL RULES — when in doubt, always use null:
+- If customer name is not explicitly stated → customer_name: null
+- If quantity is not explicitly stated with a valid unit → quantity: 0, quantity_mt: 0
+- If dimensions are not explicitly stated → dimensions: null
+- If delivery location is not explicitly stated → delivery_location: null
+- If payment terms are not explicitly stated → payment_terms: null
+- If rate is not explicitly stated → rate_per_mt: null
+- NEVER infer, guess, or derive a value from context or common knowledge
+- NEVER use a value from a previous message to fill a missing field in the current message
+- A missing field is always better than a wrong field
+- If uncertain between two possible values → null
 
 CRITICAL RULES FOR THE 9 CORE STEEL PRODUCT CATEGORIES:
 1. CR COILS:
@@ -123,6 +219,40 @@ Return ONLY the JSON object.
 `;
 
 const PRODUCT_FAMILIES = {
+  // Flat Steel
+  hr_coil: [
+    'hr coil',
+    'hot rolled coil',
+    'hr strip',
+    'e350 hr',
+    'sailma',
+    'hot rolled slit',
+    'hr slit coil',
+  ],
+  hr_sheet: ['hr sheet', 'hot rolled sheet', 'ms sheet'],
+  hr_plate: [
+    'hr plate',
+    'hot rolled plate',
+    'ms plate',
+    'ms plates',
+    'boiler plate',
+    'bq plate',
+    'hardox',
+    'e350 plate',
+    'plate',
+  ],
+  hrpo_coil: [
+    'hrpo coil',
+    'pickled and oiled coil',
+    'pickled & oiled coil',
+    'hrpo slit',
+  ],
+  hrpo_sheet: [
+    'hrpo sheet',
+    'pickled and oiled sheet',
+    'pickled & oiled sheet',
+    'hrpo',
+  ],
   cr_coil: [
     'cr coil',
     'cold rolled coil',
@@ -132,20 +262,35 @@ const PRODUCT_FAMILIES = {
     'cr2',
     'cr1',
     'edd cr',
-    'cr sheet',
   ],
-  hr_coil: [
-    'hr coil',
-    'hot rolled coil',
-    'hrpo',
-    'hrpo coil',
-    'pickled and oiled',
-    'pickled & oiled',
-    'hr strip',
-    'e350 hr',
-    'sailma',
-    'hr sheet',
+  cr_sheet: ['cr sheet', 'cold rolled sheet', 'crca sheet', 'cr patra'],
+  gp_coil: ['gp coil', 'galvanized plain coil', 'gi coil', 'galvanized coil'],
+  gp_sheet: [
+    'gp sheet',
+    'galvanized plain sheet',
+    'gi sheet',
+    'galvanized sheet',
+    'gp patra',
+    'gi patra',
   ],
+  galvalume_coil: ['galvalume coil', 'gl coil'],
+  galvalume_sheet: [
+    'galvalume sheet',
+    'gl sheet',
+    'galvalume corrugation',
+    'corrugated sheet',
+    'galvalume',
+  ],
+  chequered_coil: ['chequered coil', 'checkered coil', 'tear drop coil'],
+  chequered_sheet: [
+    'chequered sheet',
+    'checkered sheet',
+    'chequered plate',
+    'checkered plate',
+    'tear drop sheet',
+  ],
+
+  // Structural Steel
   ms_round_bar: [
     'round bar',
     'ms round bar',
@@ -157,16 +302,33 @@ const PRODUCT_FAMILIES = {
     'ms rod',
     'bright round',
   ],
-  ms_square_pipe: [
-    'square pipe',
-    'box pipe',
-    'shs',
-    'square tube',
-    'rectangular pipe',
-    'rhs',
-    'gp square pipe',
-    'hollow section',
-    'box tube',
+  ms_flat_bar: [
+    'ms flat bar',
+    'flat bar',
+    'ms flat',
+    'flats',
+    'patti',
+    'ms patti',
+  ],
+  ms_square_bar: [
+    'ms square bar',
+    'square bar',
+    'sq bar',
+    'ms sq bar',
+    'square rod',
+  ],
+  tmt_bar: [
+    'tmt bar',
+    'tmt bars',
+    'tmt rebar',
+    'rebars',
+    'tmt',
+    'fe 500',
+    'fe 500d',
+    'fe 550',
+    'fe 550d',
+    'fe 600',
+    'sariya',
   ],
   ms_angle: [
     'angle',
@@ -176,6 +338,15 @@ const PRODUCT_FAMILIES = {
     'l-angle',
     'isa',
     'patra angle',
+  ],
+  ms_channel: [
+    'channel',
+    'ms channel',
+    'ismc',
+    'c-channel',
+    'u-channel',
+    'gate channel',
+    'shutter channel',
   ],
   ms_beam: [
     'beam',
@@ -191,38 +362,62 @@ const PRODUCT_FAMILIES = {
     'ub',
     'column',
   ],
-  ms_channel: [
-    'channel',
-    'ms channel',
-    'ismc',
-    'c-channel',
-    'u-channel',
-    'gate channel',
-    'shutter channel',
+
+  // Pipes and Tubes
+  ms_round_pipe: [
+    'ms round pipe',
+    'round pipe',
+    'erw pipe',
+    'seamless pipe',
+    'ms pipe',
+    'gi pipe',
+    'round tube',
+    'pipe',
+    'tube',
   ],
-  ms_plate: [
-    'ms plate',
-    'ms plates',
-    'ms sheet',
-    'chequered plate',
-    'checkered plate',
-    'boiler plate',
-    'bq plate',
-    'hardox',
-    'e350 plate',
+  ms_square_pipe: [
+    'ms square pipe',
+    'square pipe',
+    'box pipe',
+    'shs',
+    'square tube',
+    'gp square pipe',
   ],
-  tmt_bar: [
-    'tmt bar',
-    'tmt bars',
-    'tmt rebar',
-    'rebars',
-    'tmt',
-    'fe 500',
-    'fe 500d',
-    'fe 550',
-    'fe 550d',
-    'fe 600',
-    'sariya',
+  ms_rectangular_tube: [
+    'ms rectangular tube',
+    'rectangular pipe',
+    'rectangular tube',
+    'rhs',
+    'box tube',
+  ],
+
+  // Value Added Products
+  slotted_angle: ['slotted angle', 'slotted', 'slotted rack'],
+  solar_mounting_structure: [
+    'solar mounting structure',
+    'solar mounting',
+    'solar structure',
+    'z purlin',
+    'c purlin',
+    'hat section',
+  ],
+  cable_tray_perforated: [
+    'cable tray – perforated',
+    'cable tray perforated',
+    'perforated cable tray',
+    'cable tray',
+  ],
+  cable_tray_ladder: [
+    'cable tray – ladder',
+    'cable tray ladder',
+    'ladder cable tray',
+  ],
+  gi_earthing_strip: [
+    'gi earthing strip',
+    'earthing strip',
+    'galvanized strip',
+    'earthing patti',
+    'earthing',
   ],
 };
 
@@ -497,6 +692,669 @@ function cleanProductCandidate(candidate) {
   return cleaned
     .replace(/^(?:bhai|please|update|change|set|the|for|of)\s+/i, '')
     .trim();
+}
+
+function getProductTextSegment(fullText, pName, itemIndex = 0, allItems = []) {
+  if (!fullText || !pName) return fullText || '';
+  if (!allItems || allItems.length <= 1) return fullText;
+
+  const lowerText = fullText.toLowerCase();
+
+  function findItemPosition(item) {
+    const name = (item.pName || item.product_requirement || item.sku_text || '')
+      .toLowerCase()
+      .trim();
+    if (!name) return -1;
+    let pos = lowerText.indexOf(name);
+    if (pos !== -1) return pos;
+
+    const words = name
+      .split(/\s+/)
+      .filter(
+        (w) =>
+          w.length > 1 &&
+          !['coil', 'sheet', 'bar', 'pipe', 'steel', 'ms'].includes(w),
+      );
+    for (const w of words) {
+      pos = lowerText.indexOf(w);
+      if (pos !== -1) return pos;
+    }
+
+    const allWords = name.split(/\s+/).filter((w) => w.length > 1);
+    for (const w of allWords) {
+      pos = lowerText.indexOf(w);
+      if (pos !== -1) return pos;
+    }
+    return -1;
+  }
+
+  const itemPositions = allItems.map((it, idx) => ({
+    index: idx,
+    pos: findItemPosition(it),
+  }));
+
+  const matchedPositions = itemPositions
+    .filter((ip) => ip.pos !== -1)
+    .sort((a, b) => a.pos - b.pos);
+
+  if (matchedPositions.length === 0) return fullText;
+
+  const currentMatchIdx = matchedPositions.findIndex(
+    (mp) => mp.index === itemIndex,
+  );
+  if (currentMatchIdx === -1) return fullText;
+
+  let startPos = matchedPositions[currentMatchIdx].pos;
+  const prefix = fullText.substring(Math.max(0, startPos - 30), startPos);
+  const qtyPrefixMatch = prefix.match(
+    /(?:\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|coil|coils|bar|bars)\s*)$/i,
+  );
+  if (qtyPrefixMatch) {
+    startPos = startPos - qtyPrefixMatch[0].length;
+  }
+
+  let endPos = fullText.length;
+  if (currentMatchIdx + 1 < matchedPositions.length) {
+    let nextStart = matchedPositions[currentMatchIdx + 1].pos;
+    const nextPrefix = fullText.substring(
+      Math.max(0, nextStart - 30),
+      nextStart,
+    );
+    const nextQtyPrefix = nextPrefix.match(
+      /(?:(?:and|with|,|;)\s*)?(?:\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|coil|coils|bar|bars)\s*)$/i,
+    );
+    if (nextQtyPrefix) {
+      endPos = nextStart - nextQtyPrefix[0].length;
+    } else {
+      endPos = nextStart;
+    }
+  }
+
+  return fullText.substring(startPos, endPos).trim();
+}
+
+function extractProductSegmentDimension(
+  fullText,
+  pName,
+  itemIndex = 0,
+  allItems = [],
+) {
+  if (!fullText || typeof fullText !== 'string' || !pName) return null;
+
+  // 1. Check if pName itself already contains the dimension
+  const pNameMatch =
+    pName.match(
+      /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft|x\s*[\d.]+)+)/i,
+    ) ||
+    pName.match(
+      /\b(ismb\s*\d+|ismc\s*\d+|npb\s*[\dx]+|wpb\s*[\dx]+|uc\s*[\dx]+|ub\s*[\dx]+)\b/i,
+    );
+  if (pNameMatch) return pNameMatch[0];
+
+  // 2. Extract strictly from this product's text segment
+  const segment = getProductTextSegment(fullText, pName, itemIndex, allItems);
+  if (!segment) return null;
+
+  const ismbM = segment.match(
+    /\b(ismb\s*\d+|ismc\s*\d+|npb\s*[\dx]+|wpb\s*[\dx]+|uc\s*[\dx]+|ub\s*[\dx]+)\b/i,
+  );
+  if (ismbM) return ismbM[0].toUpperCase();
+
+  const boxSizeM = segment.match(/(\d+\s*x\s*\d+(?:\s*x\s*[\d.]+)?\s*mm)/i);
+  if (boxSizeM) return boxSizeM[0];
+
+  const mmM = segment.match(
+    /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft)(?:\s*x\s*[\d.]+\s*(?:mm|ft|inch|mtr)?)?)/i,
+  );
+  if (mmM) return mmM[0];
+
+  const simpleMmM = segment.match(/(\d+(?:\.\d+)?\s*mm)/i);
+  if (simpleMmM) return simpleMmM[0];
+
+  return null;
+}
+
+function extractProductSegmentQuantity(
+  fullText,
+  pName,
+  itemIndex = 0,
+  allItems = [],
+) {
+  if (!fullText || typeof fullText !== 'string' || !pName) return null;
+
+  // 1. Extract from product's isolated segment if multi-item
+  const segment = getProductTextSegment(fullText, pName, itemIndex, allItems);
+  if (segment) {
+    const qtyMatch = segment.match(
+      /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|nos|sheets?|plates?|coils?|bars?|lengths?|bundles?)/i,
+    );
+    if (qtyMatch) {
+      const u = qtyMatch[2].toUpperCase();
+      return {
+        qty: parseFloat(qtyMatch[1]),
+        unit: u.startsWith('TON') ? 'MT' : u.startsWith('K') ? 'KG' : u,
+      };
+    }
+  }
+
+  // 2. Fallback: Check context around product in fullText
+  const lower = fullText.toLowerCase();
+  const pIndex = lower.indexOf(pName.toLowerCase());
+  if (pIndex >= 0) {
+    const sliceSeg = fullText.slice(
+      Math.max(0, pIndex - 30),
+      Math.min(fullText.length, pIndex + pName.length + 45),
+    );
+    const qtyMatch = sliceSeg.match(
+      /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|nos|sheets?|plates?|coils?|bars?|lengths?|bundles?)/i,
+    );
+    if (qtyMatch) {
+      const u = qtyMatch[2].toUpperCase();
+      return {
+        qty: parseFloat(qtyMatch[1]),
+        unit: u.startsWith('TON') ? 'MT' : u.startsWith('K') ? 'KG' : u,
+      };
+    }
+  }
+
+  return null;
+}
+
+const COMPANY_INDICATORS_REGEX =
+  /\b(pvt|ltd|limited|industries|industry|infra|infrastructure|enterprises|enterprise|corp|corporation|works|steel|metals|engineering|engineers|associates|traders|trading|buildcon|fab|fabricators|co|company)\b/i;
+const STEEL_PRODUCT_TERMS =
+  /\b(coil|coils|sheet|sheets|plate|plates|bar|bars|pipe|pipes|tube|tubes|angle|angles|beam|beams|channel|channels|tmt|rebar|sariya|crca|hrpo|gp|gi|ms|hr|cr|ismb|ismc|chequered|checkered)\b/i;
+
+function countDistinctProductFamiliesInText(text) {
+  if (!text || typeof text !== 'string') return 0;
+  const lower = text.toLowerCase();
+  const matchedFamilies = new Set();
+  for (const [family, aliases] of Object.entries(PRODUCT_FAMILIES)) {
+    if (aliases.some((alias) => lower.includes(alias))) {
+      matchedFamilies.add(family);
+    }
+  }
+  return matchedFamilies.size;
+}
+
+function extractRuleBasedLineItems(textRaw) {
+  if (!textRaw || typeof textRaw !== 'string') return [];
+  const items = [];
+
+  // 1. Check deterministic rate items first
+  const rateItems = extractDeterministicRateItems(textRaw);
+  if (rateItems.length > 0) {
+    return rateItems;
+  }
+
+  // 2. Check multi-item TMT list
+  const tmtMultiRegex =
+    /(\d+(?:\.\d+)?\s*mm)\s*(?:[-:]|–)?\s*(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|bundles|pcs)?/gi;
+  let tmtM;
+  const tmtItems = [];
+  while ((tmtM = tmtMultiRegex.exec(textRaw)) !== null) {
+    tmtItems.push({
+      product_requirement: 'TMT Bar',
+      pName: 'TMT Bar',
+      dimensions: tmtM[1].replace(/\s+/g, ''),
+      quantity_mt: parseFloat(tmtM[2]),
+      quantity: parseFloat(tmtM[2]),
+      unit: tmtM[3] ? tmtM[3].toUpperCase() : 'MT',
+      rate_per_mt: null,
+    });
+  }
+  if (tmtItems.length > 1) {
+    return tmtItems;
+  }
+
+  // 3. Multi-product Catalog regex
+  const KNOWN_CATALOG_PRODUCTS = [
+    { name: 'HRPO Coil', regex: /\b(hrpo|pickled\s*&\s*oiled)\b/i },
+    { name: 'HR Coil', regex: /\b(hr\s*coil|hot\s*rolled\s*coil)\b/i },
+    { name: 'CR Coil', regex: /\b(cr\s*coil|cold\s*rolled\s*coil|crca)\b/i },
+    { name: 'CR Sheet', regex: /\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i },
+    {
+      name: 'Chequered Plate',
+      regex: /\b(chequered|checkered)\s*(?:plate|sheet)?\b/i,
+    },
+    {
+      name: 'MS Plate',
+      regex: /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i,
+    },
+    { name: 'MS Sheet', regex: /\b(ms\s*sheet)\b/i },
+    {
+      name: 'MS Round Bar',
+      regex: /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod)\b/i,
+    },
+    {
+      name: 'MS Square Pipe',
+      regex:
+        /\b(square\s*pipe|box\s*pipe|shs|square\s*tube|rectangular\s*pipe|rhs|gp\s*square\s*pipe)\b/i,
+    },
+    {
+      name: 'MS Angle',
+      regex: /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle)\b/i,
+    },
+    {
+      name: 'MS Beam',
+      regex: /\b(beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb)\b/i,
+    },
+    { name: 'MS Channel', regex: /\b(channel|channels|ismc|c-channel)\b/i },
+    { name: 'TMT Bar', regex: /\b(tmt\s*bar|tmt|sariya|rebar)\b/i },
+  ];
+
+  const multiProdRegex =
+    /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|piece|pieces|nos|sheet|sheets|plate|plates|coil|coils|bar|bars|lengths|bundles)\s+([A-Za-z0-9\s.()x/]+?)(?=(?:and\s+\d|,\s*(?:\d|[a-zA-Z]+\s+delivery|delivery|payment|contact|terms|credit)|(?:\.|\?|!)(?:\s+|$)|$|\s+for\s+delivery|\s+delivery|\s+payment|\s+contact|\s+before|\s+by\s+\d|\s+rate|\s+price|\s+po|\s+attn|\s+terms|\s+credit|\s+advance))/gi;
+  let mProd;
+  while ((mProd = multiProdRegex.exec(textRaw)) !== null) {
+    const mQty = parseFloat(mProd[1]);
+    const mUnitRaw = mProd[2].toUpperCase();
+    const rawP = mProd[3]
+      .trim()
+      .replace(/\s+(?:thk|thick|thickness|approx|approx\.)\b/i, '');
+
+    let matchedPName = null;
+    for (const kp of KNOWN_CATALOG_PRODUCTS) {
+      if (kp.regex.test(rawP)) {
+        matchedPName = kp.name;
+        break;
+      }
+    }
+    if (!matchedPName) matchedPName = rawP;
+
+    const ismbM = rawP.match(
+      /\b(ismb\s*\d+|ismc\s*\d+|npb\s*[\dx]+|wpb\s*[\dx]+|uc\s*[\dx]+|ub\s*[\dx]+)\b/i,
+    );
+    const boxSizeM = rawP.match(/(\d+\s*x\s*\d+(?:\s*x\s*[\d.]+)?\s*mm)/i);
+    const mmM = rawP.match(
+      /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft)(?:\s*x\s*[\d.]+\s*(?:mm|ft|inch|mtr)?)?)/i,
+    );
+    const simpleMmM = rawP.match(/(\d+(?:\.\d+)?\s*mm)/i);
+    const mDim = ismbM
+      ? ismbM[0].toUpperCase()
+      : boxSizeM
+        ? boxSizeM[0]
+        : mmM
+          ? mmM[0]
+          : simpleMmM
+            ? simpleMmM[0]
+            : null;
+
+    items.push({
+      product_requirement: matchedPName,
+      pName: matchedPName,
+      dimensions: mDim,
+      quantity: mQty,
+      quantity_mt: mUnitRaw.startsWith('K') ? mQty / 1000 : mQty,
+      unit: mUnitRaw.startsWith('TON') ? 'MT' : mUnitRaw,
+      rate_per_mt: null,
+    });
+  }
+
+  return items;
+}
+
+function mergeIncompleteLineItems(data, rawText) {
+  if (!data || !rawText) return data;
+  const distinctFamilyCount = countDistinctProductFamiliesInText(rawText);
+  const currentItems = Array.isArray(data.line_items) ? data.line_items : [];
+
+  const ruleItems = extractRuleBasedLineItems(rawText);
+
+  if (
+    ruleItems.length > currentItems.length ||
+    distinctFamilyCount > currentItems.length
+  ) {
+    const existingFamilies = new Set(
+      currentItems
+        .map((i) => getProductFamily(i.product_requirement || i.pName))
+        .filter(Boolean),
+    );
+    const merged = [...currentItems];
+
+    for (let rIdx = 0; rIdx < ruleItems.length; rIdx++) {
+      const rItem = ruleItems[rIdx];
+      const rFam = getProductFamily(rItem.product_requirement || rItem.pName);
+      const isAlreadyIncluded = currentItems.some((i) => {
+        const iName = (i.product_requirement || i.pName || '').toLowerCase();
+        const rName = (
+          rItem.product_requirement ||
+          rItem.pName ||
+          ''
+        ).toLowerCase();
+        return iName === rName || (rFam && rFam === getProductFamily(iName));
+      });
+
+      if (!isAlreadyIncluded) {
+        if (!rItem.dimensions) {
+          rItem.dimensions = extractProductSegmentDimension(
+            rawText,
+            rItem.product_requirement,
+            rIdx,
+            ruleItems,
+          );
+        }
+        merged.push(rItem);
+        if (rFam) existingFamilies.add(rFam);
+      }
+    }
+    data.line_items = merged;
+  }
+
+  return data;
+}
+
+function applyFieldPurityChecks(data) {
+  if (!data || typeof data !== 'object') return data;
+
+  // 1. Check customer_name purity
+  if (data.customer_name) {
+    const cName = data.customer_name.trim();
+    // Check if customer_name is a known steel city
+    const isCity = KNOWN_STEEL_CITIES.some(
+      (city) => city.toLowerCase() === cName.toLowerCase(),
+    );
+    if (isCity) {
+      if (!data.delivery_location) data.delivery_location = cName;
+      data.customer_name = null;
+    } else {
+      // Check if customer_name is purely a steel product
+      const isPureProduct =
+        STEEL_PRODUCT_TERMS.test(cName) &&
+        !COMPANY_INDICATORS_REGEX.test(cName);
+      if (isPureProduct) {
+        if (!data.line_items || data.line_items.length === 0) {
+          data.line_items = [
+            {
+              product_requirement: cName,
+              quantity: data.quantity || 0,
+              quantity_mt: data.quantity || 0,
+              unit: data.unit || 'MT',
+              rate_per_mt: data.rate_per_mt || null,
+            },
+          ];
+        }
+        data.customer_name = null;
+      }
+    }
+  }
+
+  // 2. Check delivery_location purity
+  if (data.delivery_location) {
+    const loc = data.delivery_location.trim();
+    const isPureProduct =
+      STEEL_PRODUCT_TERMS.test(loc) &&
+      !KNOWN_STEEL_CITIES.some((c) =>
+        loc.toLowerCase().includes(c.toLowerCase()),
+      );
+    if (isPureProduct) {
+      if (!data.line_items || data.line_items.length === 0) {
+        data.line_items = [
+          {
+            product_requirement: loc,
+            quantity: data.quantity || 0,
+            quantity_mt: data.quantity || 0,
+            unit: data.unit || 'MT',
+          },
+        ];
+      }
+      data.delivery_location = null;
+    } else {
+      const isCompanyOnly =
+        COMPANY_INDICATORS_REGEX.test(loc) &&
+        !KNOWN_STEEL_CITIES.some((c) =>
+          loc.toLowerCase().includes(c.toLowerCase()),
+        ) &&
+        !/\b(?:plot|phase|near|opp|road|midc|street|gat|survey|sector)\b/i.test(
+          loc,
+        );
+      if (isCompanyOnly) {
+        if (!data.customer_name) data.customer_name = loc;
+        data.delivery_location = null;
+      }
+    }
+  }
+
+  // 3. Check line_items product_requirement purity
+  if (Array.isArray(data.line_items) && data.line_items.length > 0) {
+    data.line_items = data.line_items
+      .map((item) => {
+        const pName = (item.product_requirement || item.pName || '').trim();
+        if (!pName) return item;
+
+        // Check if pName is a known steel city
+        const isCity = KNOWN_STEEL_CITIES.some(
+          (c) => c.toLowerCase() === pName.toLowerCase(),
+        );
+        if (isCity) {
+          if (!data.delivery_location) data.delivery_location = pName;
+          return { ...item, product_requirement: null, pName: null };
+        }
+
+        // Check if pName has company indicators and NO steel product terms
+        const hasCompany = COMPANY_INDICATORS_REGEX.test(pName);
+        const hasSteel = STEEL_PRODUCT_TERMS.test(pName);
+        if (hasCompany && !hasSteel) {
+          if (!data.customer_name) data.customer_name = pName;
+          return { ...item, product_requirement: null, pName: null };
+        }
+
+        return item;
+      })
+      .filter(
+        (i) =>
+          (i.product_requirement && i.product_requirement.trim().length > 0) ||
+          (i.rate_per_mt && i.rate_per_mt > 0),
+      );
+  }
+
+  return data;
+}
+
+function verifyExtractionAgainstCurrentMessage(
+  data,
+  currentMessage,
+  hasActiveSession = false,
+) {
+  if (!data || typeof data !== 'object') return data;
+  const msg = (currentMessage || '').toLowerCase();
+
+  // 1. Check customer name actually appears in current message
+  if (data.customer_name) {
+    const custClean = data.customer_name.toLowerCase().trim();
+    const custWords = custClean
+      .split(/[^a-z0-9]+/i)
+      .filter(
+        (w) =>
+          w.length >= 3 &&
+          !['pvt', 'ltd', 'limited', 'the', 'and', 'for'].includes(w),
+      );
+    const custInMessage =
+      msg.includes(custClean) ||
+      (custWords.length > 0 && custWords.some((w) => msg.includes(w)));
+    if (!custInMessage && !hasActiveSession) {
+      data.customer_name = null; // Hallucinated from history
+    }
+  }
+
+  // 2. Check delivery location actually appears in current message
+  if (data.delivery_location) {
+    const locClean = data.delivery_location.toLowerCase().trim();
+    const locWords = locClean
+      .split(/[^a-z0-9]+/i)
+      .filter(
+        (w) =>
+          w.length >= 3 &&
+          ![
+            'plot',
+            'phase',
+            'near',
+            'opp',
+            'road',
+            'midc',
+            'gat',
+            'survey',
+            'sector',
+          ].includes(w),
+      );
+    const locInMessage =
+      msg.includes(locClean) ||
+      (locWords.length > 0 && locWords.some((w) => msg.includes(w)));
+    if (!locInMessage) {
+      data.delivery_location = null; // Hallucinated from history
+    }
+  }
+
+  // 3. Check payment terms actually appear in current message
+  if (data.payment_terms) {
+    const ptClean = data.payment_terms.toLowerCase().trim();
+    const termWords = ptClean.split(/[^a-z0-9]+/i).filter((w) => w.length >= 3);
+    const hasTermInMsg =
+      termWords.length > 0
+        ? termWords.some((w) => msg.includes(w))
+        : msg.includes(ptClean);
+    const hasPaymentKeyword =
+      /\b(?:days?|credit|advance|pdc|against|cash|net|rtgs|cheque|cod|lc|cad|immediate|payment)\b/i.test(
+        msg,
+      ) || /\b(?:on|upon|before|after|against)\s+delivery\b/i.test(msg);
+    if (!hasTermInMsg && !hasPaymentKeyword) {
+      data.payment_terms = null; // Hallucinated from history
+    }
+  }
+
+  return data;
+}
+
+function shouldFallbackToActiveSession(text, data, targetExplicitDeal) {
+  if (targetExplicitDeal) return true;
+  const cleanMsg = (text || '').toLowerCase();
+
+  // 1. Explicit pronoun or reference to active deal/session
+  const hasSessionPronoun =
+    /\b(?:it|that deal|this deal|same customer|update it|same party|same inq|same inquiry|that inq|that inquiry)\b/i.test(
+      cleanMsg,
+    );
+  if (hasSessionPronoun) return true;
+
+  // 2. Explicit stage update
+  const isStageUpdate =
+    data?.action === 'stage_update' ||
+    /\b(?:mark|move|update|set|change|put)\b.*?\b(negotiation|won|lost|quoted|quotated|on\s+hold|hold|qualified)\b/i.test(
+      cleanMsg,
+    ) ||
+    /\b(?:deal|inquiry).*?\b(is\s+on\s+hold|is\s+lost|is\s+won|is\s+negotiation|is\s+quoted|moved\s+to|marked\s+as|put\s+on\s+hold|on\s+hold)\b/i.test(
+      cleanMsg,
+    ) ||
+    /\b(?:is\s+on\s+hold|put\s+on\s+hold|on\s+hold|hold)\b/i.test(cleanMsg);
+
+  // 3. Explicit field update
+  const isFieldUpdate =
+    /\b(?:update\s+delivery|change\s+delivery|delivery\s+address|update\s+payment|payment\s+terms|hsn\s+code|change\s+unit|update\s+rates?|new\s+rates?)\b/i.test(
+      cleanMsg,
+    );
+
+  // Check if message appears to be a new inquiry (contains product name + quantity)
+  const hasProductKeywords =
+    /\b(coil|coils|sheet|sheets|plate|plates|bar|bars|pipe|pipes|tube|tubes|angle|angles|beam|beams|channel|channels|tmt|rebar|sariya|crca|hrpo|gp|gi|ms|hr|cr)\b/i.test(
+      cleanMsg,
+    );
+  const hasQuantityMatch =
+    /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|kg|kgs|pcs|nos|sheets?|plates?|coils?|bars?|lengths?|bundles?)\b/i.test(
+      cleanMsg,
+    );
+  const isNewInquiry =
+    (hasProductKeywords && hasQuantityMatch) ||
+    /^(?:new\s+inquiry|inquiry\s+for|inquiry\s+from|need|requires?|create\s+inquiry|add\s+inquiry)\b/i.test(
+      cleanMsg,
+    );
+
+  if (isNewInquiry && !hasSessionPronoun && !targetExplicitDeal) {
+    return false;
+  }
+
+  if (isStageUpdate || isFieldUpdate) return true;
+
+  return false;
+}
+
+function sanitizeLLMExtraction(
+  extractedData,
+  rawText,
+  hasActiveSession = false,
+) {
+  if (!extractedData || typeof extractedData !== 'object') return extractedData;
+  const clean = (rawText || '').toLowerCase();
+
+  // 1. Post-extraction contamination check (Issue 9)
+  extractedData = verifyExtractionAgainstCurrentMessage(
+    extractedData,
+    rawText,
+    hasActiveSession,
+  );
+
+  // 2. Sanitize contact_person
+  if (extractedData.contact_person) {
+    const cpClean = extractedData.contact_person.toLowerCase().trim();
+    const cpWords = cpClean.split(/[^a-z0-9]+/i).filter((w) => w.length >= 3);
+    const isPresent =
+      cpWords.length > 0
+        ? cpWords.some((w) => clean.includes(w))
+        : clean.includes(cpClean);
+    if (!isPresent) {
+      extractedData.contact_person = null;
+    }
+  }
+
+  // 3. Sanitize line_items for rate-only / generic messages:
+  if (
+    Array.isArray(extractedData.line_items) &&
+    extractedData.line_items.length > 0
+  ) {
+    const hasAnySteelKeywords =
+      /\b(coil|coils|sheet|sheets|plate|plates|bar|bars|pipe|pipes|tube|tubes|angle|angles|beam|beams|channel|channels|tmt|rebar|sariya|crca|hrpo|gp|gi|ms|hr|cr|steel|metal|iron|ismb|ismc|chequered)\b/i.test(
+        clean,
+      );
+
+    extractedData.line_items = extractedData.line_items
+      .map((item) => {
+        const pName = (item.product_requirement || item.pName || '').trim();
+        const pWords = pName
+          .toLowerCase()
+          .split(/[^a-z0-9]+/i)
+          .filter((w) => w.length >= 2);
+        const isProductMentioned =
+          hasAnySteelKeywords &&
+          (pWords.length > 0
+            ? pWords.some((w) => clean.includes(w))
+            : clean.includes(pName.toLowerCase()));
+
+        if (!isProductMentioned && !hasAnySteelKeywords) {
+          return {
+            ...item,
+            product_requirement: null,
+            pName: null,
+            quantity: 0,
+            quantity_mt: 0,
+            dimensions: null,
+          };
+        }
+
+        return item;
+      })
+      .filter(
+        (i) =>
+          (i.product_requirement && i.product_requirement.trim().length > 0) ||
+          (i.rate_per_mt && i.rate_per_mt > 0),
+      );
+  }
+
+  // 4. Apply Issue 4 Field Purity Checks
+  extractedData = applyFieldPurityChecks(extractedData);
+
+  // 5. Apply Issue 3 Completeness check (recover silently dropped products)
+  extractedData = mergeIncompleteLineItems(extractedData, rawText);
+
+  return extractedData;
 }
 
 function extractDeliveryLocation(text) {
@@ -1297,26 +2155,64 @@ async function syncInquiryFromDeal(inquiryId, dealObj, dealItems) {
       const cleanInqId = String(targetInqId)
         .replace(/^#?(?:DEAL|INQ)-?/i, '')
         .trim();
-      let query = supabase.from('inquiries').select('*');
-      if (cleanInqId.length > 30) {
-        query = query.eq('id', cleanInqId);
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          cleanInqId,
+        );
+      if (isUuid) {
+        const { data: inqArr } = await supabase
+          .from('inquiries')
+          .select('*')
+          .eq('id', cleanInqId.toLowerCase())
+          .limit(1);
+        if (inqArr && inqArr.length > 0) inq = inqArr[0];
       } else {
-        query = query.or(`id.eq.${cleanInqId},id.ilike.%${cleanInqId}%`);
+        const { data: inqArr } = await supabase
+          .from('inquiries')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1000);
+        inq = (inqArr || []).find(
+          (i) =>
+            (i.id || '').toUpperCase().startsWith(cleanInqId.toUpperCase()) ||
+            (i.id || '')
+              .replace(/-/g, '')
+              .toUpperCase()
+              .startsWith(cleanInqId.toUpperCase()),
+        );
       }
-      const { data: inqArr } = await query.limit(1);
-      if (inqArr && inqArr.length > 0) inq = inqArr[0];
     }
 
     if (!inq && dealObj?.id) {
       const cleanDealId = String(dealObj.id)
         .replace(/^#?(?:DEAL|INQ)-?/i, '')
         .trim();
-      const { data: inqArr } = await supabase
-        .from('inquiries')
-        .select('*')
-        .or(`id.eq.${cleanDealId},id.ilike.%${cleanDealId}%`)
-        .limit(1);
-      if (inqArr && inqArr.length > 0) inq = inqArr[0];
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          cleanDealId,
+        );
+      if (isUuid) {
+        const { data: inqArr } = await supabase
+          .from('inquiries')
+          .select('*')
+          .eq('id', cleanDealId.toLowerCase())
+          .limit(1);
+        if (inqArr && inqArr.length > 0) inq = inqArr[0];
+      } else {
+        const { data: inqArr } = await supabase
+          .from('inquiries')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1000);
+        inq = (inqArr || []).find(
+          (i) =>
+            (i.id || '').toUpperCase().startsWith(cleanDealId.toUpperCase()) ||
+            (i.id || '')
+              .replace(/-/g, '')
+              .toUpperCase()
+              .startsWith(cleanDealId.toUpperCase()),
+        );
+      }
     }
 
     if (!inq && dealObj?.customer_name) {
@@ -1668,20 +2564,15 @@ async function handleSendQuotationMessage(
   let targetDeal = null;
 
   // 1. Check if specific deal ID mentioned
-  const dealIdMatch =
-    (overrideDealId ? { 1: overrideDealId } : null) ||
-    text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,6})\b/i) ||
-    text.match(/#([A-F0-9]{6})\b/i);
-  if (dealIdMatch) {
-    const code = dealIdMatch[1].toUpperCase().replace(/^(?:DEAL|INQ)-?/, '');
-    const { data: matchedDeals } = await supabase
-      .from('deals')
-      .select('*, deal_items(*)')
-      .or(`id.ilike.%${code}%,inquiry_id.ilike.%${code}%`)
-      .limit(1);
-    if (matchedDeals && matchedDeals.length > 0) {
-      targetDeal = matchedDeals[0];
-    }
+  const dealIdCode = overrideDealId
+    ? String(overrideDealId)
+        .replace(/^#?(?:DEAL|INQ)[-_:#]*/i, '')
+        .replace(/^#+/, '')
+        .trim()
+        .toUpperCase()
+    : extractDealIdFromText(text);
+  if (dealIdCode) {
+    targetDeal = await findDealByCodeOrId(dealIdCode, senderPhone);
   }
 
   // 2. Check customer name
@@ -1771,91 +2662,292 @@ async function handleSendQuotationMessage(
   );
 }
 
+function buildDealStubFromInquiry(foundInq, senderPhone) {
+  if (!foundInq) return null;
+
+  const inqStatus = (foundInq.status || '').toLowerCase().trim();
+  let derivedStage = 'new_inquiry';
+  if (['confirmed', 'saved', 'processed', 'qualified'].includes(inqStatus)) {
+    derivedStage = 'qualified';
+  } else if (['quoted', 'quotation_sent'].includes(inqStatus)) {
+    derivedStage = 'quoted';
+  } else if (inqStatus === 'negotiation') {
+    derivedStage = 'negotiation';
+  } else if (inqStatus === 'on_hold' || inqStatus === 'hold') {
+    derivedStage = 'on_hold';
+  } else if (inqStatus === 'won') {
+    derivedStage = 'won';
+  } else if (inqStatus === 'lost') {
+    derivedStage = 'lost';
+  }
+
+  let cName = foundInq.sender_name;
+  let deliveryLoc = null;
+  let paymentTerms = null;
+  let totalAmount = 0;
+  let extractedItems = [];
+
+  if (foundInq.ai_extraction_json) {
+    try {
+      const ai =
+        typeof foundInq.ai_extraction_json === 'string'
+          ? JSON.parse(foundInq.ai_extraction_json)
+          : foundInq.ai_extraction_json;
+
+      if (ai.companyName || ai.customer_name) {
+        cName = ai.companyName || ai.customer_name;
+      }
+      deliveryLoc = ai.delivery_location || ai.deliveryLocation || null;
+      paymentTerms = ai.payment_terms || ai.paymentTerms || null;
+      totalAmount = Number(ai.total_amount || ai.totalAmount || 0) || 0;
+
+      const rawItems = ai.line_items || ai.lineItems || [];
+      if (Array.isArray(rawItems) && rawItems.length > 0) {
+        extractedItems = rawItems.map((item, idx) => ({
+          id: `inq_item_${idx}`,
+          deal_id: foundInq.id,
+          sku_text:
+            item.sku_text ||
+            item.product_requirement ||
+            item.pName ||
+            'Steel Material',
+          dimensions: item.dimensions || null,
+          quantity: Number(item.quantity || item.quantity_mt || 0) || 0,
+          unit: item.unit || 'MT',
+          rate:
+            item.rate !== undefined && item.rate !== null
+              ? Number(item.rate)
+              : item.rate_per_mt !== undefined
+                ? Number(item.rate_per_mt)
+                : null,
+          amount:
+            item.amount !== undefined && item.amount !== null
+              ? Number(item.amount)
+              : null,
+          hsn_code: item.hsn_code || null,
+        }));
+      } else if (ai.productType || ai.product_requirement) {
+        const sku = ai.productType || ai.product_requirement;
+        const qty = Number(ai.quantityTons || ai.quantity || 0) || 0;
+        const rate = Number(ai.unitPrice || ai.rate_per_mt || 0) || null;
+        extractedItems = [
+          {
+            id: `inq_item_0`,
+            deal_id: foundInq.id,
+            sku_text: sku,
+            dimensions: ai.dimensions || null,
+            quantity: qty,
+            unit: 'MT',
+            rate: rate,
+            amount: rate && qty ? rate * qty : null,
+          },
+        ];
+      }
+    } catch (err) {
+      console.warn(
+        '[SalesAgent] Failed to parse ai_extraction_json in buildDealStubFromInquiry:',
+        err.message,
+      );
+    }
+  }
+
+  if (!cName || isInvalidCustomerName(cName)) {
+    const rawFirstLine = (foundInq.raw_text || '').split('\n')[0];
+    const matchComp = rawFirstLine.match(
+      /^([A-Za-z0-9\s&.,'-]+?)(?:\s+requires|\s+needs|\s+inquiry|\s+order|\s+deal|:|-|$)/i,
+    );
+    cName = matchComp
+      ? matchComp[1].trim()
+      : foundInq.sender_name || 'Customer';
+  }
+
+  return {
+    id: foundInq.id,
+    inquiry_id: foundInq.id,
+    is_inquiry_source: true,
+    stage: derivedStage,
+    customer_name: cName,
+    total_amount: totalAmount,
+    deal_items: extractedItems,
+    delivery_location: deliveryLoc,
+    payment_terms: paymentTerms,
+    salesperson_phone:
+      foundInq.salesperson_phone || foundInq.sender_phone || senderPhone,
+    raw_inquiry: foundInq,
+    created_at: foundInq.created_at,
+  };
+}
+
 async function findDealByCodeOrId(codeOrId, senderPhone) {
   if (!codeOrId) return null;
-  const clean = codeOrId
-    .replace(/^#?(?:DEAL|INQ)-?/i, '')
+  const clean = String(codeOrId)
+    .replace(/^#+/, '')
+    .replace(/^(?:DEAL|INQ)[-_:#]*/i, '')
+    .replace(/^#+/, '')
     .trim()
     .toUpperCase();
-  if (clean.length < 4) return null;
+  if (clean.length < 3) return null;
 
-  // Run deals and inquiries lookups concurrently with lean projections for ultra-low latency
+  const { getAccessibleSalespersonPhonesForBot } = require('../supabase');
+  const scope = senderPhone
+    ? await getAccessibleSalespersonPhonesForBot(senderPhone)
+    : { phones: null, isAdmin: true };
+
+  const isPhoneAccessible = (dealPhone) => {
+    if (!dealPhone) return true;
+    if (scope.isAdmin || scope.phones === null) return true;
+    const dealVariants = getPhoneVariants(dealPhone);
+    const accessibleSet = new Set();
+    if (Array.isArray(scope.phones)) {
+      for (const p of scope.phones)
+        getPhoneVariants(p).forEach((pv) => accessibleSet.add(pv));
+    }
+    if (senderPhone)
+      getPhoneVariants(senderPhone).forEach((pv) => accessibleSet.add(pv));
+    return dealVariants.some((dv) => accessibleSet.has(dv));
+  };
+
+  const isInquiryAccessible = (inq) => {
+    if (scope.isAdmin || scope.phones === null) return true;
+    if (!inq.salesperson_phone) return true;
+    if (isPhoneAccessible(inq.salesperson_phone)) return true;
+    if (isPhoneAccessible(inq.sender_phone)) return true;
+    return false;
+  };
+
+  // 1. Direct UUID lookup if clean is a standard UUID
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      clean,
+    );
+  if (isUuid) {
+    const { data: directDeal } = await supabase
+      .from('deals')
+      .select('*, deal_items(*)')
+      .eq('id', clean.toLowerCase())
+      .limit(1);
+    if (
+      directDeal &&
+      directDeal.length > 0 &&
+      isPhoneAccessible(directDeal[0].salesperson_phone)
+    ) {
+      return directDeal[0];
+    }
+
+    const { data: directInqDeal } = await supabase
+      .from('deals')
+      .select('*, deal_items(*)')
+      .eq('inquiry_id', clean.toLowerCase())
+      .limit(1);
+    if (
+      directInqDeal &&
+      directInqDeal.length > 0 &&
+      isPhoneAccessible(directInqDeal[0].salesperson_phone)
+    ) {
+      return directInqDeal[0];
+    }
+
+    const { data: directInq } = await supabase
+      .from('inquiries')
+      .select(
+        'id, sender_name, status, sender_phone, salesperson_phone, employee_id, raw_text, ai_extraction_json, created_at',
+      )
+      .eq('id', clean.toLowerCase())
+      .limit(1);
+    if (
+      directInq &&
+      directInq.length > 0 &&
+      isInquiryAccessible(directInq[0])
+    ) {
+      return buildDealStubFromInquiry(directInq[0], senderPhone);
+    }
+  }
+
+  // 2. Fetch recent deals and inquiries in parallel for high-speed in-memory prefix & token matching
   const [dealsRes, inqsRes] = await Promise.all([
     supabase
       .from('deals')
       .select(
-        'id, inquiry_id, customer_name, stage, status, total_amount, salesperson_phone, po_number, created_at, deal_items(*)',
+        'id, inquiry_id, customer_name, stage, status, total_amount, salesperson_phone, po_number, bigin_deal_id, delivery_location, payment_terms, created_at, deal_items(*)',
       )
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(1000),
     supabase
       .from('inquiries')
-      .select('id, sender_name, status, sender_phone, raw_text, created_at')
+      .select(
+        'id, sender_name, status, sender_phone, salesperson_phone, employee_id, raw_text, ai_extraction_json, created_at',
+      )
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(1000),
   ]);
 
-  const deals = dealsRes?.data;
-  if (deals && deals.length > 0) {
-    const found = deals.find(
+  const deals = (dealsRes?.data || []).filter((d) =>
+    isPhoneAccessible(d.salesperson_phone),
+  );
+  if (deals.length > 0) {
+    // Exact prefix match on Deal ID (with or without hyphens)
+    let found = deals.find(
       (d) =>
         (d.id || '').toUpperCase().startsWith(clean) ||
         (d.id || '').replace(/-/g, '').toUpperCase().startsWith(clean) ||
         (d.inquiry_id || '').toUpperCase().startsWith(clean) ||
-        (d.inquiry_id || '')
-          .replace(/-/g, '')
-          .toUpperCase()
-          .startsWith(clean) ||
-        (d.id || '').toUpperCase().includes(clean),
+        (d.inquiry_id || '').replace(/-/g, '').toUpperCase().startsWith(clean),
     );
+    if (found) return found;
+
+    // Match on po_number or bigin_deal_id
+    found = deals.find(
+      (d) =>
+        (d.po_number && d.po_number.toUpperCase().includes(clean)) ||
+        (d.bigin_deal_id && String(d.bigin_deal_id).includes(clean)),
+    );
+    if (found) return found;
+
+    // Substring match on Deal UUID
+    found = deals.find((d) => (d.id || '').toUpperCase().includes(clean));
     if (found) return found;
   }
 
-  const inquiries = inqsRes?.data;
-  if (inquiries && inquiries.length > 0) {
-    const foundInq = inquiries.find((inq) =>
-      (inq.id || '').toUpperCase().startsWith(clean),
+  const inquiries = (inqsRes?.data || []).filter((inq) =>
+    isInquiryAccessible(inq),
+  );
+  if (inquiries.length > 0) {
+    const foundInq = inquiries.find(
+      (inq) =>
+        (inq.id || '').toUpperCase().startsWith(clean) ||
+        (inq.id || '').replace(/-/g, '').toUpperCase().startsWith(clean) ||
+        (inq.id || '').toUpperCase().includes(clean),
     );
     if (foundInq) {
-      const inqStatus = (foundInq.status || '').toLowerCase().trim();
-      let derivedStage = 'new_inquiry';
-      if (
-        ['confirmed', 'saved', 'processed', 'qualified'].includes(inqStatus)
-      ) {
-        derivedStage = 'qualified';
-      } else if (['quoted', 'quotation_sent'].includes(inqStatus)) {
-        derivedStage = 'quoted';
-      } else if (inqStatus === 'negotiation') {
-        derivedStage = 'negotiation';
-      } else if (inqStatus === 'won') {
-        derivedStage = 'won';
-      } else if (inqStatus === 'lost') {
-        derivedStage = 'lost';
-      } else {
-        derivedStage = 'new_inquiry';
-      }
+      // Check if there is already a deal created for this inquiry
+      const linkedDeal = deals.find((d) => d.inquiry_id === foundInq.id);
+      if (linkedDeal) return linkedDeal;
 
-      let cName = foundInq.sender_name;
-      if (!cName || isInvalidCustomerName(cName)) {
-        const rawFirstLine = (foundInq.raw_text || '').split('\n')[0];
-        const matchComp = rawFirstLine.match(
-          /^([A-Za-z0-9\s&.,'-]+?)(?:\s+requires|\s+needs|\s+inquiry|\s+order|\s+deal|:|-|$)/i,
-        );
-        cName = matchComp ? matchComp[1].trim() : 'Customer';
-      }
-
-      return {
-        id: foundInq.id,
-        inquiry_id: foundInq.id,
-        is_inquiry_source: true,
-        stage: derivedStage,
-        customer_name: cName,
-        total_amount: 0,
-        deal_items: [],
-        salesperson_phone: foundInq.sender_phone || senderPhone,
-        raw_inquiry: foundInq,
-      };
+      return buildDealStubFromInquiry(foundInq, senderPhone);
     }
+  }
+
+  // 3. Fallback: Search deals by customer name tokens if clean looks like a company name
+  const cleanWords = clean
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length >= 3 &&
+        ![
+          'PVT',
+          'LTD',
+          'STEEL',
+          'PROJECTS',
+          'INFRASTRUCTURE',
+          'INDUSTRIES',
+        ].includes(w),
+    );
+  if (cleanWords.length > 0 && deals.length > 0) {
+    const foundByCust = deals.find((d) => {
+      const cName = (d.customer_name || '').toUpperCase();
+      return cleanWords.every((w) => cName.includes(w));
+    });
+    if (foundByCust) return foundByCust;
   }
 
   return null;
@@ -1875,6 +2967,7 @@ function getPhoneVariants(phone) {
 
 async function getAllOpenDealsForCustomer(customerName, senderPhone) {
   if (!customerName) return [];
+  const cleanCust = customerName.replace(/[.,'"]/g, '').trim();
   const { getAccessibleSalespersonPhonesForBot } = require('../supabase');
   const scope = senderPhone
     ? await getAccessibleSalespersonPhonesForBot(senderPhone)
@@ -1883,7 +2976,7 @@ async function getAllOpenDealsForCustomer(customerName, senderPhone) {
   let query = supabase
     .from('deals')
     .select('*, deal_items(*)')
-    .ilike('customer_name', `%${customerName}%`)
+    .ilike('customer_name', `%${cleanCust}%`)
     .not('stage', 'in', '("won","lost")')
     .order('created_at', { ascending: false });
 
@@ -1903,14 +2996,60 @@ async function getAllOpenDealsForCustomer(customerName, senderPhone) {
     }
   }
 
-  const { data } = await query;
-  const deals = data || [];
+  let { data } = await query;
+  let deals = data || [];
+
+  // If no deals found with full customer string, try word tokens
+  if (deals.length === 0) {
+    const words = cleanCust
+      .split(/\s+/)
+      .filter(
+        (w) =>
+          w.length >= 3 &&
+          ![
+            'pvt',
+            'ltd',
+            'steel',
+            'company',
+            'enterprises',
+            'industries',
+            'projects',
+            'infrastructure',
+          ].includes(w.toLowerCase()),
+      );
+    if (words.length > 0) {
+      const orClause = words.map((w) => `customer_name.ilike.%${w}%`).join(',');
+      let wordQuery = supabase
+        .from('deals')
+        .select('*, deal_items(*)')
+        .or(orClause)
+        .not('stage', 'in', '("won","lost")')
+        .order('created_at', { ascending: false });
+      if (scope.phones !== null) {
+        const allPhones = new Set();
+        for (const p of scope.phones)
+          getPhoneVariants(p).forEach((pv) => allPhones.add(pv));
+        if (senderPhone)
+          getPhoneVariants(senderPhone).forEach((pv) => allPhones.add(pv));
+        wordQuery = wordQuery.in('salesperson_phone', Array.from(allPhones));
+      }
+      const { data: wordDeals } = await wordQuery;
+      if (wordDeals && wordDeals.length > 0) {
+        deals = wordDeals;
+      }
+    }
+  }
+
   if (deals.length <= 1) return deals;
 
   // Prioritize exact customer name matches if available
-  const targetClean = customerName.toLowerCase().trim();
+  const targetClean = cleanCust.toLowerCase().trim();
   const exactMatches = deals.filter(
-    (d) => (d.customer_name || '').toLowerCase().trim() === targetClean,
+    (d) =>
+      (d.customer_name || '')
+        .replace(/[.,'"]/g, '')
+        .toLowerCase()
+        .trim() === targetClean,
   );
   return exactMatches.length > 0 ? exactMatches : deals;
 }
@@ -1948,25 +3087,46 @@ function formatOpenDealsListPrompt(customerName, openDeals) {
 }
 
 async function findBestDeal(customerName, senderPhone) {
-  const { data: ownActive } = await supabase
+  const { getAccessibleSalespersonPhonesForBot } = require('../supabase');
+  const scope = senderPhone
+    ? await getAccessibleSalespersonPhonesForBot(senderPhone)
+    : { phones: null };
+
+  let queryActive = supabase
     .from('deals')
     .select('*, deal_items(*)')
     .ilike('customer_name', `%${customerName}%`)
-    .eq('salesperson_phone', senderPhone)
     .not('stage', 'in', '("won","lost")')
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
+  if (scope.phones !== null) {
+    const allPhones = new Set();
+    for (const p of scope.phones)
+      getPhoneVariants(p).forEach((pv) => allPhones.add(pv));
+    if (senderPhone)
+      getPhoneVariants(senderPhone).forEach((pv) => allPhones.add(pv));
+    queryActive = queryActive.in('salesperson_phone', Array.from(allPhones));
+  }
+
+  const { data: ownActive } = await queryActive.limit(1);
   if (ownActive && ownActive.length > 0) return ownActive[0];
 
-  const { data: ownAny } = await supabase
+  let queryAny = supabase
     .from('deals')
     .select('*, deal_items(*)')
     .ilike('customer_name', `%${customerName}%`)
-    .eq('salesperson_phone', senderPhone)
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
+  if (scope.phones !== null) {
+    const allPhones = new Set();
+    for (const p of scope.phones)
+      getPhoneVariants(p).forEach((pv) => allPhones.add(pv));
+    if (senderPhone)
+      getPhoneVariants(senderPhone).forEach((pv) => allPhones.add(pv));
+    queryAny = queryAny.in('salesperson_phone', Array.from(allPhones));
+  }
+
+  const { data: ownAny } = await queryAny.limit(1);
   return ownAny && ownAny.length > 0 ? ownAny[0] : null;
 }
 
@@ -2053,7 +3213,7 @@ function evaluateMandatoryFields({
   const hasRate =
     validItems.some((i) => Number(i.rate || i.rate_per_mt) > 0) ||
     Number(totalAmount) > 0;
-  // Note: Rates are optional for customer inquiries (RFQs); do not require rate for completion
+  if (!hasRate) missing.push('Rate (₹)');
 
   const hasDelivery = !!(
     deliveryLocation && String(deliveryLocation).trim().length >= 2
@@ -2080,15 +3240,14 @@ function evaluateMandatoryFields({
 
 function extractDeterministicRateItems(text) {
   if (!text || typeof text !== 'string') return [];
-
-  // If text is an inquiry creation command, never extract rate items from it
-  if (
-    /^(?:create|log|add|new|raise)\s+(?:inquiry|deal|order|po)/i.test(
-      text.trim(),
-    )
-  ) {
-    return [];
-  }
+  const hasRateKeywords =
+    /\b(rates?|prices?|pricing|bhav|daam|@|₹|inr|rs\.?|\/mt|\/kg)\b/i.test(
+      text,
+    );
+  const isExplicitRateUpdate =
+    /\b(upadte|updt|updte|update|set|new|change)\s+(?:the\s+)?(?:rates?|prices?)\b/i.test(
+      text,
+    );
 
   const lines = text.split(/[\r\n]+/);
   const items = [];
@@ -2097,27 +3256,18 @@ function extractDeterministicRateItems(text) {
     const cleanLine = line.trim();
     if (
       !cleanLine ||
-      /^(?:upadte|updt|updte|update|rates?|prices?|for|customer|company|deal|inquiry|inq)\b/i.test(
+      /^(?:upadte|updt|updte|update|rates?|prices?|for|customer|company|deal|inquiry|inq|qty|quantity)\b/i.test(
         cleanLine,
       ) ||
       /#?(?:DEAL|INQ)-[A-F0-9]{4,8}\b/i.test(cleanLine) ||
-      /deal\s+id/i.test(cleanLine) ||
-      /^(?:create|log|add|new|raise)\s+(?:inquiry|deal|order|po)/i.test(
-        cleanLine,
-      )
+      /deal\s+id/i.test(cleanLine)
     )
       continue;
 
-    // Skip lines that state quantities (e.g. "20 MT HR Coil")
-    if (
-      /\b\d+\s*(?:mt|tons?|tonne?s?|kg|kgs|quintal|nos|pcs|sheets?)\b/i.test(
-        cleanLine,
-      )
-    ) {
-      continue;
-    }
+    // Reject if line has quantity indicators like "qty - 45MT" or "quantity 45 MT"
+    if (/\b(?:qty|quantity|tonnage)\s*[-:=]?\s*\d+/i.test(cleanLine)) continue;
 
-    // Pattern: "MS Sheet 5MM THK E250 - 10", "CR sheet 1mm : 16", "Chequered Plate = 17", "HR Coil 3.15mm 12"
+    // Pattern: "MS Sheet 5MM THK E250 - 52000", "CR sheet 1mm : 58000", "HR Coil 3.15mm @ 54000"
     const lineMatch =
       cleanLine.match(
         /^([A-Za-z0-9\s.,()x/]+?)\s*(?:[-:=@—→]|rate\s+(?:is|to|of)?|price\s+(?:is|to|of)?)\s*₹?\s*([\d,.]+)\s*(?:\/?[a-zA-Z]+)?$/i,
@@ -2125,12 +3275,26 @@ function extractDeterministicRateItems(text) {
     if (lineMatch) {
       const prodCandidate = lineMatch[1].trim().replace(/^[-•*]\s*/, '');
       const rateVal = parseFloat(lineMatch[2].replace(/,/g, ''));
+      const suffix =
+        (lineMatch[0].match(/[\d,.]+\s*([a-zA-Z]+)/) || [])[1] || '';
+
+      // Check if suffix is a quantity unit -> if so, it's a quantity, NOT a rate!
+      if (
+        /^(?:mt|tons?|tonne|kg|pcs|nos|sheets?|plates?|coils?|bars?|lengths?|bundles?)$/i.test(
+          suffix,
+        )
+      ) {
+        continue;
+      }
+
       if (
         prodCandidate &&
-        rateVal > 0 &&
-        !/^(?:company|customer|inquiry|delivery|payment|stage|status|notes?|create|log|add)/i.test(
+        !/^(?:company|customer|inquiry|delivery|payment|stage|status|notes?|qty|quantity|tonnage|address|terms|credit)$/i.test(
           prodCandidate,
-        )
+        ) &&
+        (getProductFamily(prodCandidate) ||
+          isValidCatalogProduct(prodCandidate)) &&
+        rateVal > 10
       ) {
         const mmM = prodCandidate.match(
           /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft|x\s*[\d.]+)+)/i,
@@ -2149,38 +3313,44 @@ function extractDeterministicRateItems(text) {
     }
   }
 
-  // If no multi-line, try inline comma/dash separated items
-  if (items.length === 0) {
+  // If no multi-line, try inline comma/dash separated items ONLY if explicit rate context
+  if (items.length === 0 && (hasRateKeywords || isExplicitRateUpdate)) {
     const inlineSegments = text.split(/[,;]+/);
     for (const seg of inlineSegments) {
       const cleanSeg = seg.trim();
+      // Skip quantity segments
+      if (/\b(?:qty|quantity|tonnage)\s*[-:=]?\s*\d+/i.test(cleanSeg)) continue;
       if (
-        /^(?:create|log|add|new|raise)\s+(?:inquiry|deal|order|po)/i.test(
-          cleanSeg,
-        )
-      )
-        continue;
-      if (
-        /\b\d+\s*(?:mt|tons?|tonne?s?|kg|kgs|quintal|nos|pcs|sheets?)\b/i.test(
+        /\b\d+\s*(?:mt|tons?|tonne|kg|pcs|nos|sheets?|plates?|coils?|bars?)\b/i.test(
           cleanSeg,
         )
       )
         continue;
 
       const segMatch = cleanSeg.match(
-        /([A-Za-z0-9\s.()x/]+?)\s*(?:[-:=@—→]|rate\s+(?:is|to|of)?)\s*₹?\s*([\d,.]+)\s*(?:\/?[a-zA-Z]+)?$/i,
+        /([A-Za-z0-9\s.()x/]+?)\s*(?:[-:=@—→]|rate\s+(?:is|to|of)?)\s*₹?\s*([\d,.]+)/i,
       );
       if (segMatch) {
         const pCand = segMatch[1]
           .trim()
           .replace(/^(?:rates?|prices?|for|and|update)\s+/i, '');
         const rVal = parseFloat(segMatch[2].replace(/,/g, ''));
+        const suffix = (cleanSeg.match(/[\d,.]+\s*([a-zA-Z]+)/) || [])[1] || '';
+        if (
+          /^(?:mt|tons?|tonne|kg|pcs|nos|sheets?|plates?|coils?|bars?|lengths?|bundles?)$/i.test(
+            suffix,
+          )
+        ) {
+          continue;
+        }
+
         if (
           pCand &&
-          rVal > 0 &&
-          !/^(?:company|customer|inquiry|delivery|payment|stage|status|create|log)/i.test(
+          !/^(?:company|customer|inquiry|delivery|payment|stage|status|qty|quantity|tonnage|address|terms|credit)$/i.test(
             pCand,
-          )
+          ) &&
+          (getProductFamily(pCand) || isValidCatalogProduct(pCand)) &&
+          rVal > 10
         ) {
           const mmM = pCand.match(
             /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft|x\s*[\d.]+)+)/i,
@@ -2209,15 +3379,24 @@ function extractDeterministicRateItems(text) {
 async function processSalesMessage(text, senderPhone, overrideData = null) {
   try {
     // 0. Check if this is an explicit request to send / email a quotation or answering email prompt
+    const isStageOrStatusUpdate =
+      /\b(?:status|stage|mark|move|update\s+status|update\s+stage|change\s+status|change\s+stage)\b/i.test(
+        text,
+      ) ||
+      /\b(?:to\s+(?:quoted|quotated|won|lost|negotiation|qualified))\b/i.test(
+        text,
+      );
+
     const isQuotationSend =
-      /\b(?:send|mail|email|forward|share|dispatch)\b.*?\b(?:quotation|quote|pdf)\b/i.test(
+      !isStageOrStatusUpdate &&
+      (/\b(?:send|mail|email|forward|share|dispatch)\b.*?\b(?:quotation|quote|pdf)\b/i.test(
         text,
       ) ||
-      /\b(?:quotation|quote)\b.*?\b(?:bhejo|bhej|send|mail|email|share|forward)\b/i.test(
-        text,
-      ) ||
-      (/\b(?:send\s+to|mail\s+to|email\s+to)\b/i.test(text) &&
-        /\b(?:quotation|quote)\b/i.test(text));
+        /\b(?:quotation|quote)\b.*?\b(?:bhejo|bhej|send|mail|email|share|forward)\b/i.test(
+          text,
+        ) ||
+        (/\b(?:send\s+to|mail\s+to|email\s+to)\b/i.test(text) &&
+          /\b(?:quotation|quote)\b/i.test(text)));
 
     const { getFullActiveSession } = require('../supabase');
     const activeSess = await getFullActiveSession(senderPhone);
@@ -2228,6 +3407,91 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
     if (isQuotationSend || (isWaitingEmail && hasEmailInText)) {
       return await handleSendQuotationMessage(text, senderPhone);
+    }
+
+    // Check if there is an active pending product clarification session
+    if (activeSess?.last_intent?.startsWith('pending_product_clarification|')) {
+      const parts = activeSess.last_intent.split('|');
+      const sessionCustomer = parts[1];
+      const payloadStr = parts.slice(2).join('|');
+      const { safeParseJSON } = require('../utils/jsonUtils');
+      const pendingPayload = safeParseJSON(payloadStr, null);
+
+      if (pendingPayload) {
+        const rawClean = text.trim();
+        const sheetOptions = [
+          'HR Sheet',
+          'CR Sheet',
+          'HRPO Sheet',
+          'GP Sheet',
+          'Galvalume Sheet',
+          'Chequered Sheet',
+        ];
+        const plateOptions = ['HR Plate', 'HR Sheet', 'Chequered Sheet'];
+
+        let resolvedCatalogName = null;
+        const numMatch = rawClean.match(/^([1-6])\b/);
+        if (numMatch) {
+          const idx = parseInt(numMatch[1], 10) - 1;
+          const isPlate = String(pendingPayload.invalid_product || '')
+            .toLowerCase()
+            .includes('plate');
+          const optList = isPlate ? plateOptions : sheetOptions;
+          if (optList[idx]) {
+            resolvedCatalogName = optList[idx];
+          }
+        }
+
+        if (!resolvedCatalogName) {
+          const norm = normalizeProductToCatalog(rawClean);
+          if (norm.isValid) {
+            resolvedCatalogName = norm.catalogName;
+          }
+        }
+
+        if (resolvedCatalogName) {
+          const oldProdName = pendingPayload.invalid_product;
+          if (
+            pendingPayload.data &&
+            Array.isArray(pendingPayload.data.line_items)
+          ) {
+            for (const itm of pendingPayload.data.line_items) {
+              const itmName = itm.product_requirement || itm.pName || '';
+              if (
+                itmName.toLowerCase() === oldProdName.toLowerCase() ||
+                itmName.toLowerCase().includes(oldProdName.toLowerCase())
+              ) {
+                itm.product_requirement = resolvedCatalogName;
+                itm.pName = resolvedCatalogName;
+              }
+            }
+          }
+          if (Array.isArray(pendingPayload.processedItems)) {
+            for (const itm of pendingPayload.processedItems) {
+              const itmName = itm.pName || itm.product_requirement || '';
+              if (
+                itmName.toLowerCase() === oldProdName.toLowerCase() ||
+                itmName.toLowerCase().includes(oldProdName.toLowerCase())
+              ) {
+                itm.pName = resolvedCatalogName;
+                itm.product_requirement = resolvedCatalogName;
+              }
+            }
+          }
+
+          await saveActiveSession(
+            senderPhone,
+            sessionCustomer || 'Unknown',
+            'general',
+          );
+
+          return await processSalesMessage(
+            pendingPayload.raw_text,
+            senderPhone,
+            pendingPayload.data,
+          );
+        }
+      }
     }
 
     let effectiveTextForLLM = text;
@@ -2312,11 +3576,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         }
       }
 
-      const isStageOrStatusUpdate =
-        /\b(?:mark|move|update|set|change|status|stage|negotiation|won|lost|quoted|qualified)\b/i.test(
+      const isStageOrStatusExplicit =
+        /\b(?:mark|move|update|set|change|status|stage|negotiation|won|lost|quoted|quotated|qualified)\b/i.test(
           effectiveTextForLLM,
         );
-      if (!isStageOrStatusUpdate) {
+      if (!isStageOrStatusExplicit) {
         const invalidUnitCheck =
           detectInvalidUnitInMessage(effectiveTextForLLM);
         if (invalidUnitCheck) {
@@ -2329,111 +3593,27 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         }
       }
 
-      // ── LATENCY OPTIMIZATION: FAST-PATH RULE EXTRACTOR FOR PURE STAGE UPDATES ──
-      const textRaw = effectiveTextForLLM || text || '';
-      const isClearStageUpdate =
-        /\b(?:mark|move|update|set|change)\b.*?\b(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i.test(
-          textRaw,
-        ) ||
-        /\b(?:status|stage)\b.*?\b(negotiation|qualified|quoted|won|lost)\b/i.test(
-          textRaw,
-        ) ||
-        /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+)?(won|lost|quoted|negotiation|qualified)\b/i.test(
-          textRaw,
-        );
-
-      const hasLineItemKeywords =
-        /\b(mt|ton|tons|tonne|kg|kgs|sheet|sheets|plate|plates|coil|coils|pipe|pipes|beam|beams|angle|angles|channel|channels|bar|bars|tmt|dia|gauge|thk)\b/i.test(
-          textRaw,
-        );
-
-      if (isClearStageUpdate && !hasLineItemKeywords) {
-        let ruleDealId = null;
-        const dealIdMatch = textRaw.match(
-          /#?(DEAL-[A-Za-z0-9_-]+|INQ-[A-Za-z0-9_-]+|[A-Fa-f0-9]{6})/i,
-        );
-        if (dealIdMatch) {
-          ruleDealId = dealIdMatch[1].toUpperCase();
+      // ── PURE LLM EXTRACTION AS PRIMARY ENGINE ──
+      try {
+        const { invokeWithFallback } = require('../core/modelRouter');
+        const response = await invokeWithFallback([
+          new SystemMessage(SALES_AGENT_PROMPT),
+          new HumanMessage('Salesperson message:\n' + effectiveTextForLLM),
+        ]);
+        const rawText =
+          typeof response.content === 'string'
+            ? response.content
+            : JSON.stringify(response.content || '');
+        const { safeParseJSON } = require('../utils/jsonUtils');
+        data = safeParseJSON(rawText, null);
+        if (data) {
+          data = sanitizeLLMExtraction(data, effectiveTextForLLM || text);
         }
-
-        let ruleCustomer = null;
-        const structComp = textRaw.match(
-          /(?:company\s+name|customer\s+name|client\s+name)\s*[:=-]\s*([^\n\r]+)/i,
+      } catch (llmErr) {
+        console.warn(
+          '[SalesAgent] LLM extraction notice, utilizing rule-based engine:',
+          llmErr.message,
         );
-        if (structComp) {
-          ruleCustomer = structComp[1].trim().replace(/^['"]|['"]$/g, '');
-        } else {
-          const custMatch =
-            textRaw.match(
-              /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?(?:status\s+to\s+\w+\s+for\s+(?:deal\s+id\s+[\w-]+\s+for\s+)?(?:customer\s+)?)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
-            ) ||
-            textRaw.match(
-              /(?:for\s+customer\s+|for\s+)([A-Z0-9\s&.-]{2,40}?)(?:\s+deal|\s+to|\.|$)/i,
-            ) ||
-            textRaw.match(
-              /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?/i,
-            );
-          if (custMatch && custMatch[1]) {
-            const cand = custMatch[1].trim();
-            if (
-              ![
-                'the',
-                'this',
-                'that',
-                'a',
-                'an',
-                'deal',
-                'customer',
-                'status',
-                'stage',
-              ].includes(cand.toLowerCase())
-            ) {
-              ruleCustomer = cand;
-            }
-          }
-        }
-
-        let ruleStage = 'new_inquiry';
-        const stageMatch = textRaw.match(
-          /\b(negotiation|won|lost|quoted|qualified)\b/i,
-        );
-        if (stageMatch) {
-          ruleStage = stageMatch[1].toLowerCase();
-        }
-
-        data = {
-          action: 'stage_update',
-          deal_id: ruleDealId,
-          customer_name: ruleCustomer,
-          contact_person: null,
-          target_stage: ruleStage,
-          customer_phone: null,
-          line_items: [],
-          total_amount: 0,
-          delivery_location: null,
-          payment_terms: null,
-          delivery_date: null,
-          confidence: 1.0,
-        };
-      } else {
-        try {
-          const { invokeWithFallback } = require('../core/modelRouter');
-          const response = await invokeWithFallback([
-            new SystemMessage(SALES_AGENT_PROMPT),
-            new HumanMessage('Salesperson message:\n' + effectiveTextForLLM),
-          ]);
-          const rawText =
-            typeof response.content === 'string'
-              ? response.content
-              : JSON.stringify(response.content || '');
-          const { safeParseJSON } = require('../utils/jsonUtils');
-          data = safeParseJSON(rawText, null);
-        } catch (llmErr) {
-          console.warn(
-            '[SalesAgent] LLM extraction notice, utilizing rule-based engine:',
-            llmErr.message,
-          );
-        }
       }
 
       if (!data || data.confidence < 0.3) {
@@ -2446,13 +3626,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           .replace(/\s+/g, ' ');
         const textLower = textClean.toLowerCase();
 
-        let ruleDealId = null;
-        const dealIdMatch = textRaw.match(
-          /#?(DEAL-[A-F0-9]{4,6}|INQ-[A-F0-9]{4,6}|[A-F0-9]{6})/i,
-        );
-        if (dealIdMatch) {
-          ruleDealId = dealIdMatch[1].toUpperCase();
-        }
+        let ruleDealId = extractDealIdFromText(textRaw);
 
         let ruleCustomer = null;
         const structComp = textRaw.match(
@@ -2469,7 +3643,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
               /(?:inquiry\s+from|order\s+from|rfq\s+from|from)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+requires|\s+needs|\s+for|\s+before|\.|$)/i,
             ) ||
             textClean.match(
-              /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
+              /\b(?:mark|move|update|set|change|put)\s+(?:the\s+|this\s+)?([A-Z0-9\s&.-]{2,40}?)\s+(?:deal\s+)?(?:as\s+|to\s+|on\s+)?(won|lost|quoted|quotated|negotiation|qualified|on\s+hold|hold)\b/i,
             ) ||
             textClean.match(
               /^(?!new\b|log\b|create\b|add\b)([A-Z0-9\s&.-]{2,40}?)\s+(?:requires|require|needs|need|inquiry|rfq|po|order|want)\b/i,
@@ -2504,16 +3678,29 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         let ruleStage = 'new_inquiry';
         const stageUpdateMatch =
           textClean.match(
-            /\b(?:mark|move|update|set|change)\s+(?:the\s+|this\s+)?(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
+            /\b(?:mark|move|update|set|change|put)\s+(?:the\s+|this\s+)?(?:deal\s+)?(?:as\s+|to\s+|on\s+)?(won|lost|quoted|quotated|negotiation|qualified|on\s+hold|hold)\b/i,
           ) ||
           textClean.match(
-            /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+)?(won|lost|quoted|negotiation|qualified)\b/i,
+            /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+|put\s+on\s+)?(won|lost|quoted|quotated|negotiation|qualified|on\s+hold|hold)\b/i,
           ) ||
-          textClean.match(/\b(won|lost|quoted|negotiation|qualified)\b/i);
+          textClean.match(/\b(?:is\s+on\s+hold|put\s+on\s+hold)\b/i) ||
+          textClean.match(
+            /\b(won|lost|quoted|quotated|negotiation|qualified|on\s+hold|hold)\b/i,
+          );
 
         if (stageUpdateMatch) {
           ruleAction = 'stage_update';
-          ruleStage = stageUpdateMatch[1].toLowerCase();
+          const rawSt = stageUpdateMatch[1]
+            ? stageUpdateMatch[1].toLowerCase().replace(/\s+/g, '_')
+            : stageUpdateMatch[0].includes('hold')
+              ? 'on_hold'
+              : stageUpdateMatch[0].toLowerCase();
+          ruleStage =
+            rawSt === 'hold' || rawSt === 'on_hold'
+              ? 'on_hold'
+              : rawSt === 'quotated'
+                ? 'quoted'
+                : rawSt;
         }
 
         // Check multi-item rate update list / inline updates / field updates
@@ -2634,19 +3821,116 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           }
         }
 
-        // Check multi-item TMT list e.g. "8mm - 5 MT, 10mm - 10 MT, 12mm - 15 MT"
-        const tmtMultiRegex =
-          /(\d+(?:\.\d+)?\s*mm)\s*(?:[-:]|–)?\s*(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|bundles|pcs)?/gi;
-        let tmtM;
-        while ((tmtM = tmtMultiRegex.exec(textRaw)) !== null) {
+        // Check multi-item list e.g. "15 MT HR Coil 3.15mm thk and 10 MT CR Sheet 1.2mm" or "8mm - 5 MT, 10mm - 10 MT"
+        const KNOWN_CATALOG_PRODUCTS = [
+          { name: 'HRPO Coil', regex: /\b(hrpo|pickled\s*&\s*oiled)\b/i },
+          { name: 'HR Coil', regex: /\b(hr\s*coil|hot\s*rolled\s*coil)\b/i },
+          {
+            name: 'CR Coil',
+            regex: /\b(cr\s*coil|cold\s*rolled\s*coil|crca)\b/i,
+          },
+          {
+            name: 'CR Sheet',
+            regex: /\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i,
+          },
+          {
+            name: 'Chequered Plate',
+            regex: /\b(chequered|checkered)\s*(?:plate|sheet)?\b/i,
+          },
+          {
+            name: 'MS Plate',
+            regex: /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i,
+          },
+          { name: 'MS Sheet', regex: /\b(ms\s*sheet)\b/i },
+          {
+            name: 'MS Round Bar',
+            regex: /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod)\b/i,
+          },
+          {
+            name: 'MS Square Pipe',
+            regex:
+              /\b(square\s*pipe|box\s*pipe|shs|square\s*tube|rectangular\s*pipe|rhs)\b/i,
+          },
+          {
+            name: 'MS Angle',
+            regex: /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle)\b/i,
+          },
+          {
+            name: 'MS Beam',
+            regex: /\b(beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb)\b/i,
+          },
+          {
+            name: 'MS Channel',
+            regex: /\b(channel|channels|ismc|c-channel)\b/i,
+          },
+          { name: 'TMT Bar', regex: /\b(tmt\s*bar|tmt|sariya|rebar)\b/i },
+        ];
+
+        // Check multi-item Quantity + Unit + Product pattern
+        const multiProdRegex =
+          /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|piece|pieces|nos|sheet|sheets|plate|plates|coil|coils|bar|bars|lengths|bundles)\s+([A-Za-z0-9\s.()x/]+?)(?=(?:and\s+\d|,\s*(?:\d|[a-zA-Z]+\s+delivery|delivery|payment|contact|terms|credit)|(?:\.|\?|!)(?:\s+|$)|$|\s+for\s+delivery|\s+delivery|\s+payment|\s+contact|\s+before|\s+by\s+\d|\s+rate|\s+price|\s+po|\s+attn|\s+terms|\s+credit|\s+advance))/gi;
+        let mProd;
+        while ((mProd = multiProdRegex.exec(textRaw)) !== null) {
+          const mQty = parseFloat(mProd[1]);
+          const mUnitRaw = mProd[2].toUpperCase();
+          const rawP = mProd[3]
+            .trim()
+            .replace(/\s+(?:thk|thick|thickness|approx|approx\.)\b/i, '');
+
+          let matchedPName = null;
+          for (const kp of KNOWN_CATALOG_PRODUCTS) {
+            if (kp.regex.test(rawP)) {
+              matchedPName = kp.name;
+              break;
+            }
+          }
+          if (!matchedPName) matchedPName = rawP;
+
+          const ismbM = rawP.match(
+            /\b(ismb\s*\d+|ismc\s*\d+|npb\s*[\dx]+|wpb\s*[\dx]+|uc\s*[\dx]+|ub\s*[\dx]+)\b/i,
+          );
+          const boxSizeM = rawP.match(
+            /(\d+\s*x\s*\d+(?:\s*x\s*[\d.]+)?\s*mm)/i,
+          );
+          const mmM = rawP.match(
+            /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft)(?:\s*x\s*[\d.]+\s*(?:mm|ft|inch|mtr)?)?)/i,
+          );
+          const simpleMmM = rawP.match(/(\d+(?:\.\d+)?\s*mm)/i);
+          const mDim = ismbM
+            ? ismbM[0].toUpperCase()
+            : boxSizeM
+              ? boxSizeM[0]
+              : mmM
+                ? mmM[0]
+                : simpleMmM
+                  ? simpleMmM[0]
+                  : null;
+
           multiItemsParsed.push({
-            product_requirement: 'TMT Bar',
-            dimensions: tmtM[1].replace(/\s+/g, ''),
-            quantity_mt: parseFloat(tmtM[2]),
-            quantity: parseFloat(tmtM[2]),
-            unit: tmtM[3] ? tmtM[3].toUpperCase() : 'MT',
+            product_requirement: matchedPName,
+            dimensions: mDim,
+            quantity: mQty,
+            quantity_mt: mUnitRaw.startsWith('K') ? mQty / 1000 : mQty,
+            unit: mUnitRaw.startsWith('TON') ? 'MT' : mUnitRaw,
             rate_per_mt: null,
           });
+        }
+
+        // Check multi-item TMT list e.g. "8mm - 5 MT, 10mm - 10 MT, 12mm - 15 MT"
+        if (multiItemsParsed.length === 0) {
+          const tmtMultiRegex =
+            /(\d+(?:\.\d+)?\s*mm)\s*(?:[-:]|–)?\s*(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|bundles|pcs)?/gi;
+          let tmtM;
+          while ((tmtM = tmtMultiRegex.exec(textRaw)) !== null) {
+            multiItemsParsed.push({
+              product_requirement: 'TMT Bar',
+              dimensions: tmtM[1].replace(/\s+/g, ''),
+              quantity_mt: parseFloat(tmtM[2]),
+              quantity: parseFloat(tmtM[2]),
+              unit: tmtM[3] ? tmtM[3].toUpperCase() : 'MT',
+              rate_per_mt: null,
+            });
+          }
         }
 
         let qty = 0;
@@ -2755,10 +4039,21 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         let ruleRate = null;
         const structPrice =
           textRaw.match(
-            /(?:target\s+price|rate|price|unit\s+price)\s*(?::|is|=|-|\s)\s*₹?\s*([\d,.]+)(?:\s*\/\s*[a-zA-Z]+)?/i,
-          ) || textRaw.match(/@\s*₹?\s*([\d,.]+)/i);
+            /\b(?:target\s+price|unit\s+price|rate|price)\s*[:=-]\s*₹?\s*([\d,.]+)(?:\s*\/\s*[a-zA-Z]+)?/i,
+          ) ||
+          textRaw.match(
+            /\b(?:target\s+price|unit\s+price|rate|price)\s+(?:is\s+|to\s+)?₹?\s*([\d,.]+)(?:\s*\/\s*[a-zA-Z]+)?/i,
+          ) ||
+          textRaw.match(/@\s*₹?\s*([\d,.]+)/i);
         if (structPrice) {
-          ruleRate = Number(structPrice[1].replace(/,/g, '')) || null;
+          const rVal = parseFloat(structPrice[1].replace(/,/g, ''));
+          if (
+            rVal > 0 &&
+            rVal < 10000000 &&
+            !/^[6-9]\d{9}$/.test(String(Math.round(rVal)))
+          ) {
+            ruleRate = rVal;
+          }
         }
 
         let rulePayment = null;
@@ -2835,24 +4130,55 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     // ── CONTEXT RESOLUTION FOR EXPLICIT DEAL ID & ACTIVE SESSIONS ──────────
     const textToInspect = effectiveTextForLLM || text || '';
     const cleanTextToInspect = textToInspect.replace(/[*_~`]/g, '').trim();
-    const explicitDealIdMatch =
-      cleanTextToInspect.match(/#?(?:DEAL|INQ)-([A-Za-z0-9_-]+)/i) ||
-      cleanTextToInspect.match(/#?([A-Fa-f0-9]{6})\b/i);
+    const explicitDealCode =
+      extractDealIdFromText(cleanTextToInspect) ||
+      (data && data.deal_id
+        ? extractDealIdFromText(data.deal_id) || data.deal_id
+        : null);
     let targetExplicitDeal = null;
-    if (explicitDealIdMatch || data.deal_id) {
-      const dealCodeToFind = explicitDealIdMatch
-        ? explicitDealIdMatch[1]
-        : data.deal_id;
+    if (explicitDealCode) {
       targetExplicitDeal = await findDealByCodeOrId(
-        dealCodeToFind,
+        explicitDealCode,
         senderPhone,
       );
-      if (!targetExplicitDeal && explicitDealIdMatch) {
-        return `❌ Inquiry ID #${dealCodeToFind.toUpperCase()} was not found in our records. Please check the Inquiry ID and try again.`;
+      if (!targetExplicitDeal) {
+        return `❌ Inquiry ID #${String(explicitDealCode).toUpperCase().replace(/^#+/, '')} was not found in our records. Please check the Inquiry ID and try again.`;
       }
     }
 
+    if (data.line_items && Array.isArray(data.line_items)) {
+      data.line_items = data.line_items.filter((item) => {
+        const p = (
+          item.product_requirement ||
+          item.pName ||
+          item.sku_text ||
+          ''
+        )
+          .toLowerCase()
+          .trim();
+        if (!p) return false;
+        if (
+          /^(?:for\s+)?(?:this\s+)?(?:inquiry|inq|deal|order)(?:\s+id|\s+is|\s+no)?/i.test(
+            p,
+          )
+        )
+          return false;
+        if (
+          /\b(?:this\s+inqiry|this\s+inquiry|inquiry\s+id|deal\s+id|inq\s+id)\b/i.test(
+            p,
+          )
+        )
+          return false;
+        return true;
+      });
+    }
+
     let customerName = data.customer_name;
+    if (customerName) {
+      customerName = customerName
+        .replace(/^(?:customer|client|party|firm|m\/s|m\/s\.)\s*[:=-]?\s*/i, '')
+        .trim();
+    }
     if (isInvalidCustomerName(customerName)) {
       customerName = null;
     }
@@ -2861,42 +4187,41 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       customerName = targetExplicitDeal.customer_name;
     }
 
-    // If still no customer name in message, check active conversation session or recent active deal
-    if (!customerName) {
-      const activeSessionCustomer = await getActiveSession(senderPhone);
-      if (
-        activeSessionCustomer &&
-        !isInvalidCustomerName(activeSessionCustomer)
-      ) {
-        customerName = activeSessionCustomer;
-      } else {
-        const { data: recentDeals } = await supabase
-          .from('deals')
-          .select('*, deal_items(*)')
-          .eq('salesperson_phone', senderPhone)
-          .not('stage', 'in', '("won","lost")')
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (recentDeals && recentDeals.length > 0) {
-          targetExplicitDeal = recentDeals[0];
-          customerName = recentDeals[0].customer_name;
+    // If still no customer name in message, check active conversation session ONLY if conditions are met (Issue 10)
+    if (!customerName && !targetExplicitDeal) {
+      const canFallbackToSession = shouldFallbackToActiveSession(
+        effectiveTextForLLM || text,
+        data,
+        targetExplicitDeal,
+      );
+      if (canFallbackToSession) {
+        const activeSessionCustomer = await getActiveSession(senderPhone);
+        if (
+          activeSessionCustomer &&
+          !isInvalidCustomerName(activeSessionCustomer)
+        ) {
+          customerName = activeSessionCustomer;
         }
       }
     }
 
-    // Check line items & product name extraction
-    const isExplicitRateUpdateIntent =
-      data.action === 'rate_update' ||
-      /\b(?:rate|price)\s*(?:update|change|is|to|badha|ghata)\b/i.test(text) ||
-      /\bupdate\s+rate\b/i.test(text);
+    if (data.product_requirement) {
+      const p = String(data.product_requirement).toLowerCase().trim();
+      if (
+        /^(?:for\s+)?(?:this\s+)?(?:inquiry|inq|deal|order)(?:\s+id|\s+is|\s+no)?/i.test(
+          p,
+        ) ||
+        /\b(?:this\s+inqiry|this\s+inquiry|inquiry\s+id|deal\s+id|inq\s+id|inq-)\b/i.test(
+          p,
+        )
+      ) {
+        data.product_requirement = null;
+      }
+    }
 
+    // Check line items & product name extraction
     let rawItems = [];
-    if (
-      Array.isArray(data.line_items) &&
-      data.line_items.length > 0 &&
-      !isExplicitRateUpdateIntent
-    ) {
+    if (Array.isArray(data.line_items) && data.line_items.length > 0) {
       rawItems = data.line_items;
     } else {
       const deterministicRateItems = extractDeterministicRateItems(
@@ -2904,8 +4229,6 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       );
       if (deterministicRateItems.length > 0) {
         rawItems = deterministicRateItems;
-      } else if (Array.isArray(data.line_items) && data.line_items.length > 0) {
-        rawItems = data.line_items;
       } else if (
         data.product_requirement ||
         data.quantity_mt ||
@@ -2925,7 +4248,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     }
 
     const GENERIC_PRODUCT_REGEX =
-      /^(steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined|address|delivery|delivery address|delivery location|location|destination|payment|payment terms|terms|credit|hsn|sac|unit)$/i;
+      /^(?:steel requirement|product requirement|steel|material|requirement|inquiry|unknown|item|null|undefined|address|delivery|delivery address|delivery location|location|destination|payment|payment terms|terms|credit|hsn|sac|unit|this inquiry|this inqiry|this inqiry is inq|inquiry id|deal id)$/i;
 
     let processedItems = [];
     let calculatedTotal = 0;
@@ -2934,9 +4257,17 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       let pName = item.product_requirement
         ? item.product_requirement.trim()
         : null;
+      const hasCompanyIndicatorOnly =
+        pName &&
+        COMPANY_INDICATORS_REGEX.test(pName) &&
+        !STEEL_PRODUCT_TERMS.test(pName);
       if (
         pName &&
         (GENERIC_PRODUCT_REGEX.test(pName) ||
+          hasCompanyIndicatorOnly ||
+          /\b(?:this\s+inqiry|this\s+inquiry|inquiry\s+id|deal\s+id|inq\s+id|inq-)\b/i.test(
+            pName,
+          ) ||
           KNOWN_STEEL_CITIES.some(
             (c) => c.toLowerCase() === pName.toLowerCase(),
           ))
@@ -2944,9 +4275,26 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         pName = null;
       }
 
-      const qty =
-        Number(item.quantity || item.quantity_mt || item.qty || 0) || 0;
-      const unit = item.unit || 'MT';
+      // Only push items to processedItems where pName is a valid non-null non-generic product name
+      if (!pName) continue;
+
+      let qty = Number(item.quantity || item.quantity_mt || item.qty || 0) || 0;
+      let unit = item.unit || 'MT';
+
+      // Issue 7: Recover zero quantity from surrounding context in message
+      if (qty === 0 && pName) {
+        const recovered = extractProductSegmentQuantity(
+          effectiveTextForLLM || text,
+          pName,
+          rawItems.indexOf(item),
+          rawItems,
+        );
+        if (recovered && recovered.qty > 0) {
+          qty = recovered.qty;
+          if (recovered.unit) unit = recovered.unit;
+        }
+      }
+
       const rawRate =
         item.rate_per_mt !== undefined &&
         item.rate_per_mt !== null &&
@@ -2958,34 +4306,35 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const rate = rawRate && rawRate > 0 ? rawRate : null;
       const rawDim =
         item.dimensions ||
-        (pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
-          ? pName.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
-          : text.match(/(\d+(?:\.\d+)?)\s*mm/i)
-            ? text.match(/(\d+(?:\.\d+)?)\s*mm/i)[1] + ' mm'
-            : null);
+        extractProductSegmentDimension(
+          effectiveTextForLLM || text,
+          pName,
+          rawItems.indexOf(item),
+          rawItems,
+        );
 
-      if (pName) {
-        if (qty > 0 && rate && rate > 0) {
-          const lineCalc = calculateLineItem({ quantity: qty, rate, unit });
-          calculatedTotal += lineCalc.amount;
-          processedItems.push({
-            pName,
-            dimensions: rawDim,
-            qty,
-            unit,
-            rate: lineCalc.rate || rate,
-            itemAmount: lineCalc.amount,
-          });
-        } else {
-          processedItems.push({
-            pName,
-            dimensions: rawDim,
-            qty,
-            unit,
-            rate: rate || null,
-            itemAmount: null,
-          });
-        }
+      if (qty > 0 && rate && rate > 0) {
+        const lineCalc = calculateLineItem({ quantity: qty, rate, unit });
+        calculatedTotal += lineCalc.amount;
+        processedItems.push({
+          pName,
+          product_requirement: pName,
+          dimensions: rawDim,
+          qty,
+          unit,
+          rate: lineCalc.rate || rate,
+          itemAmount: lineCalc.amount,
+        });
+      } else {
+        processedItems.push({
+          pName,
+          product_requirement: pName,
+          dimensions: rawDim,
+          qty: qty > 0 ? qty : 0,
+          unit,
+          rate: rate || null,
+          itemAmount: null,
+        });
       }
     }
 
@@ -3065,13 +4414,33 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     const hasUnitUpdate =
       extractedUnitList.length > 0 ||
       /\b(?:change|set|update)\s+unit\b/i.test(effectiveTextForLLM || text);
-    const hasRateUpdate = !!(
-      data.line_items?.some((i) => i.rate_per_mt > 0) ||
-      (data.total_amount && data.total_amount > 0)
-    );
-    const hasQtyUpdate = !!rawItems.some(
-      (i) => i.quantity > 0 || i.quantity_mt > 0,
-    );
+    const isQtyUpdateContext =
+      /\b(?:qty|quantity|tonnage|pieces|pcs|nos|bundles|increase|decrease|reduce|from\s+\d+\s+to\s+\d+|change\s+to\s+\d+|set\s+to\s+\d+|to\s+\d+)\b/i.test(
+        effectiveTextForLLM || text,
+      ) ||
+      /\b\d+(?:\.\d+)?\s*(?:mt|tons?|tonne|kg|pcs|nos|sheets?|plates?|coils?|bars?)\b/i.test(
+        (effectiveTextForLLM || text)
+          .replace(/rate\s+is\s+[\d,.]+/i, '')
+          .replace(/@\s*[\d,.]+/i, '')
+          .replace(/\b(?:rs|inr|\/mt|\/kg)\b/gi, ''),
+      );
+    const isRateUpdateContext =
+      /\b(upadte|updt|updte|update|set|new|give)\s+(?:the\s+)?(?:rates?|prices?)|(?:rates?|prices?)\s+for|rates?:/i.test(
+        effectiveTextForLLM || text,
+      ) ||
+      /\b(?:rates?|prices?|target\s+price)\b/i.test(
+        effectiveTextForLLM || text,
+      );
+
+    const hasRateUpdate =
+      isRateUpdateContext ||
+      !!(
+        data.line_items?.some((i) => i.rate_per_mt > 0) ||
+        (data.total_amount && data.total_amount > 0)
+      );
+    const hasQtyUpdate =
+      isQtyUpdateContext ||
+      !!rawItems.some((i) => i.quantity > 0 || i.quantity_mt > 0);
 
     // ── STAGE UPDATE HANDLER (e.g. "mark the deal as won", "deal is lost", "mark as negotiation", "put on hold") ───
     const isExplicitStageUpdate =
@@ -3086,12 +4455,42 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           'hold',
           'qualified',
         ].includes(data.target_stage)) ||
-      /\b(?:mark|move|update|set|change|put)\b.*?\b(negotiation|won|lost|quoted|on\s+hold|hold|qualified)\b/i.test(
+      /\b(?:mark|move|update|set|change|put)\b.*?\b(negotiation|won|lost|quoted|quotated|on\s+hold|hold|qualified)\b/i.test(
         text,
       ) ||
-      /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+|put\s+on\s+)?(negotiation|won|lost|quoted|on\s+hold|hold|qualified)\b/i.test(
+      /\b(?:deal|inquiry).*?\b(is\s+on\s+hold|is\s+lost|is\s+won|is\s+negotiation|is\s+quoted|moved\s+to|marked\s+as|put\s+on\s+hold|on\s+hold)\b/i.test(
         text,
-      );
+      ) ||
+      /\b(?:is\s+on\s+hold|put\s+on\s+hold|on\s+hold|hold)\b/i.test(text);
+
+    // ── CATALOG PRODUCT VALIDATION INTERCEPTOR ────────────────────────────────
+    // If user provided items that do not match our official catalog (e.g. "MS Sheet", "MS Plate"),
+    // ask for confirmation/clarification immediately and DO NOT save to database!
+    if (!isExplicitStageUpdate && processedItems.length > 0) {
+      const ambiguousOrInvalidItem = processedItems.find((item) => {
+        const norm = normalizeProductToCatalog(item.pName, item.dimensions);
+        return !norm.isValid;
+      });
+
+      if (ambiguousOrInvalidItem) {
+        const clarificationCustomer = customerName || 'Unknown';
+        const pendingPayload = {
+          raw_text: text,
+          customer_name: clarificationCustomer,
+          data: data,
+          processedItems: processedItems,
+          invalid_product: ambiguousOrInvalidItem.pName,
+        };
+        await saveActiveSession(
+          senderPhone,
+          clarificationCustomer,
+          `pending_product_clarification|${clarificationCustomer}|${JSON.stringify(pendingPayload)}`,
+        );
+        return getUnknownProductClarificationMessage(
+          ambiguousOrInvalidItem.pName,
+        );
+      }
+    }
 
     if (isExplicitStageUpdate) {
       let targetStageName = data.target_stage;
@@ -3108,13 +4507,6 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                 ? 'on_hold'
                 : rawStage;
         }
-      }
-
-      if (
-        targetStageName === 'quoted' ||
-        text.toLowerCase().includes('quoted')
-      ) {
-        return await handleSendQuotationMessage(text, senderPhone);
       }
 
       const stageMap = {
@@ -3157,14 +4549,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const currentStage = (dealToUpdate.stage || 'new_inquiry')
         .toLowerCase()
         .trim();
+      const dealAmount = Number(dealToUpdate.total_amount) || 0;
+      const dealCode = getDealCode(dealToUpdate);
 
-      // Stage Gate 1: If deal is already closed
-      if (currentStage === 'won' || currentStage === 'lost') {
-        return `This deal is already marked as ${currentStage.toUpperCase()} and cannot be updated further.`;
-      }
-
-      // Stage Gate 2: If deal is in New Inquiry stage and trying to mark Won without PO/items
-      if (
+      // Check if deal is in New Inquiry / Unquoted stage
+      const isNewInquiryStage =
         [
           'new_inquiry',
           'review',
@@ -3172,15 +4561,48 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           'pending',
           'draft',
           'needs_review',
-        ].includes(currentStage) &&
+        ].includes(currentStage) ||
+        (dealToUpdate.is_inquiry_source && currentStage === 'new_inquiry') ||
+        (dealAmount === 0 && currentStage === 'new_inquiry');
+
+      // Stage Gate 1: If deal is already closed
+      if (currentStage === 'won' || currentStage === 'lost') {
+        return `This deal is already marked as ${currentStage.toUpperCase()} and cannot be updated further.`;
+      }
+
+      if (currentStage === dbStage) {
+        return `Inquiry ${dealCode} for ${dealToUpdate.customer_name} is already in ${dbStage.toUpperCase().replace('_', ' ')} stage.`;
+      }
+
+      // Stage Gate 2: On Hold is ONLY allowed from Price Quote (quoted/qualified) stage
+      if (dbStage === 'on_hold') {
+        if (isNewInquiryStage) {
+          return `❌ Cannot put inquiry on hold.\n\nInquiry ${dealCode} for ${dealToUpdate.customer_name} is currently in NEW INQUIRY stage please share the quotation or mark Inquiry as quoted.\n\nPlease enter unit rates first to move it to PRICE QUOTE stage before putting it on hold.`;
+        }
+        if (currentStage !== 'quoted' && currentStage !== 'qualified') {
+          return `❌ Cannot put inquiry on hold.\n\nInquiry ${dealCode} for ${dealToUpdate.customer_name} is currently in ${currentStage.toUpperCase().replace('_', ' ')} stage. An inquiry must be in PRICE QUOTE stage before it can be placed on hold.`;
+        }
+      }
+
+      // Stage Gate 3: Negotiation is ONLY allowed from Price Quote (quoted/qualified) stage
+      if (dbStage === 'negotiation') {
+        if (isNewInquiryStage) {
+          return `❌ Cannot move inquiry to Negotiation.\n\nInquiry ${dealCode} for ${dealToUpdate.customer_name} is currently in NEW INQUIRY stage without quoted rates.\n\nPlease enter unit rates first to move it to PRICE QUOTE stage before entering Negotiation.`;
+        }
+        if (currentStage === 'on_hold') {
+          return `❌ Cannot move inquiry to Negotiation.\n\nInquiry ${dealCode} for ${dealToUpdate.customer_name} is currently ON HOLD. From On Hold stage, an inquiry can only be marked as WON or LOST.`;
+        }
+      }
+
+      // Stage Gate 4: If deal is in New Inquiry stage and trying to mark Won without PO/items
+      if (
+        isNewInquiryStage &&
         dbStage === 'won' &&
         !data.po_number &&
         data.action !== 'purchase_order'
       ) {
-        return `This deal is currently in New Inquiry stage. Please quote the deal or provide a Purchase Order (PO) to mark it as Won.`;
+        return `❌ Cannot mark inquiry as Won.\n\nInquiry ${dealCode} is currently in NEW INQUIRY stage. Please quote the deal or provide a Purchase Order (PO) to mark it as Won.`;
       }
-
-      const dealCode = getDealCode(dealToUpdate);
 
       if (dealToUpdate.is_inquiry_source) {
         // Insert pipeline deal in deals table linked to this inquiry
@@ -3345,13 +4767,6 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     }
 
     // Disambiguation check for any deal update/rate update/field update without an explicit Deal ID
-    const isRateUpdateContext =
-      /\b(upadte|updt|updte|update|set|new|give)\s+(?:the\s+)?(?:rates?|prices?)|(?:rates?|prices?)\s+for|rates?:/i.test(
-        effectiveTextForLLM || text,
-      ) ||
-      /\b(?:rates?|prices?|target\s+price)\b/i.test(
-        effectiveTextForLLM || text,
-      );
     const isRateOrPriceUpdate = isRateUpdateContext || hasRateUpdate;
     const isFieldUpdate =
       hasDeliveryUpdate ||
@@ -3360,10 +4775,18 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       hasUnitUpdate ||
       !!data.delivery_date ||
       !!data.contact_person;
+    const isExplicitNewInquiryIntent =
+      /^\s*(?:log\s+(?:new\s+)?inquiry|new\s+inquiry|inquiry\s+for|requirement\s+for|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry|order\s+for)\b/i.test(
+        effectiveTextForLLM || text,
+      );
+    const isNewInquiryWithProduct =
+      (data.action === 'inquiry' && hasAnyProductName) ||
+      isExplicitNewInquiryIntent;
 
     if (
       !targetExplicitDeal &&
       customerName &&
+      !isNewInquiryWithProduct &&
       (isRateOrPriceUpdate ||
         isFieldUpdate ||
         data.action === 'deal_update' ||
@@ -3414,16 +4837,17 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
     if (
       targetExplicitDeal &&
-      (explicitDealIdMatch ||
+      (explicitDealCode ||
         data.deal_id ||
-        !hasAnyProductName ||
-        data.action === 'deal_update' ||
-        isRateUpdateContext ||
-        hasRateUpdate ||
-        isRateOrPriceUpdate ||
-        isFieldUpdate ||
-        isAddItemAction ||
-        isRemoveItemAction)
+        (!isExplicitNewInquiryIntent &&
+          (!hasAnyProductName ||
+            data.action === 'deal_update' ||
+            isRateUpdateContext ||
+            hasRateUpdate ||
+            isRateOrPriceUpdate ||
+            isFieldUpdate ||
+            isAddItemAction ||
+            isRemoveItemAction)))
     ) {
       const dealId = targetExplicitDeal.id;
       const dealCode = getDealCode(targetExplicitDeal);
@@ -3584,14 +5008,25 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
               .replace(/\b(?:rs|inr|\/mt|\/kg)\b/gi, ''),
           );
         const hasExplicitQtyInMsg = isQtyUpdateContext;
+        let explicitTargetQty = null;
+        const fromToMatch = (effectiveTextForLLM || text).match(
+          /(?:(?:from\s+[\d,.]+\s*(?:mt|tons?|kg|pcs|nos|sheets?|plates?|coils?|bars?)?\s+)?to\s+|change\s+(?:quantity|qty)?\s*to\s+|set\s+(?:quantity|qty)?\s*to\s+)(\d+(?:\.\d+)?)/i,
+        );
+        if (fromToMatch) {
+          explicitTargetQty = Number(fromToMatch[1]);
+        }
+
         const firstRate =
           data.line_items?.[0]?.rate_per_mt ||
           (processedItems[0]?.rate > 0 ? processedItems[0]?.rate : null);
-        const firstQty = hasExplicitQtyInMsg
-          ? data.line_items?.[0]?.quantity ||
-            data.line_items?.[0]?.quantity_mt ||
-            (processedItems[0]?.qty > 0 ? processedItems[0]?.qty : null)
-          : null;
+        const firstQty =
+          explicitTargetQty !== null
+            ? explicitTargetQty
+            : hasExplicitQtyInMsg
+              ? data.line_items?.[0]?.quantity ||
+                data.line_items?.[0]?.quantity_mt ||
+                (processedItems[0]?.qty > 0 ? processedItems[0]?.qty : null)
+              : null;
 
         const { matchedMap, unmatchedProcessed } =
           matchProcessedItemsToExisting(existingItems, processedItems);
@@ -3737,8 +5172,45 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       // Keep stage unchanged (never auto-escalate to quoted on field updates)
       updateFields.stage = targetExplicitDeal.stage || 'new_inquiry';
 
-      if (Object.keys(updateFields).length > 0) {
+      const { data: existingDealRows } = await supabase
+        .from('deals')
+        .select('id')
+        .eq('id', dealId)
+        .limit(1);
+
+      if (!existingDealRows || existingDealRows.length === 0) {
+        await supabase.from('deals').insert({
+          id: dealId,
+          inquiry_id: targetExplicitDeal.inquiry_id || dealId,
+          customer_name: company,
+          stage:
+            updateFields.stage || targetExplicitDeal.stage || 'new_inquiry',
+          salesperson_phone:
+            targetExplicitDeal.salesperson_phone || senderPhone,
+          delivery_location:
+            updateFields.delivery_location ||
+            targetExplicitDeal.delivery_location,
+          payment_terms:
+            updateFields.payment_terms || targetExplicitDeal.payment_terms,
+          total_amount: computedTotal,
+          status: 'active',
+        });
+      } else if (Object.keys(updateFields).length > 0) {
         await supabase.from('deals').update(updateFields).eq('id', dealId);
+      }
+
+      for (const uItem of updatedDealItems) {
+        if (uItem.id && String(uItem.id).startsWith('inq_item_')) {
+          await supabase.from('deal_items').insert({
+            deal_id: dealId,
+            sku_text: uItem.sku_text || uItem.pName || 'Steel Material',
+            dimensions: uItem.dimensions || '',
+            quantity: uItem.quantity || uItem.qty || 0,
+            unit: uItem.unit || 'MT',
+            rate: uItem.rate || null,
+            amount: uItem.amount || null,
+          });
+        }
       }
 
       // Sync inquiries table ai_extraction_json
@@ -3950,14 +5422,13 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       text.match(/#?(?:DEAL|INQ)-([A-F0-9]{4,6})\b/i) ||
       text.match(/#([A-F0-9]{6})\b/i);
     const numChoiceMatch = text.trim().match(/^([1-9])$/);
-
     const isExplicitNewInquiry =
       !dealIdMatch &&
       !numChoiceMatch &&
       !data.po_number &&
       dbStage !== 'won' &&
       data.action !== 'purchase_order' &&
-      /^\s*(?:log\s+new\s+inquiry|new\s+inquiry|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry)\b/i.test(
+      /^\s*(?:log\s+(?:new\s+)?inquiry|new\s+inquiry|inquiry\s+for|requirement\s+for|new\s+deal|create\s+deal|create\s+inquiry|add\s+deal|add\s+inquiry|order\s+for)\b/i.test(
         text,
       );
 
@@ -3972,20 +5443,27 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           (d.deal_number && d.deal_number.toUpperCase().includes(targetCode)),
       );
     } else if (!isExplicitNewInquiry && openDeals.length > 0) {
-      const candidateProductNames = processedItems
-        .map((pi) => pi.pName)
-        .filter(Boolean);
-      if (candidateProductNames.length > 0) {
-        const matchingDeal = openDeals.find((d) =>
-          isDealProductMatch(d, candidateProductNames),
-        );
-        existingDeal = matchingDeal || null;
-      } else if (openDeals.length === 1) {
-        existingDeal = openDeals[0];
+      if (data.action !== 'inquiry' && !isExplicitNewInquiryIntent) {
+        const candidateProductNames = processedItems
+          .map((pi) => pi.pName)
+          .filter(Boolean);
+        if (candidateProductNames.length > 0) {
+          const matchingDeal = openDeals.find((d) =>
+            isDealProductMatch(d, candidateProductNames),
+          );
+          existingDeal = matchingDeal || null;
+        } else if (openDeals.length === 1) {
+          existingDeal = openDeals[0];
+        }
       }
     }
 
-    if (existingDeal && !isExplicitNewInquiry) {
+    if (
+      existingDeal &&
+      !isExplicitNewInquiry &&
+      data.action !== 'inquiry' &&
+      !isExplicitNewInquiryIntent
+    ) {
       dealId = existingDeal.id;
     }
 
@@ -4072,15 +5550,22 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           : pricingSummary.subtotal > 0
             ? pricingSummary.subtotal
             : null,
-      line_items: processedItems.map((pi) => ({
-        sku_text: pi.pName,
-        dimensions: pi.dimensions || '',
-        hsn_code: detectHsnCode(pi.pName, pi.dimensions),
-        quantity: pi.qty,
-        unit: pi.unit || 'MT',
-        rate: pi.rate > 0 ? pi.rate : null,
-        amount: pi.itemAmount > 0 ? pi.itemAmount : null,
-      })),
+      line_items: processedItems.map((pi) => {
+        const norm = normalizeProductToCatalog(pi.pName, pi.dimensions);
+        return {
+          sku_text: norm.isValid ? norm.catalogName : pi.pName,
+          dimensions: pi.dimensions || '',
+          hsn_code:
+            pi.hsn_code ||
+            (norm.isValid
+              ? norm.hsnCode
+              : detectHsnCode(pi.pName, pi.dimensions)),
+          quantity: pi.qty,
+          unit: pi.unit || 'MT',
+          rate: pi.rate > 0 ? pi.rate : null,
+          amount: pi.itemAmount > 0 ? pi.itemAmount : null,
+        };
+      }),
       preferred_make: data.preferred_make || null,
       overall_confidence: data.confidence || 0.95,
     };
@@ -4216,11 +5701,13 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         }
       } else if (processedItems.length > 0) {
         for (const pItem of processedItems) {
+          const norm = normalizeProductToCatalog(pItem.pName, pItem.dimensions);
+          const skuText = norm.isValid ? norm.catalogName : pItem.pName;
           const { data: insItem } = await supabase
             .from('deal_items')
             .insert({
               deal_id: dealId,
-              sku_text: pItem.pName,
+              sku_text: skuText,
               dimensions:
                 pItem.dimensions ||
                 (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
@@ -4270,6 +5757,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const { data: newDeal, error: dealInsertErr } = await supabase
         .from('deals')
         .insert({
+          ...(inqId ? { id: inqId } : {}),
           inquiry_id: inqId || null,
           customer_name: finalCustomerName,
           salesperson_phone: senderPhone,
@@ -4293,11 +5781,13 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         dealId = newDeal.id;
         activeDealObj = newDeal;
         for (const pItem of processedItems) {
+          const norm = normalizeProductToCatalog(pItem.pName, pItem.dimensions);
+          const skuText = norm.isValid ? norm.catalogName : pItem.pName;
           const { data: insItem } = await supabase
             .from('deal_items')
             .insert({
               deal_id: dealId,
-              sku_text: pItem.pName,
+              sku_text: skuText,
               dimensions:
                 pItem.dimensions ||
                 (pItem.pName?.match(/(\d+(?:\.\d+)?)\s*mm/i)
@@ -4497,4 +5987,12 @@ module.exports = {
   detectInvalidUnitInMessage,
   extractDeliveryLocation,
   evaluateMandatoryFields,
+  extractDeterministicRateItems,
+  getProductFamily,
+  extractRuleBasedLineItems,
+  mergeIncompleteLineItems,
+  applyFieldPurityChecks,
+  verifyExtractionAgainstCurrentMessage,
+  shouldFallbackToActiveSession,
+  extractProductSegmentQuantity,
 };
