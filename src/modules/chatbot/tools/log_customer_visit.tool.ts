@@ -12,11 +12,11 @@ export interface LogCustomerVisitArgs {
 export const logCustomerVisitTool: ChatbotTool<LogCustomerVisitArgs, any> = {
   name: 'log_customer_visit',
   description:
-    'Use this tool when the salesperson or user reports visiting a customer site, meeting a customer in person, an office visit, a field visit or market visit. This logs to Customer Visits Card (KRA 9), updates customer profile, auto-creates prospect in recurring_customers if new, and triggers Zoho Bigin sync.',
+    'ACTION TOOL: Use this tool whenever the salesperson reports or logs visiting a customer, meeting someone in person, a site visit, or an office meeting (e.g. "Met Rajesh Sharma at ABC Steel today...", "Visited Supreme Steel...", "Meeting with XYZ..."). This logs the visit to Customer Visits Card (KRA 9), auto-creates prospect in recurring_customers if new, and triggers Zoho Bigin sync.',
   declaration: {
     name: 'log_customer_visit',
     description:
-      'Logs a customer site visit, office meeting, or field visit with discussion remarks, person met, material requirement, visit outcome, and follow-up actions.',
+      'ACTION TOOL: Logs and records a customer site visit, office meeting, or in-person discussion report with discussion remarks, person met, location, material requirement, visit outcome, and follow-up actions. Call this tool whenever the user reports having met or visited a customer (e.g. "Met [Name] at [Company]...", "Visited [Company] today...").',
     parameters: {
       type: 'OBJECT',
       properties: {

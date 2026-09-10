@@ -66,7 +66,11 @@ export async function getSubordinateSalespersons(
   const matched = (allActive || []).filter((emp: any) => {
     const r = (emp.role || '').toLowerCase();
     if (r.includes('admin') || r.includes('manager')) return false;
-    if (callerContext.userId && emp.manager_id === callerContext.userId)
+    if (
+      callerContext.userId &&
+      (emp.manager_id === callerContext.userId ||
+        emp.reports_to_employee_id === callerContext.userId)
+    )
       return true;
     if (
       callerContext.employeeId &&

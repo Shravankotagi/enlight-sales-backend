@@ -118,6 +118,10 @@ export function convertLineItemToMt(item: LineItemInput): {
     item.specification || '',
     item.description || '',
     item.product || '',
+    item.product_requirement || '',
+    item.pName || '',
+    item.raw_text || '',
+    item.text || '',
   ]
     .join(' ')
     .toLowerCase();
@@ -223,46 +227,96 @@ export function convertLineItemToMt(item: LineItemInput): {
   }
 
   // 3e. Standard Sheets / Plates / Coils / CR Coils / HR Coils / Chequered Plates:
+  // Weight (KG) = Length (m) * Width (m) * Thickness (mm) * 8 * Nos
   let thickness: number | null = null;
   const thkMatch = combinedText.match(
     /(\d+(?:\.\d+)?)\s*(?:mm\s*thk|mm\s*thickness|mm|\bthk\b)/,
   );
   if (thkMatch) {
     thickness = parseFloat(thkMatch[1]);
+  } else {
+    // Check for gauge
+    const gaugeMatch = combinedText.match(/(\d+)\s*(?:g|gauge)\b/);
+    if (gaugeMatch) {
+      const g = parseInt(gaugeMatch[1], 10);
+      const GAUGE_MAP: Record<number, number> = {
+        10: 3.2,
+        12: 2.5,
+        14: 2.0,
+        16: 1.6,
+        18: 1.2,
+        20: 0.9,
+        22: 0.8,
+        24: 0.6,
+      };
+      if (GAUGE_MAP[g]) thickness = GAUGE_MAP[g];
+    }
   }
 
   let widthM: number | null = null;
   let lengthM: number | null = null;
 
-  const dim3Match = combinedText.match(
-    /(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+  // Check imperial feet dimensions e.g. "5ft x 20ft", "5 ft x 20 ft", "5' x 20'"
+  const ftMatch = combinedText.match(
+    /(\d+(?:\.\d+)?)\s*(?:ft|feet|')\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:ft|feet|'|"|in)?/,
   );
-  if (dim3Match) {
-    const n1 = parseFloat(dim3Match[1]);
-    const n2 = parseFloat(dim3Match[2]);
-    const n3 = parseFloat(dim3Match[3]);
-    const sorted = [n1, n2, n3].sort((a, b) => a - b);
-    if (!thickness) thickness = sorted[0];
-    const w = sorted[1];
-    const l = sorted[2];
-    widthM = w > 20 ? w / 1000 : w;
-    lengthM = l > 20 ? l / 1000 : l;
-  } else {
-    const dim2Match = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?/,
+  if (ftMatch) {
+    const f1 = parseFloat(ftMatch[1]);
+    const f2 = parseFloat(ftMatch[2]);
+    widthM = Math.min(f1, f2) * 0.3048;
+    lengthM = Math.max(f1, f2) * 0.3048;
+  }
+
+  if (!widthM || !lengthM) {
+    const dim3Match = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
     );
-    if (dim2Match) {
-      const d1 = parseFloat(dim2Match[1]);
-      const d2 = parseFloat(dim2Match[2]);
-      const w = Math.min(d1, d2);
-      const l = Math.max(d1, d2);
+    if (dim3Match) {
+      const n1 = parseFloat(dim3Match[1]);
+      const n2 = parseFloat(dim3Match[2]);
+      const n3 = parseFloat(dim3Match[3]);
+      const sorted = [n1, n2, n3].sort((a, b) => a - b);
+      if (!thickness) thickness = sorted[0];
+      const w = sorted[1];
+      const l = sorted[2];
       widthM = w > 20 ? w / 1000 : w;
       lengthM = l > 20 ? l / 1000 : l;
+    } else {
+      const dim2Match = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
+      );
+      if (dim2Match) {
+        const d1 = parseFloat(dim2Match[1]);
+        const d2 = parseFloat(dim2Match[2]);
+        const w = Math.min(d1, d2);
+        const l = Math.max(d1, d2);
+        widthM = w > 20 ? w / 1000 : w;
+        lengthM = l > 20 ? l / 1000 : l;
+      }
     }
   }
 
+  // Fallback to standard sheet dimensions (1.25m x 2.5m = 1250mm x 2500mm) if thickness is known
+  // and length/width are omitted for sheet/plate items
+  const isSheetOrPlate =
+    combinedText.includes('sheet') ||
+    combinedText.includes('plate') ||
+    combinedText.includes('chequered') ||
+    combinedText.includes('cr ') ||
+    combinedText.includes('hr ') ||
+    combinedText.includes('hrpo') ||
+    normUnit === 'Sheets' ||
+    normUnit === 'Plates' ||
+    normUnit === 'Nos' ||
+    normUnit === 'Pcs';
+
+  if (thickness && (!widthM || !lengthM) && isSheetOrPlate) {
+    widthM = 1.25;
+    lengthM = 2.5;
+  }
+
   if (thickness && widthM && lengthM) {
-    const wtPerPieceKg = lengthM * widthM * thickness * 7.85;
+    const wtPerPieceKg = lengthM * widthM * thickness * 8;
     const totalMt = (wtPerPieceKg * qty) / 1000;
     return {
       mt: totalMt,
@@ -358,7 +412,15 @@ export function calculateLineItem(item: LineItemInput): CalculatedLineItem {
 
   let amount = item.amount && Number(item.amount) > 0 ? Number(item.amount) : 0;
   if (!amount && quantity > 0 && rate > 0) {
-    if (unit === 'KG' && rate > 1000) {
+    const conv = convertLineItemToMt(item);
+    if (
+      conv.canConvert &&
+      conv.mt !== null &&
+      conv.mt > 0 &&
+      (rate > 1000 || unit === 'MT')
+    ) {
+      amount = Math.round(conv.mt * rate);
+    } else if (unit === 'KG' && rate > 1000) {
       amount = Math.round((quantity / 1000) * rate);
     } else {
       amount = Math.round(quantity * rate);

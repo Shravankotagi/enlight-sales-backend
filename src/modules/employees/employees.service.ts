@@ -168,8 +168,18 @@ export class EmployeesService {
 
       const normPhone = normalizePhone(managerPhone);
       return data.filter((emp: any) => {
-        if (emp.role === 'admin' || emp.role === 'sales_manager') return false;
-        if (managerId && emp.manager_id === managerId) return true;
+        if (
+          emp.role === 'admin' ||
+          emp.role === 'sales_manager' ||
+          emp.role === 'manager'
+        )
+          return false;
+        if (
+          managerId &&
+          (emp.manager_id === managerId ||
+            emp.reports_to_employee_id === managerId)
+        )
+          return true;
         if (normPhone && normalizePhone(emp.manager_phone) === normPhone)
           return true;
         return false;
@@ -246,6 +256,9 @@ export class EmployeesService {
       const teamPhones = Array.from(
         new Set(assigned.map((a: any) => a.phone).filter(Boolean)),
       );
+      if (employee.phone && !teamPhones.includes(employee.phone)) {
+        teamPhones.push(employee.phone);
+      }
 
       if (isPersonalMode) {
         return { phones: [employee.phone], isPersonalView: true };
@@ -280,8 +293,8 @@ export class EmployeesService {
     phone: string;
     email?: string;
     role?: string;
-    manager_id?: string;
-    manager_phone?: string;
+    manager_id?: string | null;
+    manager_phone?: string | null;
   }) {
     try {
       // Check duplicate phone
@@ -298,18 +311,36 @@ export class EmployeesService {
         );
       }
 
+      const role = dto.role || 'salesperson';
       const insertPayload: any = {
         employee_id: dto.employee_id,
         name: dto.name,
         phone: dto.phone,
         email: dto.email || null,
-        role: dto.role || 'salesperson',
+        role,
         is_active: true,
         created_at: new Date().toISOString(),
       };
 
-      if (dto.manager_id) insertPayload.manager_id = dto.manager_id;
-      if (dto.manager_phone) insertPayload.manager_phone = dto.manager_phone;
+      if (role === 'salesperson' && (dto.manager_id || dto.manager_phone)) {
+        let mgr: any = null;
+        if (dto.manager_id) {
+          const { data } = await this.supabase
+            .from('employees')
+            .select('*')
+            .eq('id', dto.manager_id)
+            .single();
+          mgr = data;
+        } else if (dto.manager_phone) {
+          mgr = await this.findByPhone(dto.manager_phone);
+        }
+
+        if (mgr) {
+          insertPayload.manager_id = mgr.id;
+          insertPayload.manager_phone = mgr.phone;
+          insertPayload.reports_to_employee_id = mgr.id;
+        }
+      }
 
       const { data, error } = await this.supabase
         .from('employees')
@@ -336,12 +367,43 @@ export class EmployeesService {
       is_active: boolean;
       manager_id: string | null;
       manager_phone: string | null;
+      reports_to_employee_id: string | null;
     }>,
   ) {
     try {
+      const updatePayload: any = { ...dto };
+
+      if (dto.role === 'sales_manager' || dto.role === 'admin') {
+        updatePayload.manager_id = null;
+        updatePayload.manager_phone = null;
+        updatePayload.reports_to_employee_id = null;
+      } else if (dto.manager_id || dto.manager_phone) {
+        let mgr: any = null;
+        if (dto.manager_id) {
+          const { data } = await this.supabase
+            .from('employees')
+            .select('*')
+            .eq('id', dto.manager_id)
+            .single();
+          mgr = data;
+        } else if (dto.manager_phone) {
+          mgr = await this.findByPhone(dto.manager_phone);
+        }
+
+        if (mgr) {
+          updatePayload.manager_id = mgr.id;
+          updatePayload.manager_phone = mgr.phone;
+          updatePayload.reports_to_employee_id = mgr.id;
+        }
+      } else if (dto.manager_id === null || dto.manager_id === '') {
+        updatePayload.manager_id = null;
+        updatePayload.manager_phone = null;
+        updatePayload.reports_to_employee_id = null;
+      }
+
       const { data, error } = await this.supabase
         .from('employees')
-        .update({ ...dto })
+        .update(updatePayload)
         .eq('id', id)
         .select()
         .single();

@@ -7,6 +7,7 @@ import {
   verifyCustomerAccountAccess,
 } from './chatbot-tool.interface';
 import { parseVisitRemarks } from './get_visits.tool';
+import { convertLineItemToMt } from '../../pricing/pricing.engine';
 
 function deriveCustomerSegment(
   totalTonnage: number,
@@ -152,10 +153,12 @@ export const getCustomer360Tool: ChatbotTool = {
     // ─── Case 1: Directory Mode (customer_name is omitted) ─────────────────
     if (!customerName) {
       try {
-        const { CustomersService } =
-          await import('../../customers/customers.service');
-        const { CustomerInsightsService } =
-          await import('../../customers/customer-insights.service');
+        const { CustomersService } = await import(
+          '../../customers/customers.service'
+        );
+        const { CustomerInsightsService } = await import(
+          '../../customers/customer-insights.service'
+        );
         const customersService = new CustomersService(
           {
             getAdminClient: () => supabaseAdmin,
@@ -560,9 +563,15 @@ export const getCustomer360Tool: ChatbotTool = {
       const items = d.deal_items || [];
       const dealTonnage = items.reduce((sum: number, it: any) => {
         const q = Number(it.quantity) || 0;
-        const u = (it.unit || 'MT').toLowerCase().trim();
-        if (u === 'kg' || u === 'kgs') return sum + q / 1000;
-        return sum + q;
+        const u = (it.unit || 'MT').trim();
+        const conv = convertLineItemToMt({
+          sku_text: it.sku_text,
+          dimensions: it.dimensions,
+          quantity: q,
+          unit: u,
+        });
+        const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : q;
+        return sum + qtyMt;
       }, 0);
 
       if (isWon) {

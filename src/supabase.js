@@ -457,6 +457,118 @@ async function checkAndLogNewCustomer(deal, senderPhone) {
 
 /**
  * Uses Google Gemini to fuzzy match a customer name from a list of customer names.
+const DISTINCTIVE_INDUSTRY_WORDS = [
+  'steel',
+  'steels',
+  'metal',
+  'metals',
+  'fabricator',
+  'fabricators',
+  'fabrication',
+  'tube',
+  'tubes',
+  'pipe',
+  'pipes',
+  'motor',
+  'motors',
+  'infra',
+  'infrastructure',
+  'engineering',
+  'engineers',
+  'automotive',
+  'automotives',
+  'auto',
+  'sheet',
+  'sheets',
+  'coil',
+  'coils',
+  'strip',
+  'strips',
+  'wire',
+  'wires',
+  'casting',
+  'castings',
+  'forging',
+  'forgings',
+  'alloy',
+  'alloys',
+  'power',
+  'energy',
+  'chemical',
+  'chemicals',
+  'tool',
+  'tools',
+  'solutions',
+  'logistics',
+  'trader',
+  'traders',
+  'trading',
+  'industry',
+  'industries',
+  'enterprise',
+  'enterprises',
+  'work',
+  'works',
+  'hardware',
+  'buildcon',
+  'constructions',
+  'construction',
+];
+
+const CORPORATE_LEGAL_SUFFIXES = [
+  'pvt',
+  'ltd',
+  'private',
+  'limited',
+  'llp',
+  'inc',
+  'corp',
+  'corporation',
+  'co',
+  'and',
+  '&',
+];
+
+function normalizeCoreCompanyName(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/[.:,\-_/()&]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 0 && !CORPORATE_LEGAL_SUFFIXES.includes(w))
+    .join(' ')
+    .trim();
+}
+
+function hasConflictingIndustryNoun(name1, name2) {
+  if (!name1 || !name2) return false;
+  const words1 = name1
+    .toLowerCase()
+    .replace(/[.:,\-_/()&]/g, ' ')
+    .split(/\s+/);
+  const words2 = name2
+    .toLowerCase()
+    .replace(/[.:,\-_/()&]/g, ' ')
+    .split(/\s+/);
+
+  const ind1 = words1.filter((w) => DISTINCTIVE_INDUSTRY_WORDS.includes(w));
+  const ind2 = words2.filter((w) => DISTINCTIVE_INDUSTRY_WORDS.includes(w));
+
+  if (ind1.length > 0 && ind2.length > 0) {
+    const hasOverlap = ind1.some(
+      (w1) =>
+        ind2.includes(w1) ||
+        ind2.some((w2) => w1.startsWith(w2) || w2.startsWith(w1)),
+    );
+    if (!hasOverlap) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Uses Google Gemini to fuzzy match a customer name from a list of customer names.
  * Useful for handling salesperson typos, Hinglish, or shorthand customer names.
  * @param {string} text - The raw input text containing the customer name.
  * @param {string[]} customerList - The list of active customer names to match against.
@@ -470,18 +582,30 @@ async function fuzzyMatchCustomer(text, customerList) {
     const { HumanMessage } = require('@langchain/core/messages');
 
     const prompt = `
-Given a user message and a list of customer names, identify which customer from the list the message is referring to.
-The user might have spelling mistakes, typos, or written in Hinglish/mix languages (e.g. "Mehta steel" matches "Mehta Steel Limited", "Delta structural" matches "Delta Structural Steel").
+You are a Strict Entity Resolution Engine for B2B industrial company names.
+Given a user-provided company name and a list of registered customer names, determine if ANY registered customer is EXACTLY the same business entity.
 
-List of customer names:
+Target Company Name: "${text}"
+
+Registered Customer Candidates:
 ${customerList.map((c, i) => `${i + 1}. "${c}"`).join('\n')}
 
-Message: "${text}"
+STRICT MATCHING & ANTI-ALIASING RULES:
+1. MATCH ONLY IF:
+   - The candidate is the EXACT same company with minor spelling typo or phonetic variation (e.g. "Vardhaman" vs "Vardhman", "Rishabh" vs "Rishab").
+   - The candidate is the SAME company with or without standard corporate legal suffixes (e.g. "Pvt Ltd", "Private Limited", "LLP", "Corp", "Enterprises", "Co."). For example: "ABC Steel" MATCHES "ABC Steel Pvt Ltd".
+2. STRICTLY REJECT (RETURN ONLY "0") IF:
+   - The core business noun or industry descriptor is different! For example:
+     * "ABC Steel" DOES NOT MATCH "ABC Fabricators" -> Return 0.
+     * "Tata Motors" DOES NOT MATCH "Tata Steel" -> Return 0.
+     * "Apex Steel" DOES NOT MATCH "Apex Industries" -> Return 0.
+     * "Jindal Pipes" DOES NOT MATCH "Jindal Fabricators" -> Return 0.
+     * "Supreme Infrastructure" DOES NOT MATCH "Supreme Steel" -> Return 0.
+   - The user name is a new prospect/company whose distinct name is not in the list.
+   - In case of ANY ambiguity, doubt, or multiple different companies sharing a prefix word, return "0".
 
-Rules:
-- If there is a high-confidence match from the list, return ONLY the index of the matched customer (1-based index).
-- If there is absolutely no match or the message is about a different customer, return ONLY "0".
-- Return ONLY the number (e.g. "1" or "0"), do not include any other text, markdown, or explanation.
+If there is a definite, high-confidence match according to these rules, return ONLY the 1-based index (e.g. "1").
+If there is NO exact entity match, return ONLY "0".
 `;
 
     const response = await invokeWithFallback([new HumanMessage(prompt)]);
@@ -490,14 +614,17 @@ Rules:
         ? response.content
         : JSON.stringify(response.content)
     ).trim();
-    const matchIndex = parseInt(textRes);
+    const matchIndex = parseInt(textRes, 10);
 
     if (
       !isNaN(matchIndex) &&
       matchIndex > 0 &&
       matchIndex <= customerList.length
     ) {
-      return customerList[matchIndex - 1];
+      const candidate = customerList[matchIndex - 1];
+      if (!hasConflictingIndustryNoun(text, candidate)) {
+        return candidate;
+      }
     }
   } catch (err) {
     console.error('fuzzyMatchCustomer error:', err.message);
@@ -580,22 +707,14 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
     }
 
     // 3. Word token candidate retrieval for typos or word order differences (max 20 candidates)
+    // IMPORTANT: stopWords must ONLY strip legal corporate suffixes, NEVER core business words like steel, fabricators, tubes
     if (!candidateRows || candidateRows.length === 0) {
-      const stopWords = [
-        'pvt',
-        'ltd',
-        'steel',
-        'company',
-        'corp',
-        'enterprises',
-        'private',
-        'limited',
-        'industries',
-        'works',
-      ];
       const words = clean
         .split(/\s+/)
-        .filter((w) => w.length > 2 && !stopWords.includes(w.toLowerCase()));
+        .filter(
+          (w) =>
+            w.length > 2 && !CORPORATE_LEGAL_SUFFIXES.includes(w.toLowerCase()),
+        );
 
       if (words.length > 0) {
         const orTokens = words
@@ -649,9 +768,27 @@ async function verifyAndGetCustomerName(customerName, senderPhone) {
     );
     if (exactMatch) return exactMatch;
 
-    // Fuzzy match with Gemini only across targeted candidates (max 20)
-    const fuzzyMatch = await fuzzyMatchCustomer(clean, customerList);
-    if (fuzzyMatch) return fuzzyMatch;
+    // Suffix-normalized core match (e.g. "ABC Steel" vs "ABC Steel Pvt Ltd")
+    const cleanNormalized = normalizeCoreCompanyName(clean);
+    const suffixNormalizedMatch = customerList.find(
+      (c) => normalizeCoreCompanyName(c) === cleanNormalized,
+    );
+    if (suffixNormalizedMatch) return suffixNormalizedMatch;
+
+    // Filter out candidates that have conflicting industry/business descriptors before fuzzy matching
+    const nonConflictingCandidates = customerList.filter(
+      (c) => !hasConflictingIndustryNoun(clean, c),
+    );
+    if (nonConflictingCandidates.length === 0) return null;
+
+    // Fuzzy match with Gemini only across non-conflicting candidates (max 20)
+    const fuzzyMatch = await fuzzyMatchCustomer(
+      clean,
+      nonConflictingCandidates,
+    );
+    if (fuzzyMatch && !hasConflictingIndustryNoun(clean, fuzzyMatch)) {
+      return fuzzyMatch;
+    }
   } catch (err) {
     console.error('verifyAndGetCustomerName error:', err.message);
   }

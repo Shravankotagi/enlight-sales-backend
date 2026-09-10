@@ -6,6 +6,7 @@ import {
   isSalespersonRole,
   verifyCustomerAccountAccess,
 } from './chatbot-tool.interface';
+import { convertLineItemToMt } from '../../pricing/pricing.engine';
 
 function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   if (!dateFilter || dateFilter === 'all') return {};
@@ -258,9 +259,15 @@ export const getMyOpenDealsTool: ChatbotTool = {
       const items = d.deal_items || [];
       const dealTonnageMt = items.reduce((tSum: number, item: any) => {
         const q = Number(item.quantity) || 0;
-        const u = (item.unit || 'MT').toLowerCase().trim();
-        if (u === 'kg' || u === 'kgs') return tSum + q / 1000;
-        return tSum + q;
+        const u = (item.unit || 'MT').trim();
+        const conv = convertLineItemToMt({
+          sku_text: item.sku_text,
+          dimensions: item.dimensions,
+          quantity: q,
+          unit: u,
+        });
+        const qtyMt = conv.canConvert && conv.mt !== null ? conv.mt : q;
+        return tSum + qtyMt;
       }, 0);
 
       const roundedTonnage = Math.round(dealTonnageMt * 1000) / 1000;

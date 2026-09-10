@@ -225,6 +225,14 @@ function isQuery(text) {
     'customer visits',
     'site visits',
     'team visits',
+    'pending follow-up',
+    'pending followup',
+    'pending follow up',
+    'pending follow-ups',
+    'pending visits',
+    'visit count',
+    'visits this month',
+    'visits last month',
 
     // Rate / Price queries
     'rate sheet',
@@ -1920,6 +1928,332 @@ async function getVisitSummary(scopeOrPhone, text = '') {
   }
 }
 
+/** Helper to format date for visits */
+function formatVisitDate(dateVal) {
+  if (!dateVal) return 'Unknown Date';
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return 'Unknown Date';
+  const day = d.getDate();
+  const monthNames = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return `${day} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Helper to classify follow-up action into deliverable, scheduled_call, or none */
+function classifyFollowUp(visit) {
+  let rawFollowUp = visit.follow_up_action || visit.follow_up || null;
+  const remarks = visit.remarks || '';
+
+  if (!rawFollowUp && remarks) {
+    const match = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
+    if (match) {
+      rawFollowUp = match[1].trim();
+    } else {
+      const inlineMatch = remarks.match(
+        /\bfollow-?up\s*(?:needed|required)?\s*(?:to|:)?\s*([^\n\r.]+)/i,
+      );
+      if (inlineMatch) {
+        rawFollowUp = inlineMatch[1].trim();
+      }
+    }
+  }
+
+  if (!rawFollowUp) return null;
+
+  const cleanAction = rawFollowUp.trim();
+  const lowerAction = cleanAction.toLowerCase();
+
+  // Exclude non-actionable or completed remarks
+  if (
+    /^(no\s+follow\s*up(\s*needed|\s*required)?|none|not\s+required|not\s+needed|not\s+interested|n\/?a|nil|nothing|done|completed)$/i.test(
+      lowerAction,
+    ) ||
+    lowerAction.startsWith('no remarks')
+  ) {
+    return null;
+  }
+
+  // Determine deliverable vs scheduled_call
+  const isDeliverable =
+    /\b(send|share|provide|prepare|mail|email|courier|dispatch|submit|give)\s+(?:the\s+)?(?:ms\s+plate\s+|hr\s+coil\s+|cr\s+coil\s+|steel\s+)?(samples?|quotation|quote|pricing|rates?|catalog|catalogue|specs?|specification|certificate|test\s+cert|proforma|pi)\b/i.test(
+      lowerAction,
+    ) ||
+    /\b(samples?|quotation|quote|specs?|catalog|test\s+cert)\s+(?:to\s+be\s+sent|needed|required|to\s+send)\b/i.test(
+      lowerAction,
+    ) ||
+    /\b(send\s+samples?|send\s+quote|send\s+quotation)\b/i.test(lowerAction);
+
+  return {
+    action: cleanAction,
+    category: isDeliverable ? 'deliverable' : 'scheduled_call',
+  };
+}
+
+/** Pending Follow-up Visits (Actionable deliverables vs scheduled check-ins) */
+async function getVisitsPendingFollowup(scopeOrPhone, text = '') {
+  try {
+    const supabase = getSupabase();
+    const scope =
+      typeof scopeOrPhone === 'object' && scopeOrPhone !== null
+        ? scopeOrPhone
+        : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
+
+    if (scope.isManager && (!scope.phones || scope.phones.length === 0)) {
+      return (
+        `Customer Visits Pending Follow-up\n\n` +
+        `No visits logged. You currently have no salespersons assigned to your team.`
+      );
+    }
+
+    let query = supabase
+      .from('customer_visits')
+      .select('*')
+      .order('visited_at', { ascending: false })
+      .limit(100);
+    query = applySalespersonFilter(query, scope.phones, 'salesperson_phone');
+
+    const { data: visits, error } = await query;
+    if (error) {
+      console.error(
+        '[queryhandler] getVisitsPendingFollowup error:',
+        error.message,
+      );
+      return `Could not fetch pending follow-up visits: ${error.message}`;
+    }
+
+    if (!visits || visits.length === 0) {
+      return (
+        `Customer Visits Pending Follow-up\n\n` +
+        `No visits logged in the system.`
+      );
+    }
+
+    const deliverables = [];
+    const scheduledCalls = [];
+
+    for (const v of visits) {
+      const classified = classifyFollowUp(v);
+      if (!classified) continue;
+
+      const dateStr = formatVisitDate(v.visited_at || v.created_at);
+      const custName = v.customer_name || 'Customer';
+      const personMet = v.person_met || 'Not recorded';
+      const item = {
+        customer_name: custName,
+        dateStr,
+        personMet,
+        action: classified.action,
+      };
+
+      if (classified.category === 'deliverable') {
+        deliverables.push(item);
+      } else {
+        scheduledCalls.push(item);
+      }
+    }
+
+    const totalPending = deliverables.length + scheduledCalls.length;
+    if (totalPending === 0) {
+      return (
+        `Customer Visits Pending Follow-up\n\n` +
+        `No visits currently have pending follow-up actions. All visit follow-ups are up to date!\n\n` +
+        `Tracked under Customer Visits Card`
+      );
+    }
+
+    const sections = [];
+    if (deliverables.length > 0) {
+      const delLines = deliverables
+        .map(
+          (d) =>
+            `- ${d.customer_name} (Visited: ${d.dateStr})\n  Contact: ${d.personMet}\n  Action: ${d.action}`,
+        )
+        .join('\n\n');
+      sections.push(`Actionable Deliverables:\n${delLines}`);
+    }
+
+    if (scheduledCalls.length > 0) {
+      const callLines = scheduledCalls
+        .map(
+          (c) =>
+            `- ${c.customer_name} (Visited: ${c.dateStr})\n  Contact: ${c.personMet}\n  Action: ${c.action}`,
+        )
+        .join('\n\n');
+      sections.push(`Scheduled Follow-up Calls:\n${callLines}`);
+    }
+
+    return (
+      `Customer Visits Pending Follow-up\n\n` +
+      sections.join('\n\n') +
+      `\n\nTotal Pending Follow-up Visits: ${totalPending}\n\n` +
+      `Tracked under Customer Visits Card`
+    );
+  } catch (err) {
+    console.error('getVisitsPendingFollowup error:', err.message);
+    return 'Could not fetch pending follow-up visits.';
+  }
+}
+
+/** Month-over-Month Visit Count & Outcomes Comparison */
+async function getVisitCountComparison(scopeOrPhone, text = '') {
+  try {
+    const supabase = getSupabase();
+    const scope =
+      typeof scopeOrPhone === 'object' && scopeOrPhone !== null
+        ? scopeOrPhone
+        : await getAccessibleSalespersonPhonesForBot(scopeOrPhone);
+
+    const now = new Date();
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    // 1. Last Month Range
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthStart = new Date(
+      lastMonthDate.getFullYear(),
+      lastMonthDate.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+    const lastMonthEnd = new Date(
+      lastMonthDate.getFullYear(),
+      lastMonthDate.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    const lastMonthLabel = `${monthNames[lastMonthDate.getMonth()]} ${lastMonthDate.getFullYear()}`;
+
+    // 2. This Month Range
+    const thisMonthStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+    const thisMonthEnd = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    const thisMonthLabel = `${monthNames[now.getMonth()]} ${now.getFullYear()} MTD`;
+
+    let qLast = supabase
+      .from('customer_visits')
+      .select('*')
+      .gte('visited_at', lastMonthStart.toISOString())
+      .lte('visited_at', lastMonthEnd.toISOString());
+    qLast = applySalespersonFilter(qLast, scope.phones, 'salesperson_phone');
+
+    let qThis = supabase
+      .from('customer_visits')
+      .select('*')
+      .gte('visited_at', thisMonthStart.toISOString())
+      .lte('visited_at', thisMonthEnd.toISOString());
+    qThis = applySalespersonFilter(qThis, scope.phones, 'salesperson_phone');
+
+    const [
+      { data: lastVisits, error: errLast },
+      { data: thisVisits, error: errThis },
+    ] = await Promise.all([qLast, qThis]);
+
+    if (errLast || errThis) {
+      console.error(
+        '[queryhandler] getVisitCountComparison error:',
+        errLast || errThis,
+      );
+      return `Could not fetch visit comparison: ${(errLast || errThis).message}`;
+    }
+
+    const getOutcomeBreakdown = (visitsList) => {
+      const counts = { positive: 0, neutral: 0, negative: 0 };
+      (visitsList || []).forEach((v) => {
+        const rem = v.remarks || '';
+        const match = rem.match(/\[Outcome:\s*([^\]]+)\]/i);
+        let out =
+          v.outcome || (match ? match[1].toLowerCase().trim() : 'neutral');
+        out = out.toLowerCase().trim();
+        if (out.includes('pos')) counts.positive++;
+        else if (out.includes('neg')) counts.negative++;
+        else counts.neutral++;
+      });
+      return counts;
+    };
+
+    const lastCount = (lastVisits || []).length;
+    const thisCount = (thisVisits || []).length;
+    const lastOutcomes = getOutcomeBreakdown(lastVisits);
+    const thisOutcomes = getOutcomeBreakdown(thisVisits);
+
+    const diff = thisCount - lastCount;
+    let netChangeStr = `${diff >= 0 ? '+' : ''}${diff} visits`;
+    if (lastCount > 0) {
+      const ratio = (thisCount / lastCount).toFixed(1);
+      netChangeStr += ` (${ratio}x volume compared to last month)`;
+    }
+
+    const posDiff = thisOutcomes.positive - lastOutcomes.positive;
+    const posTrendStr = `${posDiff >= 0 ? '+' : ''}${posDiff} positive visits`;
+
+    return (
+      `Customer Visits Summary - Month Comparison\n\n` +
+      `Last Month (${lastMonthLabel}):\n` +
+      `- Total Visits: ${lastCount}\n` +
+      `- Positive: ${lastOutcomes.positive}\n` +
+      `- Neutral: ${lastOutcomes.neutral}\n` +
+      `- Negative: ${lastOutcomes.negative}\n\n` +
+      `This Month (${thisMonthLabel}):\n` +
+      `- Total Visits: ${thisCount}\n` +
+      `- Positive: ${thisOutcomes.positive}\n` +
+      `- Neutral: ${thisOutcomes.neutral}\n` +
+      `- Negative: ${thisOutcomes.negative}\n\n` +
+      `Comparison:\n` +
+      `- Net Change: ${netChangeStr}\n` +
+      `- Positive Outcome Trend: ${posTrendStr}\n\n` +
+      `Tracked under Customer Visits Card`
+    );
+  } catch (err) {
+    console.error('getVisitCountComparison error:', err.message);
+    return 'Could not fetch visit count comparison.';
+  }
+}
+
 /** Inactive / Churn Risk customers (no order in 60+ days) */
 async function getInactiveCustomers(scopeOrPhone) {
   try {
@@ -3072,6 +3406,17 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
     case 'kra_status':
       return await getKRAStatus(scope, text);
     case 'visit_summary':
+      if (
+        (text &&
+          (text.toLowerCase().includes('vs') ||
+            text.toLowerCase().includes('compare') ||
+            text.toLowerCase().includes('comparison'))) ||
+        (text &&
+          text.toLowerCase().includes('last month') &&
+          text.toLowerCase().includes('this month'))
+      ) {
+        return await getVisitCountComparison(scope, text);
+      }
       return await getVisitSummary(scope, text);
     case 'payment_summary':
       return await getPaymentSummary(scope);
@@ -3099,6 +3444,25 @@ async function routeToHandler(category, text, scope, supabase, extra = {}) {
     case 'rate_sheet':
       return await getRateSheet();
     case 'visit_list':
+      if (
+        text &&
+        (text.toLowerCase().includes('follow') ||
+          text.toLowerCase().includes('pending') ||
+          text.toLowerCase().includes('remaining'))
+      ) {
+        return await getVisitsPendingFollowup(scope, text);
+      }
+      if (
+        (text &&
+          (text.toLowerCase().includes('vs') ||
+            text.toLowerCase().includes('compare') ||
+            text.toLowerCase().includes('comparison'))) ||
+        (text &&
+          text.toLowerCase().includes('last month') &&
+          text.toLowerCase().includes('this month'))
+      ) {
+        return await getVisitCountComparison(scope, text);
+      }
       return await getVisitList(scope, text);
     case 'payment_aging':
       return await getPaymentAging(scope);
@@ -3607,6 +3971,29 @@ async function handleQuery(text, senderPhone) {
   ) {
     return await getRateSheet();
   }
+  // Visit pending follow-ups
+  if (
+    (lower.includes('visit') &&
+      (lower.includes('follow') ||
+        lower.includes('pending') ||
+        lower.includes('remaining'))) ||
+    lower.includes('pending follow-up') ||
+    lower.includes('pending followup') ||
+    lower.includes('pending follow up')
+  ) {
+    return await getVisitsPendingFollowup(effectiveScope, text);
+  }
+  // Visit comparison (last month vs this month)
+  if (
+    lower.includes('visit') &&
+    (lower.includes('vs') ||
+      lower.includes('compare') ||
+      lower.includes('comparison') ||
+      (lower.includes('last month') && lower.includes('this month')) ||
+      (lower.includes('pichle mahine') && lower.includes('is mahine')))
+  ) {
+    return await getVisitCountComparison(effectiveScope, text);
+  }
   // Visit list
   if (
     lower.includes('visit') ||
@@ -3658,6 +4045,8 @@ module.exports = {
   isQuery,
   handleQuery,
   getVisitSummary,
+  getVisitsPendingFollowup,
+  getVisitCountComparison,
   getInactiveCustomers,
   getReorderQueue,
   getFilteredOrders,
