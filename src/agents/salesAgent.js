@@ -240,7 +240,6 @@ const PRODUCT_FAMILIES = {
     'bq plate',
     'hardox',
     'e350 plate',
-    'plate',
   ],
   hrpo_coil: [
     'hrpo coil',
@@ -289,6 +288,9 @@ const PRODUCT_FAMILIES = {
     'chequered plate',
     'checkered plate',
     'tear drop sheet',
+    'tear drop plate',
+    'chequered',
+    'checkered',
   ],
 
   // Structural Steel
@@ -997,8 +999,74 @@ function extractRuleBasedLineItems(textRaw) {
     },
   ];
 
+  // 3a. Check line-by-line list: "1. MS Sheet 5MM THK (1250 x 2500 mm) - Qty: 150 Nos"
+  const lines = textRaw.split(/[\r\n]+/);
+  const lineItemsList = [];
+  for (const line of lines) {
+    const cleanL = line.trim();
+    if (
+      !cleanL ||
+      /^(?:log|create|inquiry|deal|customer|company|payment|delivery|terms|waluj|midc)\b/i.test(
+        cleanL,
+      )
+    )
+      continue;
+    const lineM = cleanL.match(
+      /^(?:(?:\d+[-.)]|[-*•])\s*)?([A-Za-z0-9\s.()x/–-]+?)\s*(?:[-:–=]\s*(?:qty\s*:?\s*)?|\s+qty\s*:?\s*|\s+quantity\s*:?\s*)(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/i,
+    );
+    if (lineM) {
+      const rawProductAndDim = lineM[1].trim();
+      const lineQty = parseFloat(lineM[2]);
+      const lineUnit = lineM[3] ? lineM[3].toUpperCase() : 'MT';
+
+      let linePName = null;
+      for (const kp of KNOWN_CATALOG_PRODUCTS) {
+        if (kp.regex.test(rawProductAndDim)) {
+          linePName = kp.name;
+          break;
+        }
+      }
+      if (!linePName) {
+        const uncatM = rawProductAndDim.match(
+          /\b(ms\s*sheet|ms\s*plate|chequered\s*plate)\b/i,
+        );
+        if (uncatM) {
+          linePName = uncatM[0].trim();
+        } else {
+          linePName = rawProductAndDim;
+        }
+      }
+      if (
+        linePName &&
+        lineQty > 0 &&
+        !/^\d+$/.test(linePName) &&
+        !/^[0-9.:\s-]+$/.test(linePName) &&
+        linePName.length >= 2
+      ) {
+        const mmM = rawProductAndDim.match(
+          /(\d+(?:\.\d+)?\s*(?:mm|g|gauge|dia|ø|inch|ft)(?:\s*x\s*[\d.]+\s*(?:mm|ft|inch|mtr)?)?)/i,
+        );
+        const simpleMmM = rawProductAndDim.match(/(\d+(?:\.\d+)?\s*mm)/i);
+        const mDim = mmM ? mmM[0] : simpleMmM ? simpleMmM[0] : null;
+        lineItemsList.push({
+          product_requirement: linePName,
+          pName: linePName,
+          dimensions: mDim,
+          quantity: lineQty,
+          quantity_mt: lineUnit.startsWith('K') ? lineQty / 1000 : lineQty,
+          unit: lineUnit.startsWith('TON') ? 'MT' : lineUnit,
+          rate_per_mt: null,
+        });
+      }
+    }
+  }
+  if (lineItemsList.length > 0) {
+    return lineItemsList;
+  }
+
+  // 3b. Quantity + Unit + Product inline pattern
   const multiProdRegex =
-    /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|piece|pieces|nos|sheet|sheets|plate|plates|coil|coils|bar|bars|lengths|bundles)\s+([A-Za-z0-9\s.()x/]+?)(?=(?:and\s+\d|,\s*(?:\d|[a-zA-Z]+\s+delivery|delivery|payment|contact|terms|credit)|(?:\.|\?|!)(?:\s+|$)|$|\s+for\s+delivery|\s+delivery|\s+payment|\s+contact|\s+before|\s+by\s+\d|\s+rate|\s+price|\s+po|\s+attn|\s+terms|\s+credit|\s+advance))/gi;
+    /(\d+(?:\.\d+)?)\s*(mt|ton|tons|tonne|kg|kgs|pcs|piece|pieces|nos|sheet|sheets|plate|plates|coil|coils|bar|bars|lengths|bundles)\s+([A-Za-z0-9\s.()x/]+?)(?=(?:and\s+\d|,\s*(?:\d|[a-zA-Z]+\s+delivery|delivery|payment|contact|terms|credit)|(?:\.|\?|!)(?:\s+|$)|$|[\r\n]|\s+for\s+delivery|\s+delivery|\s+payment|\s+contact|\s+before|\s+by\s+\d|\s+rate|\s+price|\s+po|\s+attn|\s+terms|\s+credit|\s+advance))/gi;
   let mProd;
   while ((mProd = multiProdRegex.exec(textRaw)) !== null) {
     const mQty = parseFloat(mProd[1]);
@@ -1006,6 +1074,13 @@ function extractRuleBasedLineItems(textRaw) {
     const rawP = mProd[3]
       .trim()
       .replace(/\s+(?:thk|thick|thickness|approx|approx\.)\b/i, '');
+    if (
+      !rawP ||
+      /^\d+$/.test(rawP) ||
+      /^[0-9.:\s-]+$/.test(rawP) ||
+      rawP.length < 2
+    )
+      continue;
 
     let matchedPName = null;
     for (const kp of KNOWN_CATALOG_PRODUCTS) {
@@ -1050,15 +1125,26 @@ function extractRuleBasedLineItems(textRaw) {
 
 function mergeIncompleteLineItems(data, rawText) {
   if (!data || !rawText) return data;
-  const distinctFamilyCount = countDistinctProductFamiliesInText(rawText);
-  const currentItems = Array.isArray(data.line_items) ? data.line_items : [];
+  const currentItems = Array.isArray(data.line_items)
+    ? data.line_items.filter((i) => {
+        const p = (i.product_requirement || i.pName || '').trim();
+        return (
+          p && !/^\d+$/.test(p) && !/^[0-9.:\s-]+$/.test(p) && p.length >= 2
+        );
+      })
+    : [];
 
-  const ruleItems = extractRuleBasedLineItems(rawText);
+  const ruleItems = extractRuleBasedLineItems(rawText).filter((item) => {
+    const p = (item.product_requirement || item.pName || '').trim();
+    return p && !/^\d+$/.test(p) && !/^[0-9.:\s-]+$/.test(p) && p.length >= 2;
+  });
 
-  if (
-    ruleItems.length > currentItems.length ||
-    distinctFamilyCount > currentItems.length
-  ) {
+  if (currentItems.length >= ruleItems.length && currentItems.length > 0) {
+    data.line_items = currentItems;
+    return data;
+  }
+
+  if (ruleItems.length > currentItems.length) {
     const existingFamilies = new Set(
       currentItems
         .map((i) => getProductFamily(i.product_requirement || i.pName))
@@ -1068,15 +1154,28 @@ function mergeIncompleteLineItems(data, rawText) {
 
     for (let rIdx = 0; rIdx < ruleItems.length; rIdx++) {
       const rItem = ruleItems[rIdx];
-      const rFam = getProductFamily(rItem.product_requirement || rItem.pName);
+      const rName = (rItem.product_requirement || rItem.pName || '').trim();
+      if (
+        !rName ||
+        /^\d+$/.test(rName) ||
+        /^[0-9.:\s-]+$/.test(rName) ||
+        rName.length < 2
+      )
+        continue;
+      const rFam = getProductFamily(rName);
       const isAlreadyIncluded = currentItems.some((i) => {
         const iName = (i.product_requirement || i.pName || '').toLowerCase();
-        const rName = (
-          rItem.product_requirement ||
-          rItem.pName ||
-          ''
+        const normI = (
+          normalizeProductToCatalog(iName).catalogName || iName
         ).toLowerCase();
-        return iName === rName || (rFam && rFam === getProductFamily(iName));
+        const normR = (
+          normalizeProductToCatalog(rName).catalogName || rName
+        ).toLowerCase();
+        return (
+          iName === rName.toLowerCase() ||
+          normI === normR ||
+          (rFam && rFam === getProductFamily(iName))
+        );
       });
 
       if (!isAlreadyIncluded) {
@@ -1174,7 +1273,14 @@ function applyFieldPurityChecks(data) {
     data.line_items = data.line_items
       .map((item) => {
         const pName = (item.product_requirement || item.pName || '').trim();
-        if (!pName) return item;
+        if (
+          !pName ||
+          /^\d+$/.test(pName) ||
+          /^[0-9.:\s-]+$/.test(pName) ||
+          pName.length < 2
+        ) {
+          return { ...item, product_requirement: null, pName: null };
+        }
 
         // Check if pName is a known steel city
         const isCity = KNOWN_STEEL_CITIES.some(
@@ -1197,7 +1303,7 @@ function applyFieldPurityChecks(data) {
       })
       .filter(
         (i) =>
-          (i.product_requirement && i.product_requirement.trim().length > 0) ||
+          (i.product_requirement && i.product_requirement.trim().length >= 2) ||
           (i.rate_per_mt && i.rate_per_mt > 0),
       );
   }
@@ -3511,6 +3617,20 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             pendingPayload.data &&
             Array.isArray(pendingPayload.data.line_items)
           ) {
+            pendingPayload.data.line_items =
+              pendingPayload.data.line_items.filter((itm) => {
+                const itmName = (
+                  itm.product_requirement ||
+                  itm.pName ||
+                  ''
+                ).trim();
+                return (
+                  itmName &&
+                  !/^\d+$/.test(itmName) &&
+                  !/^[0-9.:\s-]+$/.test(itmName) &&
+                  itmName.length >= 2
+                );
+              });
             for (const itm of pendingPayload.data.line_items) {
               const itmName = itm.product_requirement || itm.pName || '';
               if (
@@ -3523,6 +3643,20 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
             }
           }
           if (Array.isArray(pendingPayload.processedItems)) {
+            pendingPayload.processedItems =
+              pendingPayload.processedItems.filter((itm) => {
+                const itmName = (
+                  itm.pName ||
+                  itm.product_requirement ||
+                  ''
+                ).trim();
+                return (
+                  itmName &&
+                  !/^\d+$/.test(itmName) &&
+                  !/^[0-9.:\s-]+$/.test(itmName) &&
+                  itmName.length >= 2
+                );
+              });
             for (const itm of pendingPayload.processedItems) {
               const itmName = itm.pName || itm.product_requirement || '';
               if (
