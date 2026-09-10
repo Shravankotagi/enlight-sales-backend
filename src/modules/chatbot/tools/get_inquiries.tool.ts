@@ -211,7 +211,7 @@ export const getInquiriesTool: ChatbotTool = {
       )
       .order('created_at', { ascending: false });
 
-    const dealsQuery = supabaseAdmin
+    let dealsQuery = supabaseAdmin
       .from('deals')
       .select(
         'id, inquiry_id, stage, status, customer_name, customer_phone, po_number, total_amount, salesperson_phone, employee_id, created_at, won_at, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
@@ -223,19 +223,22 @@ export const getInquiriesTool: ChatbotTool = {
       const rawPhone = callerContext.phone || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
       const empId = callerContext.employeeId;
-      const orParts: string[] = [];
+      const inqOrParts: string[] = [];
+      const dealOrParts: string[] = [];
 
       if (cleanPhone) {
-        orParts.push(
+        inqOrParts.push(
           `salesperson_phone.ilike.%${cleanPhone}%`,
           `sender_phone.ilike.%${cleanPhone}%`,
         );
+        dealOrParts.push(`salesperson_phone.ilike.%${cleanPhone}%`);
       }
       if (empId) {
-        orParts.push(`employee_id.eq.${empId}`);
+        inqOrParts.push(`employee_id.eq.${empId}`);
+        dealOrParts.push(`employee_id.eq.${empId}`);
       }
 
-      if (orParts.length === 0) {
+      if (inqOrParts.length === 0) {
         return {
           data: {
             notFound: true,
@@ -254,25 +257,31 @@ export const getInquiriesTool: ChatbotTool = {
         };
       }
 
-      inqQuery = inqQuery.or(orParts.join(','));
+      inqQuery = inqQuery.or(inqOrParts.join(','));
+      if (dealOrParts.length > 0) {
+        dealsQuery = dealsQuery.or(dealOrParts.join(','));
+      }
     } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes, employeeIds } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
       );
 
-      const orParts: string[] = [];
+      const inqOrParts: string[] = [];
+      const dealOrParts: string[] = [];
       phoneSuffixes.forEach((p) => {
-        orParts.push(
+        inqOrParts.push(
           `salesperson_phone.ilike.%${p}%`,
           `sender_phone.ilike.%${p}%`,
         );
+        dealOrParts.push(`salesperson_phone.ilike.%${p}%`);
       });
       employeeIds.forEach((id) => {
-        orParts.push(`employee_id.eq.${id}`);
+        inqOrParts.push(`employee_id.eq.${id}`);
+        dealOrParts.push(`employee_id.eq.${id}`);
       });
 
-      if (orParts.length === 0) {
+      if (inqOrParts.length === 0) {
         return {
           summary: {
             total_inquiries: 0,
@@ -287,7 +296,10 @@ export const getInquiriesTool: ChatbotTool = {
         };
       }
 
-      inqQuery = inqQuery.or(orParts.join(','));
+      inqQuery = inqQuery.or(inqOrParts.join(','));
+      if (dealOrParts.length > 0) {
+        dealsQuery = dealsQuery.or(dealOrParts.join(','));
+      }
     }
     // Admin role receives unfiltered data
 
@@ -295,13 +307,15 @@ export const getInquiriesTool: ChatbotTool = {
     const { from, to } = parseDateFilter(dateRange);
     if (from) {
       inqQuery = inqQuery.gte('created_at', from.toISOString());
+      dealsQuery = dealsQuery.gte('created_at', from.toISOString());
     }
     if (to) {
       inqQuery = inqQuery.lte('created_at', to.toISOString());
+      dealsQuery = dealsQuery.lte('created_at', to.toISOString());
     }
 
     // 4. In-memory cache resolution to prevent repeated Supabase latency & statement timeouts
-    const cacheKey = `${callerContext.userId || callerContext.role}_${from?.toISOString() || ''}_${to?.toISOString() || ''}`;
+    const cacheKey = `${callerContext.userId || ''}_${callerContext.role || ''}_${callerContext.phone || ''}_${callerContext.employeeId || ''}_${from?.toISOString() || ''}_${to?.toISOString() || ''}_${dateRange || ''}_${searchName || ''}_${mode || ''}`;
     const cached = inquiriesGlobalCache.get(cacheKey);
     let inqData: any[] = [];
     let dealsData: any[] = [];
