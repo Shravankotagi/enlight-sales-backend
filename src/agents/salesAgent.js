@@ -99,8 +99,12 @@ CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
    - When unit is Kg: MT = Kg / 1000.
 
 7. EXACT CUSTOMER NAME PRESERVATION:
-   - Extract the EXACT company/customer name stated in the user message (e.g. "ABC Steel", "Company 5", "Company 6", "Tata Motors").
+   - Extract the EXACT company/customer name stated in the user message (e.g. "ABC Steel", "Shree Ganesh Traders", "Tata Motors").
+   - When messages say "This is for Shree Ganesh Traders company" or "Inquiry for ABC Steel client", extract the company name cleanly without the generic trailing word "company" or "client" unless it is an explicit legal part of the title.
    - NEVER alter, guess, abbreviate, or substitute company names.
+
+8. DELIVERY DATE & DEADLINE:
+   - When the user specifies relative deadlines such as "by next Friday", "before Monday", "by tomorrow", or explicit dates "by 25 August", extract the delivery deadline in YYYY-MM-DD format (using current year 2026).
 
 Return ONLY the JSON object.
 `;
@@ -539,13 +543,14 @@ function extractDeliveryLocation(text) {
 
   // 1. Explicit field updates: "update delivery address to Plot 42, MIDC Chakan, Pune for inquiry INQ-0B1D1A"
   const explicitMatch = text.match(
-    /(?:update|change|set|give)?\s*(?:the\s+)?(?:delivery\s+address|delivery\s+location|delivery\s+site|ship\s+to|destination|delivery\s+city|delivery\s+pe|delivery|address)\s*(?:to|is|:|=|-)\s*([^\n\r]+?)(?:\s*(?:,|;)?\s*(?:payment\s*terms?|payment|credit\s*terms?|credit|hsn\s*code|hsn|sac|unit|for\s+(?:inquiry|deal)|in\s+inquiry|inq-|deal-)|\.|$|\n)/i,
+    /(?:update|change|set|give)?\s*(?:the\s+)?(?:delivery\s+address|delivery\s+location|delivery\s+site|ship\s+to|destination|delivery\s+city|delivery\s+pe|delivery|address)\s*(?:to|is|:|=|-)\s*([^\n\r]+?)(?:\s*(?:,|;)?\s*(?:payment\s*terms?|payment|credit\s*terms?|credit|hsn\s*code|hsn|sac|unit|for\s+(?:inquiry|deal)|in\s+inquiry|inq-|deal-)|\s+before\b|\s+by\b|\s+on\b|\s+within\b|\.|$|\n)/i,
   );
   if (explicitMatch && explicitMatch[1]) {
-    const cand = explicitMatch[1]
+    let cand = explicitMatch[1]
       .trim()
       .replace(/^['"]|['"]$/g, '')
       .replace(/#?(?:DEAL|INQ)-[A-F0-9]{4,8}\b/gi, '')
+      .replace(/\s+(?:by|before|on|within)\s+.*$/i, '')
       .trim();
     if (
       cand.length >= 2 &&
@@ -565,7 +570,9 @@ function extractDeliveryLocation(text) {
     ) {
       return trimmed
         .replace(/^📍\s*/, '')
-        .replace(/^(?:delivery(?:\s+address|\s+location)?\s*[:\-]?\s*)/i, '');
+        .replace(/^(?:delivery(?:\s+address|\s+location)?\s*[:\-]?\s*)/i, '')
+        .replace(/\s+(?:by|before|on|within)\s+.*$/i, '')
+        .trim();
     }
   }
 
@@ -580,10 +587,14 @@ function extractDeliveryLocation(text) {
 
   // 4. Preposition matches: "deliver to Chakan Phase 2, Pune"
   const phraseMatch = text.match(
-    /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|deliver\s+to|ship\s+to|transport\s+to|bhejna\s+hai|deliver\s+karna\s+hai|delivering\s+to)\s+([A-Za-z0-9\s,.-]+?)(?:\s*(?:,|;)?\s*(?:payment\s*terms?|payment|credit|hsn|sac|unit|for\s+(?:inquiry|deal)|in\s+inquiry|inq-|deal-)|\s+before|\s+by|\s+on|\s+within|\s+rate|\s+price|\.|\n|$)/i,
+    /(?:for\s+delivery\s+to|delivery\s+to|delivery\s+at|deliver\s+to|ship\s+to|transport\s+to|bhejna\s+hai|deliver\s+karna\s+hai|delivering\s+to)\s+([A-Za-z0-9\s,.-]+?)(?:\s*(?:,|;)?\s*(?:payment\s*terms?|payment|credit|hsn|sac|unit|for\s+(?:inquiry|deal)|in\s+inquiry|inq-|deal-)|\s+before\b|\s+by\b|\s+on\b|\s+within\b|\s+rate|\s+price|\.|\n|$)/i,
   );
   if (phraseMatch && phraseMatch[1]) {
-    const cand = phraseMatch[1].trim().replace(/^['"]|['"]$/g, '');
+    let cand = phraseMatch[1]
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .replace(/\s+(?:by|before|on|within)\s+.*$/i, '')
+      .trim();
     if (
       cand.length >= 2 &&
       !/^(?:the|and|with|metal|steel|credit|advance|payment|days|day)$/i.test(
@@ -643,6 +654,118 @@ function extractPaymentTerms(text) {
 
   if (/\b(?:against\s+delivery|cash\s+on\s+delivery|cod)\b/i.test(text)) {
     return 'Against Delivery';
+  }
+
+  return null;
+}
+
+function extractDeliveryDate(text) {
+  if (!text || typeof text !== 'string') return null;
+
+  // 1. Explicit ISO / standard date formats (YYYY-MM-DD or DD/MM/YYYY or DD-MM-YYYY)
+  const isoMatch = text.match(/\b(202\d-[01]\d-[0-3]\d)\b/);
+  if (isoMatch) return isoMatch[1];
+
+  const ddmmyyyyMatch = text.match(
+    /\b([0-3]?\d)[\/\-.]([01]?\d)[\/\-.](202\d)\b/,
+  );
+  if (ddmmyyyyMatch) {
+    const day = String(ddmmyyyyMatch[1]).padStart(2, '0');
+    const month = String(ddmmyyyyMatch[2]).padStart(2, '0');
+    const year = ddmmyyyyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // 2. Month name formats: "25 August", "25th Aug", "August 25", "by 15 September"
+  const monthNames = {
+    jan: '01',
+    january: '01',
+    feb: '02',
+    february: '02',
+    mar: '03',
+    march: '03',
+    apr: '04',
+    april: '04',
+    may: '05',
+    june: '06',
+    jun: '06',
+    july: '07',
+    jul: '07',
+    aug: '08',
+    august: '08',
+    sep: '09',
+    sept: '09',
+    september: '09',
+    oct: '10',
+    october: '10',
+    nov: '11',
+    november: '11',
+    dec: '12',
+    december: '12',
+  };
+
+  const monthRegex = new RegExp(
+    `\\b(?:by|before|on|delivery\\s+by)?\\s*([0-3]?\\d)(?:st|nd|rd|th)?\\s+(${Object.keys(monthNames).join('|')})(?:\\s+(202\\d))?\\b`,
+    'i',
+  );
+  const mMatch = text.match(monthRegex);
+  if (mMatch) {
+    const day = String(mMatch[1]).padStart(2, '0');
+    const month = monthNames[mMatch[2].toLowerCase()];
+    const year = mMatch[3] || '2026';
+    return `${year}-${month}-${day}`;
+  }
+
+  // 3. Relative date formats: "tomorrow", "next Friday", "this Friday", "by Monday", "coming Monday"
+  const lower = text.toLowerCase();
+  const today = new Date();
+  const currentDay = today.getDay(); // 0 = Sun, 1 = Mon, ..., 5 = Fri, 6 = Sat
+
+  if (/\b(?:by\s+)?tomorrow\b/i.test(lower)) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+
+  const daysOfWeek = {
+    sunday: 0,
+    sun: 0,
+    monday: 1,
+    mon: 1,
+    tuesday: 2,
+    tue: 2,
+    tues: 2,
+    wednesday: 3,
+    wed: 3,
+    thursday: 4,
+    thu: 4,
+    thur: 4,
+    thurs: 4,
+    friday: 5,
+    fri: 5,
+    saturday: 6,
+    sat: 6,
+  };
+
+  const relDayMatch = lower.match(
+    /\b(?:by|before|on|delivery\s+by)?\s*(next|this|coming)?\s*(sunday|sun|monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thur|thurs|friday|fri|saturday|sat)\b/i,
+  );
+  if (relDayMatch) {
+    const modifier = relDayMatch[1] ? relDayMatch[1].toLowerCase() : 'this';
+    const targetDayName = relDayMatch[2].toLowerCase();
+    const targetDayIndex = daysOfWeek[targetDayName];
+
+    if (targetDayIndex !== undefined) {
+      let daysAhead = targetDayIndex - currentDay;
+      if (modifier === 'next') {
+        daysAhead += daysAhead <= 0 ? 7 : 7;
+      } else {
+        if (daysAhead <= 0) daysAhead += 7;
+      }
+      const targetDate = new Date(today);
+      targetDate.setDate(targetDate.getDate() + daysAhead);
+      return targetDate.toISOString().split('T')[0];
+    }
   }
 
   return null;
@@ -2769,7 +2892,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           ) {
             ruleCustomer = hinglishMatch[1].trim();
           } else {
+            const thisIsForMatch = textClean.match(
+              /(?:this\s+is\s+for|is\s+for|for\s+company|for\s+client|for\s+customer)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+company|\s+client|\s+firm|\s+customer|\s*,\s*|\.|$)/i,
+            );
             const reqMatch =
+              thisIsForMatch ||
               textClean.match(
                 /(?:inquiry\s+for|order\s+for|deal\s+for|quote\s+for|requirement\s+for|for)\s+([A-Z0-9\s&.-]{2,40}?)(?::|\s*:\s*|\s+\d+\s*(?:mt|ton|tons|tonne|kg|pcs|sheet|sheets|plate|plates|mm|coil|coils|bar|bars|nos)|\s+requires|\s+needs|\s+before|\.|$)/i,
               ) ||
@@ -2786,7 +2913,11 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                 /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
               );
             if (reqMatch) {
-              const cand = reqMatch[1].trim();
+              let cand = reqMatch[1].trim();
+              cand = cand
+                .replace(/\s+(?:company|client|firm|customer)$/i, '')
+                .replace(/^(?:customer|company|client)\s+/i, '')
+                .trim();
               if (
                 ![
                   'new',
@@ -2799,6 +2930,8 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                   'that',
                   'deal',
                   'customer',
+                  'company',
+                  'client',
                   'unknown',
                   'max',
                 ].includes(cand.toLowerCase())
@@ -3163,7 +3296,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           total_amount: 0,
           delivery_location: delLoc,
           payment_terms: rulePayment,
-          delivery_date: null,
+          delivery_date: extractDeliveryDate(textRaw),
           confidence: 0.9,
         };
       }
@@ -3185,13 +3318,32 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         senderPhone,
       );
       if (!targetExplicitDeal && explicitDealIdMatch) {
-        return `❌ Inquiry ID #${dealCodeToFind.toUpperCase()} was not found in our records. Please check the Inquiry ID and try again.`;
+        return `Inquiry ID #${dealCodeToFind.toUpperCase()} was not found in our records. Please check the Inquiry ID and try again.`;
       }
     }
 
     let customerName = data.customer_name;
+    if (typeof customerName === 'string') {
+      customerName = customerName
+        .replace(/\s+(?:company|client|firm|customer)$/i, '')
+        .replace(/^(?:customer|company|client)\s+/i, '')
+        .trim();
+    }
     if (isInvalidCustomerName(customerName)) {
       customerName = null;
+    }
+
+    if (!customerName) {
+      const thisIsForMatch = cleanTextToInspect.match(
+        /(?:this\s+is\s+for|is\s+for|for\s+company|for\s+client|for\s+customer)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+company|\s+client|\s+firm|\s+customer|\s*,\s*|\.|$)/i,
+      );
+      if (thisIsForMatch && !isInvalidCustomerName(thisIsForMatch[1].trim())) {
+        customerName = thisIsForMatch[1]
+          .trim()
+          .replace(/\s+(?:company|client|firm|customer)$/i, '')
+          .replace(/^(?:customer|company|client)\s+/i, '')
+          .trim();
+      }
     }
 
     if (!customerName) {
@@ -3205,12 +3357,20 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         trailingDashMatch &&
         !isInvalidCustomerName(trailingDashMatch[1].trim())
       ) {
-        customerName = trailingDashMatch[1].trim();
+        customerName = trailingDashMatch[1]
+          .trim()
+          .replace(/\s+(?:company|client|firm|customer)$/i, '')
+          .replace(/^(?:customer|company|client)\s+/i, '')
+          .trim();
       } else if (
         hinglishMatch &&
         !isInvalidCustomerName(hinglishMatch[1].trim())
       ) {
-        customerName = hinglishMatch[1].trim();
+        customerName = hinglishMatch[1]
+          .trim()
+          .replace(/\s+(?:company|client|firm|customer)$/i, '')
+          .replace(/^(?:customer|company|client)\s+/i, '')
+          .trim();
       }
     }
 
@@ -3413,6 +3573,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
     }
 
     const extractedDeliveryLoc = extractDeliveryLocation(
+      effectiveTextForLLM || text,
+    );
+    const extractedDeliveryDateVal = extractDeliveryDate(
       effectiveTextForLLM || text,
     );
     const extractedPaymentTermsVal = extractPaymentTerms(
@@ -3880,8 +4043,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         updatedLabels.push(`Payment Terms (${payTermsToUpdate})`);
       }
 
-      if (data.delivery_date) {
-        updateFields.delivery_date = data.delivery_date;
+      const delDateToUpdate = extractedDeliveryDateVal || data.delivery_date;
+      if (delDateToUpdate) {
+        updateFields.delivery_date = delDateToUpdate;
         updatedLabels.push(`Delivery Date (${updateFields.delivery_date})`);
       }
 
@@ -4479,6 +4643,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
 
     const finalDeliveryDate =
       data.delivery_date ||
+      extractedDeliveryDateVal ||
       (!isExplicitNewInquiry ? existingDeal?.delivery_date : null) ||
       null;
 
@@ -5094,5 +5259,6 @@ module.exports = {
   findDealByCodeOrId,
   detectInvalidUnitInMessage,
   extractDeliveryLocation,
+  extractDeliveryDate,
   evaluateMandatoryFields,
 };

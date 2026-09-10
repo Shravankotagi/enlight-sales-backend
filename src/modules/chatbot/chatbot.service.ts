@@ -889,7 +889,14 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
    A. Creating Inquiries, Updating Rates, Line Items, POs, or Closing Deals:
       - Call 'update_deal_stage' whenever the user wants to:
-        * Create or log a new customer inquiry, lead, or RFQ (e.g. "Create inquiry for Apex Steel, 10 MT HR Coil", "Inquiry from Tata Motors for 25 MT CR Sheet")
+        * Create or log a new customer inquiry, lead, RFQ, or product requirement in formal OR natural conversational/layman language:
+          - "Need HR Coil 6mm, 35 MT, delivery to Nagpur by next Friday. This is for Shree Ganesh Traders company" -> Call 'update_deal_stage'
+          - "Shree Ganesh Traders wants 50 MT CR Sheet 1.2mm in Pune by Monday" -> Call 'update_deal_stage'
+          - "Require 20 MT MS Plate 10mm for Apex Steel in Pune" -> Call 'update_deal_stage'
+          - "Got requirement from Tata Motors: 15 MT HRPO Coil 3mm" -> Call 'update_deal_stage'
+          - "Client Mehta Engineering needs 25 MT MS Round Bar 20mm, rate 54000" -> Call 'update_deal_stage'
+          - "Rate query: Apex Steel asking for 10 MT HR Coil" -> Call 'update_deal_stage'
+          - "Create inquiry for Apex Steel, 10 MT HR Coil" -> Call 'update_deal_stage'
         * Update prices, rates, or items for an existing inquiry/deal (e.g. "Update rate for Apex Steel to 52000", "Rate for HR Coil is 54500", "Add 5 MT GI Sheet")
         * Mark a deal as won with a Purchase Order (PO) (e.g. "Deal won for Mehta Engineering PO-9921", "Confirm PO 8821 for Supreme Steel")
         * Mark a deal as lost with a loss reason (e.g. "Mark deal as lost for Apex Steel due to competitor price")
@@ -1741,6 +1748,34 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 rescuedArgs = { customer_name_search: quotedMatch[1] };
               }
             }
+          } else if (
+            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+              lowerMsg,
+            ) &&
+              /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|tonnes|kg|kgs|pcs|nos|sheets?|plates?|bundles?|lengths?|mm|gauge|thk)\b/i.test(
+                lowerMsg,
+              )) ||
+            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+              lowerMsg,
+            ) &&
+              /\b(need|needs|require|requires|requirement|requirements|want|wants|looking\s+for|quote\s+for|rate\s+for|rates?\s+for|price\s+for|prices?\s+for|bhejo|chahiye|mang\s+raha|demand|send\s+rate|give\s+rate|delivery\s+to|deliver\s+to)\b/i.test(
+                lowerMsg,
+              )) ||
+            (/\b(need|needs|require|requires|requirement|requirements|want|wants|looking\s+for|quote\s+for|rate\s+for|rates?\s+for|price\s+for|prices?\s+for|bhejo|chahiye|mang\s+raha|demand|send\s+rate|give\s+rate|delivery\s+to|deliver\s+to)\b/i.test(
+              lowerMsg,
+            ) &&
+              /\b(this\s+is\s+for|for\s+company|for\s+client|for\s+customer|customer|company|client|traders|enterprises|industries|fabricators|steels?|infra)\b/i.test(
+                lowerMsg,
+              ) &&
+              (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+                lowerMsg,
+              ) ||
+                /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|tonnes|kg|kgs|pcs|nos|sheets?|plates?|bundles?|lengths?|mm|gauge|thk)\b/i.test(
+                  lowerMsg,
+                )))
+          ) {
+            rescuedToolName = 'update_deal_stage';
+            rescuedArgs = { text: messageText };
           } else if (
             lowerMsg.includes('customer') ||
             lowerMsg.includes('account') ||
