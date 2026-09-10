@@ -458,7 +458,11 @@ async function saveCompletedVisit(visitState, senderPhone) {
   if (product_interests) metaTags.push(`[Interests: ${product_interests}]`);
 
   const fullRemarks =
-    metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
+    metaTags.length > 0
+      ? remarks
+        ? `${metaTags.join(' ')} ${remarks}`
+        : metaTags.join(' ')
+      : remarks || null;
 
   // Insert into customer_visits
   const { error: visitErr } = await supabase.from('customer_visits').insert({
@@ -499,7 +503,7 @@ async function saveCompletedVisit(visitState, senderPhone) {
     product_interests ? `Interests: ${product_interests}` : null,
     material_requirement ? `Requirement: ${material_requirement}` : null,
     follow_up_action ? `Follow-up: ${follow_up_action}` : null,
-    `Notes: ${remarks}`,
+    remarks ? `Notes: ${remarks}` : null,
   ]
     .filter(Boolean)
     .join(' | ');
@@ -1195,6 +1199,217 @@ async function handleVisitUpdateSelection(text, senderPhone, sessionPayload) {
 }
 
 /**
+ * Defense-in-depth Sanitizer: Strictly eliminates any unmentioned or hallucinated fields.
+ */
+function sanitizeExtractedVisitData(data, rawText) {
+  const text = (rawText || '').toLowerCase();
+  const res = { ...data };
+
+  // 1. Follow-up action: if no explicit follow-up phrases in raw text, force null
+  if (res.follow_up_action) {
+    const hasFollowUpKeyword =
+      /\b(?:follow\s*up|next\s*step|send|share|dispatch|mail|email|sample|samples|quote|quotation|proposal|call\s+back|meet\s+again|discuss\s+again)\b/i.test(
+        text,
+      );
+    const isGenericHallucination =
+      /collect required quantity|follow up for upcoming material|routine follow-up|follow up with customer/i.test(
+        res.follow_up_action,
+      );
+    if (!hasFollowUpKeyword || isGenericHallucination) {
+      res.follow_up_action = null;
+    }
+  }
+
+  // 2. Visit outcome: if not explicitly stated, force null
+  if (res.visit_outcome) {
+    const norm = res.visit_outcome.toLowerCase().trim();
+    if (!['positive', 'neutral', 'negative'].includes(norm)) {
+      res.visit_outcome = null;
+    } else {
+      const hasPositiveIndicator =
+        /\b(?:positive|good|great|successful|well|went well|deal|closed|interested|interest|favorable|ordered)\b/i.test(
+          text,
+        );
+      const hasNegativeIndicator =
+        /\b(?:negative|bad|rejected|unsuccessful|not interested|declined|cancelled|lost)\b/i.test(
+          text,
+        );
+      const hasNeutralIndicator =
+        /\b(?:neutral|routine|check\s*in|okay|normal|average|no immediate)\b/i.test(
+          text,
+        );
+
+      if (norm === 'positive' && !hasPositiveIndicator) {
+        res.visit_outcome = null;
+      } else if (norm === 'negative' && !hasNegativeIndicator) {
+        res.visit_outcome = null;
+      } else if (norm === 'neutral' && !hasNeutralIndicator) {
+        res.visit_outcome = null;
+      }
+    }
+  }
+
+  // 3. Remarks: check for generic filler hallucinations
+  if (res.remarks) {
+    const isFiller =
+      /^(?:site visit conducted|visited|meeting conducted|on-site meeting|routine visit|field visit|visit conducted|market presence)\b/i.test(
+        res.remarks.trim(),
+      );
+    if (isFiller && text.trim().length <= 40) {
+      res.remarks = null;
+    }
+  }
+
+  // 4. Contact number: ensure it matches an actual phone number in raw text
+  if (res.contact_no) {
+    const digits = res.contact_no.replace(/\D/g, '');
+    if (!text.replace(/\D/g, '').includes(digits) || digits.length < 10) {
+      res.contact_no = null;
+    }
+  }
+
+  // 5. Person met: ensure not identical to customer company name
+  if (
+    res.person_met &&
+    res.customer_name &&
+    res.person_met.toLowerCase() === res.customer_name.toLowerCase()
+  ) {
+    res.person_met = null;
+  }
+
+  return res;
+}
+
+/**
+ * Deterministic Regex-based Extraction Fallback (when LLM is unreachable)
+ */
+function extractVisitDeterministic(text) {
+  const lower = (text || '').toLowerCase();
+  const raw = text || '';
+
+  // Customer Name
+  let customerName = null;
+  const custMatch =
+    raw.match(
+      /(?:visited|field visit to|meeting at|met with|visit with|met)\s+([A-Za-z0-9&.,\s'-]+?)(?:\s+(?:in|at|today|yesterday|spoke|met|discussed|outcome|neutral|positive|negative|contact|,|\.|$))/i,
+    ) ||
+    raw.match(
+      /(?:visited|field visit to|meeting at|met with|visit with|met)\s+([A-Za-z0-9&.,\s'-]+)/i,
+    );
+  if (custMatch) {
+    customerName = custMatch[1]
+      .replace(
+        /\b(?:today|yesterday|spoke|met|discussed|outcome|in|at)\b.*$/i,
+        '',
+      )
+      .trim();
+  }
+
+  // City / Location
+  let city = null;
+  const cityMatch = raw.match(
+    /\b(?:in|at)\s+(Kolhapur|Mumbai|Pune|Nashik|Bhiwandi|Taloja|Navi Mumbai|Nagpur|Thane|Aurangabad|Surat|Ahmedabad|Delhi|Rajkot|Indore|Goa|Chennai|Bengaluru|Hyderabad|Jaipur|Vadodara)\b/i,
+  );
+  if (cityMatch) {
+    city = cityMatch[1].trim();
+  }
+
+  // Person Met
+  let personMet = null;
+  const personMatch =
+    raw.match(
+      /(?:spoke with|met their purchase manager|met purchase manager|met|contact person is|spoke to)\s+((?:Mr\.|Ms\.|Mrs\.|Dr\.)?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+    ) ||
+    raw.match(
+      /(?:spoke with|met)\s+([A-Za-z\s]+?)(?:\s*(?:\.|\,|-|\(|contact|phone|number|outcome))/i,
+    );
+  if (personMatch) {
+    personMet = personMatch[1].trim();
+  }
+
+  // Phone
+  let contactNo = null;
+  const phoneMatch = raw.match(/(?:\+91[\-\s]?)?([6-9]\d{9})\b/);
+  if (phoneMatch) {
+    contactNo = phoneMatch[1];
+  }
+
+  // Outcome
+  let visitOutcome = null;
+  if (
+    /\b(?:positive|went well|good|great|successful|favorable)\b/i.test(lower)
+  ) {
+    visitOutcome = 'positive';
+  } else if (
+    /\b(?:negative|bad|rejected|unsuccessful|not interested|declined)\b/i.test(
+      lower,
+    )
+  ) {
+    visitOutcome = 'negative';
+  } else if (
+    /\b(?:neutral|routine|okay|normal|no immediate requirement)\b/i.test(lower)
+  ) {
+    visitOutcome = 'neutral';
+  }
+
+  // Follow-up
+  let followUpAction = null;
+  const followUpMatch = raw.match(
+    /(?:follow-up needed to|follow up needed to|next step is to|next step:|follow-up:|follow up:)\s*([^.,]+)/i,
+  );
+  if (followUpMatch) {
+    followUpAction = followUpMatch[1].trim();
+  }
+
+  // Material Requirement / Product Interests
+  let materialRequirement = null;
+  let productInterests = null;
+  const reqMatch = raw.match(
+    /(?:discussed|requirement for|needs|requires|order for)\s+([^.,]+?(?:order|requirement|coils?|plates?|sheets?|bars?|ton|mt|kg|tonnes?))/i,
+  );
+  if (reqMatch) {
+    materialRequirement = reqMatch[1].trim();
+  }
+  const prodMatch = raw.match(
+    /\b(HR Coils?|CR Sheets?|MS Plates?|GI Sheets?|TMT Bars?|Structural Steel|Plates?|Sheets?|Coils?)\b/i,
+  );
+  if (prodMatch) {
+    productInterests = prodMatch[0].trim();
+  }
+
+  // Remarks
+  let remarks = null;
+  if (
+    lower.includes('discussed') ||
+    lower.includes('requirement') ||
+    lower.includes('response')
+  ) {
+    const remMatch = raw.match(
+      /(?:discussed|neutral response|positive discussion|response,)\s*([^.,]+)/i,
+    );
+    if (remMatch) {
+      remarks = remMatch[0].trim();
+    }
+  }
+
+  return {
+    customer_name: customerName,
+    is_new_prospect: false,
+    person_met: personMet,
+    contact_no: contactNo,
+    city: city,
+    visit_date: 'today',
+    product_interests: productInterests,
+    remarks: remarks,
+    visit_outcome: visitOutcome,
+    material_requirement: materialRequirement,
+    follow_up_action: followUpAction,
+    followup_days: null,
+    confidence: 0.8,
+  };
+}
+
+/**
  * Main entry point for processing salesperson visit reports
  */
 async function processVisitMessage(text, senderPhone) {
@@ -1267,29 +1482,46 @@ async function processVisitMessage(text, senderPhone) {
       return await handleVisitCorrection(text, senderPhone);
     }
 
-    // 2. Extract visit data using LLM
-    const { invokeWithFallback } = require('../core/modelRouter');
-    const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
-    const response = await invokeWithFallback([
-      new SystemMessage(VISIT_AGENT_PROMPT),
-      new HumanMessage('Salesperson message:\n' + text),
-    ]);
-    const rawText = (
-      typeof response.content === 'string'
-        ? response.content
-        : JSON.stringify(response.content)
-    ).trim();
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    const { safeParseJSON } = require('../utils/jsonUtils');
-    const data = safeParseJSON(cleaned, null);
-    if (!data) throw new Error('Could not parse visit JSON from LLM response');
+    // 2. Extract visit data using LLM with deterministic fallback
+    let data = null;
+    try {
+      const { invokeWithFallback } = require('../core/modelRouter');
+      const {
+        HumanMessage,
+        SystemMessage,
+      } = require('@langchain/core/messages');
+      const response = await invokeWithFallback([
+        new SystemMessage(VISIT_AGENT_PROMPT),
+        new HumanMessage('Salesperson message:\n' + text),
+      ]);
+      const rawText = (
+        typeof response.content === 'string'
+          ? response.content
+          : JSON.stringify(response.content)
+      ).trim();
+      const cleaned = rawText
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const { safeParseJSON } = require('../utils/jsonUtils');
+      data = safeParseJSON(cleaned, null);
+    } catch (llmErr) {
+      console.warn(
+        '[VisitAgent] LLM extraction failed, using deterministic fallback:',
+        llmErr.message,
+      );
+    }
+
+    if (!data || !data.customer_name) {
+      const fallbackData = extractVisitDeterministic(text);
+      if (fallbackData && fallbackData.customer_name) {
+        data = { ...(data || {}), ...fallbackData };
+      }
+    }
 
     // 3. Customer name validation
-    if (!data.customer_name) {
+    if (!data || !data.customer_name) {
       return `Customer Visit - Customer Name Missing\n\nPlease specify the Customer or Company you visited.\nExample: Visited Mehta Engineering in Pune, met Mr. Sharma (9876543210), outcome positive, discussed CR Sheets.`;
     }
 
@@ -1374,22 +1606,11 @@ async function processVisitMessage(text, senderPhone) {
       followup_days: data.followup_days || null,
     };
 
-    // 8. Validate required fields
-    const missingFields = getMissingRequiredFields(currentVisitState);
+    // 8. Sanitize extracted fields against raw user text
+    const sanitizedState = sanitizeExtractedVisitData(currentVisitState, text);
 
-    if (missingFields.length > 0) {
-      // Save pending multi-turn session
-      await saveActiveSession(
-        senderPhone,
-        currentVisitState.customer_name,
-        `pending_visit_details|${currentVisitState.customer_name}|${JSON.stringify(currentVisitState)}`,
-      );
-
-      return buildMissingFieldsPrompt(currentVisitState, missingFields);
-    }
-
-    // 9. All required fields are present -> Save completed visit!
-    return await saveCompletedVisit(currentVisitState, senderPhone);
+    // 9. Save completed visit directly!
+    return await saveCompletedVisit(sanitizedState, senderPhone);
   } catch (error) {
     console.error('Visit Agent Error:', error.message);
     return `Could not process site visit update: ${error.message}`;
@@ -1402,4 +1623,6 @@ module.exports = {
   handlePendingVisitContinuation,
   handleVisitUpdateSelection,
   resolveVisitDate,
+  sanitizeExtractedVisitData,
+  extractVisitDeterministic,
 };
