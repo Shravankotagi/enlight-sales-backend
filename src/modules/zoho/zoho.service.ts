@@ -84,16 +84,48 @@ export class ZohoService implements OnModuleInit {
   private readonly processedWebhookEvents = new Set<string>();
   private cachedLayout: { id: string; name: string; pipeline: string } | null =
     null;
+  private rateLimitCooldownUntil = 0;
+  private readonly accountCache = new Map<string, string>();
+  private readonly contactCache = new Map<string, string>();
+  private readonly failedDealAttempts = new Map<string, number>();
+
+  private hasZohoCredentials(): boolean {
+    return Boolean(
+      (process.env.ZOHO_REFRESH_TOKEN || '').trim() &&
+        (process.env.ZOHO_CLIENT_ID || '').trim() &&
+        (process.env.ZOHO_CLIENT_SECRET || '').trim(),
+    );
+  }
+
+  private isRateLimited(): boolean {
+    return Date.now() < this.rateLimitCooldownUntil;
+  }
+
+  private setRateLimited(durationMs = 5 * 60 * 1000) {
+    this.rateLimitCooldownUntil = Date.now() + durationMs;
+    this.logger.warn(
+      `[ZohoService] Zoho Bigin rate limit (429) active. Pausing Zoho sync calls for ${Math.round(
+        durationMs / 60000,
+      )} minutes.`,
+    );
+  }
 
   async getSalesLayout(
     headers: any,
   ): Promise<{ id: string; name: string; pipeline: string }> {
     if (this.cachedLayout) return this.cachedLayout;
+    if (this.isRateLimited()) {
+      return {
+        id: '1384628000000000173',
+        name: 'Sales Pipeline',
+        pipeline: 'Sales Pipeline Standard',
+      };
+    }
     try {
       const res = await firstValueFrom(
         this.httpService.get(
           'https://www.zohoapis.in/bigin/v1/settings/layouts?module=Deals',
-          { headers },
+          { headers, timeout: 10000 },
         ),
       );
       const layouts = res.data?.layouts || [];
@@ -116,6 +148,9 @@ export class ZohoService implements OnModuleInit {
         return this.cachedLayout;
       }
     } catch (err: any) {
+      if (err?.response?.status === 429) {
+        this.setRateLimited();
+      }
       this.logger.warn(`Could not fetch layouts: ${err?.message}`);
     }
     return {
@@ -131,6 +166,12 @@ export class ZohoService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    if (!this.hasZohoCredentials()) {
+      this.logger.log(
+        'Zoho Bigin credentials not configured. Auto-sync disabled.',
+      );
+      return;
+    }
     this.logger.log(
       'Initializing Zoho Bigin Auto-Sync Engine (Interval: 5 minutes)...',
     );
@@ -159,6 +200,14 @@ export class ZohoService implements OnModuleInit {
         return this.accessToken;
       }
 
+      if (!this.hasZohoCredentials()) {
+        throw new Error('Missing Zoho credentials');
+      }
+
+      if (this.isRateLimited()) {
+        throw new Error('Zoho API is currently rate limited');
+      }
+
       this.logger.log('Refreshing Zoho access token...');
 
       const params = new URLSearchParams({
@@ -176,6 +225,7 @@ export class ZohoService implements OnModuleInit {
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
             },
+            timeout: 10000,
           },
         ),
       );
@@ -186,7 +236,10 @@ export class ZohoService implements OnModuleInit {
       this.logger.log('Zoho access token refreshed successfully');
       return this.accessToken;
     } catch (error: any) {
-      this.logger.error('Failed to refresh Zoho token:', error.message);
+      if (error?.response?.status === 429) {
+        this.setRateLimited();
+      }
+      this.logger.warn(`Failed to refresh Zoho token: ${error.message}`);
       throw error;
     }
   }
@@ -1149,6 +1202,10 @@ export class ZohoService implements OnModuleInit {
   // ── Recurring Auto-Sync Engine (Runs every 5 minutes) ──────────────────────
   async autoSyncRoutine(): Promise<void> {
     try {
+      if (!this.hasZohoCredentials() || this.isRateLimited()) {
+        return;
+      }
+
       this.logger.log(
         '[ZohoService] Running 5-minute recurring auto-sync to Zoho Bigin...',
       );
@@ -1157,39 +1214,71 @@ export class ZohoService implements OnModuleInit {
         .select('*')
         .is('bigin_deal_id', null)
         .not('customer_name', 'is', null)
-        .limit(20);
+        .limit(5);
 
       if (pendingDeals && pendingDeals.length > 0) {
         for (const deal of pendingDeals) {
-          await this.syncDealToBigin(deal);
-          await new Promise((r) => setTimeout(r, 200));
+          if (this.isRateLimited()) {
+            this.logger.warn(
+              '[ZohoService] Rate limited during batch sync. Stopping auto-sync run.',
+            );
+            break;
+          }
+
+          // Check if this deal failed recently (within 1 hour) to avoid tight loops
+          const lastAttempt = this.failedDealAttempts.get(deal.id) || 0;
+          if (Date.now() - lastAttempt < 60 * 60 * 1000) {
+            continue;
+          }
+
+          const res = await this.syncDealToBigin(deal);
+          if (!res) {
+            this.failedDealAttempts.set(deal.id, Date.now());
+            if (this.isRateLimited()) break;
+          }
+          await new Promise((r) => setTimeout(r, 1200));
         }
       }
     } catch (err: any) {
+      if (err?.response?.status === 429) {
+        this.setRateLimited();
+      }
       this.logger.warn(`Auto-sync routine notice: ${err?.message}`);
     }
   }
 
   // Push single deal with Contact Name & Company Name properly mapped
   async syncDealToBigin(deal: any): Promise<string | null> {
+    if (!this.hasZohoCredentials() || this.isRateLimited()) {
+      return null;
+    }
+
     try {
       const headers = await this.getAuthHeaders();
       const baseUrl = 'https://www.zohoapis.in/bigin/v1';
 
       const customerName = (deal.customer_name || '').trim();
       if (!customerName) return null;
+      const lowerCust = customerName.toLowerCase();
 
-      // 1. Find or create Account (Company)
-      let accountId: string | null = null;
-      try {
-        const searchRes = await firstValueFrom(
-          this.httpService.get(
-            `${baseUrl}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(customerName)})`,
-            { headers },
-          ),
-        );
-        accountId = searchRes.data?.data?.[0]?.id || null;
-      } catch {}
+      // 1. Find or create Account (Company) with in-memory caching
+      let accountId: string | null = this.accountCache.get(lowerCust) || null;
+      if (!accountId) {
+        try {
+          const searchRes = await firstValueFrom(
+            this.httpService.get(
+              `${baseUrl}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(customerName)})`,
+              { headers, timeout: 10000 },
+            ),
+          );
+          accountId = searchRes.data?.data?.[0]?.id || null;
+        } catch (searchErr: any) {
+          if (searchErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
+      }
 
       if (!accountId) {
         try {
@@ -1210,17 +1299,25 @@ export class ZohoService implements OnModuleInit {
                   },
                 ],
               },
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           accountId = accRes.data?.data?.[0]?.details?.id || null;
-        } catch {}
+        } catch (accErr: any) {
+          if (accErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
       }
 
-      // 2. Find or create Contact
-      let contactId: string | null = null;
-      const lower = customerName.toLowerCase();
-      const personName = KNOWN_CONTACT_PERSONS[lower] || 'Purchase Head';
+      if (accountId) {
+        this.accountCache.set(lowerCust, accountId);
+      }
+
+      // 2. Find or create Contact with in-memory caching
+      let contactId: string | null = this.contactCache.get(lowerCust) || null;
+      const personName = KNOWN_CONTACT_PERSONS[lowerCust] || 'Purchase Head';
       const parts = personName.trim().split(/\s+/);
       let firstName = '';
       let lastName = personName;
@@ -1229,28 +1326,38 @@ export class ZohoService implements OnModuleInit {
         lastName = parts[parts.length - 1];
       }
 
-      // Search existing contact by phone or account
-      if (deal.customer_phone) {
+      // Search existing contact by phone or account if not cached
+      if (!contactId && deal.customer_phone) {
         try {
           const searchContact = await firstValueFrom(
             this.httpService.get(
               `${baseUrl}/Contacts/search?criteria=(Phone:equals:${encodeURIComponent(deal.customer_phone)})`,
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           contactId = searchContact.data?.data?.[0]?.id || null;
-        } catch {}
+        } catch (sErr: any) {
+          if (sErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
       }
       if (!contactId && accountId) {
         try {
           const searchContact = await firstValueFrom(
             this.httpService.get(
               `${baseUrl}/Contacts/search?criteria=(Account_Name:equals:${accountId})`,
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           contactId = searchContact.data?.data?.[0]?.id || null;
-        } catch {}
+        } catch (sErr: any) {
+          if (sErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
       }
 
       if (!contactId) {
@@ -1267,11 +1374,20 @@ export class ZohoService implements OnModuleInit {
             this.httpService.post(
               `${baseUrl}/Contacts`,
               { data: [contactPayload] },
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           contactId = contactRes.data?.data?.[0]?.details?.id || null;
-        } catch {}
+        } catch (cErr: any) {
+          if (cErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
+      }
+
+      if (contactId) {
+        this.contactCache.set(lowerCust, contactId);
       }
 
       // 3. Upsert Deal (PUT if exists, POST if new)
@@ -1304,11 +1420,16 @@ export class ZohoService implements OnModuleInit {
           const searchRes = await firstValueFrom(
             this.httpService.get(
               `${baseUrl}/Deals/search?word=${encodeURIComponent(deal.id.substring(0, 6).toUpperCase())}`,
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           existingBiginId = searchRes.data?.data?.[0]?.id || null;
-        } catch {}
+        } catch (sErr: any) {
+          if (sErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+        }
       }
 
       let finalBiginId: string | null = null;
@@ -1320,7 +1441,7 @@ export class ZohoService implements OnModuleInit {
             this.httpService.put(
               `${baseUrl}/Deals/${existingBiginId}`,
               { data: [dealRecord] },
-              { headers },
+              { headers, timeout: 10000 },
             ),
           );
           finalBiginId =
@@ -1329,6 +1450,10 @@ export class ZohoService implements OnModuleInit {
             `Deal updated in Bigin: ${deal.id} -> ${finalBiginId} (Stage: ${dealRecord.Stage}, Amount: ₹${dealRecord.Amount})`,
           );
         } catch (updateErr: any) {
+          if (updateErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
           this.logger.warn(
             `Could not update deal ${existingBiginId} in Bigin: ${updateErr?.message}`,
           );
@@ -1337,17 +1462,27 @@ export class ZohoService implements OnModuleInit {
 
       if (!finalBiginId) {
         // CREATE new deal
-        const res = await firstValueFrom(
-          this.httpService.post(
-            `${baseUrl}/Deals`,
-            { data: [dealRecord] },
-            { headers },
-          ),
-        );
-        finalBiginId = res.data?.data?.[0]?.details?.id || null;
-        if (finalBiginId) {
-          this.logger.log(
-            `Deal created in Bigin: ${deal.id} -> ${finalBiginId}`,
+        try {
+          const res = await firstValueFrom(
+            this.httpService.post(
+              `${baseUrl}/Deals`,
+              { data: [dealRecord] },
+              { headers, timeout: 10000 },
+            ),
+          );
+          finalBiginId = res.data?.data?.[0]?.details?.id || null;
+          if (finalBiginId) {
+            this.logger.log(
+              `Deal created in Bigin: ${deal.id} -> ${finalBiginId}`,
+            );
+          }
+        } catch (createErr: any) {
+          if (createErr?.response?.status === 429) {
+            this.setRateLimited();
+            return null;
+          }
+          this.logger.warn(
+            `Could not create deal in Bigin: ${createErr?.message}`,
           );
         }
       }
@@ -1360,7 +1495,10 @@ export class ZohoService implements OnModuleInit {
       }
       return finalBiginId || null;
     } catch (error: any) {
-      this.logger.error('Failed to sync deal to Bigin:', error.message);
+      if (error?.response?.status === 429) {
+        this.setRateLimited();
+      }
+      this.logger.warn(`Notice while syncing deal to Bigin: ${error.message}`);
       return null;
     }
   }

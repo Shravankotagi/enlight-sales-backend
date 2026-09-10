@@ -9,7 +9,7 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
@@ -1956,11 +1956,16 @@ MIDC Industrial Zone, Mumbai - 400001`;
   }
 
   async parseDocumentWithGemini(fileBase64: string, mimeType: string) {
-    const apiKey =
-      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY || '';
-    if (!apiKey) {
+    const apiKeys = [
+      process.env.GEMINI_PAID_API_KEY,
+      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2,
+    ].filter(Boolean) as string[];
+
+    if (apiKeys.length === 0) {
       throw new Error(
-        'GEMINI_PAID_API_KEY is not configured in backend environment variables',
+        'GEMINI_API_KEY is not configured in backend environment variables',
       );
     }
 
@@ -2052,56 +2057,63 @@ Return ONLY the JSON.`;
     ];
 
     let lastError: any = null;
-    for (const model of candidateModels) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const response = await axios.post(url, {
-          contents: [
+    for (const key of apiKeys) {
+      for (const model of candidateModels) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+          const response = await axios.post(
+            url,
             {
-              parts: [
+              contents: [
                 {
-                  text: promptText,
-                },
-                {
-                  inline_data: {
-                    mime_type: detectedMime,
-                    data: cleanBase64,
-                  },
+                  parts: [
+                    {
+                      text: promptText,
+                    },
+                    {
+                      inline_data: {
+                        mime_type: detectedMime,
+                        data: cleanBase64,
+                      },
+                    },
+                  ],
                 },
               ],
             },
-          ],
-        });
+            { timeout: 35000 },
+          );
 
-        const text =
-          response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        let parsed: any = null;
-        try {
-          const cleanJsonStr = text
-            .replace(/```json/gi, '')
-            .replace(/```/g, '')
-            .trim();
-          parsed = JSON.parse(cleanJsonStr);
-        } catch {
-          const firstOpen = text.indexOf('{');
-          const lastClose = text.lastIndexOf('}');
-          if (firstOpen !== -1 && lastClose > firstOpen) {
-            parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+          const text =
+            response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          let parsed: any = null;
+          try {
+            const cleanJsonStr = text
+              .replace(/```json/gi, '')
+              .replace(/```/g, '')
+              .trim();
+            parsed = JSON.parse(cleanJsonStr);
+          } catch {
+            const firstOpen = text.indexOf('{');
+            const lastClose = text.lastIndexOf('}');
+            if (firstOpen !== -1 && lastClose > firstOpen) {
+              parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+            }
           }
-        }
 
-        if (parsed) {
-          return {
-            success: true,
-            data: parsed,
-          };
+          if (parsed) {
+            return {
+              success: true,
+              data: parsed,
+            };
+          }
+        } catch (err: any) {
+          lastError = err;
+          this.logger.warn(
+            `Gemini OCR parsing attempt with model ${model} failed: ${
+              err?.response?.data?.error?.message || err.message
+            }`,
+          );
         }
-      } catch (err: any) {
-        lastError = err;
-        this.logger.warn(
-          `Gemini OCR parsing attempt with model ${model} failed:`,
-          err?.response?.data || err.message,
-        );
       }
     }
 
@@ -2119,24 +2131,21 @@ Return ONLY the JSON.`;
     if (!rawText || !rawText.trim()) {
       return { success: false, error: 'Empty text' };
     }
-    const apiKey =
-      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY || '';
-    if (!apiKey) {
+    const apiKeys = [
+      process.env.GEMINI_PAID_API_KEY,
+      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2,
+    ].filter(Boolean) as string[];
+
+    if (apiKeys.length === 0) {
       return {
         success: false,
         error: 'GEMINI_API_KEY is not configured',
       };
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
-    try {
-      const response = await axios.post(url, {
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an expert AI extraction engine for steel product inquiries received via WhatsApp, emails, and sales dashboards. Extract ALL details from this inquiry text into a strict, structured JSON object with NO markdown, NO codeblocks, NO explanation:
+    const promptText = `You are an expert AI extraction engine for steel product inquiries received via WhatsApp, emails, and sales dashboards. Extract ALL details from this inquiry text into a strict, structured JSON object with NO markdown, NO codeblocks, NO explanation:
 {
   "customer_name": "Company or customer name e.g. BuildCorp Engineering",
   "contact_person": "Contact person name if mentioned e.g. Rajesh",
@@ -2164,48 +2173,77 @@ CRITICAL RULES:
 4. FULL DELIVERY ADDRESS: Always extract the complete, full delivery address and location exactly as provided in the inquiry (including plot, gat, street, MIDC/industrial area, city, district, state, and pin code). Never truncate or shorten address details.
 
 Inquiry Text:
-${rawText}`,
-              },
-            ],
-          },
-        ],
-      });
+${rawText}`;
 
-      const text =
-        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      let parsed: any = null;
-      try {
-        const cleanJsonStr = text
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-        parsed = JSON.parse(cleanJsonStr);
-      } catch {
-        const firstOpen = text.indexOf('{');
-        const lastClose = text.lastIndexOf('}');
-        if (firstOpen !== -1 && lastClose > firstOpen) {
-          parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ];
+
+    let lastError: any = null;
+    for (const key of apiKeys) {
+      for (const model of candidateModels) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+          const response = await axios.post(
+            url,
+            {
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: promptText,
+                    },
+                  ],
+                },
+              ],
+            },
+            { timeout: 35000 },
+          );
+
+          const text =
+            response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          let parsed: any = null;
+          try {
+            const cleanJsonStr = text
+              .replace(/```json/gi, '')
+              .replace(/```/g, '')
+              .trim();
+            parsed = JSON.parse(cleanJsonStr);
+          } catch {
+            const firstOpen = text.indexOf('{');
+            const lastClose = text.lastIndexOf('}');
+            if (firstOpen !== -1 && lastClose > firstOpen) {
+              parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+            }
+          }
+
+          if (parsed) {
+            return {
+              success: true,
+              data: parsed,
+            };
+          }
+        } catch (err: any) {
+          lastError = err;
+          this.logger.warn(
+            `Gemini text inquiry extraction with model ${model} failed: ${
+              err?.response?.data?.error?.message || err.message
+            }`,
+          );
         }
       }
-
-      if (!parsed) {
-        throw new Error('Failed to parse structured JSON from Gemini response');
-      }
-
-      return {
-        success: true,
-        data: parsed,
-      };
-    } catch (err: any) {
-      this.logger.error(
-        'Gemini text inquiry extraction failed:',
-        err?.response?.data || err.message,
-      );
-      return {
-        success: false,
-        error: err.message,
-      };
     }
+
+    this.logger.error(
+      'All Gemini text inquiry extraction model attempts failed:',
+      lastError?.response?.data || lastError?.message,
+    );
+    return {
+      success: false,
+      error: lastError?.message || 'Failed to parse inquiry with Gemini',
+    };
   }
 
   private resolvePlaceOfSupply(address?: string): string {
