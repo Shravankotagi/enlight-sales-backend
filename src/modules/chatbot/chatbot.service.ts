@@ -897,10 +897,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           - "Client Mehta Engineering needs 25 MT MS Round Bar 20mm, rate 54000" -> Call 'update_deal_stage'
           - "Rate query: Apex Steel asking for 10 MT HR Coil" -> Call 'update_deal_stage'
           - "Create inquiry for Apex Steel, 10 MT HR Coil" -> Call 'update_deal_stage'
-        * Update prices, rates, or items for an existing inquiry/deal (e.g. "Update rate for Apex Steel to 52000", "Rate for HR Coil is 54500", "Add 5 MT GI Sheet")
-        * Mark a deal as won with a Purchase Order (PO) (e.g. "Deal won for Mehta Engineering PO-9921", "Confirm PO 8821 for Supreme Steel")
+        * Mark a deal as won with a Purchase Order (PO) or natural customer/date reference (e.g. "PO received for the inquiry by Company 5 on 9th sept, mark that inquiry as won", "PO recevied for ID #INQ-00151B, mark it won", "Deal won for Mehta Engineering PO-9921", "Confirm PO 8821 for Supreme Steel")
         * Mark a deal as lost with a loss reason (e.g. "Mark deal as lost for Apex Steel due to competitor price")
         * Update delivery location, delivery date, notes, or payment terms on an inquiry.
+        * Note: Inquiries in Price Quote, Negotiation, or On Hold can be converted into orders / marked Won. Inquiries in New Inquiry (unquoted) must be quoted first before logging a Purchase Order. When a PO is received for a customer with a specified date or ID, call 'update_deal_stage' directly.
       - DO NOT call 'update_deal_stage' for customer site visits or complaints!
 
    B. Customer Site & Field Visits (Customer Site Visits Card - KRA 9):

@@ -1433,6 +1433,166 @@ function isInvalidCustomerName(name) {
   return false;
 }
 
+function cleanCustomerName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim();
+
+  // Try stripping outer company/client/customer/firm annotations
+  const stripped = trimmed
+    .replace(/\s+(?:company|client|firm|customer)$/i, '')
+    .replace(/^(?:customer|company|client)\s+/i, '')
+    .trim();
+
+  // If stripped version is a valid name (not empty, not just digits, and valid), use it.
+  if (stripped && !isInvalidCustomerName(stripped) && !/^\d+$/.test(stripped)) {
+    return stripped;
+  }
+  // Otherwise keep the original trimmed name if valid (e.g. "Company 5", "Company 6", "Client 1")
+  if (!isInvalidCustomerName(trimmed) && !/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+function extractDateFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const t = text.toLowerCase();
+  const now = new Date();
+
+  // Relative dates
+  if (/\b(?:today|aaj)\b/i.test(t)) {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  if (/\b(?:yesterday|kal)\b/i.test(t)) {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    return new Date(y.getFullYear(), y.getMonth(), y.getDate());
+  }
+
+  const monthMap = {
+    jan: 0,
+    january: 0,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    march: 2,
+    apr: 3,
+    april: 3,
+    may: 4,
+    jun: 5,
+    june: 5,
+    jul: 6,
+    july: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    sept: 8,
+    september: 8,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    november: 10,
+    dec: 11,
+    december: 11,
+  };
+
+  const d1 = t.match(
+    /\b(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)(?:\s*,?\s*(\d{4}))?\b/i,
+  );
+  if (d1) {
+    const day = parseInt(d1[1], 10);
+    const month = monthMap[d1[2].toLowerCase()];
+    const year = d1[3] ? parseInt(d1[3], 10) : now.getFullYear();
+    return new Date(year, month, day);
+  }
+
+  const d2 = t.match(
+    /\b(?:on\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b/i,
+  );
+  if (d2) {
+    const month = monthMap[d2[1].toLowerCase()];
+    const day = parseInt(d2[2], 10);
+    const year = d2[3] ? parseInt(d2[3], 10) : now.getFullYear();
+    return new Date(year, month, day);
+  }
+
+  const isoMatch = t.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (isoMatch) {
+    return new Date(
+      parseInt(isoMatch[1], 10),
+      parseInt(isoMatch[2], 10) - 1,
+      parseInt(isoMatch[3], 10),
+    );
+  }
+
+  const ddmmyyyy = t.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b/);
+  if (ddmmyyyy) {
+    return new Date(
+      parseInt(ddmmyyyy[3], 10),
+      parseInt(ddmmyyyy[2], 10) - 1,
+      parseInt(ddmmyyyy[1], 10),
+    );
+  }
+
+  return null;
+}
+
+function getLocalDateString(d) {
+  if (!d) return '';
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return '';
+  const year = date.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+  });
+  const month = date.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    month: '2-digit',
+  });
+  const day = date.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+  });
+  return `${year}-${month}-${day}`;
+}
+
+function isSameCalendarDay(d1, d2) {
+  if (!d1 || !d2) return false;
+  return getLocalDateString(d1) === getLocalDateString(d2);
+}
+
+function getOrdinalSuffix(day) {
+  if (day > 3 && day < 21) return 'th';
+  switch (day % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+}
+
+function formatDisplayDate(d) {
+  if (!d) return '';
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return '';
+  const month = date.toLocaleDateString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    month: 'long',
+  });
+  const day = parseInt(
+    date.toLocaleDateString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+    }),
+    10,
+  );
+  return `${month} ${day}${getOrdinalSuffix(day)}`;
+}
+
 function getDealCode(deal) {
   if (!deal) return '#INQ-UNKNOWN';
   if (deal.deal_number) {
@@ -1948,15 +2108,92 @@ async function handleSendQuotationMessage(
   );
 }
 
+function normalizeStageName(stage) {
+  const s = (stage || '').toLowerCase().trim();
+  if (
+    [
+      'price_quote',
+      'quoted',
+      'proposal',
+      'qualified',
+      'quotation_sent',
+      'confirmed',
+      'saved',
+      'processed',
+    ].includes(s)
+  ) {
+    return 'price_quote';
+  }
+  if (['negotiation', 'under_review', 'reviewing'].includes(s)) {
+    return 'negotiation';
+  }
+  if (['on_hold', 'hold'].includes(s)) {
+    return 'on_hold';
+  }
+  if (['won', 'order', 'closed_won', 'po_received'].includes(s)) {
+    return 'won';
+  }
+  if (['lost', 'closed_lost'].includes(s)) {
+    return 'lost';
+  }
+  return 'new_inquiry';
+}
+
 async function findDealByCodeOrId(codeOrId, senderPhone) {
   if (!codeOrId) return null;
   const clean = codeOrId
     .replace(/^#?(?:DEAL|INQ)-?/i, '')
     .trim()
     .toUpperCase();
-  if (clean.length < 4) return null;
+  if (clean.length < 3) return null;
 
-  // Run deals and inquiries lookups concurrently with lean projections for ultra-low latency
+  // 1. Direct targeted queries
+  const [dealsDirect, inqsDirect] = await Promise.all([
+    supabase
+      .from('deals')
+      .select(
+        'id, inquiry_id, customer_name, stage, status, total_amount, salesperson_phone, po_number, created_at, deal_items(*)',
+      )
+      .or(`id.ilike.%${clean}%,inquiry_id.ilike.%${clean}%`)
+      .limit(5),
+    supabase
+      .from('inquiries')
+      .select('id, sender_name, status, sender_phone, raw_text, created_at')
+      .or(`id.ilike.%${clean}%`)
+      .limit(5),
+  ]);
+
+  if (dealsDirect?.data && dealsDirect.data.length > 0) {
+    return dealsDirect.data[0];
+  }
+
+  if (inqsDirect?.data && inqsDirect.data.length > 0) {
+    const foundInq = inqsDirect.data[0];
+    const derivedStage = normalizeStageName(foundInq.status);
+
+    let cName = foundInq.sender_name;
+    if (!cName || isInvalidCustomerName(cName)) {
+      const rawFirstLine = (foundInq.raw_text || '').split('\n')[0];
+      const matchComp = rawFirstLine.match(
+        /^([A-Za-z0-9\s&.,'-]+?)(?:\s+requires|\s+needs|\s+inquiry|\s+order|\s+deal|:|-|$)/i,
+      );
+      cName = matchComp ? matchComp[1].trim() : 'Customer';
+    }
+
+    return {
+      id: foundInq.id,
+      inquiry_id: foundInq.id,
+      is_inquiry_source: true,
+      stage: derivedStage,
+      customer_name: cName,
+      total_amount: 0,
+      deal_items: [],
+      salesperson_phone: foundInq.sender_phone || senderPhone,
+      raw_inquiry: foundInq,
+    };
+  }
+
+  // 2. Fallback to scan active deals/inquiries if prefix matching
   const [dealsRes, inqsRes] = await Promise.all([
     supabase
       .from('deals')
@@ -1964,12 +2201,12 @@ async function findDealByCodeOrId(codeOrId, senderPhone) {
         'id, inquiry_id, customer_name, stage, status, total_amount, salesperson_phone, po_number, created_at, deal_items(*)',
       )
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(300),
     supabase
       .from('inquiries')
       .select('id, sender_name, status, sender_phone, raw_text, created_at')
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(300),
   ]);
 
   const deals = dealsRes?.data;
@@ -1990,28 +2227,13 @@ async function findDealByCodeOrId(codeOrId, senderPhone) {
 
   const inquiries = inqsRes?.data;
   if (inquiries && inquiries.length > 0) {
-    const foundInq = inquiries.find((inq) =>
-      (inq.id || '').toUpperCase().startsWith(clean),
+    const foundInq = inquiries.find(
+      (inq) =>
+        (inq.id || '').toUpperCase().startsWith(clean) ||
+        (inq.id || '').replace(/-/g, '').toUpperCase().startsWith(clean),
     );
     if (foundInq) {
-      const inqStatus = (foundInq.status || '').toLowerCase().trim();
-      let derivedStage = 'new_inquiry';
-      if (
-        ['confirmed', 'saved', 'processed', 'qualified'].includes(inqStatus)
-      ) {
-        derivedStage = 'qualified';
-      } else if (['quoted', 'quotation_sent'].includes(inqStatus)) {
-        derivedStage = 'quoted';
-      } else if (inqStatus === 'negotiation') {
-        derivedStage = 'negotiation';
-      } else if (inqStatus === 'won') {
-        derivedStage = 'won';
-      } else if (inqStatus === 'lost') {
-        derivedStage = 'lost';
-      } else {
-        derivedStage = 'new_inquiry';
-      }
-
+      const derivedStage = normalizeStageName(foundInq.status);
       let cName = foundInq.sender_name;
       if (!cName || isInvalidCustomerName(cName)) {
         const rawFirstLine = (foundInq.raw_text || '').split('\n')[0];
@@ -2746,13 +2968,16 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       // ── LATENCY OPTIMIZATION: FAST-PATH RULE EXTRACTOR FOR PURE STAGE UPDATES ──
       const textRaw = effectiveTextForLLM || text || '';
       const isClearStageUpdate =
-        /\b(?:mark|move|update|set|change)\b.*?\b(?:deal\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified)\b/i.test(
+        /\b(?:mark|move|update|set|change)\b.*?\b(?:deal\s+|inquiry\s+|it\s+)?(?:as\s+|to\s+)?(won|lost|quoted|negotiation|qualified|on_hold|hold)\b/i.test(
           textRaw,
         ) ||
-        /\b(?:status|stage)\b.*?\b(negotiation|qualified|quoted|won|lost)\b/i.test(
+        /\b(?:status|stage)\b.*?\b(negotiation|qualified|quoted|won|lost|on_hold|hold)\b/i.test(
           textRaw,
         ) ||
-        /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+)?(won|lost|quoted|negotiation|qualified)\b/i.test(
+        /\b(?:deal|inquiry)\s+(?:is\s+|moved\s+to\s+|marked\s+as\s+)?(won|lost|quoted|negotiation|qualified|on_hold|hold)\b/i.test(
+          textRaw,
+        ) ||
+        /\b(?:po\s*received|po\s*recevied|order\s*confirmed|order\s*placed|deal\s*won)\b/i.test(
           textRaw,
         );
 
@@ -2807,12 +3032,41 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           }
         }
 
+        let rulePoNumber = null;
+        const poMatch =
+          textRaw.match(
+            /\b(?:po\s*no\.?|po\s*number|po\s*#|official\s*po)\s*[:=-]?\s*([A-Za-z0-9_-]+)/i,
+          ) ||
+          textRaw.match(/\b(PO-[A-Za-z0-9_-]+)\b/i) ||
+          textRaw.match(/\bPO\s*#?\s*([A-Za-z0-9_-]{3,20})\b/i);
+        if (
+          poMatch &&
+          ![
+            'received',
+            'recevied',
+            'placed',
+            'confirmed',
+            'for',
+            'id',
+            'deal',
+            'inq',
+          ].includes(poMatch[1].toLowerCase())
+        ) {
+          rulePoNumber = poMatch[1].trim();
+        }
+
         let ruleStage = 'new_inquiry';
         const stageMatch = textRaw.match(
-          /\b(negotiation|won|lost|quoted|qualified)\b/i,
+          /\b(negotiation|won|lost|quoted|qualified|on_hold|hold)\b/i,
         );
         if (stageMatch) {
           ruleStage = stageMatch[1].toLowerCase();
+        } else if (
+          /\b(?:po\s*received|po\s*recevied|order\s*confirmed|order\s*placed|deal\s*won)\b/i.test(
+            textRaw,
+          )
+        ) {
+          ruleStage = 'won';
         }
 
         data = {
@@ -2827,6 +3081,7 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
           delivery_location: null,
           payment_terms: null,
           delivery_date: null,
+          po_number: rulePoNumber,
           confidence: 1.0,
         };
       } else {
@@ -2913,12 +3168,9 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
                 /(?:customer|company|client|pvt\.?\s*ltd\.?|ltd\.?|infra|steel|engineering|industries)\s+([A-Z0-9\s&.-]{3,35})/i,
               );
             if (reqMatch) {
-              let cand = reqMatch[1].trim();
-              cand = cand
-                .replace(/\s+(?:company|client|firm|customer)$/i, '')
-                .replace(/^(?:customer|company|client)\s+/i, '')
-                .trim();
+              const cand = cleanCustomerName(reqMatch[1]);
               if (
+                cand &&
                 ![
                   'new',
                   'log',
@@ -3322,27 +3574,14 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       }
     }
 
-    let customerName = data.customer_name;
-    if (typeof customerName === 'string') {
-      customerName = customerName
-        .replace(/\s+(?:company|client|firm|customer)$/i, '')
-        .replace(/^(?:customer|company|client)\s+/i, '')
-        .trim();
-    }
-    if (isInvalidCustomerName(customerName)) {
-      customerName = null;
-    }
+    let customerName = cleanCustomerName(data.customer_name);
 
     if (!customerName) {
       const thisIsForMatch = cleanTextToInspect.match(
         /(?:this\s+is\s+for|is\s+for|for\s+company|for\s+client|for\s+customer)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+company|\s+client|\s+firm|\s+customer|\s*,\s*|\.|$)/i,
       );
-      if (thisIsForMatch && !isInvalidCustomerName(thisIsForMatch[1].trim())) {
-        customerName = thisIsForMatch[1]
-          .trim()
-          .replace(/\s+(?:company|client|firm|customer)$/i, '')
-          .replace(/^(?:customer|company|client)\s+/i, '')
-          .trim();
+      if (thisIsForMatch) {
+        customerName = cleanCustomerName(thisIsForMatch[1]);
       }
     }
 
@@ -3353,24 +3592,19 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       const hinglishMatch = cleanTextToInspect.match(
         /\b([A-Za-z0-9\s&.-]{2,30}?)\s+se\s+(?:bol\s+raha\s+hu|bol\s+rahe\s+hai|hu|baat\s+kar\s+raha\s+hu)\b/i,
       );
-      if (
-        trailingDashMatch &&
-        !isInvalidCustomerName(trailingDashMatch[1].trim())
-      ) {
-        customerName = trailingDashMatch[1]
-          .trim()
-          .replace(/\s+(?:company|client|firm|customer)$/i, '')
-          .replace(/^(?:customer|company|client)\s+/i, '')
-          .trim();
-      } else if (
-        hinglishMatch &&
-        !isInvalidCustomerName(hinglishMatch[1].trim())
-      ) {
-        customerName = hinglishMatch[1]
-          .trim()
-          .replace(/\s+(?:company|client|firm|customer)$/i, '')
-          .replace(/^(?:customer|company|client)\s+/i, '')
-          .trim();
+      if (trailingDashMatch) {
+        customerName = cleanCustomerName(trailingDashMatch[1]);
+      } else if (hinglishMatch) {
+        customerName = cleanCustomerName(hinglishMatch[1]);
+      }
+    }
+
+    if (!customerName) {
+      const byCustomerMatch = cleanTextToInspect.match(
+        /\b(?:inquiry|deal|order|po)\s+(?:by|of|from|for)\s+([A-Z0-9\s&.-]{2,40}?)(?:\s+on|\s+dated|\s+from|\s*,\s*|\.|$)/i,
+      );
+      if (byCustomerMatch) {
+        customerName = cleanCustomerName(byCustomerMatch[1]);
       }
     }
 
@@ -3677,17 +3911,29 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       let targetStageName = data.target_stage;
       if (!targetStageName || targetStageName === 'new_inquiry') {
         const stageMatch = text.match(
-          /\b(negotiation|won|lost|quoted|qualified)\b/i,
+          /\b(negotiation|won|lost|quoted|qualified|on_hold|hold)\b/i,
         );
         if (stageMatch) {
           targetStageName = stageMatch[1].toLowerCase();
+        } else if (
+          /\b(?:po\s*received|po\s*recevied|order\s*confirmed|order\s*placed|deal\s*won)\b/i.test(
+            text,
+          )
+        ) {
+          targetStageName = 'won';
         }
       }
 
-      if (
-        targetStageName === 'quoted' ||
-        text.toLowerCase().includes('quoted')
-      ) {
+      // Check if user is explicitly asking to generate/email quotation PDF
+      const isQuotationSendRequest =
+        /\b(?:send|mail|email|forward|share|dispatch)\b.*?\b(?:quotation|quote|pdf)\b/i.test(
+          text,
+        ) ||
+        /\b(?:quotation|quote)\b.*?\b(?:bhejo|bhej|send|mail|email|share|forward)\b/i.test(
+          text,
+        );
+
+      if (targetStageName === 'quoted' && isQuotationSendRequest) {
         return await handleSendQuotationMessage(text, senderPhone);
       }
 
@@ -3698,60 +3944,132 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         negotiation: 'negotiation',
         qualified: 'qualified',
         quoted: 'quoted',
+        price_quote: 'quoted',
+        on_hold: 'on_hold',
+        hold: 'on_hold',
       };
-      const dbStage = stageMap[targetStageName] || 'new_inquiry';
+      const dbStage =
+        stageMap[targetStageName] ||
+        (/\b(?:won|order|po)\b/i.test(text) ? 'won' : 'new_inquiry');
 
+      const targetDate = extractDateFromText(effectiveTextForLLM || text);
       let dealToUpdate = targetExplicitDeal;
       if (!dealToUpdate && customerName) {
-        const openDeals = await getAllOpenDealsForCustomer(
+        let openDeals = await getAllOpenDealsForCustomer(
           customerName,
           senderPhone,
         );
+
+        if (targetDate) {
+          const dateFilteredDeals = openDeals.filter((d) =>
+            isSameCalendarDay(d.created_at, targetDate),
+          );
+          if (dateFilteredDeals.length > 0) {
+            openDeals = dateFilteredDeals;
+          } else {
+            const dateFormatted = formatDisplayDate(targetDate);
+            return `I couldn't find any inquiry records for ${customerName} on ${dateFormatted} in Enlight Metals OS.\n\nWould you like to:\n- Log a new inquiry for this customer?\n- Onboard them as a new customer in your directory?`;
+          }
+        }
+
         if (openDeals.length === 1) {
           dealToUpdate = openDeals[0];
         } else if (openDeals.length > 1) {
-          return formatOpenDealsListPrompt(customerName, openDeals);
+          if (dbStage === 'won') {
+            const eligibleDeals = openDeals.filter((d) =>
+              [
+                'quoted',
+                'qualified',
+                'proposal',
+                'price_quote',
+                'negotiation',
+                'on_hold',
+              ].includes((d.stage || '').toLowerCase()),
+            );
+            if (eligibleDeals.length === 1) {
+              dealToUpdate = eligibleDeals[0];
+            } else if (eligibleDeals.length > 1) {
+              return formatOpenDealsListPrompt(customerName, eligibleDeals);
+            } else {
+              return formatOpenDealsListPrompt(customerName, openDeals);
+            }
+          } else {
+            return formatOpenDealsListPrompt(customerName, openDeals);
+          }
         } else {
           dealToUpdate = await findBestDeal(customerName, senderPhone);
         }
       }
 
       if (!dealToUpdate) {
+        if (targetDate && customerName) {
+          const dateFormatted = formatDisplayDate(targetDate);
+          return `I couldn't find any inquiry records for ${customerName} on ${dateFormatted} in Enlight Metals OS.\n\nWould you like to:\n- Log a new inquiry for this customer?\n- Onboard them as a new customer in your directory?`;
+        }
         return `Which inquiry would you like to mark as ${dbStage.toUpperCase()}? Please provide the Inquiry ID (e.g. #INQ-XXXXXX) or customer name.`;
       }
 
-      const currentStage = (dealToUpdate.stage || 'new_inquiry')
-        .toLowerCase()
-        .trim();
-
-      // Stage Gate 1: If deal is in New Inquiry stage, no status updates allowed
-      if (
-        [
-          'new_inquiry',
-          'review',
-          'auto_created',
-          'pending',
-          'draft',
-          'needs_review',
-        ].includes(currentStage)
-      ) {
-        return `This deal is currently in New Inquiry stage. It must be moved to Qualified before it can be updated further. Please save the deal first.`;
+      // Extract PO Number if present in text or data
+      if (!data.po_number) {
+        const poMatch =
+          text.match(
+            /\b(?:po\s*no\.?|po\s*number|po\s*#|official\s*po)\s*[:=-]?\s*([A-Za-z0-9_-]+)/i,
+          ) ||
+          text.match(/\b(PO-[A-Za-z0-9_-]+)\b/i) ||
+          text.match(/\bPO\s*#?\s*([A-Za-z0-9_-]{3,20})\b/i);
+        if (
+          poMatch &&
+          ![
+            'received',
+            'recevied',
+            'placed',
+            'confirmed',
+            'for',
+            'id',
+            'deal',
+            'inq',
+          ].includes(poMatch[1].toLowerCase())
+        ) {
+          data.po_number = poMatch[1].trim();
+        }
       }
 
-      // Stage Gate 2: If deal is in Qualified stage, must move to Negotiation or Quoted first before Won/Lost
-      if (
-        currentStage === 'qualified' &&
-        (dbStage === 'won' || dbStage === 'lost')
-      ) {
-        return `This deal must go through Negotiation or Quoted stage before it can be marked as Won or Lost.`;
-      }
-
-      // Stage Gate 3: If deal is already closed
-      if (currentStage === 'won' || currentStage === 'lost') {
-        return `This deal is already marked as ${currentStage.toUpperCase()} and cannot be updated further.`;
-      }
-
+      const rawCurrentStage = dealToUpdate.stage || 'new_inquiry';
+      const currentStage = normalizeStageName(rawCurrentStage);
       const dealCode = getDealCode(dealToUpdate);
+      const customerDisplayName = dealToUpdate.customer_name || 'Customer';
+
+      // Stage Gate 1: If deal is in New Inquiry stage
+      if (currentStage === 'new_inquiry') {
+        if (dbStage === 'won') {
+          return `Inquiry #${dealCode} for ${customerDisplayName} is currently in the New Inquiry stage and has not been quoted yet. A price quotation with unit rates must be prepared and sent before logging a Purchase Order. Would you like me to help you quote prices for this inquiry first?`;
+        }
+        if (dbStage === 'negotiation' || dbStage === 'on_hold') {
+          return `Inquiry #${dealCode} for ${customerDisplayName} is currently in the New Inquiry stage. Unit rates must be quoted first before moving to ${dbStage === 'on_hold' ? 'On Hold' : 'Negotiation'}.`;
+        }
+        if (dbStage === 'lost') {
+          if (!data.loss_reason) {
+            return `Inquiry #${dealCode} for ${customerDisplayName} is in the New Inquiry stage. To mark it as Lost, please provide the loss reason (e.g. "Mark #${dealCode} lost due to competitor price").`;
+          }
+        }
+      }
+
+      // Stage Gate 2: If deal is already closed as Won
+      if (currentStage === 'won') {
+        if (dbStage === 'won') {
+          return `This deal is already marked as WON (Order confirmed${dealToUpdate.po_number ? ` with PO #${dealToUpdate.po_number}` : ''}).`;
+        }
+        return `This deal is already marked as WON and cannot be updated to ${dbStage.toUpperCase()}.`;
+      }
+
+      // Stage Gate 3: If deal is already marked as Lost
+      if (
+        currentStage === 'lost' &&
+        dbStage !== 'price_quote' &&
+        dbStage !== 'negotiation'
+      ) {
+        return `This deal is currently marked as LOST${dealToUpdate.lost_reason ? ` (Reason: ${dealToUpdate.lost_reason})` : ''}. If the customer has placed an order now, please update the stage to Price Quote or Negotiation first.`;
+      }
 
       if (dealToUpdate.is_inquiry_source) {
         // Insert pipeline deal in deals table linked to this inquiry
@@ -3967,10 +4285,19 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
         data.action === 'deal_update' ||
         !hasAnyProductName)
     ) {
-      const openDeals = await getAllOpenDealsForCustomer(
+      let openDeals = await getAllOpenDealsForCustomer(
         customerName,
         senderPhone,
       );
+      const targetDate = extractDateFromText(effectiveTextForLLM || text);
+      if (targetDate) {
+        const dateFilteredDeals = openDeals.filter((d) =>
+          isSameCalendarDay(d.created_at, targetDate),
+        );
+        if (dateFilteredDeals.length > 0) {
+          openDeals = dateFilteredDeals;
+        }
+      }
       if (openDeals.length === 1) {
         targetExplicitDeal = openDeals[0];
       } else if (openDeals.length > 1) {
@@ -3984,10 +4311,19 @@ async function processSalesMessage(text, senderPhone, overrideData = null) {
       if (targetExplicitDeal) {
         // Handled below via Deal ID update path
       } else if (customerName) {
-        const openDeals = await getAllOpenDealsForCustomer(
+        let openDeals = await getAllOpenDealsForCustomer(
           customerName,
           senderPhone,
         );
+        const targetDate = extractDateFromText(effectiveTextForLLM || text);
+        if (targetDate) {
+          const dateFilteredDeals = openDeals.filter((d) =>
+            isSameCalendarDay(d.created_at, targetDate),
+          );
+          if (dateFilteredDeals.length > 0) {
+            openDeals = dateFilteredDeals;
+          }
+        }
         if (openDeals.length === 1) {
           targetExplicitDeal = openDeals[0];
         } else if (openDeals.length > 1) {
@@ -5257,6 +5593,10 @@ module.exports = {
   sendQuotationEmail,
   findBestDeal,
   findDealByCodeOrId,
+  normalizeStageName,
+  extractDateFromText,
+  isSameCalendarDay,
+  cleanCustomerName,
   detectInvalidUnitInMessage,
   extractDeliveryLocation,
   extractDeliveryDate,
