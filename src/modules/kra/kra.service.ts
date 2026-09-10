@@ -30,6 +30,24 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+function extractProductFromText(text?: string | null): string | null {
+  if (!text) return null;
+  const str = String(text).trim();
+  const m1 = str.match(
+    /(?:(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?|bundle|bundles))\s+)?\b(MS\s+Plates?|MS\s+Sheets?|HR\s+Coils?|HR\s+Sheets?|CR\s+Coils?|CR\s+Sheets?|TMT\s+Bars?|GI\s+Sheets?|GI\s+Coils?|GP\s+Sheets?|GP\s+Coils?|Chequered\s+Plates?|MS\s+Pipes?|Seamless\s+Pipes?|ERW\s+Pipes?|MS\s+Angles?|MS\s+Channels?|MS\s+Beams?|MS\s+Flats?|MS\s+Rounds?|Square\s+Bars?|Beams?|Channels?|Angles?|Flats?|Rounds?|IS\s+2062(?:\s+E250)?)\b(?:\s+([0-9.]+\s*mm(?:(?:\s*x\s*[0-9.]+\s*mm)+)?))?(?:\s+(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?)))?/i,
+  );
+  if (m1) {
+    const qty = (m1[1] || m1[4] || '').trim();
+    const prod = m1[2].trim();
+    const dims = (m1[3] || '').trim();
+    let res = prod;
+    if (dims) res += ` ${dims}`;
+    if (qty) res += ` (${qty})`;
+    return res;
+  }
+  return null;
+}
+
 function isProductInquiry(inquiry: any): boolean {
   if (!inquiry) return false;
   const rawText = (inquiry.raw_text || '').toLowerCase().trim();
@@ -1705,11 +1723,19 @@ export class KraService {
           );
         }
 
-        // Parse affected product from structured '[Product: HR Coil] ...' description prefix
+        // Parse affected product from structured '[Product: HR Coil] ...' description prefix or stored columns
         const productMatch = c.description?.match(
           /^\[Product:\s*([^\]]+)\]\s*/i,
         );
-        const affectedProduct = productMatch ? productMatch[1].trim() : '-';
+        const extractedProduct = extractProductFromText(
+          `${c.description || ''} ${c.resolution_notes || ''}`,
+        );
+        const affectedProduct =
+          c.product_name ||
+          c.affected_product ||
+          (productMatch ? productMatch[1].trim() : null) ||
+          extractedProduct ||
+          '-';
         const cleanDescription = productMatch
           ? c.description.replace(/^\[Product:\s*[^\]]+\]\s*/i, '').trim()
           : c.description || '-';
@@ -2121,25 +2147,6 @@ export class KraService {
           }
         }
       });
-
-      const extractProductFromText = (text?: string | null) => {
-        if (!text) return null;
-        const str = String(text).trim();
-        const m1 = str.match(
-          /(?:(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?))\s+)?\b(MS\s+Plates?|MS\s+Sheets?|HR\s+Coils?|HR\s+Sheets?|CR\s+Coils?|CR\s+Sheets?|TMT\s+Bars?|GI\s+Sheets?|GI\s+Coils?|GP\s+Sheets?|GP\s+Coils?|Chequered\s+Plates?|MS\s+Pipes?|Seamless\s+Pipes?|ERW\s+Pipes?|Beams?|Channels?|Angles?|IS\s+2062(?:\s+E250)?)\b(?:\s+([0-9.]+\s*mm(?:(?:\s*x\s*[0-9.]+\s*mm)+)?))?(?:\s+(\d+(?:\.\d+)?\s*(?:MT|tons?|kg|pcs?|nos?)))?/i,
-        );
-        if (m1) {
-          const qty = (m1[1] || m1[4] || '').trim();
-          const prod = m1[2].trim();
-          const dims = (m1[3] || '').trim();
-          let res = prod;
-          if (dims) res += ` ${dims}`;
-          if (qty) res += ` (${qty})`;
-          return res;
-        }
-        return null;
-      };
-
       return complaintsList.map((c) => {
         const cleanRep = (c.reported_by || '').replace(/\D/g, '').slice(-10);
         let poNum = c.po_number;
@@ -2163,7 +2170,13 @@ export class KraService {
 
         let resolvedProd = rawProd;
         if (isGeneric) {
-          if (
+          // 1. First check if complaint description mentions a specific product
+          const fromDesc = extractProductFromText(
+            `${c.description || ''} ${c.resolution_notes || ''}`,
+          );
+          if (fromDesc) {
+            resolvedProd = fromDesc;
+          } else if (
             c.deal_id &&
             dealProductMap.has(c.deal_id.toLowerCase().replace(/^#?deal-/i, ''))
           ) {
@@ -2183,13 +2196,6 @@ export class KraService {
             resolvedProd =
               dealProductMap.get(
                 `cust_${c.customer_name.toLowerCase().trim()}`,
-              ) || '';
-          }
-
-          if (!resolvedProd) {
-            resolvedProd =
-              extractProductFromText(
-                `${c.description || ''} ${c.resolution_notes || ''}`,
               ) || '';
           }
         }
