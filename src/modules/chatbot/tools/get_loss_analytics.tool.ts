@@ -42,7 +42,7 @@ export const getLossAnalyticsTool: ChatbotTool = {
     let query = supabaseAdmin
       .from('deals')
       .select(
-        'id, customer_name, customer_phone, total_amount, stage, status, salesperson_phone, employee_id, created_at',
+        'id, inquiry_id, customer_name, customer_phone, total_amount, stage, status, salesperson_phone, employee_id, created_at',
       )
       .eq('stage', 'lost');
 
@@ -133,7 +133,14 @@ export const getLossAnalyticsTool: ChatbotTool = {
         total_lost_deals_count: rows.length,
         total_lost_revenue_usd: totalLostValue,
         loss_reasons_breakdown: lossReasonBreakdown,
-        recent_lost_deals: rows.slice(0, 15),
+        recent_lost_deals: rows.slice(0, 15).map((d: any) => {
+          const rawId = d.inquiry_id || d.id || '';
+          return {
+            ...d,
+            inquiry_id: `#INQ-${rawId.replace(/-/g, '').slice(0, 6).toUpperCase()}`,
+            full_id: rawId,
+          };
+        }),
       },
       rowCount: rows.length,
     };

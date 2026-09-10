@@ -5,8 +5,9 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
 async function fixManagerLinkage() {
-  const { SupabaseService } =
-    await import('../infrastructure/supabase/supabase.service');
+  const { SupabaseService } = await import(
+    '../infrastructure/supabase/supabase.service'
+  );
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
 

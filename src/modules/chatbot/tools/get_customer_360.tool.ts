@@ -153,10 +153,12 @@ export const getCustomer360Tool: ChatbotTool = {
     // ─── Case 1: Directory Mode (customer_name is omitted) ─────────────────
     if (!customerName) {
       try {
-        const { CustomersService } =
-          await import('../../customers/customers.service');
-        const { CustomerInsightsService } =
-          await import('../../customers/customer-insights.service');
+        const { CustomersService } = await import(
+          '../../customers/customers.service'
+        );
+        const { CustomerInsightsService } = await import(
+          '../../customers/customer-insights.service'
+        );
         const customersService = new CustomersService(
           {
             getAdminClient: () => supabaseAdmin,
