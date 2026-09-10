@@ -450,6 +450,54 @@ router.post('/', async (req, res) => {
           return;
         }
 
+        if (
+          activeSession?.last_intent?.startsWith(
+            'waiting_for_visit_update_selection|',
+          )
+        ) {
+          const parts = activeSession.last_intent.split('|');
+          const payloadJson = parts.slice(1).join('|');
+          const { safeParseJSON } = require('./utils/jsonUtils');
+          const sessionPayload = safeParseJSON(payloadJson, null);
+
+          if (sessionPayload) {
+            const {
+              handleVisitUpdateSelection,
+            } = require('./agents/visitAgent');
+            const reply = await handleVisitUpdateSelection(
+              raw_text,
+              senderPhone,
+              sessionPayload,
+            );
+            if (reply) {
+              await sendTextMessage(senderPhone, reply);
+              return;
+            }
+          }
+        }
+
+        if (activeSession?.last_intent?.startsWith('pending_visit_details|')) {
+          const parts = activeSession.last_intent.split('|');
+          const payloadJson = parts.slice(2).join('|');
+          const { safeParseJSON } = require('./utils/jsonUtils');
+          const storedState = safeParseJSON(payloadJson, null);
+
+          if (storedState) {
+            const {
+              handlePendingVisitContinuation,
+            } = require('./agents/visitAgent');
+            const reply = await handlePendingVisitContinuation(
+              raw_text,
+              senderPhone,
+              storedState,
+            );
+            if (reply) {
+              await sendTextMessage(senderPhone, reply);
+              return;
+            }
+          }
+        }
+
         isMediaMessage =
           messageType === 'image' ||
           messageType === 'document' ||
