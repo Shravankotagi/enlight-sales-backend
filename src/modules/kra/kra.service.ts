@@ -2598,19 +2598,44 @@ export class KraService {
           )
           .trim() || rawRemarks;
 
-      let outcome = (v.outcome || '').toLowerCase();
-      if (!outcome || outcome === 'unknown') {
+      let outcome = (v.outcome || '').toLowerCase().trim();
+      if (
+        !outcome ||
+        outcome === 'unknown' ||
+        !['positive', 'neutral', 'negative'].includes(outcome)
+      ) {
         const outcomeFromTag = rawRemarks
           .match(/\[Outcome:\s*([^\]]+)\]/i)?.[1]
-          ?.toLowerCase();
-        if (outcomeFromTag) {
+          ?.toLowerCase()
+          ?.trim();
+        if (
+          outcomeFromTag &&
+          ['positive', 'neutral', 'negative'].includes(outcomeFromTag)
+        ) {
           outcome = outcomeFromTag;
-        } else if (rawRemarks.toLowerCase().includes('positive')) {
-          outcome = 'positive';
-        } else if (rawRemarks.toLowerCase().includes('neutral')) {
-          outcome = 'neutral';
         } else {
-          outcome = 'positive';
+          const lowerRem = rawRemarks.toLowerCase();
+          if (
+            /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
+              lowerRem,
+            ) ||
+            /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
+              lowerRem,
+            )
+          ) {
+            outcome = 'negative';
+          } else if (
+            /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
+              lowerRem,
+            ) &&
+            !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
+              lowerRem,
+            )
+          ) {
+            outcome = 'positive';
+          } else {
+            outcome = 'neutral';
+          }
         }
       }
 

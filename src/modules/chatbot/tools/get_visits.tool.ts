@@ -103,6 +103,34 @@ export function parseVisitRemarks(remarks?: string | null): {
       outcome = rawOut;
     }
   }
+  if (!outcome) {
+    const lowerRem = remarks.toLowerCase();
+    if (
+      /\b(?:negative|bad|rejected|rejection|unsuccessful|declined|not\s+(?:at\s+all\s+)?inter(?:e)?sted|uninterested|no\s+interest|not\s+buying|not\s+interested|no\s+(?:immediate\s+)?need|no\s+requirement|refused|unfavorable|dissatisfied|cancelled|lost)\b/i.test(
+        lowerRem,
+      ) ||
+      /\b(?:nahi\s+chahiye|interest\s+nahi|mana\s+kar\s+diya|reject\s+hua)\b/i.test(
+        lowerRem,
+      )
+    ) {
+      outcome = 'negative';
+    } else if (
+      /\b(?:positive|went\s+well|good|great|successful|favorable|interested|keen|promising|order\s+confirmed|deal\s+done)\b/i.test(
+        lowerRem,
+      ) &&
+      !/\b(?:not\s+|no\s+|nahi\s+)(?:positive|good|great|interested|keen|promising)\b/i.test(
+        lowerRem,
+      )
+    ) {
+      outcome = 'positive';
+    } else if (
+      /\b(?:neutral|routine|okay|ok|normal|general\s+visit|courtesy\s+visit|check-?in|introductory|introduction)\b/i.test(
+        lowerRem,
+      )
+    ) {
+      outcome = 'neutral';
+    }
+  }
 
   // 2. Parse Follow-up Action tag [FollowUp: ...] or [Follow-up: ...]
   let follow_up_action: string | null = null;
