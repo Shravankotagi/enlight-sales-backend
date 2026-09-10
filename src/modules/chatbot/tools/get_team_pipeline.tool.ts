@@ -34,7 +34,7 @@ export const getTeamPipelineTool: ChatbotTool = {
     let query = supabaseAdmin
       .from('deals')
       .select(
-        'id, customer_name, customer_phone, total_amount, stage, status, po_number, salesperson_phone, employee_id, created_at',
+        'id, inquiry_id, customer_name, customer_phone, total_amount, stage, status, po_number, salesperson_phone, employee_id, created_at',
       );
 
     // Scoping Layer
@@ -156,7 +156,14 @@ export const getTeamPipelineTool: ChatbotTool = {
         stage_breakdown: summaryByStage,
         top_converter: topRep,
         rep_conversion_leaderboard: leaderboard,
-        deals: rows.slice(0, 20),
+        deals: rows.slice(0, 20).map((d: any) => {
+          const rawId = d.inquiry_id || d.id || '';
+          return {
+            ...d,
+            inquiry_id: `#INQ-${rawId.replace(/-/g, '').slice(0, 6).toUpperCase()}`,
+            full_id: rawId,
+          };
+        }),
       },
       rowCount: rows.length,
     };

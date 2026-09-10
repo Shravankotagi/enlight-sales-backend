@@ -519,23 +519,17 @@ export const getInquiriesTool: ChatbotTool = {
 
       totalInqTonnageMt = Math.round(totalInqTonnageMt * 1000) / 1000;
 
-      // Determine human deal ID: #INQ-XXXXXX
-      const dealNum = deal?.deal_number
-        ? deal.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
-        : deal?.id
-          ? deal.id.substring(0, 6).toUpperCase()
-          : null;
-      const inqNum = inq.id ? inq.id.substring(0, 6).toUpperCase() : null;
-      const humanDealId = dealNum
-        ? 'INQ-' + dealNum
-        : inqNum
-          ? 'INQ-' + inqNum
-          : null;
+      // Determine single human inquiry ID: #INQ-XXXXXX
+      const rawInqId = inq.id || deal?.inquiry_id || deal?.id || '';
+      const inqShort = rawInqId
+        ? '#INQ-' + rawInqId.replace(/-/g, '').substring(0, 6).toUpperCase()
+        : null;
 
       return {
-        inquiry_id: inq.id,
-        deal_id: humanDealId,
-        deal_uuid: deal?.id || null,
+        inquiry_id: inqShort || inq.id,
+        deal_id: inqShort || inq.id,
+        inquiry_uuid: inq.id,
+        deal_uuid: deal?.inquiry_id || deal?.id || null,
         deal_number: deal?.deal_number || null,
         deal_status: dealStage,
         inquiry_status: inquiryStatus,
@@ -604,8 +598,7 @@ export const getInquiriesTool: ChatbotTool = {
       .sort((a, b) => b.total_tonnage_mt - a.total_tonnage_mt);
 
     const topTonnageInquiries = tonnageSorted.slice(0, 5).map((i) => ({
-      inquiry_id:
-        i.deal_id || 'INQ-' + i.inquiry_id.substring(0, 6).toUpperCase(),
+      inquiry_id: i.inquiry_id,
       customer_name: i.customer_name,
       tonnage_mt: i.total_tonnage_mt,
       deal_status: i.deal_status,
@@ -715,9 +708,7 @@ export const getInquiriesTool: ChatbotTool = {
           data: {
             found: true,
             inquiry: matched,
-            inquiry_id:
-              matched.deal_id ||
-              'INQ-' + matched.inquiry_id.substring(0, 6).toUpperCase(),
+            inquiry_id: matched.inquiry_id,
             customer_name: matched.customer_name,
             customer_phone: matched.customer_phone,
             deal_status: matched.deal_status,

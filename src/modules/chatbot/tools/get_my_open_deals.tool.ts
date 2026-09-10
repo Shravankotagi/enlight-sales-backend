@@ -149,7 +149,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
     let query = supabaseAdmin
       .from('deals')
       .select(
-        'id, customer_name, customer_phone, customer_gst, customer_address, delivery_location, payment_terms, total_amount, stage, status, po_number, po_date, created_at, salesperson_phone, employee_id, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
+        'id, inquiry_id, customer_name, customer_phone, customer_gst, customer_address, delivery_location, payment_terms, total_amount, stage, status, po_number, po_date, created_at, salesperson_phone, employee_id, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
       )
       .order('created_at', { ascending: false });
 
@@ -285,15 +285,18 @@ export const getMyOpenDealsTool: ChatbotTool = {
         lostCount++;
       }
 
-      const cleanNum = d.deal_number
-        ? d.deal_number.replace(/^#?(?:DEAL|INQ)-?/i, '')
-        : d.id.substring(0, 6).toUpperCase();
-      const humanDealId = 'INQ-' + cleanNum;
+      const rawInq = d.inquiry_id || d.id || '';
+      const cleanNum = rawInq
+        .replace(/^#?(?:DEAL|INQ)-?/i, '')
+        .replace(/-/g, '')
+        .substring(0, 6)
+        .toUpperCase();
+      const humanInquiryId = '#INQ-' + cleanNum;
 
       return {
-        deal_id: humanDealId,
-        inquiry_id: humanDealId,
-        deal_uuid: d.id,
+        inquiry_id: humanInquiryId,
+        deal_id: humanInquiryId,
+        deal_uuid: rawInq,
         customer_name: d.customer_name || 'Unknown Customer',
         customer_phone: d.customer_phone || '',
         customer_gst: d.customer_gst || null,
