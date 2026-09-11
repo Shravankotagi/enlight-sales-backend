@@ -1789,19 +1789,43 @@ export class KraService {
           v.visit_outcome || rawRemarks.match(/\[Outcome:\s*([^\]]+)\]/i)?.[1];
         const reqMatch =
           v.material_requirement ||
-          rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1] ||
-          rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1];
-        const followMatch =
+          rawRemarks.match(
+            /\[(?:Material )?Requirements?:\s*([^\]]+)\]/i,
+          )?.[1] ||
+          rawRemarks.match(
+            /(?:^|\||\n)\s*(?:Material )?Requirement:\s*([^|\]\n]+)/i,
+          )?.[1] ||
+          rawRemarks.match(/\[Interests?:\s*([^\]]+)\]/i)?.[1];
+        const rawFollow =
           v.follow_up_action ||
-          rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1];
+          rawRemarks.match(
+            /\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i,
+          )?.[1] ||
+          rawRemarks.match(
+            /(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*([^|\]\n]+)/i,
+          )?.[1];
+        const followMatch =
+          rawFollow &&
+          !['none', '-', 'nil', 'n/a', 'na', 'null'].includes(
+            rawFollow.toLowerCase().trim(),
+          ) &&
+          !rawFollow.toLowerCase().trim().startsWith('no remarks') &&
+          !rawFollow.toLowerCase().trim().startsWith('no follow')
+            ? rawFollow.trim()
+            : '-';
 
         // Clean remarks by stripping tags
         const cleanRemarks =
           rawRemarks
             .replace(
-              /\[(Outcome|Requirement|FollowUp|Interests|Location):\s*[^\]]+\]\s*/gi,
+              /\[(?:Outcome|Location|Follow-?Up|Follow-?up\s*Action|Requirement|Requirements|Interests?):[^\]]*\]\s*/gi,
               '',
             )
+            .replace(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*[^|\n]+/gi, '')
+            .replace(/(?:^|\||\n)\s*(?:Material )?Requirement:\s*[^|\n]+/gi, '')
+            .replace(/(?:^|\||\n)\s*Location:\s*[^|\n]+/gi, '')
+            .replace(/(?:^|\||\n)\s*Interests?:\s*[^|\n]+/gi, '')
+            .replace(/^[\s|]+|[\s|]+$/g, '')
             .trim() || 'On-site meeting';
 
         return {
@@ -2585,23 +2609,43 @@ export class KraService {
 
       const reqMatch =
         v.material_requirement ||
-        rawRemarks.match(/\[Requirement:\s*([^\]]+)\]/i)?.[1] ||
-        rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1] ||
+        rawRemarks.match(/\[(?:Material )?Requirements?:\s*([^\]]+)\]/i)?.[1] ||
+        rawRemarks.match(
+          /(?:^|\||\n)\s*(?:Material )?Requirement:\s*([^|\]\n]+)/i,
+        )?.[1] ||
+        rawRemarks.match(/\[Interests?:\s*([^\]]+)\]/i)?.[1] ||
         null;
-      const followMatch =
+      const rawFollow =
         v.follow_up_action ||
-        rawRemarks.match(/\[FollowUp:\s*([^\]]+)\]/i)?.[1] ||
-        rawRemarks.match(/\[Follow-up:\s*([^\]]+)\]/i)?.[1] ||
-        (rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1]
-          ? `Follow-up on ${rawRemarks.match(/\[Interests:\s*([^\]]+)\]/i)?.[1]} requirement`
+        rawRemarks.match(
+          /\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i,
+        )?.[1] ||
+        rawRemarks.match(
+          /(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*([^|\]\n]+)/i,
+        )?.[1] ||
+        (rawRemarks.match(/\[Interests?:\s*([^\]]+)\]/i)?.[1]
+          ? `Follow-up on ${rawRemarks.match(/\[Interests?:\s*([^\]]+)\]/i)?.[1]} requirement`
           : null);
+      const isFollowValid =
+        rawFollow &&
+        !['none', '-', 'nil', 'n/a', 'na', 'null'].includes(
+          rawFollow.toLowerCase().trim(),
+        ) &&
+        !rawFollow.toLowerCase().trim().startsWith('no remarks') &&
+        !rawFollow.toLowerCase().trim().startsWith('no follow');
+      const followMatch = isFollowValid ? rawFollow.trim() : null;
 
       const cleanRemarks =
         rawRemarks
           .replace(
-            /\[(Outcome|Requirement|FollowUp|Follow-up|Interests|Location):\s*[^\]]+\]\s*/gi,
+            /\[(?:Outcome|Location|Follow-?Up|Follow-?up\s*Action|Requirement|Requirements|Interests?):[^\]]*\]\s*/gi,
             '',
           )
+          .replace(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*[^|\n]+/gi, '')
+          .replace(/(?:^|\||\n)\s*(?:Material )?Requirement:\s*[^|\n]+/gi, '')
+          .replace(/(?:^|\||\n)\s*Location:\s*[^|\n]+/gi, '')
+          .replace(/(?:^|\||\n)\s*Interests?:\s*[^|\n]+/gi, '')
+          .replace(/^[\s|]+|[\s|]+$/g, '')
           .trim() || rawRemarks;
 
       let outcome = (v.outcome || '').toLowerCase().trim();
