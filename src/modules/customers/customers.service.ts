@@ -265,14 +265,18 @@ export class CustomersService {
       }
 
       const inqCandidateFilters: string[] = [];
-      if (targetNameClean)
+      if (targetNameClean) {
         inqCandidateFilters.push(`sender_name.ilike.%${targetNameClean}%`);
-      targetWords.forEach((w) =>
-        inqCandidateFilters.push(`sender_name.ilike.%${w}%`),
-      );
+        inqCandidateFilters.push(`raw_text.ilike.%${targetNameClean}%`);
+      }
+      targetWords.forEach((w) => {
+        inqCandidateFilters.push(`sender_name.ilike.%${w}%`);
+        inqCandidateFilters.push(`raw_text.ilike.%${w}%`);
+      });
       if (targetPhoneClean) {
         inqCandidateFilters.push(`sender_phone.ilike.%${targetPhoneClean}%`);
         inqCandidateFilters.push(`sender_phone.ilike.%91${targetPhoneClean}%`);
+        inqCandidateFilters.push(`raw_text.ilike.%${targetPhoneClean}%`);
       }
 
       const compCandidateFilters: string[] = [];
@@ -463,24 +467,114 @@ export class CustomersService {
         return true;
       });
 
+      // Collect inquiry IDs from matched deals
+      const dealInquiryIds = new Set<string>();
+      deals.forEach((d) => {
+        if (d.inquiry_id) dealInquiryIds.add(d.inquiry_id);
+        if (d.id) dealInquiryIds.add(d.id);
+      });
+
+      // Fetch any missing inquiries linked to matched deals
+      const loadedInqIds = new Set(allInquiries.map((i) => i.id));
+      const missingInqIds = Array.from(dealInquiryIds).filter(
+        (id) => !loadedInqIds.has(id),
+      );
+      if (missingInqIds.length > 0) {
+        const { data: missingInqs } = await this.supabase
+          .from('inquiries')
+          .select('*')
+          .in('id', missingInqIds);
+        if (missingInqs && missingInqs.length > 0) {
+          allInquiries.push(...missingInqs);
+        }
+      }
+
       const inquiries = allInquiries.filter((inq) => {
+        const isLinkedToDeal = dealInquiryIds.has(inq.id);
+        const isSenderMatch = isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          inq.sender_name,
+          inq.sender_phone,
+        );
+
+        const aiJson = inq.ai_extraction_json || {};
+        const aiCustName =
+          aiJson.customer_name ||
+          aiJson.companyName ||
+          aiJson.customer?.name ||
+          aiJson.company_name;
+        const aiCustPhone =
+          aiJson.customerPhone ||
+          aiJson.customer_phone ||
+          aiJson.customer?.phone ||
+          aiJson.phone;
+        const isAiMatch = isCustomerMatch(
+          customer.customer_name,
+          customer.customer_phone,
+          aiCustName,
+          aiCustPhone,
+        );
+
+        const isRawTextMatch =
+          inq.raw_text &&
+          targetNameClean &&
+          cleanLegalSuffixes(inq.raw_text).includes(targetNameClean);
+
         if (
-          !isCustomerMatch(
-            customer.customer_name,
-            customer.customer_phone,
-            inq.sender_name,
-            inq.sender_phone,
-          )
+          !isLinkedToDeal &&
+          !isSenderMatch &&
+          !isAiMatch &&
+          !isRawTextMatch
         ) {
           return false;
         }
+
         if (allowedList && allowedList.length > 0) {
           return (
-            inq.salesperson_phone &&
+            !inq.salesperson_phone ||
             phoneInList(inq.salesperson_phone, allowedList)
           );
         }
         return true;
+      });
+
+      // Also synthesize inquiry entries for pipeline inquiry deals that don't have a record in inquiries table
+      const matchedInqIds = new Set(inquiries.map((i) => i.id));
+      deals.forEach((d) => {
+        const isDealInquiry =
+          d.inquiry_type === 'inquiry' ||
+          d.stage === 'new_inquiry' ||
+          d.stage === 'review';
+        if (
+          isDealInquiry &&
+          !matchedInqIds.has(d.id) &&
+          (!d.inquiry_id || !matchedInqIds.has(d.inquiry_id))
+        ) {
+          inquiries.push({
+            id: d.inquiry_id || d.id,
+            deal_id: d.id,
+            customer_name: d.customer_name,
+            sender_name: d.customer_name,
+            sender_phone: d.customer_phone,
+            salesperson_phone: d.salesperson_phone,
+            source_channel: d.source_channel || 'WhatsApp',
+            raw_text:
+              d.deal_items && d.deal_items.length > 0
+                ? d.deal_items
+                    .map(
+                      (it: any) =>
+                        `${it.sku_text || 'Item'} (${it.quantity || ''} ${it.unit || 'MT'})`,
+                    )
+                    .join(', ')
+                : `Inquiry for ${d.customer_name}`,
+            status:
+              d.stage === 'new_inquiry' || d.status === 'auto_created'
+                ? 'New Inquiry'
+                : d.stage || 'Inquiry',
+            created_at: d.created_at,
+          });
+        }
       });
 
       if (allowedList && allowedList.length > 0) {
