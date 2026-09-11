@@ -101,48 +101,21 @@ export function parseVisitRemarks(remarks?: string | null): {
       rawOut === 'neutral'
     ) {
       outcome = rawOut;
-    } else if (
-      rawOut.includes('positive') ||
-      rawOut.includes('interested') ||
-      rawOut.includes('won')
-    ) {
-      outcome = 'positive';
-    } else if (
-      rawOut.includes('negative') ||
-      rawOut.includes('lost') ||
-      rawOut.includes('rejected')
-    ) {
-      outcome = 'negative';
-    } else {
-      outcome = 'neutral';
     }
   }
 
-  // 2. Parse Follow-up Action tag [FollowUp: ...] or | Follow-up: ...
+  // 2. Parse Follow-up Action tag [FollowUp: ...]
   let follow_up_action: string | null = null;
   let requires_follow_up = false;
-  const followUpMatch =
-    remarks.match(/\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i) ||
-    remarks.match(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*([^|\]\n]+)/i);
-
+  const followUpMatch = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
   if (followUpMatch) {
     const text = followUpMatch[1].trim();
-    const lower = text.toLowerCase();
-    const isNonAction =
-      !text ||
-      lower === 'none' ||
-      lower === '-' ||
-      lower === 'nil' ||
-      lower === 'n/a' ||
-      lower === 'na' ||
-      lower === 'null' ||
-      lower.startsWith('no remarks') ||
-      lower.startsWith('no follow') ||
-      lower.startsWith('rer') ||
-      lower === 'not required' ||
-      lower === 'not needed';
-
-    if (!isNonAction) {
+    if (
+      text &&
+      !text.toLowerCase().startsWith('no remarks') &&
+      !text.toLowerCase().startsWith('rer') &&
+      text.toLowerCase() !== 'none'
+    ) {
       follow_up_action = text;
       requires_follow_up = true;
     }
@@ -150,42 +123,31 @@ export function parseVisitRemarks(remarks?: string | null): {
 
   // 3. Parse Material Requirement tag [Requirement: ...]
   let material_requirement: string | null = null;
-  const reqMatch =
-    remarks.match(/\[(?:Material )?Requirements?:\s*([^\]]+)\]/i) ||
-    remarks.match(/(?:^|\||\n)\s*(?:Material )?Requirement:\s*([^|\]\n]+)/i);
+  const reqMatch = remarks.match(/\[Requirement:\s*([^\]]+)\]/i);
   if (reqMatch) {
     material_requirement = reqMatch[1].trim();
   }
 
   // 4. Parse Location tag [Location: ...]
   let location: string | null = null;
-  const locMatch =
-    remarks.match(/\[Location:\s*([^\]]+)\]/i) ||
-    remarks.match(/(?:^|\||\n)\s*Location:\s*([^|\]\n]+)/i);
+  const locMatch = remarks.match(/\[Location:\s*([^\]]+)\]/i);
   if (locMatch) {
     location = locMatch[1].trim();
   }
 
   // 5. Parse Interests tag [Interests: ...]
   let interests: string | null = null;
-  const intMatch =
-    remarks.match(/\[Interests?:\s*([^\]]+)\]/i) ||
-    remarks.match(/(?:^|\||\n)\s*Interests?:\s*([^|\]\n]+)/i);
+  const intMatch = remarks.match(/\[Interests:\s*([^\]]+)\]/i);
   if (intMatch) {
     interests = intMatch[1].trim();
   }
 
-  // 6. Clean Remarks by removing metadata bracket tags and pipe tags
+  // 6. Clean Remarks by removing metadata bracket tags
   const clean_remarks = remarks
     .replace(
-      /\[(?:Outcome|Location|Follow-?Up|Follow-?up\s*Action|Requirement|Requirements|Interests?):[^\]]*\]\s*/gi,
+      /\[(?:Outcome|Location|FollowUp|Requirement|Interests):[^\]]*\]\s*/gi,
       '',
     )
-    .replace(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*[^|\n]+/gi, '')
-    .replace(/(?:^|\||\n)\s*(?:Material )?Requirement:\s*[^|\n]+/gi, '')
-    .replace(/(?:^|\||\n)\s*Location:\s*[^|\n]+/gi, '')
-    .replace(/(?:^|\||\n)\s*Interests?:\s*[^|\n]+/gi, '')
-    .replace(/^[\s|]+|[\s|]+$/g, '')
     .trim();
 
   return {
@@ -378,17 +340,7 @@ export const getVisitsTool: ChatbotTool = {
     const requiresFollowUp =
       args?.requires_follow_up === true ||
       args?.follow_up === true ||
-      args?.follow_up_only === true ||
-      mode === 'pending_followup' ||
-      mode === 'pending_follow_up' ||
-      mode === 'followup_pending' ||
-      mode === 'follow_up_pending' ||
-      mode === 'pending_followups' ||
-      mode === 'pending' ||
-      mode === 'follow_up' ||
-      mode === 'followup' ||
-      args?.pending_followup === true ||
-      args?.pending_follow_up === true;
+      args?.follow_up_only === true;
 
     // 3. Compute Summary Aggregations
     const startOfToday = new Date();
@@ -427,18 +379,10 @@ export const getVisitsTool: ChatbotTool = {
         outcomeCounts[out] = 1;
       }
 
-      const rawFu =
+      const followUpAction =
         v.follow_up_action || v.follow_up || parsed.follow_up_action;
-      const isFuValid =
-        rawFu &&
-        !['none', 'nil', 'n/a', 'na', '-', 'null'].includes(
-          String(rawFu).toLowerCase().trim(),
-        ) &&
-        !String(rawFu).toLowerCase().startsWith('no remarks') &&
-        !String(rawFu).toLowerCase().startsWith('no follow');
-      const followUpAction = isFuValid ? String(rawFu).trim() : null;
       const needsFollowUp =
-        Boolean(followUpAction) || parsed.requires_follow_up;
+        parsed.requires_follow_up || Boolean(v.follow_up_action || v.follow_up);
       if (needsFollowUp) {
         followUpCount++;
       }
