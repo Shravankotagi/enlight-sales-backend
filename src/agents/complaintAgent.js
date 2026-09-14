@@ -58,6 +58,34 @@ Return ONLY the JSON object.
 /**
  * Fetch won/active deals for a customer.
  */
+/**
+ * Enrich deal with items, deal_code, and effective_po.
+ * If po_number is empty/null, deal_code (#INQ-XXXXXX) serves as the PO number.
+ */
+async function enrichOrderWithItems(deal) {
+  if (!deal) return null;
+  const { data: items } = await supabase
+    .from('deal_items')
+    .select('deal_id, sku_text, dimensions, quantity, unit')
+    .eq('deal_id', deal.id);
+
+  const dealCode = `#INQ-${deal.id.substring(0, 6).toUpperCase()}`;
+  const effectivePo =
+    deal.po_number && deal.po_number.trim() !== ''
+      ? deal.po_number.trim()
+      : dealCode;
+
+  return {
+    ...deal,
+    deal_code: dealCode,
+    effective_po: effectivePo,
+    items: items || [],
+  };
+}
+
+/**
+ * Fetch won/active deals for a customer from the Orders module (stage = 'won').
+ */
 async function getCustomerActiveDeals(customerName) {
   if (!customerName) return [];
   const { data: deals } = await supabase
@@ -83,11 +111,185 @@ async function getCustomerActiveDeals(customerName) {
     itemMap.set(it.deal_id, list);
   });
 
-  return deals.map((d) => ({
-    ...d,
-    deal_code: `#INQ-${d.id.substring(0, 6).toUpperCase()}`,
-    items: itemMap.get(d.id) || [],
-  }));
+  return deals.map((d) => {
+    const dealCode = `#INQ-${d.id.substring(0, 6).toUpperCase()}`;
+    const effectivePo =
+      d.po_number && d.po_number.trim() !== '' ? d.po_number.trim() : dealCode;
+    return {
+      ...d,
+      deal_code: dealCode,
+      effective_po: effectivePo,
+      items: itemMap.get(d.id) || [],
+    };
+  });
+}
+
+/**
+ * Search the Orders module (deals table with stage = 'won') for a matching order by PO number or Inquiry ID.
+ * Inquiry ID can be the same as the PO number.
+ */
+async function findWonOrderInOrdersModule(candidate, customerName = null) {
+  if (!candidate) return null;
+  const rawStr = String(candidate).trim();
+  if (!rawStr) return null;
+
+  const cleanId = rawStr
+    .replace(/^#?(?:DEAL|INQ)-/i, '')
+    .trim()
+    .toLowerCase();
+
+  const cleanPo = rawStr.replace(/^PO[-:\s#]*/i, '').trim();
+
+  const matchDeal = (d) => {
+    const dPo = (d.po_number || '').trim().toLowerCase();
+    const dCode = `#INQ-${d.id.substring(0, 6).toUpperCase()}`.toLowerCase();
+    const dShortId = d.id.substring(0, 6).toLowerCase();
+    const dFullId = d.id.toLowerCase();
+    const candLower = rawStr.toLowerCase();
+    const cleanIdLower = cleanId.toLowerCase();
+    const cleanPoLower = cleanPo.toLowerCase();
+
+    // Check PO match
+    if (dPo) {
+      if (
+        dPo === candLower ||
+        dPo === cleanPoLower ||
+        dPo.includes(cleanPoLower) ||
+        candLower.includes(dPo)
+      ) {
+        return true;
+      }
+    }
+    // Check Deal ID / Inquiry code match (Inquiry ID can be the same as PO number)
+    if (
+      dCode === candLower ||
+      dCode.includes(candLower) ||
+      candLower.includes(dCode)
+    ) {
+      return true;
+    }
+    if (
+      cleanIdLower &&
+      cleanIdLower.length >= 3 &&
+      (dShortId === cleanIdLower || dFullId.startsWith(cleanIdLower))
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  // 1. Search under customer name first if provided
+  if (customerName && customerName.trim()) {
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('id, stage, po_number, customer_name, total_amount, created_at')
+      .ilike('customer_name', `%${customerName.trim()}%`)
+      .eq('stage', 'won')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (deals && deals.length > 0) {
+      const matched = deals.find(matchDeal);
+      if (matched) {
+        return await enrichOrderWithItems(matched);
+      }
+    }
+  }
+
+  // 2. Search globally across won orders
+  const { data: globalDeals } = await supabase
+    .from('deals')
+    .select('id, stage, po_number, customer_name, total_amount, created_at')
+    .eq('stage', 'won')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (globalDeals && globalDeals.length > 0) {
+    const matched = globalDeals.find(matchDeal);
+    if (matched) {
+      return await enrichOrderWithItems(matched);
+    }
+  }
+
+  // 3. Fallback direct query on deals table by po_number
+  if (cleanPo) {
+    const { data: directMatched } = await supabase
+      .from('deals')
+      .select('id, stage, po_number, customer_name, total_amount, created_at')
+      .eq('stage', 'won')
+      .ilike('po_number', `%${cleanPo}%`)
+      .limit(5);
+
+    if (directMatched && directMatched.length > 0) {
+      if (customerName) {
+        const custMatch = directMatched.find((d) =>
+          (d.customer_name || '')
+            .toLowerCase()
+            .includes(customerName.toLowerCase().trim()),
+        );
+        if (custMatch) return await enrichOrderWithItems(custMatch);
+      }
+      return await enrichOrderWithItems(directMatched[0]);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if an inquiry/deal exists in deals table and what stage it is in.
+ */
+async function verifyDealStage(candidate) {
+  if (!candidate) return { exists: false };
+  const cleanId = String(candidate)
+    .replace(/^#?(?:DEAL|INQ)-/i, '')
+    .trim()
+    .toLowerCase();
+
+  if (!cleanId || cleanId.length < 3) return { exists: false };
+
+  // If full UUID format
+  if (cleanId.length === 36 && cleanId.includes('-')) {
+    const { data: deals } = await supabase
+      .from('deals')
+      .select('id, stage, po_number, customer_name')
+      .eq('id', cleanId)
+      .limit(1);
+
+    if (deals && deals.length > 0) {
+      return {
+        exists: true,
+        stage: deals[0].stage,
+        deal: deals[0],
+        isWon: (deals[0].stage || '').toLowerCase() === 'won',
+      };
+    }
+  }
+
+  // Scan recent deals for prefix matching
+  const { data: recentDeals } = await supabase
+    .from('deals')
+    .select('id, stage, po_number, customer_name')
+    .order('created_at', { ascending: false })
+    .limit(300);
+
+  if (recentDeals && recentDeals.length > 0) {
+    const found = recentDeals.find(
+      (d) =>
+        (d.id || '').toLowerCase().startsWith(cleanId) ||
+        (d.id || '').replace(/-/g, '').toLowerCase().startsWith(cleanId),
+    );
+    if (found) {
+      return {
+        exists: true,
+        stage: found.stage,
+        deal: found,
+        isWon: (found.stage || '').toLowerCase() === 'won',
+      };
+    }
+  }
+
+  return { exists: false };
 }
 
 /**
@@ -579,10 +781,38 @@ async function processSingleComplaint(data, originalText, senderPhone) {
         `Updated Customer Complaints Card! ✅`
       );
     } else {
+      // Direct resolve without existing open complaint
+      let directMatchedOrder = null;
+      if (data.deal_id || data.po_number) {
+        directMatchedOrder = await findWonOrderInOrdersModule(
+          data.po_number || data.deal_id,
+          finalCustomerName,
+        );
+      }
+
+      if (!directMatchedOrder) {
+        const custWonDeals = await getCustomerActiveDeals(finalCustomerName);
+        if (custWonDeals.length === 1) {
+          directMatchedOrder = custWonDeals[0];
+        } else if (custWonDeals.length > 1) {
+          return (
+            `❌ *Cannot Record Complaint Resolution - Multiple Orders Found*\n\n` +
+            `Customer: *${finalCustomerName}*\n` +
+            `Multiple confirmed orders exist in the Orders module. Please specify the *PO Number* or *Inquiry ID* with your resolution notes.`
+          );
+        } else {
+          return (
+            `❌ *Cannot Record Complaint Resolution - No Confirmed Order in Orders Module*\n\n` +
+            `Customer: *${finalCustomerName}*\n` +
+            `Complaints and resolutions can only be recorded for confirmed purchase orders (won deals) present in the Orders module.`
+          );
+        }
+      }
+
       const nowIso = new Date().toISOString();
       const resolvedDirectProduct = await resolveProductFromContext(
-        data.deal_id,
-        data.po_number,
+        directMatchedOrder.id,
+        directMatchedOrder.effective_po,
         finalCustomerName,
         affectedProduct,
         cleanDescription || originalText || resolutionNotes,
@@ -590,8 +820,8 @@ async function processSingleComplaint(data, originalText, senderPhone) {
 
       await supabase.from('complaints').insert({
         customer_name: finalCustomerName,
-        deal_id: data.deal_id || null,
-        po_number: data.po_number || null,
+        deal_id: directMatchedOrder.id,
+        po_number: directMatchedOrder.effective_po,
         product_name: resolvedDirectProduct,
         affected_product: resolvedDirectProduct,
         reported_by: senderPhone,
@@ -612,9 +842,14 @@ async function processSingleComplaint(data, originalText, senderPhone) {
         'complaint_resolved',
       );
 
+      const orderRef = directMatchedOrder.effective_po.startsWith('#INQ-')
+        ? `Order: *${directMatchedOrder.effective_po}*`
+        : `PO: *${directMatchedOrder.effective_po}* (#INQ-${directMatchedOrder.id.substring(0, 6).toUpperCase()})`;
+
       return (
         `✅ *Customer Complaint Resolved!*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
+        `Linked Order: ${orderRef}\n` +
         `Product: *${resolvedDirectProduct}*\n` +
         `Resolution Notes: ${resolutionNotes}\n` +
         `_Note: Created and marked resolved directly._\n\n` +
@@ -627,80 +862,123 @@ async function processSingleComplaint(data, originalText, senderPhone) {
 
   // Step 1: Check if Deal ID / PO is already identified or explicitly in text
   let targetDealId = null;
-  let targetPoNumber = data.po_number || null;
+  let targetPoNumber = null;
+  let matchedWonOrder = null;
 
-  const candidateDealCode =
-    (data.deal_id || '').match(/#?(?:DEAL|INQ)-([A-F0-9]{6})/i)?.[1] ||
-    originalText.match(/#?(?:DEAL|INQ)-([A-F0-9]{6})/i)?.[1] ||
-    null;
+  const rawPoCandidate = (data.po_number || '').trim();
+  const rawDealCandidate = (data.deal_id || '').trim();
+  const textPoMatch = originalText
+    .match(/PO[-:\s#]*([A-Z0-9\/-]+)/i)?.[1]
+    ?.trim();
+  const textDealMatch = originalText
+    .match(/#?(?:DEAL|INQ)-([A-F0-9_-]{4,36})/i)?.[1]
+    ?.trim();
 
-  if (candidateDealCode) {
-    const shortCode = candidateDealCode.toLowerCase();
-    const { data: matchedDeals } = await supabase
-      .from('deals')
-      .select('id, po_number, customer_name')
-      .or(`id.eq.${shortCode},id.ilike.${shortCode}%`)
-      .limit(5);
-    if (matchedDeals && matchedDeals.length > 0) {
-      targetDealId = matchedDeals[0].id;
-      if (matchedDeals[0].po_number) targetPoNumber = matchedDeals[0].po_number;
-    } else {
-      targetDealId = candidateDealCode;
-    }
-  } else if (data.deal_id) {
-    const cleanId = data.deal_id
-      .replace(/^#?(?:DEAL|INQ)-/i, '')
-      .trim()
-      .toLowerCase();
-    const { data: matchedDeals } = await supabase
-      .from('deals')
-      .select('id, po_number, customer_name')
-      .or(`id.eq.${cleanId},id.ilike.${cleanId}%`)
-      .limit(5);
-    if (matchedDeals && matchedDeals.length > 0) {
-      targetDealId = matchedDeals[0].id;
-      if (matchedDeals[0].po_number) targetPoNumber = matchedDeals[0].po_number;
-    } else {
-      targetDealId = data.deal_id;
-    }
-  }
+  const candidatePo = rawPoCandidate || textPoMatch || null;
+  const candidateDeal = rawDealCandidate || textDealMatch || null;
 
-  if (!targetPoNumber) {
-    const poMatch = originalText.match(/PO[-:\s]*([A-Z0-9\/-]+)/i);
-    if (poMatch) {
-      const poCandidate = poMatch[1].trim();
-      const { data: matchedDeals } = await supabase
-        .from('deals')
-        .select('id, po_number')
-        .ilike('po_number', `%${poCandidate}%`)
-        .limit(1);
-      if (matchedDeals && matchedDeals.length > 0) {
-        targetPoNumber = matchedDeals[0].po_number;
-        if (!targetDealId) targetDealId = matchedDeals[0].id;
+  // If user is confirming a previously prompted won order
+  if (data.is_confirmation) {
+    matchedWonOrder = await findWonOrderInOrdersModule(
+      data.deal_id || data.po_number || candidatePo || candidateDeal,
+      finalCustomerName,
+    );
+    if (matchedWonOrder) {
+      targetDealId = matchedWonOrder.id;
+      targetPoNumber = matchedWonOrder.effective_po;
+      if (!finalCustomerName && matchedWonOrder.customer_name) {
+        finalCustomerName = matchedWonOrder.customer_name;
       }
     }
   }
 
-  // If targetDealId is present but targetPoNumber is still missing, lookup deal's po_number
-  if (targetDealId && !targetPoNumber) {
-    const cleanId = targetDealId
-      .replace(/^#?(?:DEAL|INQ)-/i, '')
-      .trim()
-      .toLowerCase();
-    const { data: matchedDeals } = await supabase
-      .from('deals')
-      .select('id, po_number')
-      .or(`id.eq.${cleanId},id.ilike.${cleanId}%`)
-      .limit(1);
-    if (matchedDeals && matchedDeals.length > 0) {
-      targetDealId = matchedDeals[0].id;
-      if (matchedDeals[0].po_number) targetPoNumber = matchedDeals[0].po_number;
+  // Step 1: User explicitly specified a PO number or Deal / Inquiry ID
+  if (!targetDealId && (candidatePo || candidateDeal)) {
+    matchedWonOrder = await findWonOrderInOrdersModule(
+      candidatePo || candidateDeal,
+      finalCustomerName,
+    );
+
+    if (!matchedWonOrder && candidateDeal && candidatePo) {
+      matchedWonOrder = await findWonOrderInOrdersModule(
+        candidateDeal,
+        finalCustomerName,
+      );
+    }
+
+    if (matchedWonOrder) {
+      targetDealId = matchedWonOrder.id;
+      targetPoNumber = matchedWonOrder.effective_po;
+      if (!finalCustomerName && matchedWonOrder.customer_name) {
+        finalCustomerName = matchedWonOrder.customer_name;
+      }
+    } else {
+      // Specified PO or Deal was NOT found in the Orders module!
+      // Check if candidate is an inquiry in a non-won stage
+      const dealCheck = await verifyDealStage(candidateDeal || candidatePo);
+      if (dealCheck.exists && !dealCheck.isWon) {
+        const stageName = (dealCheck.stage || 'inquiry').toUpperCase();
+        return (
+          `❌ *Cannot Log Complaint - Not an Order in Orders Module*\n\n` +
+          `Inquiry *#INQ-${dealCheck.deal.id.substring(0, 6).toUpperCase()}* is currently in *${stageName}* stage.\n\n` +
+          `Complaints can only be logged for confirmed purchase orders (won deals) in the Orders module.`
+        );
+      }
+
+      // Check customer's won orders in Orders module
+      const custWonOrders = await getCustomerActiveDeals(finalCustomerName);
+      if (custWonOrders.length > 0) {
+        const availableList = custWonOrders
+          .map((d, idx) => {
+            const itemSummary =
+              d.items.length > 0
+                ? d.items
+                    .map((it) =>
+                      `${it.sku_text} ${it.dimensions || ''} ${it.quantity ? `${it.quantity} ${it.unit || 'MT'}` : ''}`.trim(),
+                    )
+                    .join(', ')
+                : 'Steel Material';
+            const poRef =
+              d.po_number && d.po_number.trim() !== ''
+                ? `PO: *${d.po_number}* (${d.deal_code})`
+                : `*${d.deal_code}*`;
+            return `${idx + 1}. ${poRef} — ${itemSummary}`;
+          })
+          .join('\n');
+
+        const primaryRef =
+          custWonOrders[0].po_number || custWonOrders[0].deal_code;
+        return (
+          `❌ *Cannot Log Complaint - PO Not Found in Orders Module*\n\n` +
+          `Customer: *${finalCustomerName}*\n` +
+          `Order / PO *"${candidatePo || candidateDeal}"* was not found in the Orders module.\n\n` +
+          `*Available Confirmed Orders for ${finalCustomerName}:*\n` +
+          `${availableList}\n\n` +
+          `👉 Please reply with a valid *PO Number* (e.g. _"${primaryRef}"_) or *Inquiry ID* from the list above.`
+        );
+      } else {
+        return (
+          `❌ *Cannot Log Complaint - No Confirmed Orders in Orders Module*\n\n` +
+          `Customer: *${finalCustomerName}*\n` +
+          `Order / PO *"${candidatePo || candidateDeal}"* was not found in the Orders module, and there are no confirmed won orders recorded for this customer.\n\n` +
+          `Complaints can only be logged for confirmed purchase orders (won deals) present in the Orders module.`
+        );
+      }
     }
   }
 
-  // Step 2: If no Deal ID or PO provided, lookup customer's active won deals
-  if (!targetDealId && !targetPoNumber) {
+  // Step 2: No PO or Deal ID specified -> Check customer's won orders in Orders module
+  if (!targetDealId) {
     const activeDeals = await getCustomerActiveDeals(finalCustomerName);
+
+    if (activeDeals.length === 0) {
+      return (
+        `❌ *Cannot Log Complaint - No Confirmed Orders in Orders Module*\n\n` +
+        `Customer: *${finalCustomerName}*\n` +
+        `No confirmed purchase orders (won deals) were found in the Orders module for this customer.\n\n` +
+        `Complaints can only be logged for confirmed orders present in the Orders module.`
+      );
+    }
 
     if (activeDeals.length === 1 && !data.is_confirmation) {
       const d = activeDeals[0];
@@ -713,15 +991,16 @@ async function processSingleComplaint(data, originalText, senderPhone) {
               .join(', ')
           : affectedProduct || 'Steel Material';
 
-      const poDisplay = d.po_number
-        ? `PO: *${d.po_number}* (${d.deal_code})`
-        : `*${d.deal_code}*`;
+      const poDisplay =
+        d.po_number && d.po_number.trim() !== ''
+          ? `PO: *${d.po_number}* (${d.deal_code})`
+          : `*${d.deal_code}*`;
 
       const resolvedDraftProd = affectedProduct || itemSummary;
       const draftPayload = JSON.stringify({
         customer_name: finalCustomerName,
         dealId: d.id,
-        poNumber: d.po_number || null,
+        poNumber: d.effective_po,
         product: resolvedDraftProd,
         complaintType: complaintType,
         description: cleanDescription,
@@ -736,13 +1015,12 @@ async function processSingleComplaint(data, originalText, senderPhone) {
       return (
         `🔍 *Confirm Linked Order for Complaint*\n\n` +
         `Customer: *${finalCustomerName}*\n` +
-        `Found 1 won order in pipeline:\n` +
+        `Found 1 confirmed order in Orders module:\n` +
         `• ${poDisplay} — ${itemSummary}\n\n` +
         `Is this complaint for ${poDisplay}?\n` +
-        `👉 Reply *"Yes"* to confirm, or provide the PO Number / Inquiry ID.`
+        `👉 Reply *"Yes"* to confirm, or specify the PO Number / Inquiry ID.`
       );
     } else if (activeDeals.length > 1 && !data.is_confirmation) {
-      // Multiple active won deals -> List with PO primary
       const dealListFormatted = activeDeals
         .map((d, idx) => {
           const itemSummary =
@@ -753,10 +1031,11 @@ async function processSingleComplaint(data, originalText, senderPhone) {
                   )
                   .join(', ')
               : 'Steel Material';
-          if (d.po_number) {
-            return `${idx + 1}. PO: *${d.po_number}* (${d.deal_code}) — ${itemSummary}`;
-          }
-          return `${idx + 1}. *${d.deal_code}* — ${itemSummary}`;
+          const poDisplay =
+            d.po_number && d.po_number.trim() !== ''
+              ? `PO: *${d.po_number}* (${d.deal_code})`
+              : `*${d.deal_code}*`;
+          return `${idx + 1}. ${poDisplay} — ${itemSummary}`;
         })
         .join('\n');
 
@@ -776,15 +1055,26 @@ async function processSingleComplaint(data, originalText, senderPhone) {
       );
 
       return (
-        `⚠️ *Multiple Won Orders Found for ${finalCustomerName}*\n\n` +
+        `⚠️ *Multiple Confirmed Orders Found for ${finalCustomerName}*\n\n` +
         `Please specify which order or PO this complaint is about:\n\n` +
         `${dealListFormatted}\n\n` +
         `👉 Please reply with the *PO Number* (e.g. _"${samplePo}"_) or *Inquiry ID*.`
       );
     } else if (activeDeals.length === 1 && data.is_confirmation) {
       targetDealId = activeDeals[0].id;
-      targetPoNumber = activeDeals[0].po_number || null;
+      targetPoNumber = activeDeals[0].effective_po;
     }
+  }
+
+  // Hard gating: ensure complaint cannot proceed without a valid won order in the Orders module
+  if (!targetDealId) {
+    console.error(
+      '[ComplaintAgent] Refusing to insert unlinked complaint without confirmed order in Orders module',
+    );
+    return (
+      `❌ *Cannot Log Complaint - No Confirmed Order in Orders Module*\n\n` +
+      `Complaints can only be logged for confirmed purchase orders present in the Orders module.`
+    );
   }
 
   // Step 3: Insert new complaint record
@@ -802,8 +1092,8 @@ async function processSingleComplaint(data, originalText, senderPhone) {
 
   const insertPayload = {
     customer_name: finalCustomerName,
-    deal_id: targetDealId || null,
-    po_number: targetPoNumber || null,
+    deal_id: targetDealId,
+    po_number: targetPoNumber,
     product_name: finalProduct,
     affected_product: finalProduct,
     reported_by: senderPhone,
@@ -849,7 +1139,7 @@ async function processSingleComplaint(data, originalText, senderPhone) {
       : '';
     logBotActivity({
       salesperson_phone: senderPhone,
-      description: `New complaint logged for ${finalCustomerName}${targetPoNumber ? ` (PO: ${targetPoNumber})` : targetDealId ? ` (Inquiry: #INQ-${cleanCodeForLog})` : ''}`,
+      description: `New complaint logged for ${finalCustomerName}${targetPoNumber ? ` (PO: ${targetPoNumber})` : ` (Inquiry: #INQ-${cleanCodeForLog})`}`,
       module: 'Complaints',
       customer_name: finalCustomerName,
     });
@@ -878,11 +1168,13 @@ async function processSingleComplaint(data, originalText, senderPhone) {
       ? targetDealId.replace(/^(?:DEAL|INQ)-/, '')
       : targetDealId.substring(0, 6).toUpperCase()
     : '';
-  const orderRef = targetPoNumber
-    ? `PO: *${targetPoNumber}* ${cleanCode ? `(#INQ-${cleanCode})` : ''}`
-    : cleanCode
-      ? `#INQ-${cleanCode}`
-      : 'Unlinked';
+
+  const orderRef =
+    targetPoNumber && targetPoNumber.startsWith('#INQ-')
+      ? `Order: *${targetPoNumber}*`
+      : targetPoNumber
+        ? `PO: *${targetPoNumber}* (#INQ-${cleanCode})`
+        : `#INQ-${cleanCode}`;
 
   return (
     `🚨 *Customer Complaint Logged*\n\n` +
