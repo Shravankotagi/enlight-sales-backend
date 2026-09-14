@@ -602,15 +602,6 @@ export function detectHsnCode(
     return '72083840';
   }
 
-  // Stainless Steel
-  if (
-    /\bstainless\b|\bss\s*(?:sheet|coil|plate|pipe|bar|304|316)\b/i.test(
-      combined,
-    )
-  ) {
-    return '72193390';
-  }
-
   // Unknown product -> leave blank
   return '';
 }
@@ -991,21 +982,7 @@ export function normalizeProductToCatalog(
     };
   }
 
-  // Stainless Steel
-  if (
-    /\bstainless\b|\bss\s*(?:sheet|coil|plate|pipe|bar|304|316)\b/i.test(
-      combined,
-    )
-  ) {
-    return {
-      isValid: true,
-      catalogName: 'Stainless Steel',
-      category: 'Specialty Steel',
-      hsnCode: '72193390',
-    };
-  }
-
-  // Generic / Unrecognized (e.g. MS Sheet, MS Plate, etc.)
+  // Generic / Unrecognized (e.g. Stainless Steel, MS Sheet, MS Plate, Titanium, Aluminum, etc.)
   return { isValid: false, catalogName: null, category: null, hsnCode: null };
 }
 
