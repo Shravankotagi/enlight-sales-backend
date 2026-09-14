@@ -243,8 +243,16 @@ export class EmployeesService {
           return { phones: teamPhones, isManagerView: true };
         }
 
-        return { phones: [requestedPhoneOverride] };
+        return {
+          phones: [requestedPhoneOverride],
+          isPersonalView: isPersonalMode,
+        };
       }
+
+      if (isPersonalMode && employee?.phone) {
+        return { phones: [employee.phone], isPersonalView: true };
+      }
+
       return { phones: null };
     }
 

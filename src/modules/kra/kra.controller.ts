@@ -120,7 +120,7 @@ export class KraController {
 
     return this.kraService.getActionQueue(
       phones === null ? undefined : phones,
-      isAdmin && !salespersonPhoneOverride,
+      isAdmin && !salespersonPhoneOverride && mode !== 'personal',
       parsedMonth,
       parsedYear,
       from,
