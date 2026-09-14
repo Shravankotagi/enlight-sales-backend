@@ -1089,19 +1089,36 @@ export class CustomersService {
   ) {
     try {
       const decodedId = decodeURIComponent(id || '').trim();
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          decodedId,
+        );
+
+      let customerRecord: any = null;
+      if (isUuid) {
+        const { data: found } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .eq('id', decodedId)
+          .maybeSingle();
+        customerRecord = found;
+      } else if (!decodedId.startsWith('virtual-')) {
+        const { data: found } = await this.supabase
+          .from('recurring_customers')
+          .select('*')
+          .ilike('customer_name', `%${decodedId}%`)
+          .limit(1);
+        if (found && found.length > 0) {
+          customerRecord = found[0];
+        }
+      }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        if (!decodedId.startsWith('virtual-')) {
-          const { data: existingCust } = await this.supabase
-            .from('recurring_customers')
-            .select('id, assigned_salesperson_phone')
-            .eq('id', decodedId)
-            .single();
-
+        if (customerRecord) {
           if (
-            existingCust?.assigned_salesperson_phone &&
+            customerRecord.assigned_salesperson_phone &&
             !phoneInList(
-              existingCust.assigned_salesperson_phone,
+              customerRecord.assigned_salesperson_phone,
               accessiblePhones,
             )
           ) {
@@ -1120,57 +1137,96 @@ export class CustomersService {
           );
         }
       }
+
       const updatePayload: any = {
         updated_at: new Date().toISOString(),
       };
       if (data.customer_name !== undefined)
         updatePayload.customer_name = data.customer_name.trim();
       if (data.contact_person !== undefined)
-        updatePayload.contact_person = data.contact_person;
+        updatePayload.contact_person = data.contact_person
+          ? String(data.contact_person).trim()
+          : null;
       if (data.customer_phone !== undefined)
-        updatePayload.customer_phone = data.customer_phone;
+        updatePayload.customer_phone = data.customer_phone
+          ? String(data.customer_phone).trim()
+          : null;
       if (data.customer_gst !== undefined)
-        updatePayload.customer_gst = data.customer_gst;
-      if (data.address !== undefined) updatePayload.address = data.address;
-      if (data.avg_order_frequency_days !== undefined)
-        updatePayload.avg_order_frequency_days = Number(
-          data.avg_order_frequency_days,
-        );
+        updatePayload.customer_gst = data.customer_gst
+          ? String(data.customer_gst).trim()
+          : null;
+
+      const addr =
+        data.customer_address !== undefined
+          ? data.customer_address
+          : data.address;
+      if (addr !== undefined) {
+        updatePayload.customer_address = addr ? String(addr).trim() : null;
+      }
+
+      if (data.avg_order_frequency_days !== undefined) {
+        const cadence = Number(data.avg_order_frequency_days);
+        updatePayload.avg_order_frequency_days =
+          !isNaN(cadence) && cadence > 0 ? cadence : 30;
+      }
       if (data.assigned_salesperson_phone !== undefined)
         updatePayload.assigned_salesperson_phone =
-          data.assigned_salesperson_phone;
-      if (data.churn_risk !== undefined)
-        updatePayload.churn_risk = data.churn_risk;
-      if (data.segment !== undefined) updatePayload.segment = data.segment;
+          data.assigned_salesperson_phone
+            ? String(data.assigned_salesperson_phone).trim()
+            : null;
+      if (data.notes !== undefined) updatePayload.notes = data.notes;
+      if (data.is_active !== undefined)
+        updatePayload.is_active = Boolean(data.is_active);
 
-      if (decodedId.startsWith('virtual-')) {
+      if (decodedId.startsWith('virtual-') || (!customerRecord && !isUuid)) {
         const namePart =
-          data.customer_name ||
-          decodedId.replace(
-            /^(virtual-deal-|virtual-visit-|virtual-inquiry-|virtual-complaint-)/,
-            '',
-          );
+          (data.customer_name ? String(data.customer_name).trim() : '') ||
+          (decodedId.startsWith('virtual-')
+            ? decodedId.replace(
+                /^(virtual-deal-|virtual-visit-|virtual-inquiry-|virtual-complaint-)/,
+                '',
+              )
+            : decodedId);
+
+        const defaultPhone =
+          updatePayload.assigned_salesperson_phone ||
+          (accessiblePhones && accessiblePhones.length > 0
+            ? accessiblePhones[0]
+            : 'unassigned');
+
         const { data: created, error } = await this.supabase
           .from('recurring_customers')
           .insert({
             customer_name: namePart,
+            assigned_salesperson_phone: defaultPhone,
             avg_order_frequency_days: 30,
             is_active: true,
             ...updatePayload,
           })
           .select()
           .single();
-        if (error) throw error;
+        if (error) {
+          this.logger.error(
+            `Error creating customer in updateCustomer fallback:`,
+            error,
+          );
+          throw error;
+        }
         return created;
       }
+
+      const targetDbId = customerRecord ? customerRecord.id : decodedId;
 
       const { data: updated, error } = await this.supabase
         .from('recurring_customers')
         .update(updatePayload)
-        .eq('id', decodedId)
+        .eq('id', targetDbId)
         .select()
         .single();
-      if (error) throw error;
+      if (error) {
+        this.logger.error(`Error updating customer ${targetDbId}:`, error);
+        throw error;
+      }
       return updated;
     } catch (error) {
       this.logger.error(`Error updating customer ${id}:`, error);

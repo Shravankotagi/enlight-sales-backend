@@ -12,12 +12,12 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   const now = new Date();
   const lower = dateFilter.toLowerCase().trim();
 
-  if (lower === 'today') {
+  if (lower === 'today' || lower === 'aaj') {
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
     return { from: startOfToday };
   }
-  if (lower === 'yesterday') {
+  if (lower === 'yesterday' || lower === 'kal') {
     const startOfYesterday = new Date(now);
     startOfYesterday.setDate(startOfYesterday.getDate() - 1);
     startOfYesterday.setHours(0, 0, 0, 0);
@@ -42,6 +42,58 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     endOfLastMonth.setHours(23, 59, 59, 999);
     return { from: startOfLastMonth, to: endOfLastMonth };
   }
+
+  const monthMap: Record<string, number> = {
+    jan: 0,
+    january: 0,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    march: 2,
+    apr: 3,
+    april: 3,
+    may: 4,
+    jun: 5,
+    june: 5,
+    jul: 6,
+    july: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    sept: 8,
+    september: 8,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    november: 10,
+    dec: 11,
+    december: 11,
+  };
+
+  const d1 = lower.match(
+    /\b(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)(?:\s*,?\s*(\d{4}))?\b/i,
+  );
+  if (d1) {
+    const day = parseInt(d1[1], 10);
+    const month = monthMap[d1[2].toLowerCase()];
+    const year = d1[3] ? parseInt(d1[3], 10) : now.getFullYear();
+    const start = new Date(year, month, day, 0, 0, 0, 0);
+    const end = new Date(year, month, day, 23, 59, 59, 999);
+    return { from: start, to: end };
+  }
+
+  const d2 = lower.match(
+    /\b(?:on\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b/i,
+  );
+  if (d2) {
+    const month = monthMap[d2[1].toLowerCase()];
+    const day = parseInt(d2[2], 10);
+    const year = d2[3] ? parseInt(d2[3], 10) : now.getFullYear();
+    const start = new Date(year, month, day, 0, 0, 0, 0);
+    const end = new Date(year, month, day, 23, 59, 59, 999);
+    return { from: start, to: end };
+  }
+
   const parsed = new Date(dateFilter);
   if (!isNaN(parsed.getTime())) {
     const start = new Date(parsed);
@@ -159,7 +211,7 @@ export const getInquiriesTool: ChatbotTool = {
       )
       .order('created_at', { ascending: false });
 
-    const dealsQuery = supabaseAdmin
+    let dealsQuery = supabaseAdmin
       .from('deals')
       .select(
         'id, inquiry_id, stage, status, customer_name, customer_phone, po_number, total_amount, salesperson_phone, employee_id, created_at, won_at, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
@@ -171,19 +223,22 @@ export const getInquiriesTool: ChatbotTool = {
       const rawPhone = callerContext.phone || '';
       const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
       const empId = callerContext.employeeId;
-      const orParts: string[] = [];
+      const inqOrParts: string[] = [];
+      const dealOrParts: string[] = [];
 
       if (cleanPhone) {
-        orParts.push(
+        inqOrParts.push(
           `salesperson_phone.ilike.%${cleanPhone}%`,
           `sender_phone.ilike.%${cleanPhone}%`,
         );
+        dealOrParts.push(`salesperson_phone.ilike.%${cleanPhone}%`);
       }
       if (empId) {
-        orParts.push(`employee_id.eq.${empId}`);
+        inqOrParts.push(`employee_id.eq.${empId}`);
+        dealOrParts.push(`employee_id.eq.${empId}`);
       }
 
-      if (orParts.length === 0) {
+      if (inqOrParts.length === 0) {
         return {
           data: {
             notFound: true,
@@ -202,25 +257,31 @@ export const getInquiriesTool: ChatbotTool = {
         };
       }
 
-      inqQuery = inqQuery.or(orParts.join(','));
+      inqQuery = inqQuery.or(inqOrParts.join(','));
+      if (dealOrParts.length > 0) {
+        dealsQuery = dealsQuery.or(dealOrParts.join(','));
+      }
     } else if (isManagerRole(callerContext.role)) {
       const { phoneSuffixes, employeeIds } = await getSubordinateSalespersons(
         callerContext,
         supabaseAdmin,
       );
 
-      const orParts: string[] = [];
+      const inqOrParts: string[] = [];
+      const dealOrParts: string[] = [];
       phoneSuffixes.forEach((p) => {
-        orParts.push(
+        inqOrParts.push(
           `salesperson_phone.ilike.%${p}%`,
           `sender_phone.ilike.%${p}%`,
         );
+        dealOrParts.push(`salesperson_phone.ilike.%${p}%`);
       });
       employeeIds.forEach((id) => {
-        orParts.push(`employee_id.eq.${id}`);
+        inqOrParts.push(`employee_id.eq.${id}`);
+        dealOrParts.push(`employee_id.eq.${id}`);
       });
 
-      if (orParts.length === 0) {
+      if (inqOrParts.length === 0) {
         return {
           summary: {
             total_inquiries: 0,
@@ -235,7 +296,10 @@ export const getInquiriesTool: ChatbotTool = {
         };
       }
 
-      inqQuery = inqQuery.or(orParts.join(','));
+      inqQuery = inqQuery.or(inqOrParts.join(','));
+      if (dealOrParts.length > 0) {
+        dealsQuery = dealsQuery.or(dealOrParts.join(','));
+      }
     }
     // Admin role receives unfiltered data
 
@@ -243,13 +307,15 @@ export const getInquiriesTool: ChatbotTool = {
     const { from, to } = parseDateFilter(dateRange);
     if (from) {
       inqQuery = inqQuery.gte('created_at', from.toISOString());
+      dealsQuery = dealsQuery.gte('created_at', from.toISOString());
     }
     if (to) {
       inqQuery = inqQuery.lte('created_at', to.toISOString());
+      dealsQuery = dealsQuery.lte('created_at', to.toISOString());
     }
 
     // 4. In-memory cache resolution to prevent repeated Supabase latency & statement timeouts
-    const cacheKey = `${callerContext.userId || callerContext.role}_${from?.toISOString() || ''}_${to?.toISOString() || ''}`;
+    const cacheKey = `${callerContext.userId || ''}_${callerContext.role || ''}_${callerContext.phone || ''}_${callerContext.employeeId || ''}_${from?.toISOString() || ''}_${to?.toISOString() || ''}_${dateRange || ''}_${searchName || ''}_${mode || ''}`;
     const cached = inquiriesGlobalCache.get(cacheKey);
     let inqData: any[] = [];
     let dealsData: any[] = [];
@@ -280,10 +346,42 @@ export const getInquiriesTool: ChatbotTool = {
       }
     });
 
-    const rawList = inqData.map((inq: any) => ({
-      ...inq,
-      deals: dealsByInquiryId.get(inq.id) || [],
+    const matchedInquiryIds = new Set(inqData.map((i: any) => i.id));
+    const standaloneDeals = dealsData.filter(
+      (d: any) =>
+        (!d.inquiry_id || !matchedInquiryIds.has(d.inquiry_id)) &&
+        !matchedInquiryIds.has(d.id),
+    );
+
+    const syntheticInquiriesFromDeals = standaloneDeals.map((d: any) => ({
+      id: d.inquiry_id || d.id,
+      sender_name: d.customer_name,
+      sender_phone: d.customer_phone || d.salesperson_phone,
+      raw_text: `${d.customer_name} inquiry`,
+      inquiry_type: 'inquiry',
+      status: d.stage || d.status || 'review',
+      source_channel: 'dashboard',
+      media_urls: [],
+      overall_confidence: 1.0,
+      ai_extraction_json: {
+        customer_name: d.customer_name,
+        companyName: d.customer_name,
+        total_amount: d.total_amount,
+        line_items: d.deal_items || [],
+      },
+      created_at: d.created_at,
+      salesperson_phone: d.salesperson_phone,
+      employee_id: d.employee_id,
+      deals: [d],
     }));
+
+    const rawList = [
+      ...inqData.map((inq: any) => ({
+        ...inq,
+        deals: dealsByInquiryId.get(inq.id) || [],
+      })),
+      ...syntheticInquiriesFromDeals,
+    ];
 
     // 4. Process all inquiries & compute accurate metrics
     const startOfToday = new Date();
