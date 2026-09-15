@@ -44,10 +44,16 @@ function cleanPhone(p?: string): string {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
+const { convertLineItemToMt } = require('../../utils/pricingEngine');
+
 function getDealTonnage(deal: any): number {
   if (!deal) return 0;
   if (Array.isArray(deal.deal_items) && deal.deal_items.length > 0) {
     return deal.deal_items.reduce((sum: number, item: any) => {
+      const conv = convertLineItemToMt(item);
+      if (conv && conv.canConvert && conv.mt !== null && !isNaN(conv.mt)) {
+        return sum + Number(conv.mt);
+      }
       const q = Number(item.quantity ?? item.quantity_mt ?? item.qty ?? 0) || 0;
       const unit = (item.unit || 'MT').toUpperCase().trim();
       return (
@@ -55,6 +61,15 @@ function getDealTonnage(deal: any): number {
         (unit === 'KG' || unit === 'KGS' || unit === 'KILOGRAM' ? q / 1000 : q)
       );
     }, 0);
+  }
+  const conv = convertLineItemToMt({
+    quantity: deal.quantity ?? deal.quantity_mt,
+    unit: deal.unit,
+    sku_text: deal.product_type || deal.sku_text,
+    dimensions: deal.dimensions,
+  });
+  if (conv && conv.canConvert && conv.mt !== null && !isNaN(conv.mt)) {
+    return Number(conv.mt);
   }
   const q = Number(deal.quantity ?? deal.quantity_mt ?? 0) || 0;
   const unit = (deal.unit || 'MT').toUpperCase().trim();
@@ -797,7 +812,7 @@ export class CustomersService {
       let dealsQuery = this.supabase
         .from('deals')
         .select(
-          'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity, unit)',
+          'customer_name, customer_phone, created_at, won_at, stage, total_amount, po_number, inquiry_type, salesperson_phone, deal_items(amount, rate, quantity, unit, sku_text, dimensions)',
         )
         .order('created_at', { ascending: false });
 
