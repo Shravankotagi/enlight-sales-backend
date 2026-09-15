@@ -94,6 +94,19 @@ const PRODUCT_KEYWORDS = [
   'cr sheet',
   'cold rolled',
   'cr coil',
+  'gp sheet',
+  'gp coil',
+  'galvanized sheet',
+  'galvanized coil',
+  'galvalume',
+  'galvalume sheet',
+  'galvalume coil',
+  'hrpo',
+  'hrpo sheet',
+  'hrpo coil',
+  'chequered sheet',
+  'chequered plate',
+  'chequered coil',
   'ms plate',
   'ms plates',
   'ms sheet',
@@ -106,9 +119,20 @@ const PRODUCT_KEYWORDS = [
   'steel pipe',
   'steel pipes',
   'angles',
+  'angle',
   'channels',
+  'channel',
   'beams',
+  'beam',
   'flats',
+  'flat bar',
+  'round bar',
+  'square bar',
+  'square pipe',
+  'rectangular tube',
+  'slotted angle',
+  'earthing strip',
+  'cable tray',
   'rebars',
   'sheet',
   'plate',
@@ -916,8 +940,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-            Array.isArray(row.media_urls) &&
-            row.media_urls.length > 0,
+          Array.isArray(row.media_urls) &&
+          row.media_urls.length > 0,
         );
         return {
           ...row,
