@@ -20,7 +20,7 @@ const { logBotActivity } = require('../utils/activityLogger');
 
 const COMPLAINT_AGENT_PROMPT = `
 You are the Specialized Quality & Complaint AI Agent (KRA 7 & KRA 8) for Enlight Metals.
-Your job is to parse quality complaints, material rejection reports, or complaint resolution updates.
+Your job is to parse quality complaints, material rejection reports, complaint resolution updates, reopening of resolved complaints, or updates to complaint details.
 
 CRITICAL INSTRUCTION - MULTIPLE COMPLAINTS:
 A salesperson message may contain MULTIPLE separate complaints for different companies or different issues (e.g. "Complaint from Dynamic Engineering: HR Coil rust. Complaint from Tech Industries: CR Sheet crack").
@@ -30,13 +30,13 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 {
   "complaints": [
     {
-      "action": "report|resolve",
+      "action": "report|resolve|reopen|update",
       "customer_name": "<customer/company name, else null>",
       "deal_id": "<inquiry ID e.g. 'INQ-C538B6', 'DEAL-C538B6' or UUID if mentioned in text, else null>",
-      "po_number": "<PO number e.g. 'PO-2026-001' or 'DEW/RFQ/2026/089' if mentioned, else null>",
+      "po_number": "<PO number e.g. 'PO-2026-001', '7788', 'PO 7788', or 'DEW/RFQ/2026/089' if mentioned, else null>",
       "complaint_type": "quality|delivery|quantity|billing|specification|other",
-      "affected_product": "<specific product/material affected e.g. 'HR Coil 12 MT', 'CR Sheet 1.20mm coils' - else null>",
-      "description": "<detailed description of complaint or resolution notes for this specific customer/incident>",
+      "affected_product": "<specific product/material affected e.g. 'HR Coil 12 MT', 'CR Sheet 1.20mm coils', 'Steel Material' - else null>",
+      "description": "<detailed description of complaint, recurrence reason, or resolution notes for this specific customer/incident>",
       "is_confirmation": <true if the user is replying 'yes', 'confirm', 'haan', 'correct', 'right', 'sahi hai' to a previous deal confirmation question, else false>,
       "confidence": <float 0.0 to 1.0>
     }
@@ -44,13 +44,17 @@ Extract into ONLY a JSON object (no prose, no markdown, no backticks):
 }
 
 Rules:
-- "customer_name": Extract the EXACT company/customer name stated in the message (e.g. "ABC Steel", "Dynamic Engineering", "Tech Industries"). NEVER alter, guess, or substitute company names.
-- "action": "report" -> new issue, defect, rejection, wrong material, shortage, delivery delay, billing dispute.
-- "action": "resolve" -> issue settled, sorted, material replaced, customer accepted, resolved.
+- "customer_name": Extract the EXACT company/customer name stated in the message (e.g. "ABC Steel", "Bhushan Steel", "Reliance Industries"). NEVER alter, guess, or substitute company names.
+- "action":
+  * "report" -> new issue, defect, rejection, wrong material, shortage, delivery delay, billing dispute.
+  * "resolve" -> issue settled, sorted, material replaced, customer accepted, resolved.
+  * "reopen" -> reopening a resolved complaint, recurrence of issue (e.g. "Reopen the Bhushan Steel complaint on PO 7788 — the steel casting issue has recurred", "reopen complaint", "issue recurred").
+  * "update" -> changing or updating fields of an existing complaint without reopening (e.g. "Change the complaint type for Reliance Industries' Steel Material complaint to Specification Mismatch", "Update complaint type to billing", "Update notes for XYZ").
+- "complaint_type": "quality", "delivery", "quantity", "billing", "specification", "other". If user says "Specification Mismatch", set "specification".
 - If multiple companies or separate complaint sentences exist, CREATE A SEPARATE ENTRY IN THE "complaints" ARRAY FOR EACH ONE!
 - "affected_product": Extract specific steel category, dimensions, or product form for that specific complaint.
 - "deal_id": Extract any #INQ-XXXXXX or #DEAL-XXXXXX mentioned.
-- "po_number": Extract any PO number (PO-XXXX, Purchase Order #) mentioned.
+- "po_number": Extract any PO number (PO-XXXX, PO 7788, Purchase Order #) mentioned.
 
 Return ONLY the JSON object.
 `;
@@ -114,6 +118,68 @@ async function getOpenComplaint(customerName, senderPhone, dealId = null) {
     .limit(1);
 
   return data && data.length > 0 ? data[0] : null;
+}
+
+/**
+ * Find an existing complaint (preferring resolved when reopening, or latest matching) for a customer or specific PO/deal.
+ */
+async function getComplaintForReopenOrUpdate(
+  customerName,
+  senderPhone,
+  dealId = null,
+  poNumber = null,
+  preferResolved = false,
+) {
+  let query = supabase.from('complaints').select('*');
+
+  if (customerName) {
+    query = query.ilike('customer_name', `%${customerName.trim()}%`);
+  }
+
+  const { data: complaints } = await query
+    .order('created_at', { ascending: false })
+    .limit(25);
+
+  if (!complaints || complaints.length === 0) return null;
+
+  // 1. Match by PO Number or Deal ID if provided
+  if (poNumber || dealId) {
+    const cleanPo = poNumber
+      ? String(poNumber)
+          .replace(/^PO[-:\s#]*/i, '')
+          .trim()
+          .toLowerCase()
+      : null;
+    const cleanDeal = dealId
+      ? String(dealId)
+          .replace(/^#?(?:DEAL|INQ)-/i, '')
+          .trim()
+          .toLowerCase()
+      : null;
+
+    const matched = complaints.find((c) => {
+      const cPo = (c.po_number || '').toLowerCase();
+      const cDeal = (c.deal_id || '').toLowerCase();
+      if (cleanPo && (cPo.includes(cleanPo) || cleanPo.includes(cPo)))
+        return true;
+      if (cleanDeal && (cDeal.includes(cleanDeal) || cleanDeal.includes(cDeal)))
+        return true;
+      return false;
+    });
+
+    if (matched) return matched;
+  }
+
+  // 2. If preferResolved is true, find first resolved complaint
+  if (preferResolved) {
+    const resolvedComp = complaints.find(
+      (c) => (c.status || '').toLowerCase() === 'resolved',
+    );
+    if (resolvedComp) return resolvedComp;
+  }
+
+  // 3. Otherwise return the most recent complaint for this customer
+  return complaints[0];
 }
 
 /**
@@ -620,6 +686,260 @@ async function processSingleComplaint(data, originalText, senderPhone) {
         `_Note: Created and marked resolved directly._\n\n` +
         `Updated Customer Complaints Card! ✅`
       );
+    }
+  }
+
+  // ── REOPEN FLOW ───────────────────────────────────────────────────
+  const isReopenIntent =
+    data.action === 'reopen' ||
+    /\b(?:reopen|re-open)\b/i.test(originalText) ||
+    (/\b(?:issue|defect|problem|complaint)\b/i.test(originalText) &&
+      /\b(?:recurred|has recurred|repeated|again|returned)\b/i.test(
+        originalText,
+      ));
+
+  if (isReopenIntent) {
+    const rawPoCandidate = (data.po_number || '').trim();
+    const rawDealCandidate = (data.deal_id || '').trim();
+    const textPoMatch = originalText
+      .match(/PO[-:\s#]*([A-Z0-9\/-]+)/i)?.[1]
+      ?.trim();
+    const textDealMatch = originalText
+      .match(/#?(?:DEAL|INQ)-([A-F0-9_-]{4,36})/i)?.[1]
+      ?.trim();
+
+    const candidatePo = rawPoCandidate || textPoMatch || null;
+    const candidateDeal = rawDealCandidate || textDealMatch || null;
+
+    const existingComplaint = await getComplaintForReopenOrUpdate(
+      finalCustomerName,
+      senderPhone,
+      candidateDeal,
+      candidatePo,
+      true, // prefer resolved complaint
+    );
+
+    if (existingComplaint) {
+      const nowIso = new Date().toISOString();
+      const slaDueAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      const recurrenceNotes = cleanDescription || 'Issue has recurred';
+      const updatedDescription = existingComplaint.description
+        ? `${existingComplaint.description}\n[Reopened on ${new Date().toLocaleDateString('en-IN')}]: ${recurrenceNotes}`
+        : recurrenceNotes;
+
+      let reopenedProduct =
+        existingComplaint.product_name ||
+        existingComplaint.affected_product ||
+        affectedProduct;
+      if (
+        (!reopenedProduct ||
+          reopenedProduct.toLowerCase().includes('material')) &&
+        affectedProduct
+      ) {
+        reopenedProduct = affectedProduct;
+      }
+
+      const reopenPayload = {
+        status: 'open',
+        escalated: false,
+        resolved_at: null,
+        resolution_notes: null,
+        reported_at: nowIso,
+        sla_due_at: slaDueAt.toISOString(),
+        description: updatedDescription,
+      };
+
+      if (reopenedProduct) {
+        reopenPayload.product_name = reopenedProduct;
+        reopenPayload.affected_product = reopenedProduct;
+      }
+
+      await supabase
+        .from('complaints')
+        .update(reopenPayload)
+        .eq('id', existingComplaint.id);
+
+      try {
+        logBotActivity({
+          salesperson_phone: senderPhone,
+          description: `Complaint reopened for ${finalCustomerName}: ${recurrenceNotes}`,
+          module: 'Complaints',
+          customer_name: finalCustomerName,
+        });
+      } catch (actErr) {
+        console.warn('[ComplaintAgent] Activity log notice:', actErr?.message);
+      }
+
+      const finalPo = existingComplaint.po_number || candidatePo;
+      const cleanCode = existingComplaint.deal_id
+        ? existingComplaint.deal_id.startsWith('DEAL-') ||
+          existingComplaint.deal_id.startsWith('INQ-')
+          ? existingComplaint.deal_id.replace(/^(?:DEAL|INQ)-/, '')
+          : existingComplaint.deal_id.substring(0, 6).toUpperCase()
+        : '';
+
+      const orderRef =
+        finalPo && finalPo.startsWith('#INQ-')
+          ? `Order: *${finalPo}*`
+          : finalPo
+            ? `PO: *${finalPo}*${cleanCode ? ` (#INQ-${cleanCode})` : ''}`
+            : cleanCode
+              ? `#INQ-${cleanCode}`
+              : 'Confirmed Order';
+
+      const resolvedType = (
+        existingComplaint.complaint_type ||
+        complaintType ||
+        'quality'
+      ).toUpperCase();
+
+      return (
+        `🚨 *Customer Complaint Reopened*\n\n` +
+        `Customer: *${finalCustomerName}*\n` +
+        `Linked Order: ${orderRef}\n` +
+        `Product: *${reopenedProduct || 'Steel Material'}*\n` +
+        `Type: *${resolvedType}*\n` +
+        `Recurrence Details: ${recurrenceNotes}\n` +
+        `Status: *Open ⏱️ (48-Hour SLA Clock Re-activated)*\n` +
+        `SLA Due: *${slaDueAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}*\n\n` +
+        `Updated Customer Complaints Card! ✅\n\n` +
+        `When resolved, reply: _"Resolved complaint for ${finalCustomerName}: [resolution notes]"_ ✅`
+      );
+    }
+  }
+
+  // ── UPDATE FLOW ───────────────────────────────────────────────────
+  const isUpdateIntent =
+    data.action === 'update' ||
+    (/\b(?:change|update|set|modify|correct)\b/i.test(originalText) &&
+      /\b(?:complaint\s*type|type\s+to|type\s+for|category|product|defect\s*type|specification\s*mismatch)\b/i.test(
+        originalText,
+      ));
+
+  if (isUpdateIntent) {
+    const rawPoCandidate = (data.po_number || '').trim();
+    const rawDealCandidate = (data.deal_id || '').trim();
+    const textPoMatch = originalText
+      .match(/PO[-:\s#]*([A-Z0-9\/-]+)/i)?.[1]
+      ?.trim();
+    const textDealMatch = originalText
+      .match(/#?(?:DEAL|INQ)-([A-F0-9_-]{4,36})/i)?.[1]
+      ?.trim();
+
+    const candidatePo = rawPoCandidate || textPoMatch || null;
+    const candidateDeal = rawDealCandidate || textDealMatch || null;
+
+    const existingComplaint = await getComplaintForReopenOrUpdate(
+      finalCustomerName,
+      senderPhone,
+      candidateDeal,
+      candidatePo,
+      false, // can be open or resolved
+    );
+
+    if (existingComplaint) {
+      const updatePayload = {};
+      let updatedFieldSummary = '';
+
+      // Normalize complaint type
+      let targetType = data.complaint_type;
+      const lowerText = originalText.toLowerCase();
+      if (
+        lowerText.includes('specification mismatch') ||
+        lowerText.includes('spec mismatch') ||
+        lowerText.includes('specification')
+      ) {
+        targetType = 'specification';
+      } else if (
+        lowerText.includes('quality') ||
+        lowerText.includes('defect')
+      ) {
+        targetType = 'quality';
+      } else if (
+        lowerText.includes('delivery') ||
+        lowerText.includes('delay')
+      ) {
+        targetType = 'delivery';
+      } else if (
+        lowerText.includes('quantity') ||
+        lowerText.includes('shortage')
+      ) {
+        targetType = 'quantity';
+      } else if (lowerText.includes('billing') || lowerText.includes('price')) {
+        targetType = 'billing';
+      }
+
+      if (targetType) {
+        const oldType = (
+          existingComplaint.complaint_type || 'quality'
+        ).toUpperCase();
+        const newType =
+          targetType === 'specification'
+            ? 'SPECIFICATION MISMATCH'
+            : targetType.toUpperCase();
+        updatePayload.complaint_type = targetType;
+        updatedFieldSummary += `Updated Complaint Type: *${newType}* (was *${oldType}*)\n`;
+      }
+
+      if (affectedProduct && affectedProduct !== 'General Material') {
+        updatePayload.product_name = affectedProduct;
+        updatePayload.affected_product = affectedProduct;
+        updatedFieldSummary += `Updated Product: *${affectedProduct}*\n`;
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        await supabase
+          .from('complaints')
+          .update(updatePayload)
+          .eq('id', existingComplaint.id);
+
+        try {
+          logBotActivity({
+            salesperson_phone: senderPhone,
+            description: `Complaint updated for ${finalCustomerName}: ${updatedFieldSummary.replace(/\n/g, ' ')}`,
+            module: 'Complaints',
+            customer_name: finalCustomerName,
+          });
+        } catch (actErr) {
+          console.warn(
+            '[ComplaintAgent] Activity log notice:',
+            actErr?.message,
+          );
+        }
+
+        const finalPo = existingComplaint.po_number || candidatePo;
+        const cleanCode = existingComplaint.deal_id
+          ? existingComplaint.deal_id.startsWith('DEAL-') ||
+            existingComplaint.deal_id.startsWith('INQ-')
+            ? existingComplaint.deal_id.replace(/^(?:DEAL|INQ)-/, '')
+            : existingComplaint.deal_id.substring(0, 6).toUpperCase()
+          : '';
+
+        const orderRef =
+          finalPo && finalPo.startsWith('#INQ-')
+            ? `Order: *${finalPo}*`
+            : finalPo
+              ? `PO: *${finalPo}*${cleanCode ? ` (#INQ-${cleanCode})` : ''}`
+              : cleanCode
+                ? `#INQ-${cleanCode}`
+                : '';
+
+        const currentStatus =
+          existingComplaint.status &&
+          existingComplaint.status.toLowerCase() === 'resolved'
+            ? 'Resolved ✅'
+            : 'Open ⏱️';
+
+        return (
+          `✏️ *Customer Complaint Updated*\n\n` +
+          `Customer: *${finalCustomerName}*\n` +
+          (orderRef ? `Linked Order: ${orderRef}\n` : '') +
+          `Product: *${existingComplaint.product_name || existingComplaint.affected_product || affectedProduct || 'Steel Material'}*\n` +
+          `${updatedFieldSummary}` +
+          `Status: *${currentStatus}*\n\n` +
+          `Updated Customer Complaints Card! ✅`
+        );
+      }
     }
   }
 

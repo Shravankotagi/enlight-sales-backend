@@ -732,7 +732,7 @@ export class ChatbotService {
 
           if (selectedCandidate) {
             const targetField = sessionData.target_field || 'person_met';
-            const newValue = sessionData.new_value;
+            let newValue = sessionData.new_value;
             const oldValue = sessionData.old_value;
 
             const updatePayload: Record<string, any> = {};
@@ -747,6 +747,23 @@ export class ChatbotService {
             } else if (targetField === 'customer_address') {
               updatePayload.customer_address = newValue;
               fieldLabel = 'Location';
+            } else if (targetField === 'visit_outcome') {
+              fieldLabel = 'Outcome';
+              const normOut =
+                newValue.charAt(0).toUpperCase() +
+                newValue.slice(1).toLowerCase();
+              newValue = normOut;
+              let updatedRemarks = selectedCandidate.remarks || '';
+              if (/\[Outcome:\s*[^\]]+\]/i.test(updatedRemarks)) {
+                updatedRemarks = updatedRemarks.replace(
+                  /\[Outcome:\s*[^\]]+\]/i,
+                  `[Outcome: ${normOut}]`,
+                );
+              } else {
+                updatedRemarks =
+                  `[Outcome: ${normOut}] ${updatedRemarks}`.trim();
+              }
+              updatePayload.remarks = updatedRemarks;
             } else if (targetField === 'remarks') {
               updatePayload.remarks = newValue;
               fieldLabel = 'Discussion Notes';
@@ -897,6 +914,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           - "Client Mehta Engineering needs 25 MT MS Round Bar 20mm, rate 54000" -> Call 'update_deal_stage'
           - "Rate query: Apex Steel asking for 10 MT HR Coil" -> Call 'update_deal_stage'
           - "Create inquiry for Apex Steel, 10 MT HR Coil" -> Call 'update_deal_stage'
+          - "Inquiry requirement — GP Sheet 10000 kgs, MS Angle 50x50 15 MT. Deliver to Aurangabad. — Deccan Fabricators" -> Call 'update_deal_stage'
+        * Multi-Item Inquiries & 28-Product Master Catalog:
+          - When an inquiry contains multiple product requirements (e.g. "GP Sheet 10000 kgs, MS Angle 50x50 15 MT"), pass the complete requirement string to 'update_deal_stage' so every line item is captured without dropping any.
+          - Enlight Metals supports all 28 master catalog products across Flat Steel (HR Coil, HR Sheet, HR Plate, HRPO Coil, HRPO Sheet, CR Coil, CR Sheet, GP Coil, GP Sheet, Galvalume Coil, Galvalume Sheet, Color Coated Coil, Color Coated Sheet, Chequered Plate), Structural Steel (MS Beam, MS Channel, MS Angle, Equal Angle, Unequal Angle, MS Round Bar, MS Square Bar, MS Flat), Pipes & Tubes (MS Round Pipe, MS Square Pipe, MS Rectangular Pipe, ERW Pipe, Seamless Pipe), and Value Added Products (TMT Bar, Wire Rod, Profile Roofing Sheet, Decking Sheet, C & Z Purlin, Slotted Angle, Flanges, GI Earthing Strip). NEVER drop any line item from a multi-item inquiry!
         * Mark a deal as won with a Purchase Order (PO) or natural customer/date reference (e.g. "PO received for the inquiry by Company 5 on 9th sept, mark that inquiry as won", "PO recevied for ID #INQ-00151B, mark it won", "Deal won for Mehta Engineering PO-9921", "Confirm PO 8821 for Supreme Steel")
         * Mark a deal as lost with a loss reason (e.g. "Mark deal as lost for Apex Steel due to competitor price")
         * Update delivery location, delivery date, notes, or payment terms on an inquiry.
@@ -914,6 +935,8 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       - Call 'log_complaint' whenever the user reports:
         * A customer complaint regarding material defect, rust, bent sheets, gauge variation, quantity shortage, delivery delay, or billing error (e.g. "Supreme Steel complained about rust on HR coils delivered yesterday")
         * A complaint resolution (e.g. "Complaint for Supreme Steel resolved - replacement material delivered and customer satisfied").
+        * Reopening an existing resolved complaint (e.g. "Reopen the Bhushan Steel complaint on PO 7788 — the steel casting issue has recurred")
+        * Changing or updating a complaint's type, product, or details (e.g. "Change the complaint type for Reliance Industries' Steel Material complaint to Specification Mismatch")
 
    D. Payment Collection & Tracking (Payment Collection Card - KRA 5):
       - Call 'log_payment' whenever the user reports:
@@ -1672,13 +1695,10 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               }
             }
           } else if (
-            lowerMsg.includes('paid') ||
-            lowerMsg.includes('received payment') ||
-            lowerMsg.includes('advance') ||
-            lowerMsg.includes('cheque') ||
-            lowerMsg.includes('rtgs') ||
-            lowerMsg.includes('neft') ||
-            lowerMsg.includes('upi')
+            /\b(?:paid|received\s+payment|advance|cheques?|rtgs|neft|upi)\b/i.test(
+              lowerMsg,
+            ) &&
+            !/\b(?:chequered|checkered)\b/i.test(lowerMsg)
           ) {
             rescuedToolName = 'log_payment';
             rescuedArgs = { text: messageText };
@@ -1749,13 +1769,13 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               }
             }
           } else if (
-            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|hr\s*plate|ms\s*sheet|ms\s*plate|chequered|gp\s*sheet|gp\s*coil|galvalume|round\s*bar|square\s*bar|flat\s*bar|ms\s*flat|round\s*pipe|square\s*pipe|box\s*pipe|rectangular\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|wire\s*rod|purlin|slotted\s*angle|erw\s*pipe|seamless\s*pipe|flange|earthing|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
               lowerMsg,
             ) &&
               /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|tonnes|kg|kgs|pcs|nos|sheets?|plates?|bundles?|lengths?|mm|gauge|thk)\b/i.test(
                 lowerMsg,
               )) ||
-            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+            (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|hr\s*plate|ms\s*sheet|ms\s*plate|chequered|gp\s*sheet|gp\s*coil|galvalume|round\s*bar|square\s*bar|flat\s*bar|ms\s*flat|round\s*pipe|square\s*pipe|box\s*pipe|rectangular\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|wire\s*rod|purlin|slotted\s*angle|erw\s*pipe|seamless\s*pipe|flange|earthing|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
               lowerMsg,
             ) &&
               /\b(need|needs|require|requires|requirement|requirements|want|wants|looking\s+for|quote\s+for|rate\s+for|rates?\s+for|price\s+for|prices?\s+for|bhejo|chahiye|mang\s+raha|demand|send\s+rate|give\s+rate|delivery\s+to|deliver\s+to)\b/i.test(
@@ -1767,7 +1787,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               /\b(this\s+is\s+for|for\s+company|for\s+client|for\s+customer|customer|company|client|traders|enterprises|industries|fabricators|steels?|infra)\b/i.test(
                 lowerMsg,
               ) &&
-              (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|ms\s*sheet|ms\s*plate|chequered|round\s*bar|bright\s*bar|square\s*pipe|box\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
+              (/\b(hr\s*coil|cr\s*coil|hrpo|cr\s*sheet|hr\s*sheet|hr\s*plate|ms\s*sheet|ms\s*plate|chequered|gp\s*sheet|gp\s*coil|galvalume|round\s*bar|square\s*bar|flat\s*bar|ms\s*flat|round\s*pipe|square\s*pipe|box\s*pipe|rectangular\s*pipe|gp\s*pipe|angle|angles|beam|beams|channel|channels|tmt|wire\s*rod|purlin|slotted\s*angle|erw\s*pipe|seamless\s*pipe|flange|earthing|steel|coil|coils|sheet|sheets|plate|plates|pipes?|tubes?|patra)\b/i.test(
                 lowerMsg,
               ) ||
                 /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|tonne|tonnes|kg|kgs|pcs|nos|sheets?|plates?|bundles?|lengths?|mm|gauge|thk)\b/i.test(

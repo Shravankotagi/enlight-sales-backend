@@ -194,6 +194,22 @@ export const MASTER_PRODUCTS_CATALOG: MasterProductItem[] = [
   },
   {
     category: 'Flat Steel',
+    product_name: 'Color Coated Coil',
+    dimensions: '0.30 mm – 1.60 mm; Width 900–1250 mm',
+    hsn_code: '72107000',
+    min_thickness_mm: 0.3,
+    max_thickness_mm: 1.6,
+  },
+  {
+    category: 'Flat Steel',
+    product_name: 'Color Coated Sheet',
+    dimensions: '0.30 mm – 1.60 mm; Width 900–1250 mm',
+    hsn_code: '72107000',
+    min_thickness_mm: 0.3,
+    max_thickness_mm: 1.6,
+  },
+  {
+    category: 'Flat Steel',
     product_name: 'Galvalume Coil',
     dimensions: '0.30 mm – 3.00 mm; Width ≥600 mm',
     hsn_code: '72106100',
@@ -519,6 +535,22 @@ export function detectHsnCode(
     )
   ) {
     return '72104900';
+  }
+
+  // Color Coated
+  if (
+    /\bcolor\s*coated\s*coil\b|\bcolour\s*coated\s*coil\b|\bppgi\s*coil\b|\bppgl\s*coil\b|\bpre-?painted\s*coil\b/i.test(
+      combined,
+    )
+  ) {
+    return '72107000';
+  }
+  if (
+    /\bcolor\s*coated\s*sheet\b|\bcolour\s*coated\s*sheet\b|\bppgi\s*sheet\b|\bppgl\s*sheet\b|\bpre-?painted\s*sheet\b|\bprofile\s*roofing\s*sheet\b|\broofing\s*sheet\b|\bcorrugated\s*sheet\b|\bcolor\s*coated\b|\bcolour\s*coated\b|\bppgi\b/i.test(
+      combined,
+    )
+  ) {
+    return '72107000';
   }
 
   // HRPO
@@ -878,6 +910,32 @@ export function normalizeProductToCatalog(
       catalogName: 'GP Sheet',
       category: 'Flat Steel',
       hsnCode: '72104900',
+    };
+  }
+
+  // Color Coated
+  if (
+    /\bcolor\s*coated\s*coil\b|\bcolour\s*coated\s*coil\b|\bppgi\s*coil\b|\bppgl\s*coil\b|\bpre-?painted\s*coil\b/i.test(
+      combined,
+    )
+  ) {
+    return {
+      isValid: true,
+      catalogName: 'Color Coated Coil',
+      category: 'Flat Steel',
+      hsnCode: '72107000',
+    };
+  }
+  if (
+    /\bcolor\s*coated\s*sheet\b|\bcolour\s*coated\s*sheet\b|\bppgi\s*sheet\b|\bppgl\s*sheet\b|\bpre-?painted\s*sheet\b|\bprofile\s*roofing\s*sheet\b|\broofing\s*sheet\b|\bcorrugated\s*sheet\b|\bcolor\s*coated\b|\bcolour\s*coated\b|\bppgi\b/i.test(
+      combined,
+    )
+  ) {
+    return {
+      isValid: true,
+      catalogName: 'Color Coated Sheet',
+      category: 'Flat Steel',
+      hsnCode: '72107000',
     };
   }
 
