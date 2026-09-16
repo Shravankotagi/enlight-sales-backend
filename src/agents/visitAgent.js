@@ -136,13 +136,167 @@ function formatResolvedDate(d) {
   const day = d.getDate();
   const monthStr = months[d.getMonth()];
   const year = d.getFullYear();
+  const ymd = `${year}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   return {
     dateObj: d,
     isoString: d.toISOString(),
     formattedDisplay: `${day} ${monthStr} ${year}`,
+    dateStrYMD: ymd,
     month: d.getMonth() + 1,
     year: year,
   };
+}
+
+/**
+ * Resolves follow-up action due date deterministically from message text and action context.
+ * Supports expressions like "tomorrow", "kal", "in 3 days", "3 din baad", "next week", "agle hafte",
+ * explicit dates ("15th Sep"), and relative weekdays ("next Monday").
+ * Defaults to baseDate + 7 days if a follow-up action is present without a specific date.
+ */
+function resolveFollowUpDate(text, followUpAction, baseDateInput) {
+  if (!followUpAction && !text) return null;
+  const base =
+    baseDateInput instanceof Date
+      ? baseDateInput
+      : new Date(baseDateInput || Date.now());
+  const combined = `${text || ''} ${followUpAction || ''}`.toLowerCase();
+
+  // 1. Check relative day offsets
+  if (/\b(?:tomorrow|kal|next\s+day)\b/i.test(combined)) {
+    const d = new Date(base.getTime() + 1 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  if (/\b(?:day\s+after\s+tomorrow|parso)\b/i.test(combined)) {
+    const d = new Date(base.getTime() + 2 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  // "in N days" / "N din baad" / "N days"
+  const nDaysMatch = combined.match(
+    /\b(?:in\s+)?(\d+)\s*(?:days?|din(?:\s+baad)?)\b/i,
+  );
+  if (nDaysMatch) {
+    const n = parseInt(nDaysMatch[1], 10);
+    if (!isNaN(n) && n > 0 && n <= 365) {
+      const d = new Date(base.getTime() + n * 24 * 60 * 60 * 1000);
+      return formatResolvedDate(d);
+    }
+  }
+
+  // "next week" / "agle hafte" / "in 1 week" / "1 week"
+  if (/\b(?:next\s+week|agle\s+hafte|1\s*week|one\s+week)\b/i.test(combined)) {
+    const d = new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  // "in 2 weeks" / "2 weeks" / "do hafte"
+  if (/\b(?:2\s*weeks|two\s*weeks|do\s+hafte)\b/i.test(combined)) {
+    const d = new Date(base.getTime() + 14 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  // "next month" / "agle mahine" / "1 month"
+  if (/\b(?:next\s+month|agle\s+mahine|1\s*month)\b/i.test(combined)) {
+    const d = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  // 2. Relative Weekdays forward-looking: "next Monday", "this Friday", "Monday ko"
+  const weekdayMap = {
+    sunday: 0,
+    raviwar: 0,
+    itwar: 0,
+    monday: 1,
+    somwar: 1,
+    tuesday: 2,
+    mangalwar: 2,
+    wednesday: 3,
+    budhwar: 3,
+    thursday: 4,
+    guruwar: 4,
+    veervar: 4,
+    friday: 5,
+    shukrawar: 5,
+    saturday: 6,
+    shaniwar: 6,
+  };
+
+  const weekdayRegex =
+    /\b(?:(next|this|on|agle)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|somwar|mangalwar|budhwar|guruwar|veervar|shukrawar|shaniwar|raviwar|itwar)\b/i;
+  const matchWeekday = combined.match(weekdayRegex);
+
+  if (matchWeekday) {
+    const dayName = matchWeekday[2].toLowerCase();
+    const targetDay = weekdayMap[dayName];
+    if (targetDay !== undefined) {
+      const currentDay = base.getDay();
+      let diff = targetDay - currentDay;
+      if (diff <= 0) {
+        diff += 7;
+      }
+      const d = new Date(base.getTime() + diff * 24 * 60 * 60 * 1000);
+      return formatResolvedDate(d);
+    }
+  }
+
+  // 3. Natural explicit dates ("15th September", "20/09/2026", etc.)
+  const naturalMatch = combined.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(\d{2,4}))?\b/i,
+  );
+
+  if (naturalMatch) {
+    const day = parseInt(naturalMatch[1], 10);
+    const monthNames = [
+      'jan',
+      'feb',
+      'mar',
+      'apr',
+      'may',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'oct',
+      'nov',
+      'dec',
+    ];
+    const month = monthNames.findIndex((m) =>
+      naturalMatch[2].toLowerCase().startsWith(m),
+    );
+    let year = naturalMatch[3]
+      ? parseInt(naturalMatch[3], 10)
+      : base.getFullYear();
+    if (year < 100) year += 2000;
+    if (month >= 0) {
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) {
+        return formatResolvedDate(d);
+      }
+    }
+  }
+
+  const dmyMatch = combined.match(
+    /\b(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\b/,
+  );
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    let year = dmyMatch[3] ? parseInt(dmyMatch[3], 10) : base.getFullYear();
+    if (year < 100) year += 2000;
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) {
+      return formatResolvedDate(d);
+    }
+  }
+
+  // Default fallback if follow_up_action exists: +7 days from base
+  if (followUpAction && followUpAction.trim()) {
+    const d = new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return formatResolvedDate(d);
+  }
+
+  return null;
 }
 
 /**
@@ -414,12 +568,29 @@ async function saveCompletedVisit(visitState, senderPhone) {
     material_requirement,
     follow_up_action,
     followup_days,
+    follow_up_date,
+    follow_up_date_display,
     visit_date_iso,
     visit_date_display,
     visit_date_month,
     visit_date_year,
     is_new_prospect,
   } = visitState;
+
+  // Resolve follow-up date if action exists
+  let resolvedFuDateYMD = follow_up_date || null;
+  let resolvedFuDisplay = follow_up_date_display || null;
+  if (follow_up_action && (!resolvedFuDateYMD || !resolvedFuDisplay)) {
+    const fuDateObj = resolveFollowUpDate(
+      remarks,
+      follow_up_action,
+      visit_date_iso,
+    );
+    if (fuDateObj) {
+      resolvedFuDateYMD = fuDateObj.dateStrYMD;
+      resolvedFuDisplay = fuDateObj.formattedDisplay;
+    }
+  }
 
   // Match or auto-onboard
   const {
@@ -455,13 +626,15 @@ async function saveCompletedVisit(visitState, senderPhone) {
   if (material_requirement)
     metaTags.push(`[Requirement: ${material_requirement}]`);
   if (follow_up_action) metaTags.push(`[FollowUp: ${follow_up_action}]`);
+  if (resolvedFuDateYMD) metaTags.push(`[FollowUpDate: ${resolvedFuDateYMD}]`);
+  if (follow_up_action) metaTags.push(`[FollowUpStatus: pending]`);
   if (product_interests) metaTags.push(`[Interests: ${product_interests}]`);
 
   const fullRemarks =
     metaTags.length > 0 ? `${metaTags.join(' ')} ${remarks}` : remarks;
 
-  // Insert into customer_visits
-  const { error: visitErr } = await supabase.from('customer_visits').insert({
+  // Insert into customer_visits with structured follow-up columns
+  let { error: visitErr } = await supabase.from('customer_visits').insert({
     customer_name: finalCustomerName,
     salesperson_phone: senderPhone,
     customer_address: city,
@@ -469,24 +642,96 @@ async function saveCompletedVisit(visitState, senderPhone) {
     contact_no: contact_no,
     remarks: fullRemarks,
     visited_at: visit_date_iso || new Date().toISOString(),
+    follow_up_action: follow_up_action || null,
+    follow_up_date: resolvedFuDateYMD || null,
+    follow_up_status: follow_up_action ? 'pending' : null,
   });
   if (visitErr) {
-    console.error(
-      '[VisitAgent] customer_visits insert error:',
+    console.warn(
+      '[VisitAgent] customer_visits dedicated columns insert failed, trying base fallback:',
       visitErr.message,
     );
+    const { error: fbErr } = await supabase.from('customer_visits').insert({
+      customer_name: finalCustomerName,
+      salesperson_phone: senderPhone,
+      customer_address: city,
+      person_met: person_met,
+      contact_no: contact_no,
+      remarks: fullRemarks,
+      visited_at: visit_date_iso || new Date().toISOString(),
+    });
+    if (fbErr) {
+      console.error(
+        '[VisitAgent] customer_visits fallback insert also failed:',
+        fbErr.message,
+      );
+      return `Failed to save visit log for ${finalCustomerName}. Database error: ${fbErr.message}. Please try again.`;
+    }
   }
 
-  // Update customer master profile in recurring_customers
+  // Insert synced record into followup_tasks
+  if (follow_up_action) {
+    try {
+      const followUpIso = resolvedFuDateYMD
+        ? new Date(`${resolvedFuDateYMD}T12:00:00Z`).toISOString()
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase.from('followup_tasks').insert({
+        task_type: 'visit_followup',
+        customer_name: finalCustomerName,
+        customer_phone: contact_no || '',
+        salesperson_phone: senderPhone,
+        due_date: followUpIso,
+        status: 'pending',
+        reminder_sent_at: null,
+        escalated_at: null,
+        follow_up_count: 0,
+        resolution_notes: `Visit Follow-up Action: ${follow_up_action}. Notes: ${remarks || ''}`,
+      });
+    } catch (ftErr) {
+      console.warn('[VisitAgent] followup_tasks insert notice:', ftErr.message);
+    }
+  }
+
+  // Update customer master profile in recurring_customers without overwriting existing primary contact
   if (city || contact_no || person_met) {
-    const custUpdate = { updated_at: new Date().toISOString() };
-    if (city) custUpdate.city = city;
-    if (contact_no) custUpdate.customer_phone = contact_no;
-    if (person_met) custUpdate.contact_person = person_met;
-    await supabase
+    const { data: existingCustArr } = await supabase
       .from('recurring_customers')
-      .update(custUpdate)
-      .ilike('customer_name', `%${finalCustomerName}%`);
+      .select('id, contact_person, customer_phone, city, notes')
+      .ilike('customer_name', `%${finalCustomerName}%`)
+      .limit(1);
+
+    const existingCust = existingCustArr?.[0];
+    const custUpdate = { updated_at: new Date().toISOString() };
+
+    if (city && (!existingCust || !existingCust.city)) {
+      custUpdate.city = city;
+    }
+    if (contact_no && (!existingCust || !existingCust.customer_phone)) {
+      custUpdate.customer_phone = contact_no;
+    }
+    if (person_met && (!existingCust || !existingCust.contact_person)) {
+      custUpdate.contact_person = person_met;
+    }
+
+    // Append additional POC to customer notes if different from master
+    if (existingCust && (person_met || contact_no)) {
+      const existingNotes = existingCust.notes || '';
+      const pocLabel = person_met || 'Site Contact';
+      const pocPhone = contact_no ? ` | ${contact_no}` : '';
+      const contactEntry = `Contact: ${pocLabel}${pocPhone}`;
+      if (!existingNotes.includes(contact_no || person_met)) {
+        custUpdate.notes = existingNotes
+          ? `${existingNotes}\n${contactEntry}`
+          : contactEntry;
+      }
+    }
+
+    if (Object.keys(custUpdate).length > 1) {
+      await supabase
+        .from('recurring_customers')
+        .update(custUpdate)
+        .ilike('customer_name', `%${finalCustomerName}%`);
+    }
   }
 
   // Log KRA 9 with full business context
@@ -499,6 +744,7 @@ async function saveCompletedVisit(visitState, senderPhone) {
     product_interests ? `Interests: ${product_interests}` : null,
     material_requirement ? `Requirement: ${material_requirement}` : null,
     follow_up_action ? `Follow-up: ${follow_up_action}` : null,
+    resolvedFuDisplay ? `Due: ${resolvedFuDisplay}` : null,
     `Notes: ${remarks}`,
   ]
     .filter(Boolean)
@@ -645,7 +891,10 @@ async function saveCompletedVisit(visitState, senderPhone) {
   if (remarks) reply += `- Discussion Notes: ${remarks}\n`;
   if (product_interests) reply += `- Product Interests: ${product_interests}\n`;
   if (material_requirement) reply += `- Requirement: ${material_requirement}\n`;
-  if (follow_up_action) reply += `- Follow-up: ${follow_up_action}\n`;
+  if (follow_up_action) {
+    const dueSuffix = resolvedFuDisplay ? ` (Due: ${resolvedFuDisplay})` : '';
+    reply += `- Follow-up: ${follow_up_action}${dueSuffix}\n`;
+  }
 
   reply += `\nTotal Visits This Month: ${totalVisits}\n\n`;
   reply += `Updated Customer Visits Card!`;
@@ -702,6 +951,11 @@ async function handlePendingVisitContinuation(text, senderPhone, storedState) {
   const phoneMatch = text.match(/(?:\+91[\-\s]?)?([6-9]\d{9})\b/);
   if (phoneMatch && !extracted.contact_no) {
     extracted.contact_no = phoneMatch[1];
+  } else if (!extracted.contact_no) {
+    const rawDigits = text.replace(/\D/g, '');
+    if (rawDigits.length >= 10) {
+      extracted.contact_no = rawDigits.slice(-10);
+    }
   }
 
   if (!extracted.visit_outcome) {
@@ -744,8 +998,18 @@ async function handlePendingVisitContinuation(text, senderPhone, storedState) {
     storedState.product_interests = extracted.product_interests;
   if (extracted.material_requirement)
     storedState.material_requirement = extracted.material_requirement;
-  if (extracted.follow_up_action)
+  if (extracted.follow_up_action) {
     storedState.follow_up_action = extracted.follow_up_action;
+    const fuDateObj = resolveFollowUpDate(
+      text,
+      extracted.follow_up_action,
+      storedState.visit_date_iso,
+    );
+    if (fuDateObj) {
+      storedState.follow_up_date = fuDateObj.dateStrYMD;
+      storedState.follow_up_date_display = fuDateObj.formattedDisplay;
+    }
+  }
 
   if (extracted.visit_date) {
     const resolved = resolveVisitDate(text, extracted.visit_date);
@@ -1078,6 +1342,24 @@ async function applyVisitFieldUpdate(
   } else if (targetField === 'remarks') {
     updatePayload.remarks = newValue;
     fieldLabel = 'Discussion Notes';
+  } else if (
+    targetField === 'follow_up_action' ||
+    targetField === 'follow_up'
+  ) {
+    updatePayload.follow_up_action = newValue;
+    if (newValue) {
+      updatePayload.follow_up_status = 'pending';
+    }
+    fieldLabel = 'Follow-up Action';
+  } else if (targetField === 'follow_up_date') {
+    updatePayload.follow_up_date = newValue;
+    fieldLabel = 'Follow-up Date';
+  } else if (targetField === 'follow_up_status') {
+    updatePayload.follow_up_status = newValue;
+    if (newValue === 'completed') {
+      updatePayload.follow_up_completed_at = new Date().toISOString();
+    }
+    fieldLabel = 'Follow-up Status';
   } else {
     updatePayload.person_met = newValue;
   }
@@ -1366,6 +1648,15 @@ async function processVisitMessage(text, senderPhone) {
     }
 
     // 7. Construct initial visit state
+    let followUpDateResolved = null;
+    if (data.follow_up_action) {
+      followUpDateResolved = resolveFollowUpDate(
+        text,
+        data.follow_up_action,
+        resolvedDate.dateObj,
+      );
+    }
+
     const currentVisitState = {
       customer_name: finalCustomerName,
       is_new_prospect: isNewProspect,
@@ -1392,6 +1683,12 @@ async function processVisitMessage(text, senderPhone) {
         : null,
       follow_up_action: data.follow_up_action
         ? data.follow_up_action.trim()
+        : null,
+      follow_up_date: followUpDateResolved
+        ? followUpDateResolved.dateStrYMD
+        : null,
+      follow_up_date_display: followUpDateResolved
+        ? followUpDateResolved.formattedDisplay
         : null,
       followup_days: data.followup_days || null,
     };
@@ -1424,4 +1721,5 @@ module.exports = {
   handlePendingVisitContinuation,
   handleVisitUpdateSelection,
   resolveVisitDate,
+  resolveFollowUpDate,
 };
