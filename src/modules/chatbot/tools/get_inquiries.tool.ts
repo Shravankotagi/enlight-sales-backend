@@ -776,6 +776,14 @@ export const getInquiriesTool: ChatbotTool = {
             ? `${((wonInquiriesCount / (wonInquiriesCount + lostCount)) * 100).toFixed(1)}%`
             : '0%',
       },
+      mode,
+      source_type: sourceTypeFilter || 'all',
+      is_ocr_query:
+        sourceTypeFilter === 'ocr_document' ||
+        sourceTypeFilter === 'document' ||
+        sourceTypeFilter === 'ocr' ||
+        mode === 'ocr_document' ||
+        mode === 'review_queue',
     };
 
     // 5. Apply filters for list mode
