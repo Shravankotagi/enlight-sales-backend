@@ -946,8 +946,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-          Array.isArray(row.media_urls) &&
-          row.media_urls.length > 0,
+            Array.isArray(row.media_urls) &&
+            row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -1479,6 +1479,21 @@ export class InquiriesService implements OnModuleInit {
         grandTotal = rawBase + Math.round(rawBase * 0.18);
       }
 
+      const poNumber =
+        details.po_number ||
+        details.poNumber ||
+        aiJson.poNumber ||
+        aiJson.po_number ||
+        inquiry.po_number ||
+        undefined;
+      const poDate =
+        details.po_date ||
+        details.poDate ||
+        aiJson.poDate ||
+        aiJson.po_date ||
+        inquiry.po_date ||
+        undefined;
+
       // Check if a deal already exists for this inquiry
       const { data: existingDeals } = await this.supabase
         .from('deals')
@@ -1490,39 +1505,47 @@ export class InquiriesService implements OnModuleInit {
       if (existingDeals && existingDeals.length > 0) {
         dealId = existingDeals[0].id;
         const targetStage = stage || existingDeals[0].stage || 'new_inquiry';
+        const dealUpdatePayload: any = {
+          stage: targetStage,
+          customer_name: customerName,
+          customer_phone: customerPhone || undefined,
+          salesperson_phone: salespersonPhone,
+          delivery_location: deliveryLocation || undefined,
+          payment_terms: paymentTerms || undefined,
+          total_amount:
+            grandTotal !== null && grandTotal > 0 ? grandTotal : null,
+          status: 'auto_created',
+        };
+        if (poNumber) dealUpdatePayload.po_number = poNumber;
+        if (poDate) dealUpdatePayload.po_date = poDate;
+
         await this.supabase
           .from('deals')
-          .update({
-            stage: targetStage,
-            customer_name: customerName,
-            customer_phone: customerPhone || undefined,
-            salesperson_phone: salespersonPhone,
-            delivery_location: deliveryLocation || undefined,
-            payment_terms: paymentTerms || undefined,
-            total_amount:
-              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
-            status: 'auto_created',
-          })
+          .update(dealUpdatePayload)
           .eq('id', dealId);
       } else {
         const targetStage = stage || 'new_inquiry';
+        const dealInsertPayload: any = {
+          inquiry_id: inquiryId,
+          stage: targetStage,
+          customer_name: customerName,
+          customer_phone: customerPhone || null,
+          salesperson_phone: salespersonPhone,
+          delivery_location: deliveryLocation || null,
+          payment_terms: paymentTerms || null,
+          total_amount:
+            grandTotal !== null && grandTotal > 0 ? grandTotal : null,
+          inquiry_type: inquiry.inquiry_type || 'Product Requirement',
+          status: 'auto_created',
+          overall_confidence: Number(inquiry.overall_confidence) || 0.95,
+          created_at: new Date().toISOString(),
+        };
+        if (poNumber) dealInsertPayload.po_number = poNumber;
+        if (poDate) dealInsertPayload.po_date = poDate;
+
         const { data: newDeal, error: dealError } = await this.supabase
           .from('deals')
-          .insert({
-            inquiry_id: inquiryId,
-            stage: targetStage,
-            customer_name: customerName,
-            customer_phone: customerPhone || null,
-            salesperson_phone: salespersonPhone,
-            delivery_location: deliveryLocation || null,
-            payment_terms: paymentTerms || null,
-            total_amount:
-              grandTotal !== null && grandTotal > 0 ? grandTotal : null,
-            inquiry_type: inquiry.inquiry_type || 'Product Requirement',
-            status: 'auto_created',
-            overall_confidence: Number(inquiry.overall_confidence) || 0.95,
-            created_at: new Date().toISOString(),
-          })
+          .insert(dealInsertPayload)
           .select()
           .single();
 
