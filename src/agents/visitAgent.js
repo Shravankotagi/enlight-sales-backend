@@ -842,50 +842,72 @@ async function handleVisitCorrection(text, senderPhone) {
     }
 
     // Fetch recent visits to resolve target
-    let query = supabase
-      .from('customer_visits')
-      .select(
-        'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone',
-      )
-      .order('visited_at', { ascending: false })
-      .limit(15);
-
-    if (senderPhone) {
-      query = query.or(
-        `salesperson_phone.eq.${senderPhone},salesperson_phone.is.null`,
-      );
-    }
-
-    const { data: recentVisits, error: fetchErr } = await query;
-    if (fetchErr) {
-      console.error(
-        '[VisitAgent] Error fetching recent visits for correction:',
-        fetchErr.message,
-      );
-    }
-
-    const visitsList = recentVisits || [];
-    if (visitsList.length === 0) {
-      return `No recent customer visit records were found to update. Please log the visit first or specify the customer name.`;
-    }
-
     let targetVisit = null;
+    let candidateVisits = [];
 
-    // 1. If customerName was mentioned, filter by customer first
-    let candidateVisits = visitsList;
+    // 1. If customerName was mentioned, query database for that specific customer's visits
     if (customerName) {
       const matchedCustName = await verifyAndGetCustomerName(
         customerName,
         senderPhone,
       );
-      const custFilterName = matchedCustName || customerName;
-      const matchedByCust = visitsList.filter(
-        (v) =>
-          v.customer_name &&
-          v.customer_name.toLowerCase().includes(custFilterName.toLowerCase()),
-      );
-      if (matchedByCust.length > 0) {
-        candidateVisits = matchedByCust;
+      const custFilterName = (matchedCustName || customerName).trim();
+
+      let custQuery = supabase
+        .from('customer_visits')
+        .select(
+          'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone',
+        )
+        .ilike('customer_name', `%${custFilterName}%`)
+        .order('visited_at', { ascending: false })
+        .limit(10);
+
+      if (senderPhone) {
+        custQuery = custQuery.or(
+          `salesperson_phone.eq.${senderPhone},salesperson_phone.is.null`,
+        );
+      }
+
+      const { data: custVisits, error: custFetchErr } = await custQuery;
+      if (custFetchErr) {
+        console.error(
+          '[VisitAgent] Error fetching customer visits by name:',
+          custFetchErr.message,
+        );
+      }
+
+      if (custVisits && custVisits.length > 0) {
+        candidateVisits = custVisits;
+      } else {
+        return `No customer visit records were found for *${custFilterName}*. Please verify the company name or log the visit first.`;
+      }
+    } else {
+      // Fetch recent visits across all customers for this salesperson
+      let query = supabase
+        .from('customer_visits')
+        .select(
+          'id, customer_name, customer_address, person_met, contact_no, remarks, visited_at, salesperson_phone',
+        )
+        .order('visited_at', { ascending: false })
+        .limit(15);
+
+      if (senderPhone) {
+        query = query.or(
+          `salesperson_phone.eq.${senderPhone},salesperson_phone.is.null`,
+        );
+      }
+
+      const { data: recentVisits, error: fetchErr } = await query;
+      if (fetchErr) {
+        console.error(
+          '[VisitAgent] Error fetching recent visits for correction:',
+          fetchErr.message,
+        );
+      }
+
+      candidateVisits = recentVisits || [];
+      if (candidateVisits.length === 0) {
+        return `No recent customer visit records were found to update. Please log the visit first or specify the customer name.`;
       }
     }
 

@@ -27,7 +27,23 @@ const {
 } = require('../supabase');
 const { syncActivity } = require('./biginSyncAgent');
 const { logBotActivity } = require('../utils/activityLogger');
-const { detectHsnCode } = require('../utils/hsnDetector');
+let hsnModule;
+try {
+  hsnModule = require('../utils/hsnDetector');
+} catch {
+  try {
+    hsnModule = require('../../dist/utils/hsnDetector');
+  } catch {
+    hsnModule = {};
+  }
+}
+const {
+  detectHsnCode = () => '',
+  normalizeProductToCatalog = () => ({ isValid: false }),
+  isValidCatalogProduct = () => false,
+  getUnknownProductClarificationMessage = () => '',
+  MASTER_PRODUCTS_CATALOG = [],
+} = hsnModule || {};
 
 const SALES_AGENT_PROMPT = `
 You are the Specialized Sales Achievement & Pipeline Agent for Enlight Metals (B2B Steel Distributor).
@@ -44,8 +60,8 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
   "target_stage": "new_inquiry|qualified|negotiation|quoted|won|lost", // Stage if explicitly requested to update e.g. "update to negotiation", "mark as negotiation", "mark as won", "deal lost", else null
   "line_items": [
     {
-      "product_requirement": "<specific product name: CR Sheet, HR Sheet, MS Sheet, CR Coil, HR Coil, HRPO Coil, MS Plate, Chequered Plate, MS Round Bar, MS Square Pipe, MS Angle, MS Beam, MS Channel, TMT Bar>",
-      "dimensions": "<exact dimensions/spec/thickness/gauge specifically for this item e.g. 10mm, 12mm, 50x50x2mm, ISMB 200, else null>",
+      "product_requirement": "<specific product name from 28 master catalog products: HR Coil, HR Sheet, HR Plate, HRPO Coil, HRPO Sheet, CR Coil, CR Sheet, GP Coil, GP Sheet, Galvalume Coil, Galvalume Sheet, Chequered Coil, Chequered Sheet, MS Round Bar, MS Flat Bar, MS Square Bar, TMT Bar, MS Angle, MS Channel, MS Beam, MS Round Pipe, MS Square Pipe, MS Rectangular Tube, Slotted Angle, Solar Mounting Structure, Cable Tray – Perforated, Cable Tray – Ladder, GI Earthing Strip>",
+      "dimensions": "<exact dimensions/spec/thickness/gauge specifically for this item e.g. 10mm, 12mm, 50x50, 50x50x2mm, ISMB 200, else null>",
       "hsn_code": "<HSN or SAC code if mentioned e.g. 72085110, 7208, 7214, 7306, else null>",
       "quantity": <numeric quantity e.g. 300, 200, 20>,
       "quantity_mt": <numeric quantity in MT or same as quantity>,
@@ -54,7 +70,7 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
     }
   ],
   "total_amount": <numeric total deal value in rupees ONLY if explicitly mentioned in text, else 0>,
-  "delivery_location": "<full exact address/city/location if mentioned in THIS message e.g. Pune, Nashik, Chakan, else null>",
+  "delivery_location": "<full exact address/city/location if mentioned in THIS message e.g. Pune, Nashik, Chakan, Aurangabad, else null>",
   "delivery_date": "<delivery deadline in YYYY-MM-DD format using current year 2026 if mentioned e.g. 2026-08-25 for 'before 25 August', else null>",
   "payment_terms": "<payment terms if mentioned in THIS message e.g. 30 days credit, 45 days, 100% advance, PDC, else null>",
   "preferred_make": "<preferred make/brand if stated e.g. Tata, JSW, SAIL, Jindal, RINL, else null>",
@@ -65,17 +81,37 @@ Extract into ONLY a JSON object (no markdown, no prose, no backticks):
 }
 
 CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
-1. PRODUCT PRESERVATION (CR SHEET vs CR COIL / HR SHEET vs HR COIL):
+1. 28-PRODUCT MASTER CATALOG PRESERVATION:
+   Enlight Metals distributes 28 standard products across 4 official categories:
+   - Flat Steel: HR Coil, HR Sheet, HR Plate, HRPO Coil, HRPO Sheet, CR Coil, CR Sheet, GP Coil, GP Sheet, Galvalume Coil, Galvalume Sheet, Chequered Coil, Chequered Sheet
+   - Structural Steel: MS Round Bar, MS Flat Bar, MS Square Bar, TMT Bar, MS Angle, MS Channel, MS Beam
+   - Pipes & Tubes: MS Round Pipe, MS Square Pipe, MS Rectangular Tube
+   - Value Added Products: Slotted Angle, Solar Mounting Structure, Cable Tray – Perforated, Cable Tray – Ladder, GI Earthing Strip
+   - "GP Sheet" / "Galvanized Sheet" / "GI Sheet" MUST be extracted as "GP Sheet" (STRICTLY DO NOT drop or convert to CR Sheet).
+   - "GP Coil" / "Galvanized Coil" / "GI Coil" MUST be extracted as "GP Coil".
+   - "Galvalume Sheet" / "GL Sheet" MUST be extracted as "Galvalume Sheet".
+   - "Galvalume Coil" / "GL Coil" MUST be extracted as "Galvalume Coil".
+   - "Chequered Sheet" / "Chequered Plate" MUST be extracted as "Chequered Sheet".
+   - "Chequered Coil" MUST be extracted as "Chequered Coil".
+   - "HRPO Sheet" MUST be extracted as "HRPO Sheet".
+   - "HRPO Coil" / "Pickled & Oiled" MUST be extracted as "HRPO Coil".
+   - "HR Plate" MUST be extracted as "HR Plate".
    - "CR Sheet" / "Cold Rolled Sheet" MUST be extracted as "CR Sheet" (STRICTLY DO NOT convert to "CR Coil").
    - "HR Sheet" / "Hot Rolled Sheet" MUST be extracted as "HR Sheet" (STRICTLY DO NOT convert to "HR Coil").
-   - "MS Sheet" MUST be extracted as "MS Sheet".
-   - "HRPO Coil" / "Pickled & Oiled" MUST be extracted as "HRPO Coil".
-   - "MS Plate" MUST be extracted as "MS Plate".
-   - "MS Beam" / "Structural Beams" MUST be extracted as "MS Beam".
-   - STRICTLY extract ONLY the products explicitly mentioned in the user message. Do NOT add phantom products (such as MS Beam or anything else) that are not in the prompt!
+   - "MS Flat Bar" / "Flats" / "Patti" MUST be extracted as "MS Flat Bar".
+   - "MS Square Bar" MUST be extracted as "MS Square Bar".
+   - "MS Round Pipe" / "Pipe" / "Tube" MUST be extracted as "MS Round Pipe".
+   - "MS Square Pipe" / "Box Pipe" MUST be extracted as "MS Square Pipe".
+   - "MS Rectangular Tube" / "RHS" MUST be extracted as "MS Rectangular Tube".
+   - "Slotted Angle" MUST be extracted as "Slotted Angle".
+   - "Solar Mounting Structure" MUST be extracted as "Solar Mounting Structure".
+   - "Cable Tray – Perforated" MUST be extracted as "Cable Tray – Perforated".
+   - "Cable Tray – Ladder" MUST be extracted as "Cable Tray – Ladder".
+   - "GI Earthing Strip" MUST be extracted as "GI Earthing Strip".
+   - STRICTLY extract ONLY the products explicitly mentioned in the user message. Do NOT add phantom products that are not in the prompt!
 
 2. ZERO DIMENSION HALLUCINATION / NO CROSS-ITEM BORROWING:
-   - If a line item does NOT have a stated thickness, dimension, or spec in the text (e.g. "HR Pickled Coil 12000 kgs" or "Structural beams 15 MT" or "CR Sheet - 100 nos"), its "dimensions" MUST BE null!
+   - If a line item does NOT have a stated thickness, dimension, or spec in the text (e.g. "HR Pickled Coil 12000 kgs" or "GP Sheet 10000 kgs" or "CR Sheet - 100 nos"), its "dimensions" MUST BE null!
    - STRICTLY NEVER copy or borrow a thickness (e.g. "10mm") from one line item to other line items in the message.
 
 3. ZERO DELIVERY LOCATION & PAYMENT TERMS HALLUCINATION:
@@ -83,9 +119,10 @@ CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
    - If the user message does NOT state payment terms, "payment_terms" MUST BE null.
    - STRICTLY NEVER invent or assume a delivery location or payment terms.
 
-4. MULTI-ITEM EXTRACTION:
-   - When a message lists multiple items (e.g. "1) HR Coil 10mm - 20 MT 2) MS Plate 12mm - 30 MT 3) CR Sheet - 100 nos" or "HR Pickled Coil 12000 kgs, MS Plate 10mm 40 MT, and Structural beams 15 MT"):
+4. MULTI-ITEM EXTRACTION (MANDATORY):
+   - When a message lists multiple items (e.g. "GP Sheet 10000 kgs, MS Angle 50x50 15 MT" or "1) HR Coil 10mm - 20 MT 2) MS Plate 12mm - 30 MT 3) CR Sheet - 100 nos"):
      Extract EACH item as a separate object in the line_items array with its own product, dimensions (if stated), quantity, and unit.
+     NEVER drop, omit, or merge any product mentioned in the message!
 
 5. RATE UPDATES & PRICE LISTS:
    - When a message says "update rates", "rates for", "new rates", or provides product rates (e.g. "CR Sheet 1mm - 15\nCR Sheet 1.2mm - 18"):
@@ -99,7 +136,7 @@ CRITICAL EXTRACTION & ANTI-HALLUCINATION RULES:
    - When unit is Kg: MT = Kg / 1000.
 
 7. EXACT CUSTOMER NAME PRESERVATION:
-   - Extract the EXACT company/customer name stated in the user message (e.g. "ABC Steel", "Shree Ganesh Traders", "Tata Motors").
+   - Extract the EXACT company/customer name stated in the user message (e.g. "Deccan Fabricators", "ABC Steel", "Shree Ganesh Traders", "Tata Motors").
    - When messages say "This is for Shree Ganesh Traders company" or "Inquiry for ABC Steel client", extract the company name cleanly without the generic trailing word "company" or "client" unless it is an explicit legal part of the title.
    - NEVER alter, guess, abbreviate, or substitute company names.
 
@@ -110,6 +147,7 @@ Return ONLY the JSON object.
 `;
 
 const PRODUCT_FAMILIES = {
+  // 1. Flat Steel
   cr_sheet: [
     'cr sheet',
     'cold rolled sheet',
@@ -138,27 +176,146 @@ const PRODUCT_FAMILIES = {
     'hr sheets',
     'hot rolled sheets',
     'hr patra',
+    'ms sheet',
+    'ms sheets',
   ],
   hr_coil: [
     'hr coil',
     'hr coils',
     'hot rolled coil',
     'hot rolled coils',
-    'hrpo',
+    'hr strip',
+    'e350 hr',
+    'sailma',
+  ],
+  hr_plate: [
+    'hr plate',
+    'hr plates',
+    'hot rolled plate',
+    'hot rolled plates',
+    'ms plate',
+    'ms plates',
+    'boiler plate',
+    'bq plate',
+    'hardox',
+    'e350 plate',
+    'plate',
+    'plates',
+  ],
+  hrpo_coil: [
     'hrpo coil',
     'hrpo coils',
+    'hrpo',
     'pickled coil',
     'pickled coils',
     'hr pickled coil',
     'hr pickled coils',
     'hr pickled',
+    'pickled and oiled coil',
+    'pickled & oiled coil',
     'pickled and oiled',
     'pickled & oiled',
     'pickled',
-    'hr strip',
-    'e350 hr',
-    'sailma',
   ],
+  hrpo_sheet: [
+    'hrpo sheet',
+    'hrpo sheets',
+    'pickled & oiled sheet',
+    'pickled and oiled sheet',
+    'hr pickled sheet',
+    'hr pickled sheets',
+  ],
+  gp_coil: [
+    'gp coil',
+    'gp coils',
+    'galvanized plain coil',
+    'galvanized coil',
+    'galvanised coil',
+    'gi coil',
+    'gi coils',
+  ],
+  gp_sheet: [
+    'gp sheet',
+    'gp sheets',
+    'galvanized plain sheet',
+    'galvanized sheet',
+    'galvanised sheet',
+    'gi sheet',
+    'gi sheets',
+    'gp patra',
+  ],
+  color_coated_coil: [
+    'color coated coil',
+    'color coated coils',
+    'colour coated coil',
+    'colour coated coils',
+    'ppgi coil',
+    'ppgi coils',
+    'ppgl coil',
+    'ppgl coils',
+    'pre-painted coil',
+    'prepainted coil',
+  ],
+  color_coated_sheet: [
+    'color coated sheet',
+    'color coated sheets',
+    'colour coated sheet',
+    'colour coated sheets',
+    'ppgi sheet',
+    'ppgi sheets',
+    'ppgl sheet',
+    'ppgl sheets',
+    'pre-painted sheet',
+    'prepainted sheet',
+    'profile roofing sheet',
+    'profile roofing sheets',
+    'roofing sheet',
+    'roofing sheets',
+    'corrugated sheet',
+    'corrugated sheets',
+    'profile sheet',
+    'profile sheets',
+    'roofing',
+    'color coated',
+    'colour coated',
+    'ppgi',
+  ],
+  galvalume_coil: [
+    'galvalume coil',
+    'galvalume coils',
+    'gl coil',
+    'gl coils',
+    'aluzinc coil',
+  ],
+  galvalume_sheet: [
+    'galvalume sheet',
+    'galvalume sheets',
+    'gl sheet',
+    'gl sheets',
+    'galvalume corrugation',
+    'corrugated sheet',
+    'galvalume',
+  ],
+  chequered_coil: [
+    'chequered coil',
+    'chequered coils',
+    'checkered coil',
+    'checkered coils',
+  ],
+  chequered_sheet: [
+    'chequered sheet',
+    'chequered sheets',
+    'checkered sheet',
+    'checkered sheets',
+    'chequered plate',
+    'chequered plates',
+    'checkered plate',
+    'checkered plates',
+    'chequered',
+    'checkered',
+  ],
+
+  // 2. Structural Steel
   ms_round_bar: [
     'round bar',
     'round bars',
@@ -175,20 +332,39 @@ const PRODUCT_FAMILIES = {
     'rods',
     'round',
   ],
-  ms_square_pipe: [
-    'square pipe',
-    'box pipe',
-    'shs',
-    'square tube',
-    'rectangular pipe',
-    'rhs',
-    'gp square pipe',
-    'hollow section',
-    'box tube',
-    'pipe',
-    'pipes',
-    'tube',
-    'tubes',
+  ms_flat_bar: [
+    'ms flat bar',
+    'flat bar',
+    'flat bars',
+    'ms flat',
+    'ms flats',
+    'flats',
+    'patti',
+    'ms patti',
+  ],
+  ms_square_bar: [
+    'ms square bar',
+    'square bar',
+    'square bars',
+    'sq bar',
+    'sq bars',
+    'ms sq bar',
+    'square rod',
+    'square rods',
+  ],
+  tmt_bar: [
+    'tmt bar',
+    'tmt bars',
+    'tmt rebar',
+    'rebars',
+    'tmt',
+    'fe 500',
+    'fe 500d',
+    'fe 550',
+    'fe 550d',
+    'fe 600',
+    'sariya',
+    'saria',
   ],
   ms_angle: [
     'angle',
@@ -200,6 +376,17 @@ const PRODUCT_FAMILIES = {
     'l-angle',
     'isa',
     'patra angle',
+  ],
+  ms_channel: [
+    'channel',
+    'channels',
+    'ms channel',
+    'ms channels',
+    'ismc',
+    'c-channel',
+    'u-channel',
+    'gate channel',
+    'shutter channel',
   ],
   ms_beam: [
     'beam',
@@ -223,45 +410,81 @@ const PRODUCT_FAMILIES = {
     'column',
     'columns',
   ],
-  ms_channel: [
-    'channel',
-    'channels',
-    'ms channel',
-    'ms channels',
-    'ismc',
-    'c-channel',
-    'u-channel',
-    'gate channel',
-    'shutter channel',
+
+  // 3. Pipes and Tubes
+  ms_round_pipe: [
+    'round pipe',
+    'round pipes',
+    'ms round pipe',
+    'ms pipe',
+    'ms pipes',
+    'erw pipe',
+    'seamless pipe',
+    'gi pipe',
+    'round tube',
+    'ms tube',
+    'pipe',
+    'pipes',
+    'tube',
+    'tubes',
   ],
-  ms_plate: [
-    'ms plate',
-    'ms plates',
-    'plate',
-    'plates',
-    'chequered plate',
-    'checkered plate',
-    'chequered',
-    'checkered',
-    'boiler plate',
-    'bq plate',
-    'hardox',
-    'e350 plate',
+  ms_square_pipe: [
+    'square pipe',
+    'square pipes',
+    'box pipe',
+    'shs',
+    'square tube',
+    'ms square pipe',
+    'hollow section',
+    'box tube',
+    'box section',
   ],
-  ms_sheet: ['ms sheet', 'ms sheets', 'sheet', 'sheets', 'patra'],
-  tmt_bar: [
-    'tmt bar',
-    'tmt bars',
-    'tmt rebar',
-    'rebars',
-    'tmt',
-    'fe 500',
-    'fe 500d',
-    'fe 550',
-    'fe 550d',
-    'fe 600',
-    'sariya',
-    'saria',
+  ms_rectangular_tube: [
+    'rectangular tube',
+    'rectangular pipe',
+    'rhs',
+    'ms rectangular tube',
+    'rectangular tubing',
+  ],
+
+  // 4. Value Added Products
+  slotted_angle: [
+    'slotted angle',
+    'slotted angles',
+    'slotted rack',
+    'slotted racks',
+    'slotted',
+  ],
+  solar_mounting_structure: [
+    'solar mounting structure',
+    'solar structure',
+    'solar mounting',
+    'z purlin',
+    'c purlin',
+    'hat section',
+    'solar',
+  ],
+  cable_tray_perforated: [
+    'cable tray – perforated',
+    'cable tray - perforated',
+    'cable tray perforated',
+    'perforated cable tray',
+    'perforated tray',
+  ],
+  cable_tray_ladder: [
+    'cable tray – ladder',
+    'cable tray - ladder',
+    'cable tray ladder',
+    'ladder cable tray',
+    'ladder tray',
+  ],
+  gi_earthing_strip: [
+    'gi earthing strip',
+    'earthing strip',
+    'earthing patti',
+    'hot-dip galvanized steel strip',
+    'gi earthing',
+    'earthing',
   ],
 };
 
@@ -2639,64 +2862,141 @@ function parseSingleItemChunk(chunk) {
   const cleanChunk = chunk.trim();
   if (!cleanChunk) return null;
 
-  // 1. Identify product
-  const lower = cleanChunk.toLowerCase();
+  // 1. Identify product using master catalog normalizer first
   let pName = null;
-
-  if (
-    /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
-      lower,
-    )
-  ) {
-    pName = 'HRPO Coil';
-  } else if (
-    /\b(cr\s*sheet|cold\s*rolled\s*sheet|crca\s*sheet)\b/i.test(lower)
-  ) {
-    pName = 'CR Sheet';
-  } else if (
-    /\b(cr\s*coil|cold\s*rolled\s*coil|crca\s*coil|crca|cr\s*slit)\b/i.test(
-      lower,
-    )
-  ) {
-    pName = 'CR Coil';
-  } else if (/\b(hr\s*sheet|hot\s*rolled\s*sheet)\b/i.test(lower)) {
-    pName = 'HR Sheet';
-  } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(lower)) {
-    pName = 'HR Coil';
-  } else if (/\b(chequered|checkered)\s*(?:plate|sheet)?\b/i.test(lower)) {
-    pName = 'Chequered Plate';
-  } else if (
-    /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i.test(lower)
-  ) {
-    pName = 'MS Plate';
-  } else if (/\b(ms\s*sheet)\b/i.test(lower)) {
-    pName = 'MS Sheet';
-  } else if (
-    /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod|ms\s*rod)\b/i.test(lower)
-  ) {
-    pName = 'MS Round Bar';
-  } else if (
-    /\b(square\s*pipe|box\s*pipe|shs|square\s*tube|rectangular\s*pipe|rhs|gp\s*pipe)\b/i.test(
-      lower,
-    )
-  ) {
-    pName = 'MS Square Pipe';
-  } else if (
-    /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle|isa)\b/i.test(lower)
-  ) {
-    pName = 'MS Angle';
-  } else if (
-    /\b(structural\s*beams?|beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb|uc|ub)\b/i.test(
-      lower,
-    )
-  ) {
-    pName = 'MS Beam';
-  } else if (/\b(channel|channels|ismc|c-channel|u-channel)\b/i.test(lower)) {
-    pName = 'MS Channel';
-  } else if (
-    /\b(tmt\s*bar|tmt|sariya|rebar|fe\s*500|fe\s*550)\b/i.test(lower)
-  ) {
-    pName = 'TMT Bar';
+  let detectedHsn = null;
+  const norm = normalizeProductToCatalog(cleanChunk);
+  if (norm.isValid && norm.catalogName) {
+    pName = norm.catalogName;
+    detectedHsn = norm.hsnCode;
+  } else {
+    // Regex fallbacks for all catalog categories
+    const lower = cleanChunk.toLowerCase();
+    if (/\b(hrpo\s*sheet|pickled\s*(?:&|and)\s*oiled\s*sheet)\b/i.test(lower)) {
+      pName = 'HRPO Sheet';
+    } else if (
+      /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'HRPO Coil';
+    } else if (
+      /\b(gp\s*sheet|galvanized\s*plain\s*sheet|gi\s*sheet)\b/i.test(lower)
+    ) {
+      pName = 'GP Sheet';
+    } else if (
+      /\b(gp\s*coil|galvanized\s*plain\s*coil|gi\s*coil)\b/i.test(lower)
+    ) {
+      pName = 'GP Coil';
+    } else if (/\b(galvalume\s*sheet|gl\s*sheet)\b/i.test(lower)) {
+      pName = 'Galvalume Sheet';
+    } else if (/\b(galvalume\s*coil|gl\s*coil)\b/i.test(lower)) {
+      pName = 'Galvalume Coil';
+    } else if (
+      /\b(color\s*coated\s*sheet|colour\s*coated\s*sheet|ppgi\s*sheet|ppgl\s*sheet|pre-?painted\s*sheet|profile\s*roofing\s*sheet|roofing\s*sheet|corrugated\s*sheet|profile\s*sheet)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'Color Coated Sheet';
+      detectedHsn = '72107000';
+    } else if (
+      /\b(color\s*coated\s*coil|colour\s*coated\s*coil|ppgi\s*coil|ppgl\s*coil|pre-?painted\s*coil)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'Color Coated Coil';
+      detectedHsn = '72107000';
+    } else if (
+      /\b(cr\s*sheet|cold\s*rolled\s*sheet|crca\s*sheet)\b/i.test(lower)
+    ) {
+      pName = 'CR Sheet';
+    } else if (
+      /\b(cr\s*coil|cold\s*rolled\s*coil|crca\s*coil|crca|cr\s*slit)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'CR Coil';
+    } else if (/\b(hr\s*plate|hot\s*rolled\s*plate)\b/i.test(lower)) {
+      pName = 'HR Plate';
+    } else if (/\b(hr\s*sheet|hot\s*rolled\s*sheet)\b/i.test(lower)) {
+      pName = 'HR Sheet';
+    } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(lower)) {
+      pName = 'HR Coil';
+    } else if (/\b(chequered\s*coil|checkered\s*coil)\b/i.test(lower)) {
+      pName = 'Chequered Coil';
+    } else if (/\b(chequered|checkered)\s*(?:plate|sheet)?\b/i.test(lower)) {
+      pName = 'Chequered Sheet';
+    } else if (
+      /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i.test(lower)
+    ) {
+      pName = 'HR Plate';
+    } else if (/\b(ms\s*sheet)\b/i.test(lower)) {
+      pName = 'HR Sheet';
+    } else if (/\b(flat\s*bar|ms\s*flat|patti|flats)\b/i.test(lower)) {
+      pName = 'MS Flat Bar';
+    } else if (/\b(square\s*bar|ms\s*square\s*bar|sq\s*bar)\b/i.test(lower)) {
+      pName = 'MS Square Bar';
+    } else if (
+      /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod|ms\s*rod)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'MS Round Bar';
+    } else if (/\b(rectangular\s*tube|rectangular\s*pipe|rhs)\b/i.test(lower)) {
+      pName = 'MS Rectangular Tube';
+    } else if (
+      /\b(square\s*pipe|box\s*pipe|shs|square\s*tube)\b/i.test(lower)
+    ) {
+      pName = 'MS Square Pipe';
+    } else if (
+      /\b(round\s*pipe|ms\s*pipe|erw\s*pipe|pipe|tube)\b/i.test(lower)
+    ) {
+      pName = 'MS Round Pipe';
+    } else if (/\b(slotted\s*angle|slotted)\b/i.test(lower)) {
+      pName = 'Slotted Angle';
+    } else if (
+      /\b(solar\s*mounting\s*structure|solar|z\s*purlin|hat\s*section)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'Solar Mounting Structure';
+    } else if (
+      /\b(cable\s*tray\s*(?:–|-)?\s*perforated|perforated\s*cable\s*tray)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'Cable Tray – Perforated';
+    } else if (
+      /\b(cable\s*tray\s*(?:–|-)?\s*ladder|ladder\s*cable\s*tray)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'Cable Tray – Ladder';
+    } else if (
+      /\b(gi\s*earthing\s*strip|earthing\s*strip|earthing\s*patti)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'GI Earthing Strip';
+    } else if (
+      /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle|isa)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'MS Angle';
+    } else if (
+      /\b(structural\s*beams?|beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb|uc|ub)\b/i.test(
+        lower,
+      )
+    ) {
+      pName = 'MS Beam';
+    } else if (/\b(channel|channels|ismc|c-channel|u-channel)\b/i.test(lower)) {
+      pName = 'MS Channel';
+    } else if (
+      /\b(tmt\s*bar|tmt|sariya|rebar|fe\s*500|fe\s*550)\b/i.test(lower)
+    ) {
+      pName = 'TMT Bar';
+    }
   }
 
   if (!pName) return null;
@@ -2791,6 +3091,7 @@ function parseSingleItemChunk(chunk) {
     quantity_mt: qtyMt,
     unit: unit,
     rate_per_mt: rate,
+    hsn_code: detectedHsn || detectHsnCode(pName, specDim) || null,
   };
 }
 
@@ -3416,67 +3717,152 @@ async function processSalesMessage(
         }
 
         let pReq = null;
+        let pDetectedHsn = null;
         const structMat = textRaw.match(
           /(?:material|product(?:\s+name)?|product(?:\s+description)?|item)\s*[:=-]\s*([^\n\r]+)/i,
         );
         if (structMat) {
           const mVal = structMat[1].trim();
+          const normMat = normalizeProductToCatalog(mVal);
+          const baseName =
+            normMat.isValid && normMat.catalogName ? normMat.catalogName : mVal;
+          pDetectedHsn = normMat.hsnCode || null;
           pReq =
-            specDim && !mVal.toLowerCase().includes(specDim.toLowerCase())
-              ? `${mVal} ${specDim}`
-              : mVal;
-        } else if (
-          /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
-            textLower,
-          )
-        ) {
-          pReq = 'HRPO Coil';
-        } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLower)) {
-          pReq = 'HR Coil';
-        } else if (
-          /\b(cr\s*coil|cold\s*rolled\s*coil|crca)\b/i.test(textLower)
-        ) {
-          pReq = 'CR Coil';
-        } else if (/\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i.test(textLower)) {
-          pReq = 'CR Sheet';
-        } else if (
-          /\b(chequered|checkered)\s*(?:plate|sheet)?\b/i.test(textLower)
-        ) {
-          pReq = 'Chequered Plate';
-        } else if (
-          /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i.test(
-            textLower,
-          )
-        ) {
-          pReq = 'MS Plate';
-        } else if (/\b(ms\s*sheet)\b/i.test(textLower)) {
-          pReq = 'MS Sheet';
-        } else if (
-          /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod)\b/i.test(textLower)
-        ) {
-          pReq = 'MS Round Bar';
-        } else if (
-          /\b(square\s*pipe|box\s*pipe|shs|square\s*tube|rectangular\s*pipe|rhs)\b/i.test(
-            textLower,
-          )
-        ) {
-          pReq = 'MS Square Pipe';
-        } else if (
-          /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle)\b/i.test(
-            textLower,
-          )
-        ) {
-          pReq = 'MS Angle';
-        } else if (
-          /\b(beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb)\b/i.test(
-            textLower,
-          )
-        ) {
-          pReq = 'MS Beam';
-        } else if (/\b(channel|channels|ismc|c-channel)\b/i.test(textLower)) {
-          pReq = 'MS Channel';
-        } else if (/\b(tmt\s*bar|tmt|sariya|rebar)\b/i.test(textLower)) {
-          pReq = 'TMT Bar';
+            specDim && !baseName.toLowerCase().includes(specDim.toLowerCase())
+              ? `${baseName} ${specDim}`
+              : baseName;
+        } else {
+          const normText = normalizeProductToCatalog(textRaw);
+          if (normText.isValid && normText.catalogName) {
+            pReq = normText.catalogName;
+            pDetectedHsn = normText.hsnCode || null;
+          } else if (
+            /\b(hrpo\s*sheet|pickled\s*(?:&|and)\s*oiled\s*sheet)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'HRPO Sheet';
+          } else if (
+            /\b(hrpo|hr\s*pickled|pickled\s*(?:&|and)\s*oiled|pickled\s*coil|pickled)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'HRPO Coil';
+          } else if (/\b(hr\s*coil|hot\s*rolled\s*coil)\b/i.test(textLower)) {
+            pReq = 'HR Coil';
+          } else if (/\b(hr\s*sheet|hot\s*rolled\s*sheet)\b/i.test(textLower)) {
+            pReq = 'HR Sheet';
+          } else if (/\b(hr\s*plate|hot\s*rolled\s*plate)\b/i.test(textLower)) {
+            pReq = 'HR Plate';
+          } else if (
+            /\b(cr\s*coil|cold\s*rolled\s*coil|crca)\b/i.test(textLower)
+          ) {
+            pReq = 'CR Coil';
+          } else if (
+            /\b(cr\s*sheet|cold\s*rolled\s*sheet)\b/i.test(textLower)
+          ) {
+            pReq = 'CR Sheet';
+          } else if (
+            /\b(gp\s*sheet|galvanized\s*plain\s*sheet|gi\s*sheet)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'GP Sheet';
+          } else if (
+            /\b(gp\s*coil|galvanized\s*plain\s*coil|gi\s*coil)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'GP Coil';
+          } else if (/\b(galvalume\s*sheet|gl\s*sheet)\b/i.test(textLower)) {
+            pReq = 'Galvalume Sheet';
+          } else if (/\b(galvalume\s*coil|gl\s*coil)\b/i.test(textLower)) {
+            pReq = 'Galvalume Coil';
+          } else if (
+            /\b(color\s*coated\s*sheet|colour\s*coated\s*sheet|ppgi\s*sheet)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'Color Coated Sheet';
+          } else if (
+            /\b(color\s*coated\s*coil|colour\s*coated\s*coil|ppgi\s*coil)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'Color Coated Coil';
+          } else if (
+            /\b(chequered|checkered)\s*(?:plate|sheet)?\b/i.test(textLower)
+          ) {
+            pReq = 'Chequered Plate';
+          } else if (
+            /\b(ms\s*plate|plates|bq\s*plate|boiler\s*plate|hardox)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'MS Plate';
+          } else if (/\b(ms\s*sheet)\b/i.test(textLower)) {
+            pReq = 'MS Sheet';
+          } else if (
+            /\b(round\s*bar|bright\s*bar|en8|en19|round\s*rod)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'MS Round Bar';
+          } else if (/\b(square\s*bar|ms\s*square)\b/i.test(textLower)) {
+            pReq = 'MS Square Bar';
+          } else if (/\b(flat\s*bar|patti|ms\s*flat)\b/i.test(textLower)) {
+            pReq = 'MS Flat';
+          } else if (
+            /\b(square\s*pipe|box\s*pipe|shs|square\s*tube)\b/i.test(textLower)
+          ) {
+            pReq = 'MS Square Pipe';
+          } else if (
+            /\b(rectangular\s*pipe|rhs|rectangular\s*tube)\b/i.test(textLower)
+          ) {
+            pReq = 'MS Rectangular Pipe';
+          } else if (
+            /\b(round\s*pipe|gi\s*pipe|ms\s*pipe|circular\s*tube)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'MS Round Pipe';
+          } else if (
+            /\b(angle|angles|equal\s*angle|unequal\s*angle|l-angle)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'MS Angle';
+          } else if (
+            /\b(beam|beams|ismb|joist|i-beam|h-beam|girder|npb|wpb)\b/i.test(
+              textLower,
+            )
+          ) {
+            pReq = 'MS Beam';
+          } else if (/\b(channel|channels|ismc|c-channel)\b/i.test(textLower)) {
+            pReq = 'MS Channel';
+          } else if (/\b(tmt\s*bar|tmt|sariya|rebar)\b/i.test(textLower)) {
+            pReq = 'TMT Bar';
+          } else if (/\b(wire\s*rod|binding\s*wire)\b/i.test(textLower)) {
+            pReq = 'Wire Rod';
+          } else if (/\b(slotted\s*angle)\b/i.test(textLower)) {
+            pReq = 'Slotted Angle';
+          } else if (
+            /\b(roofing\s*sheet|corrugated\s*sheet)\b/i.test(textLower)
+          ) {
+            pReq = 'Profile Roofing Sheet';
+          } else if (/\b(decking\s*sheet|floor\s*deck)\b/i.test(textLower)) {
+            pReq = 'Decking Sheet';
+          } else if (/\b(c\s*purlin|z\s*purlin|purlin)\b/i.test(textLower)) {
+            pReq = 'C & Z Purlin';
+          } else if (/\b(seamless\s*pipe)\b/i.test(textLower)) {
+            pReq = 'Seamless Pipe';
+          } else if (/\b(erw\s*pipe)\b/i.test(textLower)) {
+            pReq = 'ERW Pipe';
+          } else if (/\b(flange)\b/i.test(textLower)) {
+            pReq = 'Flanges';
+          } else if (/\b(earthing\s*strip)\b/i.test(textLower)) {
+            pReq = 'GI Earthing Strip';
+          }
         }
 
         let ruleRate = null;
@@ -3538,6 +3924,7 @@ async function processSalesMessage(
               quantity: qty,
               unit: unit,
               rate_per_mt: ruleRate,
+              hsn_code: pDetectedHsn || detectHsnCode(pReq, specDim) || null,
             },
           ];
         }
@@ -3796,6 +4183,7 @@ async function processSalesMessage(
             qtyMt,
             rate: lineCalc.rate || rate,
             itemAmount: lineCalc.amount,
+            hsn_code: item.hsn_code || detectHsnCode(pName, rawDim) || null,
           });
         } else {
           processedItems.push({
@@ -3806,6 +4194,7 @@ async function processSalesMessage(
             qtyMt,
             rate: rate || null,
             itemAmount: null,
+            hsn_code: item.hsn_code || detectHsnCode(pName, rawDim) || null,
           });
         }
       }
@@ -4490,6 +4879,7 @@ async function processSalesMessage(
               unit: unit,
               rate: rate > 0 ? rate : null,
               amount: amount > 0 ? amount : null,
+              hsn_code: newItem.hsn_code || detectHsnCode(sku, dim) || null,
             })
             .select();
 
@@ -5274,6 +5664,8 @@ async function processSalesMessage(
               unit: 'MT',
               rate: pItem.rate > 0 ? pItem.rate : null,
               amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
+              hsn_code:
+                pItem.hsn_code || detectHsnCode(pItem.pName, finalDim) || null,
               created_at: new Date().toISOString(),
             })
             .select()
@@ -5362,6 +5754,8 @@ async function processSalesMessage(
               unit: 'MT',
               rate: pItem.rate > 0 ? pItem.rate : null,
               amount: pItem.itemAmount > 0 ? pItem.itemAmount : null,
+              hsn_code:
+                pItem.hsn_code || detectHsnCode(pItem.pName, finalDim) || null,
               created_at: new Date().toISOString(),
             })
             .select()

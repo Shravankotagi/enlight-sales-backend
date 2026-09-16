@@ -12,11 +12,11 @@ export interface LogComplaintArgs {
 export const logComplaintTool: ChatbotTool<LogComplaintArgs, any> = {
   name: 'log_complaint',
   description:
-    'Use this tool when the user reports a customer complaint about quality, defect, rust, damage, quantity shortage, delivery, or billing, or when a complaint is resolved (e.g. "Complaint for ABC Steel resolved - replacement delivered"). Logs to Customer Complaints Card (KRA 7 & 8) and triggers Zoho Bigin sync.',
+    'Use this tool when the user reports a customer complaint about quality, defect, rust, damage, quantity shortage, delivery, or billing, when a complaint is resolved (e.g. "Complaint for ABC Steel resolved - replacement delivered"), when reopening a resolved complaint (e.g. "Reopen the Bhushan Steel complaint on PO 7788 — the steel casting issue has recurred"), or when updating complaint fields (e.g. "Change the complaint type for Reliance Industries\' Steel Material complaint to Specification Mismatch"). Logs to Customer Complaints Card (KRA 7 & 8) and triggers Zoho Bigin sync.',
   declaration: {
     name: 'log_complaint',
     description:
-      'Logs a customer quality complaint or records a complaint resolution with resolution notes and SLA status.',
+      'Logs a customer quality complaint, records a complaint resolution with resolution notes and SLA status, reopens a resolved complaint, or updates existing complaint fields (e.g. complaint type, product, notes).',
     parameters: {
       type: 'OBJECT',
       properties: {
