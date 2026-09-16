@@ -2641,13 +2641,19 @@ export class KraService {
           /\[(?:Follow-?Up-?Date|DueDate):\s*([^\]]+)\]/i,
         )?.[1] ||
         null;
+      const tagStatus = rawRemarks
+        .match(/\[(?:Follow-?Up-?Status):\s*([^\]]+)\]/i)?.[1]
+        ?.toLowerCase()
+        ?.trim();
       const followUpStatus =
-        v.follow_up_status ||
-        rawRemarks
-          .match(/\[(?:Follow-?Up-?Status):\s*([^\]]+)\]/i)?.[1]
-          ?.toLowerCase() ||
-        (followMatch ? 'pending' : null);
-      const followUpCompletedAt = v.follow_up_completed_at || null;
+        v.follow_up_status === 'completed' || tagStatus === 'completed'
+          ? 'completed'
+          : v.follow_up_status || tagStatus || (followMatch ? 'pending' : null);
+      const followUpCompletedAt =
+        v.follow_up_completed_at ||
+        (followUpStatus === 'completed'
+          ? v.visited_at || new Date().toISOString()
+          : null);
 
       const cleanRemarks =
         rawRemarks
@@ -2912,18 +2918,33 @@ export class KraService {
     data: any,
     salespersonPhones?: string[] | string,
   ) {
+    // 1. Fetch existing visit record to preserve remarks and fields during partial updates
+    let existingVisit: any = null;
+    try {
+      const { data: found } = await this.supabase
+        .from('customer_visits')
+        .select('*')
+        .eq('id', id)
+        .single();
+      existingVisit = found;
+    } catch (fetchErr: any) {
+      this.logger.warn(
+        `Could not fetch existing visit ${id} prior to update: ${fetchErr?.message}`,
+      );
+    }
+
     const follow_up_action =
       data.follow_up_action !== undefined
         ? data.follow_up_action
         : data.followup !== undefined
           ? data.followup
-          : undefined;
+          : existingVisit?.follow_up_action;
     const follow_up_date =
       data.follow_up_date !== undefined
         ? data.follow_up_date
         : data.followup_date !== undefined
           ? data.followup_date
-          : undefined;
+          : existingVisit?.follow_up_date;
     const follow_up_status =
       data.follow_up_status !== undefined
         ? data.follow_up_status
@@ -2934,36 +2955,101 @@ export class KraService {
       data.follow_up_completed_at !== undefined
         ? data.follow_up_completed_at
         : follow_up_status === 'completed'
-          ? new Date().toISOString()
+          ? existingVisit?.follow_up_completed_at || new Date().toISOString()
           : follow_up_status === 'pending'
             ? null
             : undefined;
 
-    const remarksParts: string[] = [];
-    if (data.outcome) {
-      remarksParts.push(
-        `[Outcome: ${data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1)}]`,
-      );
-    }
-    if (data.location || data.city) {
-      remarksParts.push(`[Location: ${data.location || data.city}]`);
-    }
-    if (follow_up_action) {
-      remarksParts.push(`[FollowUp: ${follow_up_action}]`);
-    }
-    if (follow_up_date) {
-      remarksParts.push(`[FollowUpDate: ${follow_up_date}]`);
-    }
-    if (follow_up_status) {
-      remarksParts.push(`[FollowUpStatus: ${follow_up_status}]`);
-    }
-    if (data.material_requirement || data.requirement) {
-      remarksParts.push(
-        `[Requirement: ${data.material_requirement || data.requirement}]`,
-      );
-    }
-    if (data.remarks) {
-      remarksParts.push(data.remarks);
+    let computedRemarks: string | undefined = undefined;
+
+    if (data.remarks !== undefined || data.raw_remarks !== undefined) {
+      // Full remarks update (e.g. from Edit modal)
+      const remarksParts: string[] = [];
+      if (data.outcome) {
+        remarksParts.push(
+          `[Outcome: ${data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1)}]`,
+        );
+      }
+      if (data.location || data.city) {
+        remarksParts.push(`[Location: ${data.location || data.city}]`);
+      }
+      if (follow_up_action) {
+        remarksParts.push(`[FollowUp: ${follow_up_action}]`);
+      }
+      if (follow_up_date) {
+        remarksParts.push(`[FollowUpDate: ${follow_up_date}]`);
+      }
+      if (follow_up_status) {
+        remarksParts.push(`[FollowUpStatus: ${follow_up_status}]`);
+      }
+      if (data.material_requirement || data.requirement) {
+        remarksParts.push(
+          `[Requirement: ${data.material_requirement || data.requirement}]`,
+        );
+      }
+      const userRem = (data.remarks || data.raw_remarks || '').trim();
+      if (userRem) {
+        remarksParts.push(userRem);
+      }
+      computedRemarks = remarksParts.join(' ');
+    } else if (
+      follow_up_status !== undefined ||
+      follow_up_action !== undefined ||
+      follow_up_date !== undefined ||
+      data.outcome !== undefined
+    ) {
+      // Partial update (e.g. toggle follow-up status): patch tags inside existing remarks without erasing text
+      let patched = (existingVisit?.remarks || '').trim();
+
+      if (follow_up_status !== undefined) {
+        if (/\[Follow-?Up-?Status:\s*[^\]]+\]/i.test(patched)) {
+          patched = patched.replace(
+            /\[Follow-?Up-?Status:\s*[^\]]+\]/gi,
+            `[FollowUpStatus: ${follow_up_status}]`,
+          );
+        } else {
+          patched = `[FollowUpStatus: ${follow_up_status}] ${patched}`.trim();
+        }
+      }
+
+      if (follow_up_action !== undefined && follow_up_action) {
+        if (
+          /\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i.test(patched)
+        ) {
+          patched = patched.replace(
+            /\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/gi,
+            `[FollowUp: ${follow_up_action}]`,
+          );
+        } else {
+          patched = `[FollowUp: ${follow_up_action}] ${patched}`.trim();
+        }
+      }
+
+      if (follow_up_date !== undefined && follow_up_date) {
+        if (/\[(?:Follow-?Up-?Date|DueDate):\s*([^\]]+)\]/i.test(patched)) {
+          patched = patched.replace(
+            /\[(?:Follow-?Up-?Date|DueDate):\s*([^\]]+)\]/gi,
+            `[FollowUpDate: ${follow_up_date}]`,
+          );
+        } else {
+          patched = `[FollowUpDate: ${follow_up_date}] ${patched}`.trim();
+        }
+      }
+
+      if (data.outcome) {
+        const outFmt =
+          data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1);
+        if (/\[Outcome:\s*[^\]]+\]/i.test(patched)) {
+          patched = patched.replace(
+            /\[Outcome:\s*([^\]]+)\]/gi,
+            `[Outcome: ${outFmt}]`,
+          );
+        } else {
+          patched = `[Outcome: ${outFmt}] ${patched}`.trim();
+        }
+      }
+
+      computedRemarks = patched;
     }
 
     const payload: any = {};
@@ -2979,7 +3065,7 @@ export class KraService {
     )
       payload.customer_address =
         data.location || data.city || data.customer_address || '';
-    if (remarksParts.length > 0) payload.remarks = remarksParts.join(' ');
+    if (computedRemarks !== undefined) payload.remarks = computedRemarks;
     if (data.visited_at) payload.visited_at = data.visited_at;
     if (follow_up_action !== undefined)
       payload.follow_up_action = follow_up_action;
@@ -3035,12 +3121,13 @@ export class KraService {
     }
 
     // Sync status change to followup_tasks
-    if (
-      follow_up_status !== undefined &&
-      (updated?.customer_name || data.customer_name)
-    ) {
+    const targetCustomerName =
+      data.customer_name ||
+      updated?.customer_name ||
+      existingVisit?.customer_name;
+
+    if (follow_up_status !== undefined && targetCustomerName) {
       try {
-        const cName = updated?.customer_name || data.customer_name;
         await this.supabase
           .from('followup_tasks')
           .update({
@@ -3050,7 +3137,7 @@ export class KraService {
                 ? new Date().toISOString()
                 : null,
           })
-          .ilike('customer_name', cName)
+          .ilike('customer_name', targetCustomerName)
           .eq('task_type', 'visit_followup');
       } catch (fErr: any) {
         this.logger.warn(
@@ -3060,7 +3147,7 @@ export class KraService {
       }
     }
 
-    return updated;
+    return updated || existingVisit;
   }
 
   async deleteVisit(id: string, salespersonPhones?: string[] | string) {

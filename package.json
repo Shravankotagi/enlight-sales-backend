@@ -29,6 +29,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:rbac": "ts-node -r tsconfig-paths/register src/scripts/test-rbac.ts",
     "test:guardrails": "ts-node -r tsconfig-paths/register src/scripts/test-guardrails.ts",
+    "db:migrate:visits": "ts-node -r tsconfig-paths/register src/scripts/add-visit-followup-columns.ts",
     "compodoc": "npx @compodoc/compodoc -c compodoc.json",
     "compodoc:serve": "npx @compodoc/compodoc -c compodoc.json -s -w",
     "compodoc:generate": "npx @compodoc/compodoc -c compodoc.json",
