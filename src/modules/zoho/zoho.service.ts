@@ -97,6 +97,13 @@ export class ZohoService implements OnModuleInit {
     );
   }
 
+  public isSyncPaused(): boolean {
+    return (
+      process.env.ZOHO_SYNC_PAUSED === 'true' ||
+      process.env.ZOHO_AUTO_SYNC_ENABLED === 'false'
+    );
+  }
+
   private isRateLimited(): boolean {
     return Date.now() < this.rateLimitCooldownUntil;
   }
@@ -166,6 +173,12 @@ export class ZohoService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    if (this.isSyncPaused()) {
+      this.logger.log(
+        'Zoho Bigin Auto-Sync is PAUSED by configuration (ZOHO_SYNC_PAUSED=true).',
+      );
+      return;
+    }
     if (!this.hasZohoCredentials()) {
       this.logger.log(
         'Zoho Bigin credentials not configured. Auto-sync disabled.',
@@ -262,6 +275,19 @@ export class ZohoService implements OnModuleInit {
     dealsImported: number;
     errors: string[];
   }> {
+    if (this.isSyncPaused()) {
+      this.logger.log(
+        '[ZohoSync] Pull sync skipped because Zoho sync is paused.',
+      );
+      return {
+        success: true,
+        usersImported: 0,
+        companiesImported: 0,
+        contactsImported: 0,
+        dealsImported: 0,
+        errors: ['Zoho sync is currently paused by configuration.'],
+      };
+    }
     const baseUrl = 'https://www.zohoapis.in/bigin/v1';
     const headers = await this.getAuthHeaders();
     const results = {
@@ -1006,7 +1032,21 @@ export class ZohoService implements OnModuleInit {
     contactsCreated: number;
     dealsSynced: number;
     notesAttached: number;
+    errors?: string[];
   }> {
+    if (this.isSyncPaused()) {
+      this.logger.log(
+        '[ZohoSync] Full re-sync skipped because Zoho sync is paused.',
+      );
+      return {
+        success: true,
+        companiesCreated: 0,
+        contactsCreated: 0,
+        dealsSynced: 0,
+        notesAttached: 0,
+        errors: ['Zoho sync is currently paused by configuration.'],
+      };
+    }
     const token = await this.refreshAccessToken();
     const headers = {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -1202,6 +1242,12 @@ export class ZohoService implements OnModuleInit {
   // ── Recurring Auto-Sync Engine (Runs every 5 minutes) ──────────────────────
   async autoSyncRoutine(): Promise<void> {
     try {
+      if (this.isSyncPaused()) {
+        this.logger.log(
+          '[ZohoService] Auto-sync skipped (Zoho sync is paused).',
+        );
+        return;
+      }
       if (!this.hasZohoCredentials() || this.isRateLimited()) {
         return;
       }
