@@ -458,6 +458,48 @@ export class KraService {
           ? Math.round((wonDealsCount / totalDealsCount) * 100)
           : 0;
 
+      // KRA 2: New Customer Acquisition
+      // 1. Customers created in recurring_customers during period
+      const periodNewCustomers = recurring.filter((c: any) => {
+        if (!c.created_at) return false;
+        if (isAllTime) return true;
+        return c.created_at >= start && c.created_at <= end;
+      });
+
+      // 2. Chatbot KRA 2 logs
+      const periodKra2Logs = kraLogs.filter(
+        (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
+      );
+
+      // 3. Collect unique customer identifiers
+      const newCustomerSet = new Set<string>();
+      periodNewCustomers.forEach((c: any) => {
+        const name = (c.customer_name || '').trim().toLowerCase();
+        if (name) newCustomerSet.add(name);
+      });
+      periodKra2Logs.forEach((l: any) => {
+        const name = (l.customer_name || '').trim().toLowerCase();
+        if (name) newCustomerSet.add(name);
+      });
+
+      // 4. Customers who won their first deal in this period
+      wonDeals.forEach((d: any) => {
+        const name = (d.customer_name || '').trim().toLowerCase();
+        if (name) {
+          const isPriorCustomer = recurring.some(
+            (c: any) =>
+              (c.customer_name || '').trim().toLowerCase() === name &&
+              c.created_at &&
+              c.created_at < start,
+          );
+          if (!isPriorCustomer) {
+            newCustomerSet.add(name);
+          }
+        }
+      });
+
+      const newCustomersCount = newCustomerSet.size;
+
       return {
         month: isAllTime ? 'all_time' : start,
         kra1: {
@@ -471,24 +513,9 @@ export class KraService {
         },
         kra2: {
           label: 'New Customer Acquisition',
-          count: new Set(
-            kraLogs
-              .filter(
-                (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
-              )
-              .map((l) => (l.customer_name || '').toLowerCase().trim()),
-          ).size,
+          count: newCustomersCount,
           target: 3,
-          status:
-            new Set(
-              kraLogs
-                .filter(
-                  (l) => l.kra_number === 2 && l.kra_type === 'new_customer',
-                )
-                .map((l) => (l.customer_name || '').toLowerCase().trim()),
-            ).size >= 3
-              ? 'achieved'
-              : 'in_progress',
+          status: newCustomersCount >= 3 ? 'achieved' : 'in_progress',
         },
         kra3: {
           label: 'Customer Retention',

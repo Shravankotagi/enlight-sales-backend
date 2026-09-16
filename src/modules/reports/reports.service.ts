@@ -274,6 +274,10 @@ export class ReportsService {
       let complaintsQ = this.supabase.from('complaints').select('*');
       let kraLogsQ = this.supabase.from('kra_logs').select('*');
       let paymentsQ = this.supabase.from('payment_tracking').select('*');
+      const recurringQ = this.supabase
+        .from('recurring_customers')
+        .select('*')
+        .eq('is_active', true);
 
       if (!isAllTime) {
         dealsQ = dealsQ.gte('created_at', start).lte('created_at', end);
@@ -291,12 +295,14 @@ export class ReportsService {
         complaintsResult,
         kraLogsResult,
         paymentsResult,
+        recurringResult,
       ] = await Promise.all([
         dealsQ,
         visitsQ,
         complaintsQ,
         kraLogsQ,
         paymentsQ,
+        recurringQ,
       ]);
 
       if (dealsResult.error) throw dealsResult.error;
@@ -310,6 +316,7 @@ export class ReportsService {
       const complaints = complaintsResult.data || [];
       const kraLogs = kraLogsResult.data || [];
       const payments = paymentsResult.data || [];
+      const recurring = recurringResult.data || [];
 
       // Fetch all employees from database
       const { data: employees } = await this.supabase
@@ -362,9 +369,30 @@ export class ReportsService {
           (sum, d) => sum + (d.total_amount || 0),
           0,
         );
-        const newCustomers = spKraLogs.filter(
-          (k) => k.kra_number === 2 && k.kra_type === 'new_customer',
-        ).length;
+        const spRecurringNew = recurring.filter((c: any) => {
+          if (!c.created_at) return false;
+          const repPhone = String(c.assigned_salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const currentPhone = String(phone).replace(/\D/g, '').slice(-10);
+          if (repPhone !== currentPhone) return false;
+          if (isAllTime) return true;
+          return c.created_at >= start && c.created_at <= end;
+        });
+
+        const newCustomerNames = new Set<string>();
+        spRecurringNew.forEach((c: any) => {
+          if (c.customer_name)
+            newCustomerNames.add(c.customer_name.trim().toLowerCase());
+        });
+        spKraLogs
+          .filter((k) => k.kra_number === 2 && k.kra_type === 'new_customer')
+          .forEach((k) => {
+            if (k.customer_name)
+              newCustomerNames.add(k.customer_name.trim().toLowerCase());
+          });
+
+        const newCustomers = newCustomerNames.size;
         const collectedPayments = spPayments.filter(
           (p) => p.status === 'collected',
         );
