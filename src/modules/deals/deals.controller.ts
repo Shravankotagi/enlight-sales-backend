@@ -168,7 +168,13 @@ export class DealsController {
   async updateStage(
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
-    @Body() body: { stage: string; lost_reason?: string },
+    @Body()
+    body: {
+      stage: string;
+      lost_reason?: string;
+      po_number?: string;
+      po_date?: string;
+    },
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
@@ -177,6 +183,8 @@ export class DealsController {
       body.stage,
       body.lost_reason,
       phones,
+      body.po_number,
+      body.po_date,
     );
   }
 

@@ -308,6 +308,8 @@ export class DealsService {
     stage: string,
     lostReason?: string,
     accessiblePhones?: string[] | null,
+    poNumber?: string,
+    poDate?: string,
   ) {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
@@ -334,6 +336,11 @@ export class DealsService {
         .toLowerCase()
         .trim();
       const targetStage = (stage || '').toLowerCase().trim();
+      const effectivePoNumber = (
+        poNumber ||
+        existingDeal.po_number ||
+        ''
+      ).trim();
 
       // Rule: Gated stage transitions:
       // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' without a PO.
@@ -342,7 +349,7 @@ export class DealsService {
           currentStage === 'review' ||
           !existingDeal.stage) &&
         targetStage === 'won' &&
-        !existingDeal.po_number
+        !effectivePoNumber
       ) {
         throw new BadRequestException(
           `Cannot mark deal as WON from '${currentStage}' stage without a Purchase Order (PO). The deal must first be Quoted or have PO details.`,
@@ -355,6 +362,12 @@ export class DealsService {
       }
       if (stage === 'won') {
         updateData.won_at = new Date().toISOString();
+        if (poNumber && poNumber.trim()) {
+          updateData.po_number = poNumber.trim();
+        }
+        if (poDate && poDate.trim()) {
+          updateData.po_date = poDate.trim();
+        }
       } else {
         updateData.won_at = null;
       }
