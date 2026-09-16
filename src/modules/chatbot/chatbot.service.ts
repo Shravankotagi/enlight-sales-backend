@@ -344,7 +344,7 @@ export class ChatbotService {
     await this.saveMessage(sessionId, 'user', messageText);
 
     // Step C: Active Multi-Turn Session Interception (Parity with WhatsApp Bot)
-    const callerPhone = caller.phone;
+    const callerPhone = caller.phone || '919619226169';
     if (callerPhone) {
       try {
         const {
@@ -853,6 +853,54 @@ export class ChatbotService {
             }
           }
         }
+
+        // Multi-turn Flow E: Pending Customer Visit Details Continuation
+        if (
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith('pending_visit_details|')
+        ) {
+          const parts = activeSession.last_intent.split('|');
+          const payloadJson = parts.slice(2).join('|');
+          const { safeParseJSON } = require('../../utils/jsonUtils');
+          const storedState = safeParseJSON(payloadJson, null);
+
+          if (storedState) {
+            const isCancel = /^(?:cancel|discard|abort|stop|exit)$/i.test(
+              messageText.trim(),
+            );
+            if (isCancel) {
+              await saveActiveSession(callerPhone, 'Unknown', 'general');
+              const cancelReply = `Visit logging for ${storedState.customer_name} cancelled.`;
+              await this.saveMessage(sessionId, 'assistant', cancelReply);
+              return { sessionId, reply: cancelReply };
+            }
+
+            const {
+              handlePendingVisitContinuation,
+            } = require('../../agents/visitAgent');
+            const continuationReply = await handlePendingVisitContinuation(
+              messageText,
+              callerPhone,
+              storedState,
+            );
+
+            if (continuationReply) {
+              const reply = this.cleanAssistantReply(continuationReply);
+              await this.saveMessage(sessionId, 'assistant', reply);
+
+              try {
+                const { addChatHistory } = require('../../core/memory');
+                await addChatHistory(callerPhone, messageText, reply, {
+                  customer_name: storedState.customer_name,
+                  action: 'visit_continuation',
+                });
+              } catch {}
+
+              return { sessionId, reply };
+            }
+          }
+        }
       } catch (sessionErr: any) {
         this.logger.warn(`Active session check error: ${sessionErr.message}`);
       }
@@ -942,7 +990,8 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       - Call 'log_customer_visit' whenever the user reports:
         * Visiting a customer factory, office, godown, or site (e.g. "Met Rajesh Sharma at ABC Steel, Mumbai today. Discussed HR coil requirement. Positive meeting, need to send rate quotation.", "Visited Supreme Steel today, met Mr. Rajesh, discussed 20 MT HR Plates requirement, positive outcome")
         * In-person meetings, market rounds, plant visits, or field inspections.
-      - This tool automatically records discussion remarks, person met, materials required, visit outcome, follow-up actions, and updates the customer profile.
+        * Providing missing visit details in a multi-turn conversation (e.g. "number is 9999966666", "phone 9876543210", "person met Suresh", "outcome positive").
+      - CRITICAL NEGATIVE CONSTRAINT: Never generate text claiming a customer visit has been logged ("Customer Visit Logged", "Updated Customer Visits Card!") on your own. You MUST call 'log_customer_visit' with the user's text!
       - STRICTLY NEVER call 'get_visits' when the user is reporting or logging a visit that took place! 'get_visits' is exclusively a read-only query tool for searching past visit history.
 
    C. Customer Complaints & Quality Rejections (Customer Complaints Card - KRA 7 & 8):

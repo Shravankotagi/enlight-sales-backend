@@ -2635,10 +2635,24 @@ export class KraService {
         !rawFollow.toLowerCase().trim().startsWith('no follow');
       const followMatch = isFollowValid ? rawFollow.trim() : null;
 
+      const followUpDate =
+        v.follow_up_date ||
+        rawRemarks.match(
+          /\[(?:Follow-?Up-?Date|DueDate):\s*([^\]]+)\]/i,
+        )?.[1] ||
+        null;
+      const followUpStatus =
+        v.follow_up_status ||
+        rawRemarks
+          .match(/\[(?:Follow-?Up-?Status):\s*([^\]]+)\]/i)?.[1]
+          ?.toLowerCase() ||
+        (followMatch ? 'pending' : null);
+      const followUpCompletedAt = v.follow_up_completed_at || null;
+
       const cleanRemarks =
         rawRemarks
           .replace(
-            /\[(?:Outcome|Location|Follow-?Up|Follow-?up\s*Action|Requirement|Requirements|Interests?):[^\]]*\]\s*/gi,
+            /\[(?:Outcome|Location|Follow-?Up|Follow-?up\s*Action|Follow-?Up-?Date|Follow-?Up-?Status|DueDate|Requirement|Requirements|Interests?):[^\]]*\]\s*/gi,
             '',
           )
           .replace(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*[^|\n]+/gi, '')
@@ -2698,6 +2712,12 @@ export class KraService {
         customer_address: loc,
         material_requirement: reqMatch,
         follow_up_action: followMatch,
+        follow_up_date: followUpDate,
+        follow_up_status: followUpStatus,
+        follow_up_completed_at: followUpCompletedAt,
+        requires_follow_up: Boolean(
+          followMatch && followUpStatus !== 'completed',
+        ),
         remarks: cleanRemarks,
         raw_remarks: rawRemarks,
         outcome,
@@ -2709,6 +2729,13 @@ export class KraService {
 
   async createVisit(data: any, salespersonPhone?: string) {
     const visited_at = data.visited_at || new Date().toISOString();
+    const follow_up_action = data.follow_up_action || data.followup || null;
+    const follow_up_date = data.follow_up_date || data.followup_date || null;
+    const follow_up_status =
+      data.follow_up_status || (follow_up_action ? 'pending' : null);
+    const follow_up_completed_at =
+      data.follow_up_completed_at ||
+      (follow_up_status === 'completed' ? new Date().toISOString() : null);
 
     const remarksParts: string[] = [];
     if (data.outcome)
@@ -2717,29 +2744,63 @@ export class KraService {
       );
     if (data.location || data.city)
       remarksParts.push(`[Location: ${data.location || data.city}]`);
-    if (data.follow_up_action || data.followup)
+    if (follow_up_action) remarksParts.push(`[FollowUp: ${follow_up_action}]`);
+    if (follow_up_date) remarksParts.push(`[FollowUpDate: ${follow_up_date}]`);
+    if (follow_up_status)
+      remarksParts.push(`[FollowUpStatus: ${follow_up_status}]`);
+    if (data.material_requirement || data.requirement)
       remarksParts.push(
-        `[FollowUp: ${data.follow_up_action || data.followup}]`,
+        `[Requirement: ${data.material_requirement || data.requirement}]`,
       );
     if (data.remarks) remarksParts.push(data.remarks);
 
-    const payload = {
+    const payload: any = {
       customer_name: data.customer_name,
       person_met: data.person_met || 'Contact Person',
       contact_no: data.contact_phone || data.contact_no || '',
-      customer_address: data.location || data.city || '',
+      customer_address:
+        data.location || data.city || data.customer_address || '',
       remarks: remarksParts.join(' '),
       visited_at,
       salesperson_phone: salespersonPhone || 'Web Admin',
+      follow_up_action,
+      follow_up_date,
+      follow_up_status,
+      follow_up_completed_at,
     };
 
-    const { data: created, error } = await this.supabase
+    let created: any;
+    const { data: inserted, error } = await this.supabase
       .from('customer_visits')
       .insert(payload)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      this.logger.warn(
+        `Direct customer_visits insert failed: ${error.message}. Retrying with base columns fallback.`,
+      );
+      const fallbackPayload: any = {
+        customer_name: payload.customer_name,
+        person_met: payload.person_met,
+        contact_no: payload.contact_no,
+        customer_address: payload.customer_address,
+        remarks: payload.remarks,
+        visited_at: payload.visited_at,
+        salesperson_phone: payload.salesperson_phone,
+      };
+      const { data: fallbackCreated, error: fallbackError } =
+        await this.supabase
+          .from('customer_visits')
+          .insert(fallbackPayload)
+          .select()
+          .single();
+
+      if (fallbackError) throw fallbackError;
+      created = fallbackCreated;
+    } else {
+      created = inserted;
+    }
 
     if (data.customer_name && data.customer_name.trim()) {
       try {
@@ -2789,35 +2850,28 @@ export class KraService {
       );
     }
 
-    // Schedule Condition 2 - Visit Interest Follow-up Task
-    if (
-      data.outcome === 'positive' &&
-      (data.follow_up_action ||
-        data.material_requirement ||
-        data.product_interests ||
-        data.remarks)
-    ) {
+    // Sync Follow-up Task to followup_tasks (KRA 3 & Action Carousel)
+    if (follow_up_action) {
       try {
-        const promisedDays = Number(data.followup_days) || 4;
-        const dueDate = new Date(
-          new Date(visited_at).getTime() + promisedDays * 24 * 60 * 60 * 1000,
-        ).toISOString();
-        const interestStr =
-          data.material_requirement ||
-          data.product_interests ||
-          data.follow_up_action ||
-          'Steel Material Discussion';
+        const dueDate = follow_up_date
+          ? follow_up_date.includes('T')
+            ? follow_up_date
+            : `${follow_up_date}T18:00:00.000Z`
+          : new Date(
+              new Date(visited_at).getTime() + 7 * 24 * 60 * 60 * 1000,
+            ).toISOString();
 
         await this.supabase.from('followup_tasks').insert({
-          task_type: 'visit_interest_followup',
+          task_type: 'visit_followup',
           customer_name: data.customer_name,
           customer_phone: data.contact_phone || data.contact_no || '',
           salesperson_phone: salespersonPhone || 'Web Admin',
           due_date: dueDate,
-          status: 'pending',
-          reminder_sent_at: null,
+          status: follow_up_status || 'pending',
           follow_up_count: 0,
-          resolution_notes: `Visit Interest Follow-up: Customer showed interest in ${interestStr}. Stated decision timeframe: ${promisedDays} days.`,
+          resolution_notes: `Visit Follow-up: ${follow_up_action}`,
+          resolved_at:
+            follow_up_status === 'completed' ? new Date().toISOString() : null,
         });
       } catch (fErr: any) {
         this.logger.warn(
@@ -2837,11 +2891,11 @@ export class KraService {
         customer_name: data.customer_name,
       });
 
-      if (data.followup_date || data.follow_up_date) {
+      if (follow_up_date) {
         this.activityLogsService.logActivity({
           salesperson_name: 'Sales Team',
           salesperson_phone: salespersonPhone || null,
-          description: `Follow-up scheduled with ${data.customer_name} for ${data.followup_date || data.follow_up_date}`,
+          description: `Follow-up scheduled with ${data.customer_name} for ${follow_up_date} - ${follow_up_action || 'Discussion'}`,
           module: 'Visits',
           customer_name: data.customer_name,
         });
@@ -2858,6 +2912,33 @@ export class KraService {
     data: any,
     salespersonPhones?: string[] | string,
   ) {
+    const follow_up_action =
+      data.follow_up_action !== undefined
+        ? data.follow_up_action
+        : data.followup !== undefined
+          ? data.followup
+          : undefined;
+    const follow_up_date =
+      data.follow_up_date !== undefined
+        ? data.follow_up_date
+        : data.followup_date !== undefined
+          ? data.followup_date
+          : undefined;
+    const follow_up_status =
+      data.follow_up_status !== undefined
+        ? data.follow_up_status
+        : data.status !== undefined
+          ? data.status
+          : undefined;
+    const follow_up_completed_at =
+      data.follow_up_completed_at !== undefined
+        ? data.follow_up_completed_at
+        : follow_up_status === 'completed'
+          ? new Date().toISOString()
+          : follow_up_status === 'pending'
+            ? null
+            : undefined;
+
     const remarksParts: string[] = [];
     if (data.outcome) {
       remarksParts.push(
@@ -2867,10 +2948,14 @@ export class KraService {
     if (data.location || data.city) {
       remarksParts.push(`[Location: ${data.location || data.city}]`);
     }
-    if (data.follow_up_action || data.followup) {
-      remarksParts.push(
-        `[FollowUp: ${data.follow_up_action || data.followup}]`,
-      );
+    if (follow_up_action) {
+      remarksParts.push(`[FollowUp: ${follow_up_action}]`);
+    }
+    if (follow_up_date) {
+      remarksParts.push(`[FollowUpDate: ${follow_up_date}]`);
+    }
+    if (follow_up_status) {
+      remarksParts.push(`[FollowUpStatus: ${follow_up_status}]`);
     }
     if (data.material_requirement || data.requirement) {
       remarksParts.push(
@@ -2881,18 +2966,28 @@ export class KraService {
       remarksParts.push(data.remarks);
     }
 
-    const payload: any = {
-      customer_name: data.customer_name,
-      person_met: data.person_met || 'Contact Person',
-      contact_no: data.contact_phone || data.contact_no || '',
-      customer_address:
-        data.location || data.city || data.customer_address || '',
-      remarks: remarksParts.join(' '),
-    };
-
-    if (data.visited_at) {
-      payload.visited_at = data.visited_at;
-    }
+    const payload: any = {};
+    if (data.customer_name) payload.customer_name = data.customer_name;
+    if (data.person_met !== undefined)
+      payload.person_met = data.person_met || 'Contact Person';
+    if (data.contact_phone !== undefined || data.contact_no !== undefined)
+      payload.contact_no = data.contact_phone || data.contact_no || '';
+    if (
+      data.location !== undefined ||
+      data.city !== undefined ||
+      data.customer_address !== undefined
+    )
+      payload.customer_address =
+        data.location || data.city || data.customer_address || '';
+    if (remarksParts.length > 0) payload.remarks = remarksParts.join(' ');
+    if (data.visited_at) payload.visited_at = data.visited_at;
+    if (follow_up_action !== undefined)
+      payload.follow_up_action = follow_up_action;
+    if (follow_up_date !== undefined) payload.follow_up_date = follow_up_date;
+    if (follow_up_status !== undefined)
+      payload.follow_up_status = follow_up_status;
+    if (follow_up_completed_at !== undefined)
+      payload.follow_up_completed_at = follow_up_completed_at;
 
     let query = this.supabase
       .from('customer_visits')
@@ -2906,8 +3001,65 @@ export class KraService {
       if (orFilter) query = query.or(orFilter);
     }
 
-    const { data: updated, error } = await query.select().single();
-    if (error) throw error;
+    let updated: any;
+    const { data: updatedData, error } = await query.select().single();
+    if (error) {
+      this.logger.warn(
+        `Direct customer_visits update failed: ${error.message}. Retrying with base columns fallback.`,
+      );
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.follow_up_action;
+      delete fallbackPayload.follow_up_date;
+      delete fallbackPayload.follow_up_status;
+      delete fallbackPayload.follow_up_completed_at;
+
+      let fallbackQuery = this.supabase
+        .from('customer_visits')
+        .update(fallbackPayload)
+        .eq('id', id);
+
+      if (salespersonPhones) {
+        const orFilter = buildMultiFieldOrFilter(salespersonPhones, [
+          'salesperson_phone',
+        ]);
+        if (orFilter) fallbackQuery = fallbackQuery.or(orFilter);
+      }
+
+      const { data: fallbackUpdated, error: fallbackError } =
+        await fallbackQuery.select().single();
+
+      if (fallbackError) throw fallbackError;
+      updated = fallbackUpdated;
+    } else {
+      updated = updatedData;
+    }
+
+    // Sync status change to followup_tasks
+    if (
+      follow_up_status !== undefined &&
+      (updated?.customer_name || data.customer_name)
+    ) {
+      try {
+        const cName = updated?.customer_name || data.customer_name;
+        await this.supabase
+          .from('followup_tasks')
+          .update({
+            status: follow_up_status,
+            resolved_at:
+              follow_up_status === 'completed'
+                ? new Date().toISOString()
+                : null,
+          })
+          .ilike('customer_name', cName)
+          .eq('task_type', 'visit_followup');
+      } catch (fErr: any) {
+        this.logger.warn(
+          'Syncing follow-up status update to followup_tasks notice:',
+          fErr?.message,
+        );
+      }
+    }
+
     return updated;
   }
 

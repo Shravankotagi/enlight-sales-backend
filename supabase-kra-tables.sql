@@ -54,8 +54,17 @@ create table if not exists customer_visits (
   person_met text,
   contact_no text,
   remarks text,
-  visited_at timestamptz default now()
+  visited_at timestamptz default now(),
+  follow_up_action text,
+  follow_up_date date,
+  follow_up_status text default 'pending',
+  follow_up_completed_at timestamptz
 );
+
+ALTER TABLE customer_visits ADD COLUMN IF NOT EXISTS follow_up_action text;
+ALTER TABLE customer_visits ADD COLUMN IF NOT EXISTS follow_up_date date;
+ALTER TABLE customer_visits ADD COLUMN IF NOT EXISTS follow_up_status text default 'pending';
+ALTER TABLE customer_visits ADD COLUMN IF NOT EXISTS follow_up_completed_at timestamptz;
 
 -- Complaints (KRA 8)
 create table if not exists complaints (
