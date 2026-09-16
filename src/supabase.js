@@ -805,7 +805,10 @@ async function updateCustomerProfileRecord(
   if (!customerName || !senderPhone) {
     return { success: false, message: 'Customer name is required for update.' };
   }
-  const cleanName = customerName.trim();
+  let cleanName = customerName
+    .replace(/^(?:for|to|of|the|an?)\s+/i, '')
+    .replace(/\s+(?:customer|client|account|company)$/i, '')
+    .trim();
   if (!cleanName || cleanName.toLowerCase() === 'unknown') {
     return { success: false, message: 'Invalid customer name.' };
   }
@@ -860,6 +863,16 @@ async function updateCustomerProfileRecord(
         'limited',
         'industries',
         'works',
+        'customer',
+        'client',
+        'account',
+        'firm',
+        'fabricators',
+        'associates',
+        'solutions',
+        'for',
+        'to',
+        'the',
       ];
       const words = cleanName
         .split(/\s+/)
@@ -1032,30 +1045,33 @@ async function updateCustomerProfileRecord(
       customer: updatedRecord,
       assignedRepName,
       message:
-        `✅ *Customer Profile Updated!*\n\n` +
-        `🏢 Company: *${updatedRecord.customer_name}*\n` +
-        (updates.order_frequency_days
-          ? `📅 Order Frequency: *Every ${updatedRecord.avg_order_frequency_days} days*\n`
+        `### Customer Profile Updated\n\n` +
+        `- **Company:** ${updatedRecord.customer_name}\n` +
+        (updates.order_frequency_days != null
+          ? `- **Order Frequency:** Every ${updatedRecord.avg_order_frequency_days} days\n`
           : '') +
         (updatedRecord.contact_person
-          ? `👤 Contact: *${updatedRecord.contact_person}*\n`
+          ? `- **Contact Person:** ${updatedRecord.contact_person}\n`
           : '') +
         (updatedRecord.customer_phone
-          ? `📱 Phone: *${updatedRecord.customer_phone}*\n`
+          ? `- **Phone:** ${updatedRecord.customer_phone}\n`
+          : '') +
+        (updatedRecord.customer_gst
+          ? `- **GST:** ${updatedRecord.customer_gst}\n`
           : '') +
         (updatedRecord.customer_address
-          ? `📍 Location: *${updatedRecord.customer_address}*\n`
+          ? `- **Location:** ${updatedRecord.customer_address}\n`
           : '') +
         (assignedRepName
-          ? `💼 Assigned Salesperson: *${assignedRepName}*\n`
+          ? `- **Assigned Salesperson:** ${assignedRepName}\n`
           : '') +
-        `\n_Updated live on Enlight Sales OS Dashboard!_ ✅`,
+        `\nUpdated live on Enlight Sales OS Dashboard.`,
     };
   } catch (err) {
     console.error('updateCustomerProfileRecord error:', err.message);
     return {
       success: false,
-      message: `❌ Could not update customer: ${err.message}`,
+      message: `Could not update customer: ${err.message}`,
     };
   }
 }
