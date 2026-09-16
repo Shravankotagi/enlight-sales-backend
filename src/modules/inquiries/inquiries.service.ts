@@ -320,7 +320,7 @@ function isGenuineInquiry(item: any): boolean {
   const rawText = (item.raw_text || '').trim();
   const aiJson = (item.ai_extraction_json as any) || {};
 
-  // 1. All official inquiry types and source channels (WhatsApp & Dashboard) are genuine
+  // 1. All official inquiry types and source channels (WhatsApp, Dashboard & AI Assistant) are genuine
   const channel = String(item.source_channel || '').toLowerCase();
   if (
     item.inquiry_type === 'inquiry' ||
@@ -328,6 +328,8 @@ function isGenuineInquiry(item: any): boolean {
     item.inquiry_type === 'quotation_sent' ||
     channel.includes('whatsapp') ||
     channel.includes('dashboard') ||
+    channel.includes('assistant') ||
+    channel.includes('chatbot') ||
     channel === 'manual' ||
     channel === 'form' ||
     channel === 'upload' ||
@@ -336,7 +338,8 @@ function isGenuineInquiry(item: any): boolean {
     item.source_channel === 'whatsapp_image' ||
     item.source_channel === 'whatsapp_po' ||
     item.source_channel === 'web_dashboard' ||
-    item.source_channel === 'dashboard'
+    item.source_channel === 'dashboard' ||
+    item.source_channel === 'ai_assistant'
   ) {
     return true;
   }
@@ -469,7 +472,10 @@ function resolveInquiryEntities(
     aiJson.customer_phone ||
     aiJson.contact_phone ||
     aiJson.contact_number ||
-    (item.source_channel === 'web_dashboard' ? item.sender_phone : '');
+    (item.source_channel === 'web_dashboard' ||
+    item.source_channel === 'ai_assistant'
+      ? item.sender_phone
+      : '');
 
   if (!rawCustomerPhone) {
     const compLower = extractedCustomerName.toLowerCase();

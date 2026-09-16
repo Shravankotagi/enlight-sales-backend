@@ -36,7 +36,12 @@ export const updateDealStageTool: ChatbotTool<UpdateDealStageArgs, any> = {
 
     try {
       const salesAgent = getSalesAgent();
-      const result = await salesAgent.processSalesMessage(text, senderPhone);
+      const result = await salesAgent.processSalesMessage(
+        text,
+        senderPhone,
+        null,
+        'ai_assistant',
+      );
       return {
         data: typeof result === 'string' ? result : JSON.stringify(result),
         rowCount: 1,
