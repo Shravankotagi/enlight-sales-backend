@@ -198,6 +198,11 @@ export const getVisitsTool: ChatbotTool = {
           description:
             'Optional filter. When true, returns only visits that require follow-up actions or remarks.',
         },
+        follow_up_status: {
+          type: 'STRING',
+          description:
+            'Optional filter by follow-up task status. Valid values: "all", "pending", "completed".',
+        },
         missing_field: {
           type: 'STRING',
           description:
@@ -381,9 +386,13 @@ export const getVisitsTool: ChatbotTool = {
 
       const followUpAction =
         v.follow_up_action || v.follow_up || parsed.follow_up_action;
+      const followUpDate = v.follow_up_date || null;
+      const followUpStatus =
+        v.follow_up_status || (followUpAction ? 'pending' : null);
+      const followUpCompletedAt = v.follow_up_completed_at || null;
       const needsFollowUp =
         parsed.requires_follow_up || Boolean(v.follow_up_action || v.follow_up);
-      if (needsFollowUp) {
+      if (needsFollowUp && followUpStatus !== 'completed') {
         followUpCount++;
       }
 
@@ -422,6 +431,9 @@ export const getVisitsTool: ChatbotTool = {
           parsed.material_requirement ||
           null,
         follow_up_action: followUpAction,
+        follow_up_date: followUpDate,
+        follow_up_status: followUpStatus,
+        follow_up_completed_at: followUpCompletedAt,
         requires_follow_up: needsFollowUp,
         salesperson_name: repName,
         salesperson_phone: v.salesperson_phone || '',
@@ -636,6 +648,16 @@ export const getVisitsTool: ChatbotTool = {
 
     if (requiresFollowUp) {
       filteredList = filteredList.filter((v: any) => v.requires_follow_up);
+    }
+
+    const followUpStatusFilter = (args?.follow_up_status || '')
+      .toLowerCase()
+      .trim();
+    if (followUpStatusFilter && followUpStatusFilter !== 'all') {
+      filteredList = filteredList.filter(
+        (v: any) =>
+          (v.follow_up_status || '').toLowerCase() === followUpStatusFilter,
+      );
     }
 
     if (searchCustomer) {

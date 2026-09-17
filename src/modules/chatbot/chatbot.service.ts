@@ -40,22 +40,31 @@ export class ChatbotService {
     const userId = user.id || user.employee_id || user.phone;
     const email = user.email || '';
     const userPhone = user.phone || user.user_metadata?.phone;
+    const cleanUserPhone = userPhone
+      ? userPhone.replace(/\D/g, '').slice(-10)
+      : '';
 
     try {
       // 1. Check employees table by email, phone, employee_id or id
+      const orConditions: string[] = [`id.eq.${userId}`];
+      if (email) orConditions.push(`email.ilike.${email}`);
+      if (userPhone) orConditions.push(`phone.eq.${userPhone}`);
+      if (cleanUserPhone) orConditions.push(`phone.ilike.%${cleanUserPhone}%`);
+      if (user.employee_id)
+        orConditions.push(`employee_id.eq.${user.employee_id}`);
+
       const { data: employee } = await this.supabaseAdmin
         .from('employees')
         .select('*')
-        .or(
-          `id.eq.${userId}${email ? `,email.eq.${email}` : ''}${userPhone ? `,phone.eq.${userPhone}` : ''}${user.employee_id ? `,employee_id.eq.${user.employee_id}` : ''}`,
-        )
+        .or(orConditions.join(','))
         .eq('is_active', true)
         .limit(1);
 
       let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
       let employeeId: string | undefined = user.employee_id;
       let reportsToId: string | undefined;
-      let phone: string | undefined = userPhone;
+      let phone: string | undefined =
+        userPhone || (cleanUserPhone ? `91${cleanUserPhone}` : undefined);
       let name: string | undefined =
         user.name ||
         user.user_metadata?.full_name ||
@@ -336,160 +345,87 @@ export class ChatbotService {
 
     // Step C: Active Multi-Turn Session Interception (Parity with WhatsApp Bot)
     const callerPhone = caller.phone || '919619226169';
-    try {
-      const {
-        getFullActiveSession,
-        saveActiveSession,
-        supabase,
-      } = require('../../supabase');
-      const activeSession = await getFullActiveSession(callerPhone);
+    if (callerPhone) {
+      try {
+        const {
+          getFullActiveSession,
+          saveActiveSession,
+          supabase,
+        } = require('../../supabase');
+        const activeSession = await getFullActiveSession(callerPhone);
 
-      // Multi-turn Flow A: Pending Deal Loss Reason
-      if (
-        activeSession &&
-        activeSession.last_intent &&
-        activeSession.last_intent.startsWith('pending_loss_reason|')
-      ) {
-        const parts = activeSession.last_intent.split('|');
-        const dealId = parts[1];
-        const customerName = parts[2] || 'Customer';
+        // Multi-turn Flow A: Pending Deal Loss Reason
+        if (
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith('pending_loss_reason|')
+        ) {
+          const parts = activeSession.last_intent.split('|');
+          const dealId = parts[1];
+          const customerName = parts[2] || 'Customer';
 
-        const MAP_REASONS: Record<string, string> = {
-          '1': 'Price',
-          '2': 'Credit terms',
-          '3': 'Delivery timeline',
-          '4': 'Material unavailable',
-          '5': 'Spec mismatch',
-          '6': 'Competitor relationship',
-          '7': 'Customer silent',
-          '8': 'Cancelled by customer',
-        };
+          const MAP_REASONS: Record<string, string> = {
+            '1': 'Price',
+            '2': 'Credit terms',
+            '3': 'Delivery timeline',
+            '4': 'Material unavailable',
+            '5': 'Spec mismatch',
+            '6': 'Competitor relationship',
+            '7': 'Customer silent',
+            '8': 'Cancelled by customer',
+          };
 
-        const cleanInput = messageText.replace(/[\s]/g, '').trim();
-        let selectedReason = cleanInput;
-        if (MAP_REASONS[cleanInput]) {
-          selectedReason = MAP_REASONS[cleanInput];
-        } else {
-          const numMatch = cleanInput.match(/^([1-8])/);
-          if (numMatch && MAP_REASONS[numMatch[1]]) {
-            selectedReason = MAP_REASONS[numMatch[1]];
+          const cleanInput = messageText.replace(/[\s]/g, '').trim();
+          let selectedReason = cleanInput;
+          if (MAP_REASONS[cleanInput]) {
+            selectedReason = MAP_REASONS[cleanInput];
           } else {
-            selectedReason = messageText.trim();
+            const numMatch = cleanInput.match(/^([1-8])/);
+            if (numMatch && MAP_REASONS[numMatch[1]]) {
+              selectedReason = MAP_REASONS[numMatch[1]];
+            } else {
+              selectedReason = messageText.trim();
+            }
           }
-        }
 
-        let dealAmount = 0;
-        const { data: dealRow } = await supabase
-          .from('deals')
-          .select('total_amount')
-          .eq('id', dealId)
-          .limit(1);
-        if (dealRow && dealRow.length > 0) {
-          dealAmount = Number(dealRow[0].total_amount || 0);
-        }
-
-        await supabase
-          .from('deals')
-          .update({
-            stage: 'lost',
-            lost_reason: selectedReason,
-          })
-          .eq('id', dealId);
-
-        await supabase.from('kra_logs').insert({
-          salesperson_phone: callerPhone,
-          kra_number: 4,
-          kra_type: 'deal_lost',
-          value: dealAmount,
-          customer_name: customerName,
-          description: `Deal Lost: ${customerName} - Reason: ${selectedReason}`,
-          month: new Date().getMonth() + 1,
-          year: new Date().getFullYear(),
-        });
-
-        await saveActiveSession(callerPhone, customerName, 'general');
-
-        const replyRaw =
-          `*Deal Marked as LOST*\n\n` +
-          `- Customer: *${customerName}*\n` +
-          `- Stage: *Closed Lost*\n` +
-          `- Reason: *${selectedReason}*\n\n` +
-          `Updated Lost Deals & Loss Analytics (KRA 4) Dashboard.`;
-
-        const reply = this.cleanAssistantReply(replyRaw);
-        await this.saveMessage(sessionId, 'assistant', reply);
-
-        try {
-          const { addChatHistory } = require('../../core/memory');
-          await addChatHistory(callerPhone, messageText, reply, {
-            customer_name: customerName,
-            deal_id: dealId,
-          });
-        } catch {}
-
-        return { sessionId, reply };
-      }
-
-      // Multi-turn Flow B: Pending Payment Confirmation
-      if (
-        activeSession &&
-        activeSession.last_intent &&
-        activeSession.last_intent.startsWith('pending_payment_confirm|')
-      ) {
-        const parts = activeSession.last_intent.split('|');
-        const dealId = parts[1];
-        const customerName = parts[2] || 'Customer';
-        const amountPaid = Number(parts[3] || 0);
-        const amountPending = Number(parts[4] || 0);
-        const isFullPayment = parts[5] === 'true';
-
-        const cleanInput = messageText
-          .replace(/[\s]/g, '')
-          .trim()
-          .toLowerCase();
-
-        if (cleanInput === '2' || cleanInput.includes('won')) {
-          const { data: existingDealRow } = await supabase
+          let dealAmount = 0;
+          const { data: dealRow } = await supabase
             .from('deals')
-            .select('po_number')
+            .select('total_amount')
             .eq('id', dealId)
             .limit(1);
-
-          let targetPoNumber = existingDealRow?.[0]?.po_number;
-          if (!targetPoNumber) {
-            const todayStr = new Date()
-              .toISOString()
-              .slice(0, 10)
-              .replace(/-/g, '');
-            const randomNum = Math.floor(1000 + Math.random() * 9000);
-            targetPoNumber = `PO-${todayStr}-${randomNum}`;
+          if (dealRow && dealRow.length > 0) {
+            dealAmount = Number(dealRow[0].total_amount || 0);
           }
 
           await supabase
             .from('deals')
             .update({
-              stage: 'won',
-              won_at: new Date().toISOString(),
-              po_number: targetPoNumber,
+              stage: 'lost',
+              lost_reason: selectedReason,
             })
             .eq('id', dealId);
 
+          await supabase.from('kra_logs').insert({
+            salesperson_phone: callerPhone,
+            kra_number: 4,
+            kra_type: 'deal_lost',
+            value: dealAmount,
+            customer_name: customerName,
+            description: `Deal Lost: ${customerName} - Reason: ${selectedReason}`,
+            month: new Date().getMonth() + 1,
+            year: new Date().getFullYear(),
+          });
+
           await saveActiveSession(callerPhone, customerName, 'general');
 
-          const {
-            processPaymentMessage,
-          } = require('../../agents/paymentAgent');
-          const syntheticText =
-            `${customerName} paid ₹${amountPaid}` +
-            (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
-            (isFullPayment ? ' full payment' : '');
-          const paymentReply = await processPaymentMessage(
-            syntheticText,
-            callerPhone,
-          );
-
           const replyRaw =
-            `*Deal Marked as WON & Payment Logged!*\n\n` + paymentReply;
+            `*Deal Marked as LOST*\n\n` +
+            `- Customer: *${customerName}*\n` +
+            `- Stage: *Closed Lost*\n` +
+            `- Reason: *${selectedReason}*\n\n` +
+            `Updated Lost Deals & Loss Analytics (KRA 4) Dashboard.`;
+
           const reply = this.cleanAssistantReply(replyRaw);
           await this.saveMessage(sessionId, 'assistant', reply);
 
@@ -504,170 +440,66 @@ export class ChatbotService {
           return { sessionId, reply };
         }
 
+        // Multi-turn Flow B: Pending Payment Confirmation
         if (
-          cleanInput === '1' ||
-          cleanInput.includes('yes') ||
-          cleanInput.includes('confirm')
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith('pending_payment_confirm|')
         ) {
-          await saveActiveSession(callerPhone, customerName, 'general');
+          const parts = activeSession.last_intent.split('|');
+          const dealId = parts[1];
+          const customerName = parts[2] || 'Customer';
+          const amountPaid = Number(parts[3] || 0);
+          const amountPending = Number(parts[4] || 0);
+          const isFullPayment = parts[5] === 'true';
 
-          const {
-            processPaymentMessage,
-          } = require('../../agents/paymentAgent');
-          const syntheticText =
-            `${customerName} paid ₹${amountPaid}` +
-            (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
-            (isFullPayment ? ' full payment' : '');
-          const paymentReply = await processPaymentMessage(
-            syntheticText,
-            callerPhone,
-          );
+          const cleanInput = messageText
+            .replace(/[\s]/g, '')
+            .trim()
+            .toLowerCase();
 
-          const reply = this.cleanAssistantReply(paymentReply);
-          await this.saveMessage(sessionId, 'assistant', reply);
+          if (cleanInput === '2' || cleanInput.includes('won')) {
+            const { data: existingDealRow } = await supabase
+              .from('deals')
+              .select('po_number')
+              .eq('id', dealId)
+              .limit(1);
 
-          try {
-            const { addChatHistory } = require('../../core/memory');
-            await addChatHistory(callerPhone, messageText, reply, {
-              customer_name: customerName,
-              deal_id: dealId,
-            });
-          } catch {}
-
-          return { sessionId, reply };
-        }
-      }
-
-      // Multi-turn Flow C: Pending Negotiation Target Rate Response
-      if (
-        activeSession &&
-        activeSession.last_intent &&
-        activeSession.last_intent.startsWith(
-          'waiting_for_negotiation_target_rate|',
-        )
-      ) {
-        const parts = activeSession.last_intent.split('|');
-        const dealId = parts[1];
-        const customerName = parts[2] || 'Customer';
-
-        // Extract numeric price or discount from user message
-        const textClean = messageText.trim();
-        const discountMatch =
-          textClean.match(
-            /\b(?:discount|reduce|less|discount\s+of|concession)\s*(?:of|by)?\s*₹?\s*([\d,.]+)/i,
-          ) || textClean.match(/₹?\s*([\d,.]+)\s*(?:discount|less|kam)/i);
-        const rateMatch = textClean.match(
-          /₹?\s*([\d,.]+)\s*(?:k\b|\/mt|\/ton|per\s*mt|per\s*ton)?/i,
-        );
-
-        let targetRate: number | null = null;
-        let discountPerMt: number | null = null;
-
-        if (discountMatch) {
-          discountPerMt = parseFloat(discountMatch[1].replace(/,/g, ''));
-        } else if (rateMatch) {
-          let numVal = parseFloat(rateMatch[1].replace(/,/g, ''));
-          if (/\d+k\b/i.test(rateMatch[0])) {
-            numVal *= 1000;
-          }
-          if (numVal > 0) {
-            targetRate = numVal;
-          }
-        }
-
-        if (targetRate !== null || discountPerMt !== null) {
-          const { data: dealArr } = await supabase
-            .from('deals')
-            .select('*, deal_items(*)')
-            .eq('id', dealId)
-            .limit(1);
-
-          const dealRow = dealArr?.[0];
-          if (dealRow) {
-            const dealCode = dealRow.inquiry_id
-              ? `#INQ-${dealRow.inquiry_id.slice(-6).toUpperCase()}`
-              : `#DEAL-${dealRow.id.slice(-6).toUpperCase()}`;
-
-            const existingItems = dealRow.deal_items || [];
-            const updatedItems: any[] = [];
-            let totalAmount = 0;
-
-            for (const item of existingItems) {
-              let newRate = targetRate;
-              if (discountPerMt !== null && item.rate) {
-                newRate = Math.max(0, Number(item.rate) - discountPerMt);
-              } else if (newRate === null && item.rate) {
-                newRate = Number(item.rate);
-              }
-
-              const qty = Number(item.quantity_mt || item.quantity || 1);
-              const itemAmount =
-                newRate && newRate > 0 ? Math.round(newRate * qty) : 0;
-              totalAmount += itemAmount;
-
-              await supabase
-                .from('deal_items')
-                .update({
-                  rate: newRate,
-                  amount: itemAmount > 0 ? itemAmount : null,
-                })
-                .eq('id', item.id);
-
-              updatedItems.push({
-                ...item,
-                rate: newRate,
-                amount: itemAmount,
-              });
+            let targetPoNumber = existingDealRow?.[0]?.po_number;
+            if (!targetPoNumber) {
+              const todayStr = new Date()
+                .toISOString()
+                .slice(0, 10)
+                .replace(/-/g, '');
+              const randomNum = Math.floor(1000 + Math.random() * 9000);
+              targetPoNumber = `PO-${todayStr}-${randomNum}`;
             }
 
             await supabase
               .from('deals')
               .update({
-                stage: 'negotiation',
-                total_amount:
-                  totalAmount > 0 ? totalAmount : dealRow.total_amount,
+                stage: 'won',
+                won_at: new Date().toISOString(),
+                po_number: targetPoNumber,
               })
               .eq('id', dealId);
 
-            if (dealRow.inquiry_id) {
-              await supabase
-                .from('inquiries')
-                .update({ status: 'negotiation' })
-                .eq('id', dealRow.inquiry_id);
-            }
-
             await saveActiveSession(callerPhone, customerName, 'general');
 
-            const itemBreakdownLines = updatedItems.map((item) => {
-              const rateDisplay =
-                item.rate > 0
-                  ? ` @ ₹${Number(item.rate).toLocaleString('en-IN')}/${item.unit || 'MT'}`
-                  : ' (Rate pending)';
-              const amountDisplay =
-                item.amount > 0
-                  ? ` = ₹${Number(item.amount).toLocaleString('en-IN')}`
-                  : '';
-              return `- ${item.sku_text || 'Item'}${item.dimensions ? ` (${item.dimensions})` : ''}: ${item.quantity || item.quantity_mt || 0} ${item.unit || 'MT'}${rateDisplay}${amountDisplay}`;
-            });
-
-            const subtotalVal = totalAmount;
-            const gstVal = Math.round(subtotalVal * 0.18);
-            const grandTotalVal = subtotalVal + gstVal;
-
-            const financialSummary =
-              subtotalVal > 0
-                ? `\n\nFinancial Breakdown:\n- Subtotal: ₹${subtotalVal.toLocaleString('en-IN')}\n- GST (18%): ₹${gstVal.toLocaleString('en-IN')}\n- Grand Total: ₹${grandTotalVal.toLocaleString('en-IN')}`
-                : '';
+            const {
+              processPaymentMessage,
+            } = require('../../agents/paymentAgent');
+            const syntheticText =
+              `${customerName} paid ₹${amountPaid}` +
+              (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
+              (isFullPayment ? ' full payment' : '');
+            const paymentReply = await processPaymentMessage(
+              syntheticText,
+              callerPhone,
+            );
 
             const replyRaw =
-              `*Inquiry Rate Updated - ${dealCode}*\n\n` +
-              `Customer: *${customerName}*\n` +
-              `Stage: *NEGOTIATION*\n\n` +
-              `Updated Line Items:\n` +
-              itemBreakdownLines.join('\n') +
-              financialSummary +
-              `\n\nRevised quote recorded in Deals & Orders Pipeline!`;
-
+              `*Deal Marked as WON & Payment Logged!*\n\n` + paymentReply;
             const reply = this.cleanAssistantReply(replyRaw);
             await this.saveMessage(sessionId, 'assistant', reply);
 
@@ -681,167 +513,397 @@ export class ChatbotService {
 
             return { sessionId, reply };
           }
-        }
-      }
 
-      // Multi-turn Flow D: Visit Update Disambiguation Selection
-      if (
-        activeSession &&
-        activeSession.last_intent &&
-        activeSession.last_intent.startsWith(
-          'waiting_for_visit_update_selection|',
-        )
-      ) {
-        const payloadStr = activeSession.last_intent.slice(
-          'waiting_for_visit_update_selection|'.length,
-        );
-        let sessionData: any = null;
-        try {
-          sessionData = JSON.parse(payloadStr);
-        } catch {
-          sessionData = null;
-        }
+          if (
+            cleanInput === '1' ||
+            cleanInput.includes('yes') ||
+            cleanInput.includes('confirm')
+          ) {
+            await saveActiveSession(callerPhone, customerName, 'general');
 
-        if (
-          sessionData &&
-          Array.isArray(sessionData.candidates) &&
-          sessionData.candidates.length > 0
-        ) {
-          const candidates: any[] = sessionData.candidates;
-          const cleanMsg = messageText.trim().toLowerCase();
-          let selectedCandidate: any = null;
-
-          // 1. Check numeric selection (e.g. "1", "2", "option 1", "#1")
-          const numMatch = cleanMsg.match(/^(?:option\s*|#\s*)?(\d+)/i);
-          if (numMatch) {
-            const idx = parseInt(numMatch[1], 10);
-            if (idx >= 1 && idx <= candidates.length) {
-              selectedCandidate = candidates[idx - 1];
-            }
-          }
-
-          // 2. Check company name or date match
-          if (!selectedCandidate) {
-            selectedCandidate = candidates.find(
-              (c) =>
-                (c.customer_name &&
-                  cleanMsg.includes(c.customer_name.toLowerCase())) ||
-                (c.date && cleanMsg.includes(c.date.toLowerCase())),
-            );
-          }
-
-          if (selectedCandidate) {
-            const targetField = sessionData.target_field || 'person_met';
-            let newValue = sessionData.new_value;
-            const oldValue = sessionData.old_value;
-
-            const updatePayload: Record<string, any> = {};
-            let fieldLabel = 'Contact Person';
-
-            if (targetField === 'person_met') {
-              updatePayload.person_met = newValue;
-              fieldLabel = 'Contact Person';
-            } else if (targetField === 'contact_no') {
-              updatePayload.contact_no = newValue;
-              fieldLabel = 'Contact Phone';
-            } else if (targetField === 'customer_address') {
-              updatePayload.customer_address = newValue;
-              fieldLabel = 'Location';
-            } else if (targetField === 'visit_outcome') {
-              fieldLabel = 'Outcome';
-              const normOut =
-                newValue.charAt(0).toUpperCase() +
-                newValue.slice(1).toLowerCase();
-              newValue = normOut;
-              let updatedRemarks = selectedCandidate.remarks || '';
-              if (/\[Outcome:\s*[^\]]+\]/i.test(updatedRemarks)) {
-                updatedRemarks = updatedRemarks.replace(
-                  /\[Outcome:\s*[^\]]+\]/i,
-                  `[Outcome: ${normOut}]`,
-                );
-              } else {
-                updatedRemarks =
-                  `[Outcome: ${normOut}] ${updatedRemarks}`.trim();
-              }
-              updatePayload.remarks = updatedRemarks;
-            } else if (targetField === 'remarks') {
-              updatePayload.remarks = newValue;
-              fieldLabel = 'Discussion Notes';
-            } else {
-              updatePayload.person_met = newValue;
-            }
-
-            await supabase
-              .from('customer_visits')
-              .update(updatePayload)
-              .eq('id', selectedCandidate.id);
-
-            // Update customer master profile if contact info was changed
-            if (
-              targetField === 'person_met' ||
-              targetField === 'contact_no' ||
-              targetField === 'customer_address'
-            ) {
-              const custUpdate: Record<string, any> = {
-                updated_at: new Date().toISOString(),
-              };
-              if (targetField === 'person_met')
-                custUpdate.contact_person = newValue;
-              if (targetField === 'contact_no')
-                custUpdate.customer_phone = newValue;
-              if (targetField === 'customer_address')
-                custUpdate.city = newValue;
-
-              await supabase
-                .from('recurring_customers')
-                .update(custUpdate)
-                .ilike('customer_name', `%${selectedCandidate.customer_name}%`);
-            }
-
-            // Log activity
-            try {
-              await supabase.from('activity_logs').insert({
-                timestamp: new Date().toISOString(),
-                salesperson_name: 'Sales Team',
-                salesperson_phone: callerPhone,
-                description: `Visit updated for ${selectedCandidate.customer_name}: ${fieldLabel} changed to "${newValue}"${oldValue ? ` (was "${oldValue}")` : ''}`,
-                module: 'Visits',
-                customer_name: selectedCandidate.customer_name,
-                source: 'bot',
-                action_type: 'visit_updated',
-              });
-            } catch {}
-
-            await saveActiveSession(
+            const {
+              processPaymentMessage,
+            } = require('../../agents/paymentAgent');
+            const syntheticText =
+              `${customerName} paid ₹${amountPaid}` +
+              (amountPending > 0 ? ` outstanding ₹${amountPending}` : '') +
+              (isFullPayment ? ' full payment' : '');
+            const paymentReply = await processPaymentMessage(
+              syntheticText,
               callerPhone,
-              selectedCandidate.customer_name,
-              'general',
             );
 
-            const replyRaw =
-              `*Customer Visit Updated!*\n\n` +
-              `- Customer: *${selectedCandidate.customer_name}*\n` +
-              `- Visit Date: *${selectedCandidate.date}*\n` +
-              `- Updated ${fieldLabel}: *${newValue}*${oldValue ? ` (was *${oldValue}*)` : ''}\n\n` +
-              `Updated Customer Visits Card!`;
-
-            const reply = this.cleanAssistantReply(replyRaw);
+            const reply = this.cleanAssistantReply(paymentReply);
             await this.saveMessage(sessionId, 'assistant', reply);
 
             try {
               const { addChatHistory } = require('../../core/memory');
               await addChatHistory(callerPhone, messageText, reply, {
-                customer_name: selectedCandidate.customer_name,
-                visit_id: selectedCandidate.id,
+                customer_name: customerName,
+                deal_id: dealId,
               });
             } catch {}
 
             return { sessionId, reply };
           }
         }
+
+        // Multi-turn Flow C: Pending Negotiation Target Rate Response
+        if (
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith(
+            'waiting_for_negotiation_target_rate|',
+          )
+        ) {
+          const parts = activeSession.last_intent.split('|');
+          const dealId = parts[1];
+          const customerName = parts[2] || 'Customer';
+
+          // Extract numeric price or discount from user message
+          const textClean = messageText.trim();
+          const discountMatch =
+            textClean.match(
+              /\b(?:discount|reduce|less|discount\s+of|concession)\s*(?:of|by)?\s*₹?\s*([\d,.]+)/i,
+            ) || textClean.match(/₹?\s*([\d,.]+)\s*(?:discount|less|kam)/i);
+          const rateMatch = textClean.match(
+            /₹?\s*([\d,.]+)\s*(?:k\b|\/mt|\/ton|per\s*mt|per\s*ton)?/i,
+          );
+
+          let targetRate: number | null = null;
+          let discountPerMt: number | null = null;
+
+          if (discountMatch) {
+            discountPerMt = parseFloat(discountMatch[1].replace(/,/g, ''));
+          } else if (rateMatch) {
+            let numVal = parseFloat(rateMatch[1].replace(/,/g, ''));
+            if (/\d+k\b/i.test(rateMatch[0])) {
+              numVal *= 1000;
+            }
+            if (numVal > 0) {
+              targetRate = numVal;
+            }
+          }
+
+          if (targetRate !== null || discountPerMt !== null) {
+            const { data: dealArr } = await supabase
+              .from('deals')
+              .select('*, deal_items(*)')
+              .eq('id', dealId)
+              .limit(1);
+
+            const dealRow = dealArr?.[0];
+            if (dealRow) {
+              const dealCode = dealRow.inquiry_id
+                ? `#INQ-${dealRow.inquiry_id.slice(-6).toUpperCase()}`
+                : `#DEAL-${dealRow.id.slice(-6).toUpperCase()}`;
+
+              const existingItems = dealRow.deal_items || [];
+              const updatedItems: any[] = [];
+              let totalAmount = 0;
+
+              for (const item of existingItems) {
+                let newRate = targetRate;
+                if (discountPerMt !== null && item.rate) {
+                  newRate = Math.max(0, Number(item.rate) - discountPerMt);
+                } else if (newRate === null && item.rate) {
+                  newRate = Number(item.rate);
+                }
+
+                const qty = Number(item.quantity_mt || item.quantity || 1);
+                const itemAmount =
+                  newRate && newRate > 0 ? Math.round(newRate * qty) : 0;
+                totalAmount += itemAmount;
+
+                await supabase
+                  .from('deal_items')
+                  .update({
+                    rate: newRate,
+                    amount: itemAmount > 0 ? itemAmount : null,
+                  })
+                  .eq('id', item.id);
+
+                updatedItems.push({
+                  ...item,
+                  rate: newRate,
+                  amount: itemAmount,
+                });
+              }
+
+              await supabase
+                .from('deals')
+                .update({
+                  stage: 'negotiation',
+                  total_amount:
+                    totalAmount > 0 ? totalAmount : dealRow.total_amount,
+                })
+                .eq('id', dealId);
+
+              if (dealRow.inquiry_id) {
+                await supabase
+                  .from('inquiries')
+                  .update({ status: 'negotiation' })
+                  .eq('id', dealRow.inquiry_id);
+              }
+
+              await saveActiveSession(callerPhone, customerName, 'general');
+
+              const itemBreakdownLines = updatedItems.map((item) => {
+                const rateDisplay =
+                  item.rate > 0
+                    ? ` @ ₹${Number(item.rate).toLocaleString('en-IN')}/${item.unit || 'MT'}`
+                    : ' (Rate pending)';
+                const amountDisplay =
+                  item.amount > 0
+                    ? ` = ₹${Number(item.amount).toLocaleString('en-IN')}`
+                    : '';
+                return `- ${item.sku_text || 'Item'}${item.dimensions ? ` (${item.dimensions})` : ''}: ${item.quantity || item.quantity_mt || 0} ${item.unit || 'MT'}${rateDisplay}${amountDisplay}`;
+              });
+
+              const subtotalVal = totalAmount;
+              const gstVal = Math.round(subtotalVal * 0.18);
+              const grandTotalVal = subtotalVal + gstVal;
+
+              const financialSummary =
+                subtotalVal > 0
+                  ? `\n\nFinancial Breakdown:\n- Subtotal: ₹${subtotalVal.toLocaleString('en-IN')}\n- GST (18%): ₹${gstVal.toLocaleString('en-IN')}\n- Grand Total: ₹${grandTotalVal.toLocaleString('en-IN')}`
+                  : '';
+
+              const replyRaw =
+                `*Inquiry Rate Updated - ${dealCode}*\n\n` +
+                `Customer: *${customerName}*\n` +
+                `Stage: *NEGOTIATION*\n\n` +
+                `Updated Line Items:\n` +
+                itemBreakdownLines.join('\n') +
+                financialSummary +
+                `\n\nRevised quote recorded in Deals & Orders Pipeline!`;
+
+              const reply = this.cleanAssistantReply(replyRaw);
+              await this.saveMessage(sessionId, 'assistant', reply);
+
+              try {
+                const { addChatHistory } = require('../../core/memory');
+                await addChatHistory(callerPhone, messageText, reply, {
+                  customer_name: customerName,
+                  deal_id: dealId,
+                });
+              } catch {}
+
+              return { sessionId, reply };
+            }
+          }
+        }
+
+        // Multi-turn Flow D: Visit Update Disambiguation Selection
+        if (
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith(
+            'waiting_for_visit_update_selection|',
+          )
+        ) {
+          const payloadStr = activeSession.last_intent.slice(
+            'waiting_for_visit_update_selection|'.length,
+          );
+          let sessionData: any = null;
+          try {
+            sessionData = JSON.parse(payloadStr);
+          } catch {
+            sessionData = null;
+          }
+
+          if (
+            sessionData &&
+            Array.isArray(sessionData.candidates) &&
+            sessionData.candidates.length > 0
+          ) {
+            const candidates: any[] = sessionData.candidates;
+            const cleanMsg = messageText.trim().toLowerCase();
+            let selectedCandidate: any = null;
+
+            // 1. Check numeric selection (e.g. "1", "2", "option 1", "#1")
+            const numMatch = cleanMsg.match(/^(?:option\s*|#\s*)?(\d+)/i);
+            if (numMatch) {
+              const idx = parseInt(numMatch[1], 10);
+              if (idx >= 1 && idx <= candidates.length) {
+                selectedCandidate = candidates[idx - 1];
+              }
+            }
+
+            // 2. Check company name or date match
+            if (!selectedCandidate) {
+              selectedCandidate = candidates.find(
+                (c) =>
+                  (c.customer_name &&
+                    cleanMsg.includes(c.customer_name.toLowerCase())) ||
+                  (c.date && cleanMsg.includes(c.date.toLowerCase())),
+              );
+            }
+
+            if (selectedCandidate) {
+              const targetField = sessionData.target_field || 'person_met';
+              let newValue = sessionData.new_value;
+              const oldValue = sessionData.old_value;
+
+              const updatePayload: Record<string, any> = {};
+              let fieldLabel = 'Contact Person';
+
+              if (targetField === 'person_met') {
+                updatePayload.person_met = newValue;
+                fieldLabel = 'Contact Person';
+              } else if (targetField === 'contact_no') {
+                updatePayload.contact_no = newValue;
+                fieldLabel = 'Contact Phone';
+              } else if (targetField === 'customer_address') {
+                updatePayload.customer_address = newValue;
+                fieldLabel = 'Location';
+              } else if (targetField === 'visit_outcome') {
+                fieldLabel = 'Outcome';
+                const normOut =
+                  newValue.charAt(0).toUpperCase() +
+                  newValue.slice(1).toLowerCase();
+                newValue = normOut;
+                let updatedRemarks = selectedCandidate.remarks || '';
+                if (/\[Outcome:\s*[^\]]+\]/i.test(updatedRemarks)) {
+                  updatedRemarks = updatedRemarks.replace(
+                    /\[Outcome:\s*[^\]]+\]/i,
+                    `[Outcome: ${normOut}]`,
+                  );
+                } else {
+                  updatedRemarks =
+                    `[Outcome: ${normOut}] ${updatedRemarks}`.trim();
+                }
+                updatePayload.remarks = updatedRemarks;
+              } else if (targetField === 'remarks') {
+                updatePayload.remarks = newValue;
+                fieldLabel = 'Discussion Notes';
+              } else {
+                updatePayload.person_met = newValue;
+              }
+
+              await supabase
+                .from('customer_visits')
+                .update(updatePayload)
+                .eq('id', selectedCandidate.id);
+
+              // Update customer master profile if contact info was changed
+              if (
+                targetField === 'person_met' ||
+                targetField === 'contact_no' ||
+                targetField === 'customer_address'
+              ) {
+                const custUpdate: Record<string, any> = {
+                  updated_at: new Date().toISOString(),
+                };
+                if (targetField === 'person_met')
+                  custUpdate.contact_person = newValue;
+                if (targetField === 'contact_no')
+                  custUpdate.customer_phone = newValue;
+                if (targetField === 'customer_address')
+                  custUpdate.city = newValue;
+
+                await supabase
+                  .from('recurring_customers')
+                  .update(custUpdate)
+                  .ilike(
+                    'customer_name',
+                    `%${selectedCandidate.customer_name}%`,
+                  );
+              }
+
+              // Log activity
+              try {
+                await supabase.from('activity_logs').insert({
+                  timestamp: new Date().toISOString(),
+                  salesperson_name: 'Sales Team',
+                  salesperson_phone: callerPhone,
+                  description: `Visit updated for ${selectedCandidate.customer_name}: ${fieldLabel} changed to "${newValue}"${oldValue ? ` (was "${oldValue}")` : ''}`,
+                  module: 'Visits',
+                  customer_name: selectedCandidate.customer_name,
+                  source: 'bot',
+                  action_type: 'visit_updated',
+                });
+              } catch {}
+
+              await saveActiveSession(
+                callerPhone,
+                selectedCandidate.customer_name,
+                'general',
+              );
+
+              const replyRaw =
+                `*Customer Visit Updated!*\n\n` +
+                `- Customer: *${selectedCandidate.customer_name}*\n` +
+                `- Visit Date: *${selectedCandidate.date}*\n` +
+                `- Updated ${fieldLabel}: *${newValue}*${oldValue ? ` (was *${oldValue}*)` : ''}\n\n` +
+                `Updated Customer Visits Card!`;
+
+              const reply = this.cleanAssistantReply(replyRaw);
+              await this.saveMessage(sessionId, 'assistant', reply);
+
+              try {
+                const { addChatHistory } = require('../../core/memory');
+                await addChatHistory(callerPhone, messageText, reply, {
+                  customer_name: selectedCandidate.customer_name,
+                  visit_id: selectedCandidate.id,
+                });
+              } catch {}
+
+              return { sessionId, reply };
+            }
+          }
+        }
+
+        // Multi-turn Flow E: Pending Customer Visit Details Continuation
+        if (
+          activeSession &&
+          activeSession.last_intent &&
+          activeSession.last_intent.startsWith('pending_visit_details|')
+        ) {
+          const parts = activeSession.last_intent.split('|');
+          const payloadJson = parts.slice(2).join('|');
+          const { safeParseJSON } = require('../../utils/jsonUtils');
+          const storedState = safeParseJSON(payloadJson, null);
+
+          if (storedState) {
+            const isCancel = /^(?:cancel|discard|abort|stop|exit)$/i.test(
+              messageText.trim(),
+            );
+            if (isCancel) {
+              await saveActiveSession(callerPhone, 'Unknown', 'general');
+              const cancelReply = `Visit logging for ${storedState.customer_name} cancelled.`;
+              await this.saveMessage(sessionId, 'assistant', cancelReply);
+              return { sessionId, reply: cancelReply };
+            }
+
+            const {
+              handlePendingVisitContinuation,
+            } = require('../../agents/visitAgent');
+            const continuationReply = await handlePendingVisitContinuation(
+              messageText,
+              callerPhone,
+              storedState,
+            );
+
+            if (continuationReply) {
+              const reply = this.cleanAssistantReply(continuationReply);
+              await this.saveMessage(sessionId, 'assistant', reply);
+
+              try {
+                const { addChatHistory } = require('../../core/memory');
+                await addChatHistory(callerPhone, messageText, reply, {
+                  customer_name: storedState.customer_name,
+                  action: 'visit_continuation',
+                });
+              } catch {}
+
+              return { sessionId, reply };
+            }
+          }
+        }
+      } catch (sessionErr: any) {
+        this.logger.warn(`Active session check error: ${sessionErr.message}`);
       }
-    } catch (sessionErr: any) {
-      this.logger.warn(`Active session check error: ${sessionErr.message}`);
     }
 
     // Step D: Input Injection, Abuse & Domain Screening Pass
@@ -928,7 +990,8 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       - Call 'log_customer_visit' whenever the user reports:
         * Visiting a customer factory, office, godown, or site (e.g. "Met Rajesh Sharma at ABC Steel, Mumbai today. Discussed HR coil requirement. Positive meeting, need to send rate quotation.", "Visited Supreme Steel today, met Mr. Rajesh, discussed 20 MT HR Plates requirement, positive outcome")
         * In-person meetings, market rounds, plant visits, or field inspections.
-      - This tool automatically records discussion remarks, person met, materials required, visit outcome, follow-up actions, and updates the customer profile.
+        * Providing missing visit details in a multi-turn conversation (e.g. "number is 9999966666", "phone 9876543210", "person met Suresh", "outcome positive").
+      - CRITICAL NEGATIVE CONSTRAINT: Never generate text claiming a customer visit has been logged ("Customer Visit Logged", "Updated Customer Visits Card!") on your own. You MUST call 'log_customer_visit' with the user's text!
       - STRICTLY NEVER call 'get_visits' when the user is reporting or logging a visit that took place! 'get_visits' is exclusively a read-only query tool for searching past visit history.
 
    C. Customer Complaints & Quality Rejections (Customer Complaints Card - KRA 7 & 8):
@@ -942,9 +1005,15 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       - Call 'log_payment' whenever the user reports:
         * Receiving a payment, advance, installment, cheque, NEFT, RTGS, or UPI payment (e.g. "Received payment of 50000 from Apex Steel via NEFT", "Supreme Steel paid 1.5 lakhs advance").
 
-   E. Customer Onboarding & Profile Updates (New Customer Acquisition Card - KRA 2):
-      - Call 'onboard_new_customer' when adding a completely new customer or prospect with company name, contact person, phone, GST, or address (e.g. "Onboard new customer Jindal Fabricators, contact Amit 9876543210, Pune").
-      - Call 'update_customer_profile' when updating an existing customer's order frequency (e.g. "Set Supreme Steel order frequency to 45 days"), contact person, phone, GSTIN, location, or reassigning them to a salesperson.
+    E. Customer Onboarding & Profile Updates (New Customer Acquisition Card - KRA 2 & Profile Management):
+       - Call 'onboard_new_customer' when adding a completely new customer or prospect with company name, contact person, phone, GST, or address (e.g. "Onboard new customer Jindal Fabricators, contact Amit 9876543210, Pune").
+       - Call 'update_customer_profile' when updating an existing customer's contact person, phone number, order frequency, GSTIN, location, or reassigning them to a salesperson.
+         * Example: "Add person name and number for deccan Fabricators customer, name - ramesh , and number - 9999966666" -> Call 'update_customer_profile' with customer_name: "Deccan Fabricators", contact_person: "ramesh", phone: "9999966666".
+         * Example: "Update contact person for ABC Steel to Ramesh and phone to 9999966666" -> Call 'update_customer_profile' with customer_name: "ABC Steel", contact_person: "Ramesh", phone: "9999966666".
+         * Example: "Set Supreme Steel order frequency to 45 days" -> Call 'update_customer_profile' with customer_name: "Supreme Steel", order_frequency_days: 45.
+         * Example: "Change contact number for Apex Steel to 9876543210" -> Call 'update_customer_profile' with customer_name: "Apex Steel", phone: "9876543210".
+         * Example: "Update GST for Deccan Fabricators to 27AAAAA0000A1Z5" -> Call 'update_customer_profile' with customer_name: "Deccan Fabricators", gst: "27AAAAA0000A1Z5".
+         * Example: "Assign Deccan Fabricators to salesperson Rishabh Makwana" -> Call 'update_customer_profile' with customer_name: "Deccan Fabricators", assigned_salesperson: "Rishabh Makwana".
 
    F. Customer Retention & Follow-ups (Customer Retention Card - KRA 3):
       - Call 'log_retention_followup' when recording a follow-up call, check-in, or reorder reminder with an existing client regarding past shipments or upcoming needs.
@@ -992,6 +1061,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
     - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
     - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+      * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
       * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
     - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
@@ -1109,6 +1179,8 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
 
       const config: any = {
         systemInstruction: systemPrompt,
+        temperature: 0.1,
+        topP: 0.95,
       };
       if (toolDeclarations && toolDeclarations.length > 0) {
         config.tools = [{ functionDeclarations: toolDeclarations }];
@@ -1280,6 +1352,8 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             systemInstruction:
               systemPrompt +
               '\n\nIMPORTANT: When synthesizing responses from tool data, NEVER output raw JSON, function responses, or code blocks containing internal tool outputs. Always output polished, executive Markdown tables, metric bullet points, and headers.',
+            temperature: 0.1,
+            topP: 0.95,
           };
 
           const finalResponse = await ai.models.generateContent({
@@ -1797,6 +1871,23 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             rescuedToolName = 'update_deal_stage';
             rescuedArgs = { text: messageText };
           } else if (
+            (/\b(add|update|set|change|edit|modify|attach|save|assign)\b/i.test(
+              lowerMsg,
+            ) &&
+              (/\b(contact|person|number|phone|mobile|frequency|cadence|gst|gstin|address|location|city|salesperson|rep)\b/i.test(
+                lowerMsg,
+              ) ||
+                /\b(name\s*[-:]|number\s*[-:]|phone\s*[-:]|contact\s*[-:])\b/i.test(
+                  lowerMsg,
+                ))) ||
+            /\b(name\s*[-:]\s*[a-zA-Z\s]+.*number\s*[-:]\s*\d+)/i.test(
+              lowerMsg,
+            ) ||
+            /\b(order\s+frequency\s+to\s+\d+)/i.test(lowerMsg)
+          ) {
+            rescuedToolName = 'update_customer_profile';
+            rescuedArgs = { text: messageText };
+          } else if (
             lowerMsg.includes('customer') ||
             lowerMsg.includes('account') ||
             lowerMsg.includes('360') ||
@@ -1848,9 +1939,70 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 .trim();
               assistantReply = this.cleanAssistantReply(unwrapped);
             } else {
-              assistantReply = this.cleanAssistantReply(
-                this.formatToolResultFallback(rescuedToolName, rescuedResult),
-              );
+              try {
+                const synthContents = [
+                  ...contents,
+                  {
+                    role: 'model',
+                    parts: [
+                      {
+                        functionCall: {
+                          name: rescuedToolName,
+                          args: rescuedArgs || {},
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    role: 'user',
+                    parts: [
+                      {
+                        functionResponse: {
+                          name: rescuedToolName,
+                          response: { result: rescuedResult },
+                        },
+                      },
+                    ],
+                  },
+                ];
+                const synthConfig: any = {
+                  systemInstruction:
+                    systemPrompt +
+                    '\n\nIMPORTANT: When synthesizing responses from tool data, NEVER output raw JSON, function responses, or code blocks containing internal tool outputs. Always output polished, executive Markdown tables, metric bullet points, and headers.',
+                  temperature: 0.1,
+                  topP: 0.95,
+                };
+                const synthRes = await ai.models.generateContent({
+                  model: modelName,
+                  contents: synthContents,
+                  config: synthConfig,
+                });
+                let synthText = synthRes.text?.trim() || '';
+                if (
+                  !synthText &&
+                  synthRes.candidates &&
+                  synthRes.candidates.length > 0
+                ) {
+                  const parts = synthRes.candidates[0].content?.parts || [];
+                  synthText = parts
+                    .filter((p: any) => !p.thought)
+                    .map((p: any) => p.text || '')
+                    .filter(Boolean)
+                    .join('\n')
+                    .trim();
+                }
+                assistantReply = this.cleanAssistantReply(
+                  synthText ||
+                    this.formatToolResultFallback(
+                      rescuedToolName,
+                      rescuedResult,
+                    ),
+                );
+              } catch {
+                assistantReply = this.cleanAssistantReply(
+                  this.formatToolResultFallback(rescuedToolName, rescuedResult),
+                );
+              }
             }
           } else {
             assistantReply =
@@ -2017,14 +2169,28 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         }
 
         // 3. Channel breakdown (WhatsApp vs Dashboard)
-        if (inqData?.by_source_channel) {
+        if (
+          inqData?.by_source_channel &&
+          (inqData?.mode === 'channel_breakdown' ||
+            inqData?.mode === 'channels' ||
+            !summaryObj)
+        ) {
           const ch = inqData.by_source_channel;
           const total = inqData.total_inquiries || ch.whatsapp + ch.dashboard;
           return `There are a total of **${total}** inquiries.\n\nHere is the breakdown by source channel:\n- **WhatsApp:** **${ch.whatsapp}** inquiries (${ch.breakdown_percent?.whatsapp || ''})\n- **Dashboard:** **${ch.dashboard}** inquiries (${ch.breakdown_percent?.dashboard || ''})\n\n*(Detailed: Text: ${ch.detailed_channels?.whatsapp_text || 0}, Image: ${ch.detailed_channels?.whatsapp_image || 0}, PO: ${ch.detailed_channels?.whatsapp_po || 0})*`;
         }
 
-        // 4. OCR / Document metrics
+        // 4. OCR / Document metrics (ONLY when explicitly queried for OCR / documents)
+        const isOcrExplicit =
+          inqData?.is_ocr_query === true ||
+          inqData?.source_type === 'ocr_document' ||
+          inqData?.source_type === 'document' ||
+          inqData?.source_type === 'ocr' ||
+          inqData?.mode === 'ocr_document' ||
+          inqData?.mode === 'review_queue';
+
         if (
+          isOcrExplicit &&
           summaryObj?.ocr_document_metrics &&
           summaryObj.ocr_document_metrics.pending_ocr_inquiries !== undefined
         ) {
@@ -2032,8 +2198,12 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           return `There are **${ocr.pending_ocr_inquiries}** OCR/document inquiries currently pending.\n\nPending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation.\n\nAcross all stages, there are **${ocr.total_ocr_inquiries}** total OCR/document inquiries (${ocr.confirmed_ocr_inquiries} confirmed, ${ocr.quoted_ocr_inquiries} quoted, ${ocr.won_ocr_inquiries} won).`;
         }
 
-        // 5. Won conversion metrics
-        if (summaryObj?.conversion_metrics) {
+        // 5. Won conversion metrics (when mode is conversion or explicitly requested)
+        if (
+          (inqData?.mode === 'conversion_metrics' ||
+            inqData?.mode === 'conversion') &&
+          summaryObj?.conversion_metrics
+        ) {
           const conv = summaryObj.conversion_metrics;
           const wonCount = conv.won_inquiries || conv.won_orders_count || 0;
           const totalCount = conv.total_inquiries || 0;
@@ -2162,6 +2332,55 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         // 11. Explicit message (e.g. non-existent customer inquiry search)
         if (inqData?.message) {
           return inqData.message;
+        }
+
+        // 12. General Inquiry Summary Fallback
+        if (summaryObj) {
+          const total =
+            summaryObj.total_inquiries ??
+            (Array.isArray(items) ? items.length : 0);
+          const tonnage =
+            summaryObj.total_tonnage_mt || summaryObj.total_quantity_mt || 0;
+          const today = summaryObj.inquiries_today || 0;
+          const channels = summaryObj.by_source_channel || {
+            whatsapp: 0,
+            dashboard: 0,
+          };
+          const statusMap =
+            summaryObj.by_inquiry_status || summaryObj.by_deal_stage || {};
+          const conv = summaryObj.conversion_metrics || {};
+
+          if (total === 0) {
+            return `You currently have **0 inquiries** in your assigned portfolio.`;
+          }
+
+          let statusLines = Object.entries(statusMap)
+            .filter(([, cnt]) => (cnt as number) > 0)
+            .map(
+              ([st, cnt]) =>
+                `- **${st.charAt(0).toUpperCase() + st.slice(1).replace(/_/g, ' ')}:** ${cnt}`,
+            )
+            .join('\n');
+
+          if (!statusLines) {
+            statusLines = `- **New Inquiry:** ${summaryObj.by_status?.new || 0}\n- **Qualified:** ${summaryObj.by_status?.qualified || 0}\n- **Won:** ${summaryObj.by_status?.won || 0}`;
+          }
+
+          let response = `You have a total of **${total}** inquiries.\n\n`;
+          response += `Here's a quick breakdown:\n\n`;
+          response += `- **Total Inquiries:** ${total}\n`;
+          response += `- **Total Inquired Quantity:** ${tonnage} MT\n`;
+          response += `- **Inquiries Today:** ${today}\n\n`;
+          response += `**Breakdown by Status:**\n${statusLines}\n\n`;
+          response += `**Breakdown by Source Channel:**\n`;
+          response += `- **WhatsApp:** ${channels.whatsapp} (${channels.breakdown_percent?.whatsapp || '0%'})\n`;
+          response += `- **Dashboard:** ${channels.dashboard} (${channels.breakdown_percent?.dashboard || '0%'})\n\n`;
+          response += `**Conversion Metrics:**\n`;
+          response += `- **Won Inquiries (Orders):** ${conv.won_inquiries || 0}\n`;
+          response += `- **Active Inquiries:** ${conv.active_inquiries || 0}\n`;
+          response += `- **Conversion Rate (Won / Total):** ${conv.inquiry_to_won_conversion_rate || '0%'}`;
+
+          return response;
         }
       }
 

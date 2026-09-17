@@ -205,6 +205,10 @@ const DDL_STATEMENTS = [
     contact_no TEXT,
     remarks TEXT,
     visited_at TIMESTAMPTZ DEFAULT now(),
+    follow_up_action TEXT,
+    follow_up_date DATE,
+    follow_up_status TEXT DEFAULT 'pending',
+    follow_up_completed_at TIMESTAMPTZ,
     employee_id UUID
   );`,
 
