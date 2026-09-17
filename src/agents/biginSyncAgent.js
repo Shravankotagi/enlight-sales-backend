@@ -1040,12 +1040,18 @@ async function syncActivity(activityType, data) {
     let zohoNoteId = null;
     let summary = '';
 
-    // Guard: skip if Zoho not configured
-    if (!process.env.ZOHO_REFRESH_TOKEN || !process.env.ZOHO_CLIENT_ID) {
+    // Guard: skip if Zoho in READ-ONLY mode, sync paused, auto-sync disabled, or not configured
+    if (
+      process.env.ZOHO_SYNC_PAUSED === 'true' ||
+      process.env.ZOHO_READ_ONLY_MODE === 'true' ||
+      process.env.ZOHO_AUTO_SYNC_ENABLED === 'false' ||
+      !process.env.ZOHO_REFRESH_TOKEN ||
+      !process.env.ZOHO_CLIENT_ID
+    ) {
       console.log(
-        '[BiginSync] Zoho credentials not configured - logging local KRA 6 event',
+        '[BiginSync] Zoho sync is PAUSED / Read-only mode active - skipping outbound Zoho Bigin sync',
       );
-      summary = `Local CRM record created for ${customerName} (${normalizedType})`;
+      summary = `Local CRM record created for ${customerName} (${normalizedType}) [Sync Paused / Read-Only Mode]`;
 
       await logKRA6Event({
         salespersonPhone: senderPhone,
