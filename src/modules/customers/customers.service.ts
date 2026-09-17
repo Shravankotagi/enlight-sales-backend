@@ -173,6 +173,7 @@ export class CustomersService {
       let query = this.supabase
         .from('recurring_customers')
         .select('*')
+        .eq('is_active', true)
         .order('customer_name', { ascending: true });
 
       if (salespersonPhone) {
