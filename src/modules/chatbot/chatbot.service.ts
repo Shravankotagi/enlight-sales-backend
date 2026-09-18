@@ -1045,7 +1045,9 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         - Won Inquiries are equivalent to converted Orders (won inquiries == orders).
         - Do NOT mention or calculate "confirmed with purchase orders", "(with confirmed Purchase Orders)", or separate "total won deals across pipeline" counts in inquiry conversion responses.
         - Provide a clean and simple breakdown: Total Inquiries, Won Inquiries (Orders), and Conversion Rate (plus active/lost inquiries if relevant).
-      * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
+      * HIGHEST TONNAGE INQUIRY VS TOP CUSTOMER ACCOUNTS:
+        - When the user asks "Which customer has the highest tonnage inquiry?" or asks for the highest tonnage RFQ lead, call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID (#INQ-XXXXXX), product, and tonnage in Metric Tons (MT).
+        - Strictly distinguish inquiries from customer accounts! Inquiries represent individual unquoted RFQs/leads. If the user asks for "top customer accounts by tonnage", "top 5 customer accounts by tonnage this year", or "which customers have the highest tonnage/order volume", do NOT call 'get_inquiries'! Call 'get_customer_360' with mode: "top_customers" and sort_by: "tonnage_desc".
       * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
         - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
         - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries and total OCR/document inquiries from the tool data.
@@ -1072,6 +1074,17 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           5. Top contributing customer accounts.
         - STRICT NEGATIVE CONSTRAINT: NEVER state or apologize that your tools do not have the capability to track or report on delivered tonnage over time! You have full access to delivered orders and tonnage trends through 'get_my_open_deals'.
     - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+      * TOP CUSTOMER ACCOUNTS BY TONNAGE / VOLUME (CUSTOMERS CARD):
+        - When the user asks "List my top 5 customer accounts by tonnage this year", "top customer accounts by tonnage", "top customers by volume", or "which customers have the highest tonnage/order volume":
+          IMMEDIATELY call 'get_customer_360' with mode: "top_customers", sort_by: "tonnage_desc", and limit: 5 (or user-requested limit).
+        - NEVER call 'get_inquiries' for "top customer accounts by tonnage"! Inquiries represent individual unquoted RFQ leads, NOT customer accounts or purchased order tonnage.
+        - ALWAYS present a clean markdown table showing:
+          | Rank | Customer Name | Tonnage (MT) | Total Orders | Lifetime Value (₹) | Segment | Assigned Sales Rep |
+        - Highlight executive insights:
+          1. Top customer account and their delivered/purchased tonnage.
+          2. Total orders and cumulative lifetime revenue from these top accounts.
+          3. Key Account vs Growth breakdown of these top accounts.
+        - STRICT NEGATIVE CONSTRAINT: Zero emojis in all responses.
       * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
       * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
@@ -1484,14 +1497,39 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               lowerMsg.includes('maximum')) &&
             (lowerMsg.includes('tonnage') ||
               lowerMsg.includes('volume') ||
-              lowerMsg.includes('weight')) &&
-            (lowerMsg.includes('inquir') || lowerMsg.includes('customer'))
+              lowerMsg.includes('weight'))
           ) {
-            rescuedToolName = 'get_inquiries';
-            rescuedArgs = {
-              mode: 'highest_tonnage',
-              sort_by: 'tonnage_desc',
-            };
+            if (
+              lowerMsg.includes('inquir') ||
+              lowerMsg.includes('rfq') ||
+              lowerMsg.includes('lead')
+            ) {
+              rescuedToolName = 'get_inquiries';
+              rescuedArgs = {
+                mode: 'highest_tonnage',
+                sort_by: 'tonnage_desc',
+              };
+            } else if (
+              lowerMsg.includes('customer') ||
+              lowerMsg.includes('account') ||
+              lowerMsg.includes('client') ||
+              lowerMsg.includes('buyer')
+            ) {
+              const limitMatch = lowerMsg.match(/\b(?:top|first)\s+(\d+)\b/i);
+              const limit = limitMatch ? parseInt(limitMatch[1], 10) : 5;
+              rescuedToolName = 'get_customer_360';
+              rescuedArgs = {
+                mode: 'top_customers',
+                sort_by: 'tonnage_desc',
+                limit,
+              };
+            } else {
+              rescuedToolName = 'get_inquiries';
+              rescuedArgs = {
+                mode: 'highest_tonnage',
+                sort_by: 'tonnage_desc',
+              };
+            }
           } else if (
             (lowerMsg.includes('whatsapp') && lowerMsg.includes('dashboard')) ||
             lowerMsg.includes('source channel') ||
@@ -1998,7 +2036,22 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             lowerMsg.includes('segment')
           ) {
             rescuedToolName = 'get_customer_360';
-            if (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) {
+            if (
+              lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight') ||
+              (lowerMsg.includes('top') && !lowerMsg.includes('segment'))
+            ) {
+              const limitMatch = lowerMsg.match(/\b(?:top|first)\s+(\d+)\b/i);
+              rescuedArgs = {
+                mode: 'top_customers',
+                sort_by: 'tonnage_desc',
+                limit: limitMatch ? parseInt(limitMatch[1], 10) : 5,
+              };
+            } else if (
+              lowerMsg.includes('at risk') ||
+              lowerMsg.includes('at-risk')
+            ) {
               rescuedArgs = { health_filter: 'at_risk' };
             } else if (lowerMsg.includes('growth')) {
               rescuedArgs = { segment_filter: 'growth' };

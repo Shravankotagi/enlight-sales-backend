@@ -74,14 +74,24 @@ export const getCustomer360Tool: ChatbotTool = {
   declaration: {
     name: 'get_customer_360',
     description:
-      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Do NOT call this tool for inquiry status lookups (use get_inquiries with inquiry_id) or highest tonnage inquiries (use get_inquiries with mode: "highest_tonnage"). Scoped strictly by caller role and assigned portfolio.',
+      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR lists top customer accounts ranked by tonnage/volume (mode: "top_customers", sort_by: "tonnage_desc"), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Do NOT call this tool for inquiry status lookups (use get_inquiries with inquiry_id) or highest tonnage inquiries (use get_inquiries with mode: "highest_tonnage"). Scoped strictly by caller role and assigned portfolio.',
     parameters: {
       type: 'OBJECT',
       properties: {
         customer_name: {
           type: 'STRING',
           description:
-            'Optional name of customer or company (e.g. "Supreme Steel" or "Mehta"). Omit to retrieve total customer count and customer directory.',
+            'Optional name of customer or company (e.g. "Supreme Steel" or "Mehta"). Omit to retrieve total customer count, top customer accounts, or customer directory.',
+        },
+        mode: {
+          type: 'STRING',
+          description:
+            'Optional mode: "top_customers" (returns top customer accounts ranked by total purchased tonnage or lifetime value), "directory" (general directory list), or "summary" (counts breakdown).',
+        },
+        sort_by: {
+          type: 'STRING',
+          description:
+            'Optional sort order: "tonnage_desc" (highest tonnage first), "ltv_desc" (highest lifetime value first), "orders_desc" (most orders first), "name_asc" (alphabetical). Defaults to "tonnage_desc" when mode is "top_customers".',
         },
         segment_filter: {
           type: 'STRING',
@@ -96,19 +106,45 @@ export const getCustomer360Tool: ChatbotTool = {
         limit: {
           type: 'INTEGER',
           description:
-            'Maximum number of customers to return in directory list (default: 50, max: 100).',
+            'Maximum number of customers to return (default: 5 for top_customers, 50 for directory, max: 100).',
         },
       },
     },
   },
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
-    const customerName = (args?.customer_name || '').trim();
+    const mode = (args?.mode || '').toLowerCase().trim();
+    const sortBy = (args?.sort_by || '').toLowerCase().trim();
+    let customerName = (args?.customer_name || '').trim();
+    const genericPhrases = [
+      'top',
+      'top 5',
+      'top 10',
+      'all',
+      'directory',
+      'customers',
+      'customer accounts',
+      'accounts',
+      'summary',
+      'highest',
+      'highest tonnage',
+    ];
+    if (
+      mode === 'top_customers' ||
+      genericPhrases.includes(customerName.toLowerCase())
+    ) {
+      customerName = '';
+    }
     const rawSegment = (args?.segment_filter || '').toLowerCase().trim();
     const rawHealth = (args?.health_filter || '').toLowerCase().trim();
     const rawPhone = callerContext.phone || '';
     const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
     const empId = callerContext.employeeId;
-    const limit = Math.min(Math.max(Number(args?.limit) || 50, 1), 100);
+    const defaultLimit =
+      mode === 'top_customers' || sortBy === 'tonnage_desc' ? 5 : 50;
+    const limit = Math.min(
+      Math.max(Number(args?.limit) || defaultLimit, 1),
+      100,
+    );
 
     // ─── Layer 1 RBAC Identity Verification (Fail-Closed) ───────────────────
     let managerPhoneSuffixes: string[] = [];
@@ -153,12 +189,10 @@ export const getCustomer360Tool: ChatbotTool = {
     // ─── Case 1: Directory Mode (customer_name is omitted) ─────────────────
     if (!customerName) {
       try {
-        const { CustomersService } = await import(
-          '../../customers/customers.service'
-        );
-        const { CustomerInsightsService } = await import(
-          '../../customers/customer-insights.service'
-        );
+        const { CustomersService } =
+          await import('../../customers/customers.service');
+        const { CustomerInsightsService } =
+          await import('../../customers/customer-insights.service');
         const customersService = new CustomersService(
           {
             getAdminClient: () => supabaseAdmin,
@@ -249,6 +283,34 @@ export const getCustomer360Tool: ChatbotTool = {
             'There are currently 0 customers marked as "At Risk" in your portfolio. All customer accounts are active and in good standing.';
         }
 
+        // Apply sorting based on sort_by or mode
+        if (
+          mode === 'top_customers' ||
+          sortBy === 'tonnage_desc' ||
+          sortBy === 'tonnage'
+        ) {
+          filteredCustomers.sort(
+            (a: any, b: any) =>
+              (Number(b.total_tonnage_mt) || 0) -
+              (Number(a.total_tonnage_mt) || 0),
+          );
+        } else if (sortBy === 'ltv_desc' || sortBy === 'ltv') {
+          filteredCustomers.sort(
+            (a: any, b: any) =>
+              (Number(b.lifetime_value_inr) || 0) -
+              (Number(a.lifetime_value_inr) || 0),
+          );
+        } else if (sortBy === 'orders_desc' || sortBy === 'orders') {
+          filteredCustomers.sort(
+            (a: any, b: any) =>
+              (Number(b.total_orders) || 0) - (Number(a.total_orders) || 0),
+          );
+        } else if (sortBy === 'name_asc') {
+          filteredCustomers.sort((a: any, b: any) =>
+            (a.customer_name || '').localeCompare(b.customer_name || ''),
+          );
+        }
+
         let largestSeg = 'new';
         let maxCount = -1;
         for (const [s, count] of Object.entries(segmentCounts)) {
@@ -257,6 +319,26 @@ export const getCustomer360Tool: ChatbotTool = {
             largestSeg = s;
           }
         }
+
+        const topByTonnage = enrichedCustomers
+          .slice()
+          .filter((c: any) => (Number(c.total_tonnage_mt) || 0) > 0)
+          .sort(
+            (a: any, b: any) =>
+              (Number(b.total_tonnage_mt) || 0) -
+              (Number(a.total_tonnage_mt) || 0),
+          )
+          .slice(0, 10)
+          .map((c: any, idx: number) => ({
+            rank: idx + 1,
+            customer_name: c.customer_name,
+            total_tonnage_mt: c.total_tonnage_mt,
+            total_orders: c.total_orders,
+            lifetime_value_inr: c.lifetime_value_inr,
+            segment: c.segment,
+            health_status: c.health_status,
+            assigned_salesperson_name: c.assigned_salesperson_name,
+          }));
 
         return {
           data: {
@@ -270,6 +352,7 @@ export const getCustomer360Tool: ChatbotTool = {
               largest_segment: largestSeg,
               largest_segment_count: maxCount,
               filtered_customers_count: filteredCustomers.length,
+              top_customers_by_tonnage: topByTonnage,
               note: note || undefined,
             },
             customers: filteredCustomers.slice(0, limit),
