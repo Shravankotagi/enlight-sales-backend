@@ -1132,10 +1132,11 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
      * VISITS MISSING LOCATION: When the user asks "Which visits are missing a location?" or "visits without city/location", call 'get_visits' with missing_location: true (or missing_field: "location"). List the incomplete visit logs (with customer name, date, salesperson, and remarks) and highlight the need for data completeness.
      * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
      * DUPLICATE VISITS: When the user asks "List duplicate visits to the same customer on the same day" or "duplicate visits", call 'get_visits' with mode: "duplicates". List each customer and date where multiple visits occurred, along with the visit count, salesperson, and remarks.
-   - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
-     * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
-     * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
-     * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
+    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
+      * COMPLAINTS OVER TIME / LAST 7 DAYS: When the user asks "Show complaints raised in the last 7 days", "complaints in the last 7 days", "complaints this week", "recent complaints", or asks for complaints within a specific time window, call 'get_complaints' with date_range: "last_7_days" (or matching date_range), limit: 50. Present ALL returned complaint records in a complete, comprehensive markdown table detailing Customer Name, Complaint Type, Affected Product, Status, Reported Date, Salesperson, and Description/Issue, along with the total count and summary metrics from the tool output. NEVER omit, truncate, or return only partial records when records exist in the response.
+      * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
+      * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
+      * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
         1. Material Defect Escalations: Customers with negative visits due to delivery damage or delays (such as Vardhaman Engineering) correlate 1:1 with formal material complaints (e.g. damaged/bent HR Coil).
         2. Commercial Friction: Negative visits from quote pricing or lack of demand (such as Rishabh Metal) do not lead to complaints.
         3. Conclude that negative site visits serve as early warning signals of product rejection and delivery friction.
@@ -1862,6 +1863,54 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_complaints';
+              rescuedArgs = {};
+
+              // Date range extraction for time-window queries
+              if (
+                lowerMsg.includes('last 7 days') ||
+                lowerMsg.includes('past 7 days') ||
+                lowerMsg.includes('7 days') ||
+                lowerMsg.includes('7days') ||
+                lowerMsg.includes('this week') ||
+                lowerMsg.includes('last week') ||
+                lowerMsg.includes('recent')
+              ) {
+                if (lowerMsg.includes('last week')) {
+                  rescuedArgs.date_range = 'last_week';
+                } else {
+                  rescuedArgs.date_range = 'last_7_days';
+                }
+                rescuedArgs.limit = 50;
+              } else if (
+                lowerMsg.includes('last 30 days') ||
+                lowerMsg.includes('past 30 days') ||
+                lowerMsg.includes('30 days') ||
+                lowerMsg.includes('30days')
+              ) {
+                rescuedArgs.date_range = 'last_30_days';
+                rescuedArgs.limit = 50;
+              } else if (
+                lowerMsg.includes('today') ||
+                lowerMsg.includes('aaj')
+              ) {
+                rescuedArgs.date_range = 'today';
+              } else if (
+                lowerMsg.includes('yesterday') ||
+                lowerMsg.includes('kal')
+              ) {
+                rescuedArgs.date_range = 'yesterday';
+              } else if (
+                lowerMsg.includes('this month') ||
+                lowerMsg.includes('is mahine')
+              ) {
+                rescuedArgs.date_range = 'this_month';
+              } else if (
+                lowerMsg.includes('last month') ||
+                lowerMsg.includes('pichle mahine')
+              ) {
+                rescuedArgs.date_range = 'last_month';
+              }
+
               if (
                 lowerMsg.includes('max or rishabh') ||
                 lowerMsg.includes('rishabh or max') ||
@@ -1872,7 +1921,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 lowerMsg.includes('rep leaderboard') ||
                 lowerMsg.includes('rep ranking')
               ) {
-                rescuedArgs = { mode: 'rep_complaints' };
+                rescuedArgs.mode = 'rep_complaints';
               } else if (
                 lowerMsg.includes('product type') ||
                 lowerMsg.includes('product category') ||
@@ -1880,31 +1929,31 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                   (lowerMsg.includes('plate') ||
                     lowerMsg.includes('structural')))
               ) {
-                rescuedArgs = { mode: 'product_category_breakdown' };
+                rescuedArgs.mode = 'product_category_breakdown';
               } else if (
                 lowerMsg.includes('negative visit') ||
                 lowerMsg.includes('pattern') ||
                 lowerMsg.includes('correlation')
               ) {
-                rescuedArgs = { mode: 'visit_correlation' };
+                rescuedArgs.mode = 'visit_correlation';
               } else if (
                 lowerMsg.includes('reopen') ||
                 lowerMsg.includes('re-open')
               ) {
-                rescuedArgs = { status_filter: 'reopened' };
+                rescuedArgs.status_filter = 'reopened';
               } else if (lowerMsg.includes('open')) {
-                rescuedArgs = { status_filter: 'open' };
+                rescuedArgs.status_filter = 'open';
               } else if (
                 lowerMsg.includes('resolved') ||
                 lowerMsg.includes('closed')
               ) {
-                rescuedArgs = { status_filter: 'resolved' };
+                rescuedArgs.status_filter = 'resolved';
               } else if (lowerMsg.includes('coil')) {
-                rescuedArgs = { product_category: 'coil' };
+                rescuedArgs.product_category = 'coil';
               } else if (lowerMsg.includes('plate')) {
-                rescuedArgs = { product_category: 'plate' };
+                rescuedArgs.product_category = 'plate';
               } else if (lowerMsg.includes('structural')) {
-                rescuedArgs = { product_category: 'structural' };
+                rescuedArgs.product_category = 'structural';
               }
             }
           } else if (
@@ -2859,7 +2908,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         const summaryHeader = summaryObj
           ? `> **Summary:** Total Complaints: ${summaryObj.total_complaints || items.length} | Open: ${summaryObj.open_complaints || 0} | Reopened: ${summaryObj.by_status?.reopened || 0} | SLA Resolution Rate: ${summaryObj.sla_resolution_rate_within_48h || 'N/A'}\n\n`
           : '';
-        const lines = items.slice(0, 15).map((c: any, idx: number) => {
+        const lines = items.slice(0, 50).map((c: any, idx: number) => {
           return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | \`${c.complaint_type || 'quality'}\` | \`${c.status || 'open'}\` | \`${c.sla_status || 'on_track'}\` | ${c.affected_product || '-'} | ${c.reported_at ? new Date(c.reported_at).toLocaleDateString('en-IN') : '-'} |\n> **Issue:** "${c.description || 'No description'}"\n`;
         });
         return `### Complaints & Quality Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Type | Status | SLA (48h) | Affected Product | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;

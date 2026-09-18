@@ -27,15 +27,75 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     endOfYesterday.setHours(23, 59, 59, 999);
     return { from: startOfYesterday, to: endOfYesterday };
   }
-  if (lower === 'this_week' || lower === 'week') {
+  if (
+    lower === 'this_week' ||
+    lower === 'week' ||
+    lower === 'last_7_days' ||
+    lower === '7_days' ||
+    lower === 'last 7 days' ||
+    lower === '7 days' ||
+    lower === 'past_7_days' ||
+    lower === 'past 7 days'
+  ) {
     const startOfWeek = new Date(now);
     startOfWeek.setDate(startOfWeek.getDate() - 7);
     startOfWeek.setHours(0, 0, 0, 0);
     return { from: startOfWeek };
   }
+  if (lower === 'last_week' || lower === 'last week') {
+    const endOfLastWeek = new Date(now);
+    endOfLastWeek.setDate(endOfLastWeek.getDate() - 7);
+    endOfLastWeek.setHours(23, 59, 59, 999);
+    const startOfLastWeek = new Date(now);
+    startOfLastWeek.setDate(startOfLastWeek.getDate() - 14);
+    startOfLastWeek.setHours(0, 0, 0, 0);
+    return { from: startOfLastWeek, to: endOfLastWeek };
+  }
+  if (
+    lower === 'last_30_days' ||
+    lower === '30_days' ||
+    lower === 'last 30 days' ||
+    lower === '30 days' ||
+    lower === 'past_30_days' ||
+    lower === 'past 30 days'
+  ) {
+    const startOf30Days = new Date(now);
+    startOf30Days.setDate(startOf30Days.getDate() - 30);
+    startOf30Days.setHours(0, 0, 0, 0);
+    return { from: startOf30Days };
+  }
   if (lower === 'this_month' || lower === 'month') {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return { from: startOfMonth };
+  }
+  if (
+    lower === 'last_month' ||
+    lower === 'last month' ||
+    lower === 'previous_month'
+  ) {
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    return { from: startOfLastMonth, to: endOfLastMonth };
+  }
+
+  // Regex for N days (e.g. "last 14 days", "10 days")
+  const daysMatch = lower.match(/(?:last|past)?\s*(\d+)\s*(?:days?|d)/i);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1], 10);
+    if (!isNaN(days) && days > 0) {
+      const startOfNDays = new Date(now);
+      startOfNDays.setDate(startOfNDays.getDate() - days);
+      startOfNDays.setHours(0, 0, 0, 0);
+      return { from: startOfNDays };
+    }
   }
   if (
     lower === 'last_6_months' ||

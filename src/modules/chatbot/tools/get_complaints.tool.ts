@@ -12,12 +12,12 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   const now = new Date();
   const lower = dateFilter.toLowerCase().trim();
 
-  if (lower === 'today') {
+  if (lower === 'today' || lower === 'aaj') {
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
     return { from: startOfToday };
   }
-  if (lower === 'yesterday') {
+  if (lower === 'yesterday' || lower === 'kal') {
     const startOfYesterday = new Date(now);
     startOfYesterday.setDate(startOfYesterday.getDate() - 1);
     startOfYesterday.setHours(0, 0, 0, 0);
@@ -26,16 +26,77 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     endOfYesterday.setHours(23, 59, 59, 999);
     return { from: startOfYesterday, to: endOfYesterday };
   }
-  if (lower === 'this_week' || lower === 'week') {
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(startOfWeek.getDate() - 7);
-    startOfWeek.setHours(0, 0, 0, 0);
-    return { from: startOfWeek };
+  if (
+    lower === 'this_week' ||
+    lower === 'week' ||
+    lower === 'last_7_days' ||
+    lower === '7_days' ||
+    lower === 'last 7 days' ||
+    lower === '7 days' ||
+    lower === 'past_7_days' ||
+    lower === 'past 7 days'
+  ) {
+    const startOf7Days = new Date(now);
+    startOf7Days.setDate(startOf7Days.getDate() - 7);
+    startOf7Days.setHours(0, 0, 0, 0);
+    return { from: startOf7Days };
+  }
+  if (lower === 'last_week' || lower === 'last week') {
+    const endOfLastWeek = new Date(now);
+    endOfLastWeek.setDate(endOfLastWeek.getDate() - 7);
+    endOfLastWeek.setHours(23, 59, 59, 999);
+    const startOfLastWeek = new Date(now);
+    startOfLastWeek.setDate(startOfLastWeek.getDate() - 14);
+    startOfLastWeek.setHours(0, 0, 0, 0);
+    return { from: startOfLastWeek, to: endOfLastWeek };
+  }
+  if (
+    lower === 'last_30_days' ||
+    lower === '30_days' ||
+    lower === 'last 30 days' ||
+    lower === '30 days' ||
+    lower === 'past_30_days' ||
+    lower === 'past 30 days'
+  ) {
+    const startOf30Days = new Date(now);
+    startOf30Days.setDate(startOf30Days.getDate() - 30);
+    startOf30Days.setHours(0, 0, 0, 0);
+    return { from: startOf30Days };
   }
   if (lower === 'this_month' || lower === 'month') {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return { from: startOfMonth };
   }
+  if (
+    lower === 'last_month' ||
+    lower === 'last month' ||
+    lower === 'previous_month'
+  ) {
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    return { from: startOfLastMonth, to: endOfLastMonth };
+  }
+
+  // Regex for N days (e.g. "last 14 days", "10 days")
+  const daysMatch = lower.match(/(?:last|past)?\s*(\d+)\s*(?:days?|d)/i);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1], 10);
+    if (!isNaN(days) && days > 0) {
+      const startOfNDays = new Date(now);
+      startOfNDays.setDate(startOfNDays.getDate() - days);
+      startOfNDays.setHours(0, 0, 0, 0);
+      return { from: startOfNDays };
+    }
+  }
+
   const parsed = new Date(dateFilter);
   if (!isNaN(parsed.getTime())) {
     const start = new Date(parsed);
@@ -138,7 +199,7 @@ export const getComplaintsTool: ChatbotTool = {
         date_range: {
           type: 'STRING',
           description:
-            'Optional date filter: "today", "yesterday", "this_week", "this_month", "all", or specific ISO date.',
+            'Optional date filter: "last_7_days" (or "7_days", "this_week"), "today", "yesterday", "last_week", "this_month", "last_month", "last_30_days", "all", or specific ISO date.',
         },
         sla_filter: {
           type: 'STRING',
@@ -158,7 +219,7 @@ export const getComplaintsTool: ChatbotTool = {
         limit: {
           type: 'INTEGER',
           description:
-            'Maximum number of complaints to return in list mode (default: 20, max: 100).',
+            'Maximum number of complaints to return in list mode (default: 50 for date-filtered queries, 20 for generic queries, max: 100).',
         },
       },
     },
@@ -175,7 +236,10 @@ export const getComplaintsTool: ChatbotTool = {
     const dealOrPo = (args?.deal_id_or_po || '').trim().toLowerCase();
     const dateRange = args?.date_range;
     const mode = (args?.mode || 'list').toLowerCase().trim();
-    const limit = Math.min(Math.max(Number(args?.limit) || 20, 1), 100);
+    const limit = Math.min(
+      Math.max(Number(args?.limit) || (dateRange ? 50 : 20), 1),
+      100,
+    );
 
     let query = supabaseAdmin
       .from('complaints')
