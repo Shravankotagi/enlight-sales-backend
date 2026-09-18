@@ -37,6 +37,38 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return { from: startOfMonth };
   }
+  if (
+    lower === 'last_6_months' ||
+    lower === 'last_6months' ||
+    lower === '6_months' ||
+    lower === '6months' ||
+    lower === 'six_months'
+  ) {
+    const startOf6Months = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    startOf6Months.setHours(0, 0, 0, 0);
+    return { from: startOf6Months };
+  }
+  if (
+    lower === 'last_3_months' ||
+    lower === 'last_3months' ||
+    lower === '3_months' ||
+    lower === '3months'
+  ) {
+    const startOf3Months = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    startOf3Months.setHours(0, 0, 0, 0);
+    return { from: startOf3Months };
+  }
+  if (
+    lower === 'last_12_months' ||
+    lower === '12_months' ||
+    lower === 'this_year' ||
+    lower === '1_year' ||
+    lower === 'year'
+  ) {
+    const startOf12Months = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    startOf12Months.setHours(0, 0, 0, 0);
+    return { from: startOf12Months };
+  }
   const parsed = new Date(dateFilter);
   if (!isNaN(parsed.getTime())) {
     const start = new Date(parsed);
@@ -51,12 +83,12 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
 export const getMyOpenDealsTool: ChatbotTool = {
   name: 'get_my_open_deals',
   description:
-    'Fetches deals and confirmed orders (negotiations, quotations, review, won orders, or lost deals) scoped strictly by caller role. Always returns total pipeline values, won orders total value, total tonnage in Metric Tons (MT), exact stage-by-stage counts, and human-readable Inquiry/Deal IDs matching the UI (#INQ-XXXXXX / #DEAL-XXXXXX). Can filter by stage (e.g. stage_filter="won" for orders), date range, PO number, and delivery location.',
+    'Fetches deals, confirmed orders, and delivered tonnage trends over time (e.g. monthly delivered volume trend for the last 6 months, 12 months, or custom period) scoped strictly by caller role. Always returns total pipeline values, won orders total value, total tonnage in Metric Tons (MT), exact stage-by-stage counts, monthly trend arrays, and human-readable Inquiry/Deal IDs matching the UI (#INQ-XXXXXX / #DEAL-XXXXXX). Can filter by stage (e.g. stage_filter="won" for orders), mode (use mode="tonnage_trend" or "monthly_trend"), date range, PO number, and delivery location.',
   roles: ['salesperson', 'manager', 'sales_manager', 'admin'],
   declaration: {
     name: 'get_my_open_deals',
     description:
-      'Retrieves deals and orders for the authenticated user based on role scope. Can filter by stage (use stage_filter="won" for confirmed orders), customer name, date range (today, this_week, this_month), PO number, or delivery location. Always returns total order value, won deal total value, volume in MT, and human-readable Inquiry/Deal IDs (INQ-XXXXXX / DEAL-XXXXXX). Valid stage_filter values: "all", "won", "quoted", "negotiation", "review", "qualified", "lost".',
+      'Retrieves deals, orders, and delivered tonnage trends over time for the authenticated user based on role scope. Can filter by stage (use stage_filter="won" for confirmed orders), customer name, date range (today, this_week, this_month, last_3_months, last_6_months, last_12_months, all), PO number, or delivery location. When asked about delivered tonnage trends, monthly volume over time, or order trends, set stage_filter="won" and mode="tonnage_trend". Always returns total order value, won deal total value, volume in MT, and human-readable Inquiry/Deal IDs (INQ-XXXXXX / DEAL-XXXXXX). Valid stage_filter values: "all", "won", "quoted", "negotiation", "review", "qualified", "lost".',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -68,7 +100,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
         stage_filter: {
           type: 'STRING',
           description:
-            'Optional filter by deal stage. Valid values: "all", "won" (use for Orders), "quoted", "negotiation", "review", "qualified", "lost". Default is "all".',
+            'Optional filter by deal stage. Valid values: "all", "won" (use for Orders / Delivered Tonnage), "quoted", "negotiation", "review", "qualified", "lost". Default is "all".',
         },
         customer_name: {
           type: 'STRING',
@@ -82,7 +114,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
         date_range: {
           type: 'STRING',
           description:
-            'Optional date filter: "today", "yesterday", "this_week", "this_month", "all", or specific ISO date.',
+            'Optional date filter: "today", "yesterday", "this_week", "this_month", "last_3_months", "last_6_months", "last_12_months", "this_year", "all", or specific ISO date.',
         },
         po_number: {
           type: 'STRING',
@@ -97,7 +129,12 @@ export const getMyOpenDealsTool: ChatbotTool = {
         mode: {
           type: 'STRING',
           description:
-            'Query mode: "list" (default, returns records with summary), "summary" (returns only pipeline sums, tonnage, and stage breakdown).',
+            'Query mode: "list" (default, returns records with summary), "summary" (returns pipeline sums, tonnage, and stage breakdown), "tonnage_trend" or "monthly_trend" (computes month-by-month delivered tonnage in MT, orders count, revenue, and trend analysis over the last 6 or specified months).',
+        },
+        months_count: {
+          type: 'INTEGER',
+          description:
+            'Number of months for trend analysis (default: 6, max: 24). Only applicable when mode="tonnage_trend" or "monthly_trend".',
         },
         limit: {
           type: 'INTEGER',
@@ -150,7 +187,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
     let query = supabaseAdmin
       .from('deals')
       .select(
-        'id, inquiry_id, customer_name, customer_phone, customer_gst, customer_address, delivery_location, payment_terms, total_amount, stage, status, po_number, po_date, created_at, salesperson_phone, employee_id, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
+        'id, inquiry_id, customer_name, customer_phone, customer_gst, customer_address, delivery_location, payment_terms, total_amount, stage, status, po_number, po_date, won_at, created_at, salesperson_phone, employee_id, deal_items(sku_text, dimensions, quantity, unit, rate, amount)',
       )
       .order('created_at', { ascending: false });
 
@@ -224,12 +261,30 @@ export const getMyOpenDealsTool: ChatbotTool = {
     // Admin role receives no filtering (unfiltered view)
 
     // 2. Date filtering
-    const { from, to } = parseDateFilter(dateRange);
-    if (from) {
-      query = query.gte('created_at', from.toISOString());
-    }
-    if (to) {
-      query = query.lte('created_at', to.toISOString());
+    const isTrendMode =
+      mode === 'tonnage_trend' ||
+      mode === 'monthly_trend' ||
+      mode === 'trend' ||
+      dateRange === 'last_6_months' ||
+      dateRange === 'last_3_months' ||
+      dateRange === 'last_12_months';
+
+    const effectiveDateRange =
+      isTrendMode && !dateRange ? 'last_6_months' : dateRange;
+    const { from, to } = parseDateFilter(effectiveDateRange);
+
+    if (isTrendMode && from) {
+      const fromDateOnly = from.toISOString().split('T')[0];
+      query = query.or(
+        `created_at.gte.${from.toISOString()},won_at.gte.${from.toISOString()},po_date.gte.${fromDateOnly}`,
+      );
+    } else {
+      if (from) {
+        query = query.gte('created_at', from.toISOString());
+      }
+      if (to) {
+        query = query.lte('created_at', to.toISOString());
+      }
     }
 
     const { data, error } = await query;
@@ -316,6 +371,7 @@ export const getMyOpenDealsTool: ChatbotTool = {
         status: d.status || 'review',
         po_number: d.po_number || null,
         po_date: d.po_date || null,
+        won_at: d.won_at || null,
         created_at: d.created_at,
         salesperson_phone: d.salesperson_phone || '',
         deal_items: items,
@@ -446,6 +502,234 @@ export const getMyOpenDealsTool: ChatbotTool = {
             : 0,
       },
     };
+
+    if (isTrendMode) {
+      const numMonths = Math.min(
+        Math.max(
+          Number(args?.months_count) ||
+            (effectiveDateRange === 'last_3_months'
+              ? 3
+              : effectiveDateRange === 'last_12_months' ||
+                  effectiveDateRange === 'this_year'
+                ? 12
+                : 6),
+          1,
+        ),
+        24,
+      );
+      const now = new Date();
+
+      // Build chronologically ordered month slots from (now - numMonths + 1) to now
+      const monthSlots: Array<{
+        month_key: string;
+        month_label: string;
+        month_name: string;
+        year: number;
+        month_num: number;
+        delivered_tonnage_mt: number;
+        orders_count: number;
+        total_revenue: number;
+        customers_map: Record<
+          string,
+          {
+            customer_name: string;
+            tonnage_mt: number;
+            orders_count: number;
+            revenue: number;
+          }
+        >;
+      }> = [];
+
+      for (let i = numMonths - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        const key = `${y}-${String(m).padStart(2, '0')}`;
+        const label = d.toLocaleString('en-IN', {
+          month: 'short',
+          year: 'numeric',
+        });
+        const name = d.toLocaleString('en-IN', { month: 'long' });
+        monthSlots.push({
+          month_key: key,
+          month_label: label,
+          month_name: name,
+          year: y,
+          month_num: m,
+          delivered_tonnage_mt: 0,
+          orders_count: 0,
+          total_revenue: 0,
+          customers_map: {},
+        });
+      }
+
+      // Populate slots using won orders (delivered volume)
+      const targetWonDeals = formattedDeals.filter(
+        (d: any) =>
+          d.stage === 'won' ||
+          d.stage === 'order' ||
+          Boolean(d.po_number) ||
+          d.inquiry_type === 'purchase_order',
+      );
+
+      targetWonDeals.forEach((deal: any) => {
+        const dtStr = deal.won_at || deal.po_date || deal.created_at;
+        if (!dtStr) return;
+        const dealDate = new Date(dtStr);
+        if (isNaN(dealDate.getTime())) return;
+        const dealKey = `${dealDate.getFullYear()}-${String(
+          dealDate.getMonth() + 1,
+        ).padStart(2, '0')}`;
+
+        const slot = monthSlots.find((s) => s.month_key === dealKey);
+        if (slot) {
+          const tMt = Number(deal.tonnage_mt) || 0;
+          const amt = Number(deal.total_amount) || 0;
+          slot.delivered_tonnage_mt =
+            Math.round((slot.delivered_tonnage_mt + tMt) * 1000) / 1000;
+          slot.orders_count += 1;
+          slot.total_revenue += amt;
+
+          const cName = deal.customer_name || 'Unknown Customer';
+          if (!slot.customers_map[cName]) {
+            slot.customers_map[cName] = {
+              customer_name: cName,
+              tonnage_mt: 0,
+              orders_count: 0,
+              revenue: 0,
+            };
+          }
+          slot.customers_map[cName].tonnage_mt =
+            Math.round((slot.customers_map[cName].tonnage_mt + tMt) * 1000) /
+            1000;
+          slot.customers_map[cName].orders_count += 1;
+          slot.customers_map[cName].revenue += amt;
+        }
+      });
+
+      // Top customer accounts across the entire evaluated trend period
+      const overallCustomerMap: Record<
+        string,
+        {
+          customer_name: string;
+          total_tonnage_mt: number;
+          orders_count: number;
+          total_revenue: number;
+        }
+      > = {};
+      monthSlots.forEach((s) => {
+        Object.values(s.customers_map).forEach((c) => {
+          if (!overallCustomerMap[c.customer_name]) {
+            overallCustomerMap[c.customer_name] = {
+              customer_name: c.customer_name,
+              total_tonnage_mt: 0,
+              orders_count: 0,
+              total_revenue: 0,
+            };
+          }
+          overallCustomerMap[c.customer_name].total_tonnage_mt =
+            Math.round(
+              (overallCustomerMap[c.customer_name].total_tonnage_mt +
+                c.tonnage_mt) *
+                1000,
+            ) / 1000;
+          overallCustomerMap[c.customer_name].orders_count += c.orders_count;
+          overallCustomerMap[c.customer_name].total_revenue += c.revenue;
+        });
+      });
+
+      const topCustomers = Object.values(overallCustomerMap)
+        .sort((a, b) => b.total_tonnage_mt - a.total_tonnage_mt)
+        .slice(0, 10);
+
+      // Clean monthly slots for assistant consumption
+      const cleanMonthlyTrend = monthSlots.map((s) => {
+        const topMonthCusts = Object.values(s.customers_map)
+          .sort((a, b) => b.tonnage_mt - a.tonnage_mt)
+          .slice(0, 3)
+          .map((c) => ({
+            customer: c.customer_name,
+            tonnage_mt: c.tonnage_mt,
+          }));
+
+        return {
+          month_key: s.month_key,
+          month: s.month_label,
+          month_name: s.month_name,
+          year: s.year,
+          delivered_tonnage_mt: s.delivered_tonnage_mt,
+          orders_count: s.orders_count,
+          total_revenue: s.total_revenue,
+          top_customers: topMonthCusts,
+        };
+      });
+
+      const totalDeliveredTonnage =
+        Math.round(
+          cleanMonthlyTrend.reduce(
+            (sum, m) => sum + m.delivered_tonnage_mt,
+            0,
+          ) * 1000,
+        ) / 1000;
+      const totalDeliveredOrders = cleanMonthlyTrend.reduce(
+        (sum, m) => sum + m.orders_count,
+        0,
+      );
+      const totalDeliveredRev = cleanMonthlyTrend.reduce(
+        (sum, m) => sum + m.total_revenue,
+        0,
+      );
+      const avgMonthlyTonnage =
+        numMonths > 0
+          ? Math.round((totalDeliveredTonnage / numMonths) * 100) / 100
+          : 0;
+
+      let peakMonth = cleanMonthlyTrend[0];
+      let lowestMonth = cleanMonthlyTrend[0];
+      cleanMonthlyTrend.forEach((m) => {
+        if (m.delivered_tonnage_mt > peakMonth.delivered_tonnage_mt)
+          peakMonth = m;
+        if (m.delivered_tonnage_mt < lowestMonth.delivered_tonnage_mt)
+          lowestMonth = m;
+      });
+
+      const trendPeriodLabel = `${cleanMonthlyTrend[0].month} to ${
+        cleanMonthlyTrend[cleanMonthlyTrend.length - 1].month
+      }`;
+
+      const trendSummary = {
+        period: trendPeriodLabel,
+        months_evaluated: numMonths,
+        total_delivered_tonnage_mt: totalDeliveredTonnage,
+        total_delivered_orders_count: totalDeliveredOrders,
+        total_delivered_revenue: totalDeliveredRev,
+        average_monthly_tonnage_mt: avgMonthlyTonnage,
+        peak_month: {
+          month: peakMonth.month,
+          delivered_tonnage_mt: peakMonth.delivered_tonnage_mt,
+          orders_count: peakMonth.orders_count,
+        },
+        lowest_month: {
+          month: lowestMonth.month,
+          delivered_tonnage_mt: lowestMonth.delivered_tonnage_mt,
+          orders_count: lowestMonth.orders_count,
+        },
+        current_month_mtd: cleanMonthlyTrend[cleanMonthlyTrend.length - 1],
+      };
+
+      return {
+        data: {
+          summary: {
+            ...summary,
+            trend_summary: trendSummary,
+          },
+          monthly_trend: cleanMonthlyTrend,
+          top_delivered_customers: topCustomers,
+          deals: filteredDeals.slice(0, limit),
+        },
+        rowCount: cleanMonthlyTrend.length,
+      };
+    }
 
     if (mode === 'summary' || mode === 'count') {
       return {

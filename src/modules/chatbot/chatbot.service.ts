@@ -1059,7 +1059,18 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries, won orders, active pipeline deals, and active customer accounts dynamically from the tool data.
       * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
       * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
-    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
+    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown, and delivered tonnage trends over time.
+      * DELIVERED TONNAGE TREND OVER TIME (LAST 6 MONTHS / CUSTOM PERIOD):
+        - When the user asks "What is the delivered tonnage trend for the last 6 months?", "delivered tonnage trend", "monthly delivered volume", or asks about delivered tonnage over time, IMMEDIATELY call 'get_my_open_deals' with stage_filter: "won", mode: "tonnage_trend", and date_range: "last_6_months".
+        - ALWAYS present a clean markdown table showing:
+          | Month | Delivered Tonnage (MT) | Orders Count | Total Revenue (₹) |
+        - Highlight executive insights:
+          1. Total Delivered Volume across the evaluated period (in MT).
+          2. Peak/Highest Delivery Month and volume.
+          3. Monthly average delivered tonnage.
+          4. Current month performance (MTD).
+          5. Top contributing customer accounts.
+        - STRICT NEGATIVE CONSTRAINT: NEVER state or apologize that your tools do not have the capability to track or report on delivered tonnage over time! You have full access to delivered orders and tonnage trends through 'get_my_open_deals'.
     - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
       * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
@@ -1412,7 +1423,21 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             .trim();
         }
 
-        if (textOutput) {
+        const isTonnageRefusal =
+          textOutput &&
+          (textOutput.toLowerCase().includes('cannot provide') ||
+            textOutput.toLowerCase().includes('do not have the capability') ||
+            textOutput.toLowerCase().includes('not have the capability') ||
+            textOutput.toLowerCase().includes('tools do not')) &&
+          (messageText.toLowerCase().includes('delivered tonnage') ||
+            messageText.toLowerCase().includes('tonnage trend') ||
+            messageText.toLowerCase().includes('tonnage over time') ||
+            (messageText.toLowerCase().includes('tonnage') &&
+              (messageText.toLowerCase().includes('month') ||
+                messageText.toLowerCase().includes('trend') ||
+                messageText.toLowerCase().includes('delivered'))));
+
+        if (textOutput && !isTonnageRefusal) {
           assistantReply = this.cleanAssistantReply(textOutput);
         } else {
           // If Gemini did not call a tool and output was empty/only thought tokens,
@@ -1800,6 +1825,22 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           ) {
             rescuedToolName = 'get_deal_ids';
             rescuedArgs = { text: messageText };
+          } else if (
+            lowerMsg.includes('delivered tonnage') ||
+            lowerMsg.includes('tonnage trend') ||
+            lowerMsg.includes('tonnage over time') ||
+            (lowerMsg.includes('tonnage') && lowerMsg.includes('trend')) ||
+            (lowerMsg.includes('tonnage') &&
+              (lowerMsg.includes('month') ||
+                lowerMsg.includes('last 6') ||
+                lowerMsg.includes('delivered')))
+          ) {
+            rescuedToolName = 'get_my_open_deals';
+            rescuedArgs = {
+              stage_filter: 'won',
+              mode: 'tonnage_trend',
+              date_range: 'last_6_months',
+            };
           } else if (
             lowerMsg.includes('deal') ||
             lowerMsg.includes('pipeline') ||
