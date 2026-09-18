@@ -1435,14 +1435,6 @@ async function syncActivity(activityType, data) {
   });
 }
 
-// ── Cleanup Utility ───────────────────────────────────────────────────────────
-
-async function clearAllBiginData() {
-  throw new Error(
-    'Action permanently disabled: Automatic deletion of Bigin CRM records is disabled to prevent accidental data loss.',
-  );
-}
-
 async function syncAllDatabaseToBigin() {
   const sb = getSupabase();
   const token = await getZohoToken();
@@ -1829,7 +1821,6 @@ async function pullBiginToDatabase() {
 
 module.exports = {
   syncActivity,
-  clearAllBiginData,
   syncAllDatabaseToBigin,
   pullBiginToDatabase,
 };
