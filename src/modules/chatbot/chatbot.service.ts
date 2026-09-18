@@ -1085,6 +1085,20 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           2. Total orders and cumulative lifetime revenue from these top accounts.
           3. Key Account vs Growth breakdown of these top accounts.
         - STRICT NEGATIVE CONSTRAINT: Zero emojis in all responses.
+      * CUSTOMERS WITHOUT ORDERS IN THE LAST N DAYS (INACTIVE / DORMANT ACCOUNTS):
+        - When the user asks "Which customers haven't placed an order in the last 60 days?", "customers with no orders in the last X days", "dormant accounts", or asks for accounts without recent order activity:
+          IMMEDIATELY call 'get_customer_360' with no_order_days: [N] (e.g. 60, 30, 90). If days are not specified, default to 60.
+        - NEVER confuse "customers who haven't placed an order in 60 days" with "At Risk customers"!
+        - NEVER state that there are 0 customers at risk or that all accounts are active when asked about customers who haven't placed an order! Customers who haven't placed an order are distinct from the churn risk health classification.
+        - ALWAYS present a clean markdown table showing the customer accounts and their available contact details:
+          | Customer Name | Contact Person | Phone Number | Last Order Date | Days Since Order | Assigned Sales Rep |
+          * If contact person or phone is not on file, show "Not Available" or "-".
+          * If last order date is null, show "Never / No orders recorded".
+        - Highlight key executive metrics:
+          1. Total count of customer accounts with no order in the evaluated period (from summary.filtered_customers_count).
+          2. High-priority accounts with available contact details for immediate salesperson re-engagement.
+          3. Breakdown of these accounts by assigned sales representative.
+        - STRICT NEGATIVE CONSTRAINT: Zero emojis in all responses.
       * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
       * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
@@ -1942,6 +1956,34 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               date_range: 'last_6_months',
             };
           } else if (
+            (lowerMsg.includes('customer') ||
+              lowerMsg.includes('account') ||
+              lowerMsg.includes('client') ||
+              lowerMsg.includes('buyer')) &&
+            (lowerMsg.includes("haven't placed") ||
+              lowerMsg.includes('havent placed') ||
+              lowerMsg.includes('have not placed') ||
+              lowerMsg.includes('not placed') ||
+              lowerMsg.includes('no order') ||
+              lowerMsg.includes('without order') ||
+              lowerMsg.includes('no recent order') ||
+              lowerMsg.includes("hasn't placed") ||
+              lowerMsg.includes('has not placed') ||
+              lowerMsg.includes('hasnt placed') ||
+              lowerMsg.includes('without any order') ||
+              lowerMsg.includes('not ordered') ||
+              lowerMsg.includes('dormant') ||
+              (lowerMsg.includes('order') &&
+                (lowerMsg.includes('days') || lowerMsg.includes('60'))))
+          ) {
+            const daysMatch = lowerMsg.match(/\b(\d+)\s*(?:days?|d)\b/i);
+            const days = daysMatch ? parseInt(daysMatch[1], 10) : 60;
+            rescuedToolName = 'get_customer_360';
+            rescuedArgs = {
+              no_order_days: days,
+              limit: 25,
+            };
+          } else if (
             lowerMsg.includes('deal') ||
             lowerMsg.includes('pipeline') ||
             lowerMsg.includes('order volume') ||
@@ -2047,6 +2089,22 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 mode: 'top_customers',
                 sort_by: 'tonnage_desc',
                 limit: limitMatch ? parseInt(limitMatch[1], 10) : 5,
+              };
+            } else if (
+              lowerMsg.includes("haven't placed") ||
+              lowerMsg.includes('havent placed') ||
+              lowerMsg.includes('have not placed') ||
+              lowerMsg.includes('not placed') ||
+              lowerMsg.includes('no order') ||
+              lowerMsg.includes('without order') ||
+              lowerMsg.includes('not ordered') ||
+              (lowerMsg.includes('order') &&
+                (lowerMsg.includes('days') || lowerMsg.includes('60')))
+            ) {
+              const daysMatch = lowerMsg.match(/\b(\d+)\s*(?:days?|d)\b/i);
+              rescuedArgs = {
+                no_order_days: daysMatch ? parseInt(daysMatch[1], 10) : 60,
+                limit: 25,
               };
             } else if (
               lowerMsg.includes('at risk') ||

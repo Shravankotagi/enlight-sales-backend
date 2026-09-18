@@ -74,7 +74,7 @@ export const getCustomer360Tool: ChatbotTool = {
   declaration: {
     name: 'get_customer_360',
     description:
-      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR lists top customer accounts ranked by tonnage/volume (mode: "top_customers", sort_by: "tonnage_desc"), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Do NOT call this tool for inquiry status lookups (use get_inquiries with inquiry_id) or highest tonnage inquiries (use get_inquiries with mode: "highest_tonnage"). Scoped strictly by caller role and assigned portfolio.',
+      'Retrieves Customer 360 profile for a specific customer (including visits, complaints, deals, payments, segmentation and health risk), OR lists top customer accounts ranked by tonnage/volume (mode: "top_customers", sort_by: "tonnage_desc"), OR filters customers who haven\'t placed an order in the last N days (no_order_days: 60, mode: "no_orders"), OR returns total customer count, segmentation breakdown, and customer directory when customer_name is omitted. Do NOT call this tool for inquiry status lookups (use get_inquiries with inquiry_id) or highest tonnage inquiries (use get_inquiries with mode: "highest_tonnage"). Scoped strictly by caller role and assigned portfolio.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -86,12 +86,17 @@ export const getCustomer360Tool: ChatbotTool = {
         mode: {
           type: 'STRING',
           description:
-            'Optional mode: "top_customers" (returns top customer accounts ranked by total purchased tonnage or lifetime value), "directory" (general directory list), or "summary" (counts breakdown).',
+            'Optional mode: "top_customers" (returns top customer accounts ranked by total purchased tonnage or lifetime value), "no_orders" (customers who have not placed an order in the last 60 days), "directory" (general directory list), or "summary" (counts breakdown).',
         },
         sort_by: {
           type: 'STRING',
           description:
             'Optional sort order: "tonnage_desc" (highest tonnage first), "ltv_desc" (highest lifetime value first), "orders_desc" (most orders first), "name_asc" (alphabetical). Defaults to "tonnage_desc" when mode is "top_customers".',
+        },
+        no_order_days: {
+          type: 'INTEGER',
+          description:
+            'Optional filter to retrieve customers who have not placed an order in the last N days (e.g. 60, 30, 90). Filters for accounts whose last order date is >= N days ago or who have never placed an order.',
         },
         segment_filter: {
           type: 'STRING',
@@ -106,7 +111,7 @@ export const getCustomer360Tool: ChatbotTool = {
         limit: {
           type: 'INTEGER',
           description:
-            'Maximum number of customers to return (default: 5 for top_customers, 50 for directory, max: 100).',
+            'Maximum number of customers to return (default: 5 for top_customers, 25 for no_order_days, 50 for directory, max: 100).',
         },
       },
     },
@@ -114,6 +119,13 @@ export const getCustomer360Tool: ChatbotTool = {
   async execute(args: any, callerContext: CallerContext, supabaseAdmin: any) {
     const mode = (args?.mode || '').toLowerCase().trim();
     const sortBy = (args?.sort_by || '').toLowerCase().trim();
+    const noOrderDays = Number(args?.no_order_days);
+    const effectiveNoOrderDays =
+      !isNaN(noOrderDays) && noOrderDays > 0
+        ? noOrderDays
+        : mode === 'no_orders' || mode === 'inactive_customers'
+          ? 60
+          : 0;
     let customerName = (args?.customer_name || '').trim();
     const genericPhrases = [
       'top',
@@ -127,9 +139,19 @@ export const getCustomer360Tool: ChatbotTool = {
       'summary',
       'highest',
       'highest tonnage',
+      'no order',
+      'no orders',
+      'inactive',
+      'dormant',
+      '60 days',
+      'last 60 days',
+      "haven't placed an order",
+      'have not placed an order',
     ];
     if (
       mode === 'top_customers' ||
+      mode === 'no_orders' ||
+      effectiveNoOrderDays > 0 ||
       genericPhrases.includes(customerName.toLowerCase())
     ) {
       customerName = '';
@@ -140,7 +162,11 @@ export const getCustomer360Tool: ChatbotTool = {
     const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
     const empId = callerContext.employeeId;
     const defaultLimit =
-      mode === 'top_customers' || sortBy === 'tonnage_desc' ? 5 : 50;
+      mode === 'top_customers' || sortBy === 'tonnage_desc'
+        ? 5
+        : effectiveNoOrderDays > 0
+          ? 25
+          : 50;
     const limit = Math.min(
       Math.max(Number(args?.limit) || defaultLimit, 1),
       100,
@@ -277,13 +303,39 @@ export const getCustomer360Tool: ChatbotTool = {
           );
         }
 
+        if (effectiveNoOrderDays > 0) {
+          const nowMs = Date.now();
+          filteredCustomers = filteredCustomers.filter((c: any) => {
+            if (
+              c.days_since_order !== null &&
+              c.days_since_order !== undefined
+            ) {
+              return c.days_since_order >= effectiveNoOrderDays;
+            }
+            if (c.last_order_date) {
+              const days = Math.floor(
+                (nowMs - new Date(c.last_order_date).getTime()) /
+                  (1000 * 60 * 60 * 24),
+              );
+              return days >= effectiveNoOrderDays;
+            }
+            return true; // No order ever recorded
+          });
+        }
+
         let note = '';
-        if (rawHealth === 'at_risk' && filteredCustomers.length === 0) {
+        if (effectiveNoOrderDays > 0) {
+          if (filteredCustomers.length === 0) {
+            note = `All customer accounts in your portfolio have placed an order within the last ${effectiveNoOrderDays} days.`;
+          } else {
+            note = `Found ${filteredCustomers.length} customer accounts with no recorded orders in the last ${effectiveNoOrderDays} days.`;
+          }
+        } else if (rawHealth === 'at_risk' && filteredCustomers.length === 0) {
           note =
             'There are currently 0 customers marked as "At Risk" in your portfolio. All customer accounts are active and in good standing.';
         }
 
-        // Apply sorting based on sort_by or mode
+        // Apply sorting based on sort_by, mode, or no_order_days
         if (
           mode === 'top_customers' ||
           sortBy === 'tonnage_desc' ||
@@ -309,6 +361,18 @@ export const getCustomer360Tool: ChatbotTool = {
           filteredCustomers.sort((a: any, b: any) =>
             (a.customer_name || '').localeCompare(b.customer_name || ''),
           );
+        } else if (effectiveNoOrderDays > 0) {
+          // Prioritize accounts with contact details (contact person / phone)
+          filteredCustomers.sort((a: any, b: any) => {
+            const aHasContact = Boolean(a.contact_person || a.customer_phone);
+            const bHasContact = Boolean(b.contact_person || b.customer_phone);
+            if (aHasContact && !bHasContact) return -1;
+            if (!aHasContact && bHasContact) return 1;
+            const aDays = a.days_since_order ?? 9999;
+            const bDays = b.days_since_order ?? 9999;
+            if (bDays !== aDays) return bDays - aDays;
+            return (a.customer_name || '').localeCompare(b.customer_name || '');
+          });
         }
 
         let largestSeg = 'new';
@@ -352,6 +416,10 @@ export const getCustomer360Tool: ChatbotTool = {
               largest_segment: largestSeg,
               largest_segment_count: maxCount,
               filtered_customers_count: filteredCustomers.length,
+              no_order_days_filter:
+                effectiveNoOrderDays > 0 ? effectiveNoOrderDays : undefined,
+              customers_without_orders_count:
+                effectiveNoOrderDays > 0 ? filteredCustomers.length : undefined,
               top_customers_by_tonnage: topByTonnage,
               note: note || undefined,
             },
