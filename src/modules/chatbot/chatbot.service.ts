@@ -1075,7 +1075,29 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
       * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
-    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
+    - 'get_visits': Past site visit records, follow-up action list, follow-ups due today / overdue / pending, positive/neutral/negative visit counts.
+      * VISIT FOLLOW-UPS (DUE TODAY, OVERDUE, PENDING, COMPLETED, UPCOMING, SUMMARY):
+        - When the user asks:
+          * "Show visit follow-ups due today", "visit followups due today", "what follow-ups are due today?", or "do I have any follow-ups due today?":
+            Call 'get_visits' with follow_up_filter: "due_today", requires_follow_up: true.
+            DO NOT pass date_range: "today" because the visit date may be earlier than today!
+          * "Show overdue visit follow-ups" or "overdue followups":
+            Call 'get_visits' with follow_up_filter: "overdue", requires_follow_up: true.
+          * "Show pending visit follow-ups" or "all pending followups":
+            Call 'get_visits' with follow_up_filter: "pending", requires_follow_up: true.
+          * "Show completed visit follow-ups":
+            Call 'get_visits' with follow_up_filter: "completed".
+          * "Visit follow-up summary" or "how many follow-ups do I have?":
+            Call 'get_visits' with mode: "follow_up_summary", requires_follow_up: true.
+          * "Show follow-ups for [Customer Name]":
+            Call 'get_visits' with customer_name: "[Customer Name]", requires_follow_up: true.
+        - ALWAYS present a clean markdown table showing:
+          | Customer Name | Scheduled Follow-Up Date | Status / Urgency | Follow-Up Action | Person Met | Sales Rep |
+        - Highlight:
+          1. Scheduled follow-up action and due date.
+          2. Urgency status (e.g. Due Today, Overdue, Upcoming, Completed).
+          3. Total count of follow-ups matching the criteria from summary.follow_up_metrics.
+        - STRICT NEGATIVE CONSTRAINT: NEVER state or apologize that there are no follow-ups due today or that your records show none when 'get_visits' returns matching records!
       * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
       * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
       * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Dynamically report the ranking from the tool output including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
@@ -1693,7 +1715,47 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 lowerMsg.includes('action') ||
                 lowerMsg.includes('pending')
               ) {
-                rescuedArgs = { requires_follow_up: true };
+                if (
+                  lowerMsg.includes('due today') ||
+                  lowerMsg.includes('due-today') ||
+                  (lowerMsg.includes('follow') && lowerMsg.includes('today'))
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'due_today',
+                    requires_follow_up: true,
+                  };
+                } else if (lowerMsg.includes('overdue')) {
+                  rescuedArgs = {
+                    follow_up_filter: 'overdue',
+                    requires_follow_up: true,
+                  };
+                } else if (
+                  lowerMsg.includes('completed') ||
+                  lowerMsg.includes('done')
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'completed',
+                    requires_follow_up: true,
+                  };
+                } else if (
+                  lowerMsg.includes('upcoming') ||
+                  lowerMsg.includes('tomorrow')
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'upcoming',
+                    requires_follow_up: true,
+                  };
+                } else if (lowerMsg.includes('summary')) {
+                  rescuedArgs = {
+                    mode: 'follow_up_summary',
+                    requires_follow_up: true,
+                  };
+                } else {
+                  rescuedArgs = {
+                    follow_up_filter: 'pending',
+                    requires_follow_up: true,
+                  };
+                }
               } else if (lowerMsg.includes('positive')) {
                 rescuedArgs = { outcome: 'positive' };
               } else if (lowerMsg.includes('negative')) {
