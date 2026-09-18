@@ -12,12 +12,12 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
   const now = new Date();
   const lower = dateFilter.toLowerCase().trim();
 
-  if (lower === 'today') {
+  if (lower === 'today' || lower === 'aaj') {
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
     return { from: startOfToday };
   }
-  if (lower === 'yesterday') {
+  if (lower === 'yesterday' || lower === 'kal') {
     const startOfYesterday = new Date(now);
     startOfYesterday.setDate(startOfYesterday.getDate() - 1);
     startOfYesterday.setHours(0, 0, 0, 0);
@@ -26,13 +26,22 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     endOfYesterday.setHours(23, 59, 59, 999);
     return { from: startOfYesterday, to: endOfYesterday };
   }
-  if (lower === 'this_week' || lower === 'week') {
+  if (
+    lower === 'this_week' ||
+    lower === 'week' ||
+    lower === 'last_7_days' ||
+    lower === '7_days' ||
+    lower === 'last 7 days' ||
+    lower === '7 days' ||
+    lower === 'past_7_days' ||
+    lower === 'past 7 days'
+  ) {
     const startOfWeek = new Date(now);
     startOfWeek.setDate(startOfWeek.getDate() - 7);
     startOfWeek.setHours(0, 0, 0, 0);
     return { from: startOfWeek };
   }
-  if (lower === 'last_week') {
+  if (lower === 'last_week' || lower === 'last week') {
     const endOfLastWeek = new Date(now);
     endOfLastWeek.setDate(endOfLastWeek.getDate() - 7);
     endOfLastWeek.setHours(23, 59, 59, 999);
@@ -41,11 +50,28 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     startOfLastWeek.setHours(0, 0, 0, 0);
     return { from: startOfLastWeek, to: endOfLastWeek };
   }
+  if (
+    lower === 'last_30_days' ||
+    lower === '30_days' ||
+    lower === 'last 30 days' ||
+    lower === '30 days' ||
+    lower === 'past_30_days' ||
+    lower === 'past 30 days'
+  ) {
+    const startOf30Days = new Date(now);
+    startOf30Days.setDate(startOf30Days.getDate() - 30);
+    startOf30Days.setHours(0, 0, 0, 0);
+    return { from: startOf30Days };
+  }
   if (lower === 'this_month' || lower === 'month') {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return { from: startOfMonth };
   }
-  if (lower === 'last_month') {
+  if (
+    lower === 'last_month' ||
+    lower === 'last month' ||
+    lower === 'previous_month'
+  ) {
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(
       now.getFullYear(),
@@ -58,6 +84,19 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     );
     return { from: startOfLastMonth, to: endOfLastMonth };
   }
+
+  // Regex for N days (e.g. "last 14 days", "10 days")
+  const daysMatch = lower.match(/(?:last|past)?\s*(\d+)\s*(?:days?|d)/i);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1], 10);
+    if (!isNaN(days) && days > 0) {
+      const startOfNDays = new Date(now);
+      startOfNDays.setDate(startOfNDays.getDate() - days);
+      startOfNDays.setHours(0, 0, 0, 0);
+      return { from: startOfNDays };
+    }
+  }
+
   const parsed = new Date(dateFilter);
   if (!isNaN(parsed.getTime())) {
     const start = new Date(parsed);
@@ -67,6 +106,169 @@ function parseDateFilter(dateFilter?: string): { from?: Date; to?: Date } {
     return { from: start, to: end };
   }
   return {};
+}
+
+function formatLocalDate(d: Date = new Date()): string {
+  // Use Indian Standard Time (UTC + 5:30) to match Enlight Metals operational timezone
+  const indianDate = new Date(
+    d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
+  );
+  const year = indianDate.getFullYear();
+  const month = String(indianDate.getMonth() + 1).padStart(2, '0');
+  const day = String(indianDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getFollowUpStatusInfo(v: any): {
+  hasFollowUp: boolean;
+  action: string;
+  dueDateStr: string | null;
+  status: 'pending' | 'completed';
+  urgency: 'completed' | 'overdue' | 'today' | 'upcoming' | 'no_date';
+  diffDays: number | null;
+  relativeText: string;
+} {
+  const rawAction =
+    v.follow_up_action ||
+    v.followup ||
+    v.follow_up ||
+    (v.remarks || '').match(
+      /\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i,
+    )?.[1] ||
+    (v.remarks || '').match(
+      /(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*([^|\]\n]+)/i,
+    )?.[1];
+
+  const action = rawAction ? String(rawAction).trim() : '';
+  const isNonAction =
+    !action ||
+    action === '-' ||
+    action.toLowerCase() === 'none' ||
+    action.toLowerCase() === 'nil' ||
+    action.toLowerCase() === 'n/a' ||
+    action.toLowerCase().startsWith('no remarks') ||
+    action.toLowerCase().startsWith('no follow');
+
+  if (isNonAction) {
+    return {
+      hasFollowUp: false,
+      action: '',
+      dueDateStr: null,
+      status: 'pending',
+      urgency: 'no_date',
+      diffDays: null,
+      relativeText: '',
+    };
+  }
+
+  // Raw status from column or remarks [FollowUpStatus: completed|pending]
+  const remarksStatus = (v.remarks || '')
+    .match(/\[Follow-?Up-?Status:\s*([^\]]+)\]/i)?.[1]
+    ?.trim()
+    .toLowerCase();
+  const status: 'pending' | 'completed' =
+    v.follow_up_status === 'completed' || remarksStatus === 'completed'
+      ? 'completed'
+      : 'pending';
+
+  // Due date from column or remarks [FollowUpDate: YYYY-MM-DD]
+  let dueDate: string | null = null;
+  if (v.follow_up_date) {
+    dueDate = new Date(v.follow_up_date).toISOString().split('T')[0];
+  } else {
+    const match = (v.remarks || '').match(/\[Follow-?Up-?Date:\s*([^\]]+)\]/i);
+    if (match) {
+      dueDate = match[1].trim();
+    }
+  }
+
+  if (status === 'completed') {
+    return {
+      hasFollowUp: true,
+      action,
+      dueDateStr: dueDate,
+      status: 'completed',
+      urgency: 'completed',
+      diffDays: null,
+      relativeText: 'Done',
+    };
+  }
+
+  if (!dueDate) {
+    return {
+      hasFollowUp: true,
+      action,
+      dueDateStr: null,
+      status: 'pending',
+      urgency: 'no_date',
+      diffDays: null,
+      relativeText: 'Pending (no scheduled date)',
+    };
+  }
+
+  const todayStr = formatLocalDate();
+  const [tY, tM, tD] = todayStr.split('-').map(Number);
+  const [dY, dM, dD] = dueDate.split('-').map(Number);
+  const todayDate = new Date(Date.UTC(tY, tM - 1, tD));
+  const targetDate = new Date(Date.UTC(dY, dM - 1, dD));
+  const diffDays = Math.round(
+    (targetDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  const formattedDate = targetDate.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+
+  if (diffDays < 0) {
+    const absDays = Math.abs(diffDays);
+    const dayLabel =
+      absDays === 1 ? '1 day overdue' : `${absDays} days overdue`;
+    return {
+      hasFollowUp: true,
+      action,
+      dueDateStr: dueDate,
+      status: 'pending',
+      urgency: 'overdue',
+      diffDays,
+      relativeText: `${dayLabel} (${formattedDate})`,
+    };
+  }
+
+  if (diffDays === 0) {
+    return {
+      hasFollowUp: true,
+      action,
+      dueDateStr: dueDate,
+      status: 'pending',
+      urgency: 'today',
+      diffDays: 0,
+      relativeText: `Due today (${formattedDate})`,
+    };
+  }
+
+  if (diffDays === 1) {
+    return {
+      hasFollowUp: true,
+      action,
+      dueDateStr: dueDate,
+      status: 'pending',
+      urgency: 'upcoming',
+      diffDays: 1,
+      relativeText: `Due tomorrow (${formattedDate})`,
+    };
+  }
+
+  return {
+    hasFollowUp: true,
+    action,
+    dueDateStr: dueDate,
+    status: 'pending',
+    urgency: 'upcoming',
+    diffDays,
+    relativeText: `In ${diffDays} days (${formattedDate})`,
+  };
 }
 
 export function parseVisitRemarks(remarks?: string | null): {
@@ -104,10 +306,12 @@ export function parseVisitRemarks(remarks?: string | null): {
     }
   }
 
-  // 2. Parse Follow-up Action tag [FollowUp: ...]
+  // 2. Parse Follow-up Action tag [FollowUp: ...] or | Follow-up: ...
   let follow_up_action: string | null = null;
   let requires_follow_up = false;
-  const followUpMatch = remarks.match(/\[FollowUp:\s*([^\]]+)\]/i);
+  const followUpMatch =
+    remarks.match(/\[(?:Follow-?Up|Follow-?up\s*Action):\s*([^\]]+)\]/i) ||
+    remarks.match(/(?:^|\||\n)\s*Follow-?up(?:\s*Action)?:\s*([^|\]\n]+)/i);
   if (followUpMatch) {
     const text = followUpMatch[1].trim();
     if (
@@ -145,7 +349,7 @@ export function parseVisitRemarks(remarks?: string | null): {
   // 6. Clean Remarks by removing metadata bracket tags
   const clean_remarks = remarks
     .replace(
-      /\[(?:Outcome|Location|FollowUp|Requirement|Interests):[^\]]*\]\s*/gi,
+      /\[(?:Outcome|Location|Follow-?Up|Follow-?Up-?Date|Follow-?Up-?Status|Requirement|Interests):[^\]]*\]\s*/gi,
       '',
     )
     .trim();
@@ -169,7 +373,7 @@ export const getVisitsTool: ChatbotTool = {
   declaration: {
     name: 'get_visits',
     description:
-      'READ-ONLY QUERY TOOL: Searches and lists past customer site visits and field visit reports. Use ONLY when the user asks to see, view, search, count, or list past visits (e.g. "Show my visits", "List visits in Mumbai", "How many visits did I do?"). NEVER call this tool when the user is reporting or logging a visit that took place (e.g. "Met [Name]...", "Visited [Company]...") — for reporting visits, call log_customer_visit instead.',
+      'READ-ONLY QUERY TOOL: Searches and lists past customer site visits, field visit reports, and VISIT FOLLOW-UPS (follow-ups due today, overdue follow-ups, pending follow-up actions, completed follow-ups). Use whenever the user asks to see or list visit follow-ups (e.g. "Show visit follow-ups due today", "What follow-ups are due today?", "Show overdue follow-ups", "Pending follow-ups", "Follow-up summary") or past visits (e.g. "Show my visits", "List visits in Mumbai", "How many visits did I do?"). NEVER call this tool when the user is reporting or logging a visit that took place — for reporting visits, call log_customer_visit instead.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -198,6 +402,16 @@ export const getVisitsTool: ChatbotTool = {
           description:
             'Optional filter. When true, returns only visits that require follow-up actions or remarks.',
         },
+        follow_up_filter: {
+          type: 'STRING',
+          description:
+            'Optional filter by follow-up schedule and urgency. Valid values: "due_today" / "today" (follow-ups scheduled for today), "overdue" (past-due follow-ups still pending), "due" (overdue + due today), "upcoming" (scheduled for future date), "pending" (all pending follow-ups), "completed" (done follow-ups), "all" (all visits). ALWAYS use "due_today" when user asks for visit follow-ups due today!',
+        },
+        follow_up_due: {
+          type: 'STRING',
+          description:
+            'Alias for follow_up_filter ("today", "due_today", "overdue", "upcoming", "pending", "completed").',
+        },
         follow_up_status: {
           type: 'STRING',
           description:
@@ -221,12 +435,12 @@ export const getVisitsTool: ChatbotTool = {
         date_range: {
           type: 'STRING',
           description:
-            'Optional date filter. Valid values: "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "all", or specific ISO date.',
+            'Optional date filter for when the VISIT TOOK PLACE (visited_at). Valid values: "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "all", or specific ISO date. DO NOT set date_range to "today" when searching for follow-ups due today — use follow_up_filter: "due_today" instead!',
         },
         mode: {
           type: 'STRING',
           description:
-            'Query mode. Valid values: "list" (default), "summary", "rep_leaderboard" / "salesperson_leaderboard" (ranks reps by visits logged), "week_comparison" / "week_over_week" (this week vs last week comparative), "duplicates" / "duplicate_visits" (detects same-day visits to same customer).',
+            'Query mode. Valid values: "list" (default), "summary", "follow_up_summary" / "followup_summary" (grouped overview of follow-ups by urgency: due today, overdue, upcoming, completed), "rep_leaderboard" / "salesperson_leaderboard" (ranks reps by visits logged), "week_comparison" / "week_over_week" (this week vs last week comparative), "duplicates" / "duplicate_visits" (detects same-day visits to same customer).',
         },
         limit: {
           type: 'INTEGER',
@@ -246,6 +460,49 @@ export const getVisitsTool: ChatbotTool = {
     const dateRange = args?.date_range;
     const mode = (args?.mode || 'list').toLowerCase().trim();
     const limit = Math.min(Math.max(Number(args?.limit) || 20, 1), 100);
+
+    const rawFollowUpFilter = (
+      args?.follow_up_filter ||
+      args?.follow_up_due ||
+      args?.followup_filter ||
+      ''
+    )
+      .toLowerCase()
+      .trim();
+
+    let normalizedFollowUpFilter = rawFollowUpFilter;
+    if (
+      rawFollowUpFilter === 'today' ||
+      rawFollowUpFilter === 'due_today' ||
+      rawFollowUpFilter === 'due-today'
+    ) {
+      normalizedFollowUpFilter = 'due_today';
+    } else if (rawFollowUpFilter === 'overdue') {
+      normalizedFollowUpFilter = 'overdue';
+    } else if (rawFollowUpFilter === 'due') {
+      normalizedFollowUpFilter = 'due';
+    } else if (
+      rawFollowUpFilter === 'upcoming' ||
+      rawFollowUpFilter === 'tomorrow'
+    ) {
+      normalizedFollowUpFilter = 'upcoming';
+    } else if (rawFollowUpFilter === 'pending') {
+      normalizedFollowUpFilter = 'pending';
+    } else if (
+      rawFollowUpFilter === 'completed' ||
+      rawFollowUpFilter === 'done'
+    ) {
+      normalizedFollowUpFilter = 'completed';
+    }
+
+    // When user or Gemini asks for follow-ups with date_range 'today', that means "follow-ups due today", NOT "visited today"!
+    if (
+      !normalizedFollowUpFilter &&
+      (args?.requires_follow_up === true || args?.follow_up === true) &&
+      (dateRange === 'today' || dateRange === 'due_today')
+    ) {
+      normalizedFollowUpFilter = 'due_today';
+    }
 
     let query = supabaseAdmin
       .from('customer_visits')
@@ -313,13 +570,25 @@ export const getVisitsTool: ChatbotTool = {
     }
     // Admin role receives unfiltered data
 
-    // 2. Date filtering
-    const { from, to } = parseDateFilter(dateRange);
-    if (from) {
-      query = query.gte('visited_at', from.toISOString());
-    }
-    if (to) {
-      query = query.lte('visited_at', to.toISOString());
+    // 2. Date filtering for visit date (visited_at)
+    // IMPORTANT: If this is a follow-up urgency query (due_today, overdue, due, upcoming, summary),
+    // DO NOT restrict visited_at >= today in SQL because the visit may have occurred in past days!
+    const skipVisitedAtDateFilter =
+      normalizedFollowUpFilter === 'due_today' ||
+      normalizedFollowUpFilter === 'overdue' ||
+      normalizedFollowUpFilter === 'due' ||
+      normalizedFollowUpFilter === 'upcoming' ||
+      mode === 'follow_up_summary' ||
+      mode === 'followup_summary';
+
+    if (!skipVisitedAtDateFilter) {
+      const { from, to } = parseDateFilter(dateRange);
+      if (from) {
+        query = query.gte('visited_at', from.toISOString());
+      }
+      if (to) {
+        query = query.lte('visited_at', to.toISOString());
+      }
     }
 
     const { data, error } = await query;
@@ -343,6 +612,7 @@ export const getVisitsTool: ChatbotTool = {
     });
 
     const requiresFollowUp =
+      Boolean(normalizedFollowUpFilter) ||
       args?.requires_follow_up === true ||
       args?.follow_up === true ||
       args?.follow_up_only === true;
@@ -353,6 +623,12 @@ export const getVisitsTool: ChatbotTool = {
 
     let visitsTodayCount = 0;
     let followUpCount = 0;
+    let followUpsDueTodayCount = 0;
+    let followUpsOverdueCount = 0;
+    let followUpsUpcomingCount = 0;
+    let followUpsPendingTotalCount = 0;
+    let followUpsCompletedCount = 0;
+    let followUpsPendingNoDateCount = 0;
     let missingLocationCount = 0;
     let missingContactPersonCount = 0;
 
@@ -384,16 +660,28 @@ export const getVisitsTool: ChatbotTool = {
         outcomeCounts[out] = 1;
       }
 
+      const fuInfo = getFollowUpStatusInfo(v);
       const followUpAction =
-        v.follow_up_action || v.follow_up || parsed.follow_up_action;
-      const followUpDate = v.follow_up_date || null;
-      const followUpStatus =
-        v.follow_up_status || (followUpAction ? 'pending' : null);
+        fuInfo.action ||
+        v.follow_up_action ||
+        v.follow_up ||
+        parsed.follow_up_action;
+      const followUpDate = fuInfo.dueDateStr;
+      const followUpStatus = fuInfo.status;
       const followUpCompletedAt = v.follow_up_completed_at || null;
-      const needsFollowUp =
-        parsed.requires_follow_up || Boolean(v.follow_up_action || v.follow_up);
-      if (needsFollowUp && followUpStatus !== 'completed') {
-        followUpCount++;
+      const needsFollowUp = fuInfo.hasFollowUp;
+
+      if (fuInfo.hasFollowUp) {
+        if (fuInfo.status === 'completed') {
+          followUpsCompletedCount++;
+        } else {
+          followUpsPendingTotalCount++;
+          followUpCount++;
+          if (fuInfo.urgency === 'today') followUpsDueTodayCount++;
+          else if (fuInfo.urgency === 'overdue') followUpsOverdueCount++;
+          else if (fuInfo.urgency === 'upcoming') followUpsUpcomingCount++;
+          else if (fuInfo.urgency === 'no_date') followUpsPendingNoDateCount++;
+        }
       }
 
       const cName = v.customer_name || 'Unnamed Customer';
@@ -433,8 +721,19 @@ export const getVisitsTool: ChatbotTool = {
         follow_up_action: followUpAction,
         follow_up_date: followUpDate,
         follow_up_status: followUpStatus,
+        follow_up_urgency: fuInfo.urgency,
+        follow_up_relative_text: fuInfo.relativeText,
         follow_up_completed_at: followUpCompletedAt,
         requires_follow_up: needsFollowUp,
+        follow_up_info: {
+          has_follow_up: fuInfo.hasFollowUp,
+          action: followUpAction,
+          due_date: followUpDate,
+          status: followUpStatus,
+          urgency: fuInfo.urgency,
+          diff_days: fuInfo.diffDays,
+          relative_text: fuInfo.relativeText,
+        },
         salesperson_name: repName,
         salesperson_phone: v.salesperson_phone || '',
       };
@@ -637,6 +936,57 @@ export const getVisitsTool: ChatbotTool = {
       };
     }
 
+    const followUpMetrics = {
+      total_with_follow_up:
+        followUpsPendingTotalCount + followUpsCompletedCount,
+      due_today: followUpsDueTodayCount,
+      overdue: followUpsOverdueCount,
+      due_total: followUpsDueTodayCount + followUpsOverdueCount,
+      upcoming: followUpsUpcomingCount,
+      pending_total: followUpsPendingTotalCount,
+      completed: followUpsCompletedCount,
+      pending_no_date: followUpsPendingNoDateCount,
+    };
+
+    // ─── Mode: Follow-up Summary Overview ──────────────────────────────────
+    if (
+      mode === 'follow_up_summary' ||
+      mode === 'followup_summary' ||
+      mode === 'followups_overview' ||
+      mode === 'followup_overview'
+    ) {
+      const followUpGroups = {
+        due_today: formattedList.filter(
+          (v: any) => v.follow_up_urgency === 'today',
+        ),
+        overdue: formattedList.filter(
+          (v: any) => v.follow_up_urgency === 'overdue',
+        ),
+        upcoming: formattedList.filter(
+          (v: any) => v.follow_up_urgency === 'upcoming',
+        ),
+        pending_no_date: formattedList.filter(
+          (v: any) => v.follow_up_urgency === 'no_date',
+        ),
+        completed: formattedList.filter(
+          (v: any) => v.follow_up_urgency === 'completed',
+        ),
+      };
+
+      return {
+        data: {
+          follow_up_metrics: followUpMetrics,
+          follow_up_groups: followUpGroups,
+          summary: {
+            total_visits: rawList.length,
+            follow_up_metrics: followUpMetrics,
+            note: `Found ${followUpMetrics.total_with_follow_up} total visit follow-ups (${followUpMetrics.due_today} due today, ${followUpMetrics.overdue} overdue, ${followUpMetrics.upcoming} upcoming, ${followUpMetrics.completed} completed).`,
+          },
+        },
+        rowCount: followUpMetrics.total_with_follow_up,
+      };
+    }
+
     // 4. Filtering
     let filteredList = formattedList;
 
@@ -646,14 +996,45 @@ export const getVisitsTool: ChatbotTool = {
       );
     }
 
-    if (requiresFollowUp) {
+    if (normalizedFollowUpFilter === 'due_today') {
+      filteredList = filteredList.filter(
+        (v: any) => v.follow_up_urgency === 'today',
+      );
+    } else if (normalizedFollowUpFilter === 'overdue') {
+      filteredList = filteredList.filter(
+        (v: any) => v.follow_up_urgency === 'overdue',
+      );
+    } else if (normalizedFollowUpFilter === 'due') {
+      filteredList = filteredList.filter(
+        (v: any) =>
+          v.follow_up_urgency === 'today' || v.follow_up_urgency === 'overdue',
+      );
+    } else if (normalizedFollowUpFilter === 'upcoming') {
+      filteredList = filteredList.filter(
+        (v: any) => v.follow_up_urgency === 'upcoming',
+      );
+    } else if (normalizedFollowUpFilter === 'pending') {
+      filteredList = filteredList.filter(
+        (v: any) => v.requires_follow_up && v.follow_up_status === 'pending',
+      );
+    } else if (normalizedFollowUpFilter === 'completed') {
+      filteredList = filteredList.filter(
+        (v: any) => v.follow_up_status === 'completed',
+      );
+    } else if (normalizedFollowUpFilter === 'none') {
+      filteredList = filteredList.filter((v: any) => !v.requires_follow_up);
+    } else if (requiresFollowUp) {
       filteredList = filteredList.filter((v: any) => v.requires_follow_up);
     }
 
     const followUpStatusFilter = (args?.follow_up_status || '')
       .toLowerCase()
       .trim();
-    if (followUpStatusFilter && followUpStatusFilter !== 'all') {
+    if (
+      followUpStatusFilter &&
+      followUpStatusFilter !== 'all' &&
+      !normalizedFollowUpFilter
+    ) {
       filteredList = filteredList.filter(
         (v: any) =>
           (v.follow_up_status || '').toLowerCase() === followUpStatusFilter,
@@ -760,7 +1141,19 @@ export const getVisitsTool: ChatbotTool = {
       .map(([customer, count]) => ({ customer, visits_count: count }));
 
     let filterNote = '';
-    if (filterMissingLocation) {
+    if (normalizedFollowUpFilter === 'due_today') {
+      filterNote = `Showing ${filteredList.length} visit follow-up(s) scheduled for today.`;
+    } else if (normalizedFollowUpFilter === 'overdue') {
+      filterNote = `Showing ${filteredList.length} overdue visit follow-up(s).`;
+    } else if (normalizedFollowUpFilter === 'due') {
+      filterNote = `Showing ${filteredList.length} due visit follow-up(s) (overdue and due today).`;
+    } else if (normalizedFollowUpFilter === 'upcoming') {
+      filterNote = `Showing ${filteredList.length} upcoming scheduled visit follow-up(s).`;
+    } else if (normalizedFollowUpFilter === 'completed') {
+      filterNote = `Showing ${filteredList.length} completed visit follow-up(s).`;
+    } else if (normalizedFollowUpFilter === 'pending') {
+      filterNote = `Showing ${filteredList.length} pending visit follow-up(s).`;
+    } else if (filterMissingLocation) {
       filterNote = `Showing ${filteredList.length} visits where location/city was not recorded.`;
     } else if (filterMissingContact) {
       filterNote = `Showing ${filteredList.length} visits where the contact person / person met was not recorded.`;
@@ -775,6 +1168,7 @@ export const getVisitsTool: ChatbotTool = {
       filtered_visits_count: filteredList.length,
       visits_today: visitsTodayCount,
       visits_requiring_follow_up: followUpCount,
+      follow_up_metrics: followUpMetrics,
       visits_missing_location_count: missingLocationCount,
       visits_missing_contact_person_count: missingContactPersonCount,
       by_outcome: outcomeCounts,

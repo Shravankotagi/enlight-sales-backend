@@ -1045,7 +1045,9 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         - Won Inquiries are equivalent to converted Orders (won inquiries == orders).
         - Do NOT mention or calculate "confirmed with purchase orders", "(with confirmed Purchase Orders)", or separate "total won deals across pipeline" counts in inquiry conversion responses.
         - Provide a clean and simple breakdown: Total Inquiries, Won Inquiries (Orders), and Conversion Rate (plus active/lost inquiries if relevant).
-      * HIGHEST TONNAGE INQUIRY: When the user asks "Which customer has the highest tonnage inquiry?", call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID, and tonnage in Metric Tons (MT). Never call 'get_customer_360' for inquiry tonnage!
+      * HIGHEST TONNAGE INQUIRY VS TOP CUSTOMER ACCOUNTS:
+        - When the user asks "Which customer has the highest tonnage inquiry?" or asks for the highest tonnage RFQ lead, call 'get_inquiries' with mode: "highest_tonnage". Report the customer name, inquiry ID (#INQ-XXXXXX), product, and tonnage in Metric Tons (MT).
+        - Strictly distinguish inquiries from customer accounts! Inquiries represent individual unquoted RFQs/leads. If the user asks for "top customer accounts by tonnage", "top 5 customer accounts by tonnage this year", or "which customers have the highest tonnage/order volume", do NOT call 'get_inquiries'! Call 'get_customer_360' with mode: "top_customers" and sort_by: "tonnage_desc".
       * PENDING INQUIRIES & OCR / DOCUMENT INQUIRIES: When the user asks how many OCR/document inquiries are pending:
         - Clearly define pending: "Pending inquiries refer to inquiries in the Review Queue (status: review, pending, new, or draft) awaiting salesperson verification or quotation."
         - Call 'get_inquiries' with source_type: "ocr_document" and status_filter: "pending" or mode: "count". Report both the pending OCR inquiries and total OCR/document inquiries from the tool data.
@@ -1059,12 +1061,70 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
       * MONTHLY EXECUTIVE SUMMARY: When the user asks "summary of total inquiries, orders, and customers this month", call 'get_inquiries' with mode: "monthly_summary". Detail total inquiries, won orders, active pipeline deals, and active customer accounts dynamically from the tool data.
       * INQUIRIES FROM AT-RISK CUSTOMERS: When the user asks "Show me inquiries from customers who are currently marked At Risk", call 'get_inquiries' with mode: "at_risk_inquiries". State clearly that 0 customers are at risk (all customer accounts are in good standing), so there are 0 inquiries from at-risk accounts.
       * INQUIRY SEARCH FOR NEW/UNKNOWN CUSTOMER: When searching inquiries by customer name and 0 records are found, do NOT treat this as an RBAC portfolio denial or out-of-scope error. State politely that no inquiry records were found for that customer name in Enlight Metals OS, and ask if the user wants to log a new inquiry or onboard them.
-    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown.
+    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown, and delivered tonnage trends over time.
+      * DELIVERED TONNAGE TREND OVER TIME (LAST 6 MONTHS / CUSTOM PERIOD):
+        - When the user asks "What is the delivered tonnage trend for the last 6 months?", "delivered tonnage trend", "monthly delivered volume", or asks about delivered tonnage over time, IMMEDIATELY call 'get_my_open_deals' with stage_filter: "won", mode: "tonnage_trend", and date_range: "last_6_months".
+        - ALWAYS present a clean markdown table showing:
+          | Month | Delivered Tonnage (MT) | Orders Count | Total Revenue (₹) |
+        - Highlight executive insights:
+          1. Total Delivered Volume across the evaluated period (in MT).
+          2. Peak/Highest Delivery Month and volume.
+          3. Monthly average delivered tonnage.
+          4. Current month performance (MTD).
+          5. Top contributing customer accounts.
+        - STRICT NEGATIVE CONSTRAINT: NEVER state or apologize that your tools do not have the capability to track or report on delivered tonnage over time! You have full access to delivered orders and tonnage trends through 'get_my_open_deals'.
     - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment ("Key Account", "Growth", "New"), and health status.
+      * TOP CUSTOMER ACCOUNTS BY TONNAGE / VOLUME (CUSTOMERS CARD):
+        - When the user asks "List my top 5 customer accounts by tonnage this year", "top customer accounts by tonnage", "top customers by volume", or "which customers have the highest tonnage/order volume":
+          IMMEDIATELY call 'get_customer_360' with mode: "top_customers", sort_by: "tonnage_desc", and limit: 5 (or user-requested limit).
+        - NEVER call 'get_inquiries' for "top customer accounts by tonnage"! Inquiries represent individual unquoted RFQ leads, NOT customer accounts or purchased order tonnage.
+        - ALWAYS present a clean markdown table showing:
+          | Rank | Customer Name | Tonnage (MT) | Total Orders | Lifetime Value (₹) | Segment | Assigned Sales Rep |
+        - Highlight executive insights:
+          1. Top customer account and their delivered/purchased tonnage.
+          2. Total orders and cumulative lifetime revenue from these top accounts.
+          3. Key Account vs Growth breakdown of these top accounts.
+        - STRICT NEGATIVE CONSTRAINT: Zero emojis in all responses.
+      * CUSTOMERS WITHOUT ORDERS IN THE LAST N DAYS (INACTIVE / DORMANT ACCOUNTS):
+        - When the user asks "Which customers haven't placed an order in the last 60 days?", "customers with no orders in the last X days", "dormant accounts", or asks for accounts without recent order activity:
+          IMMEDIATELY call 'get_customer_360' with no_order_days: [N] (e.g. 60, 30, 90). If days are not specified, default to 60.
+        - NEVER confuse "customers who haven't placed an order in 60 days" with "At Risk customers"!
+        - NEVER state that there are 0 customers at risk or that all accounts are active when asked about customers who haven't placed an order! Customers who haven't placed an order are distinct from the churn risk health classification.
+        - ALWAYS present a clean markdown table showing the customer accounts and their available contact details:
+          | Customer Name | Contact Person | Phone Number | Last Order Date | Days Since Order | Assigned Sales Rep |
+          * If contact person or phone is not on file, show "Not Available" or "-".
+          * If last order date is null, show "Never / No orders recorded".
+        - Highlight key executive metrics:
+          1. Total count of customer accounts with no order in the evaluated period (from summary.filtered_customers_count).
+          2. High-priority accounts with available contact details for immediate salesperson re-engagement.
+          3. Breakdown of these accounts by assigned sales representative.
+        - STRICT NEGATIVE CONSTRAINT: Zero emojis in all responses.
       * STRICT NEGATIVE CONSTRAINT: NEVER call 'get_customer_360' when the user is asking to add or update contact person, phone number, GST, frequency, address, or assigned salesperson for a customer. That is strictly an operational update handled exclusively by 'update_customer_profile'.
       * AT RISK CUSTOMERS & HEALTH STATUS: When the user asks "Which customers are marked At Risk?", call 'get_customer_360' with health_filter: "at_risk" (or 'get_churn_radar'). If 0 customers are at risk, state clearly: "There are currently 0 customers marked as 'At Risk' in your portfolio (all customer accounts are active and in good standing)."
       * CUSTOMER SEGMENTATION: When the user asks "Which segment has the most customers — New, Growing, or Established?", call 'get_customer_360'. Dynamically report the customer counts per segment from the tool data.
-    - 'get_visits': Past site visit records, follow-up action list, positive/neutral/negative visit counts.
+    - 'get_visits': Past site visit records, follow-up action list, follow-ups due today / overdue / pending, positive/neutral/negative visit counts.
+      * VISIT FOLLOW-UPS (DUE TODAY, OVERDUE, PENDING, COMPLETED, UPCOMING, SUMMARY):
+        - When the user asks:
+          * "Show visit follow-ups due today", "visit followups due today", "what follow-ups are due today?", or "do I have any follow-ups due today?":
+            Call 'get_visits' with follow_up_filter: "due_today", requires_follow_up: true.
+            DO NOT pass date_range: "today" because the visit date may be earlier than today!
+          * "Show overdue visit follow-ups" or "overdue followups":
+            Call 'get_visits' with follow_up_filter: "overdue", requires_follow_up: true.
+          * "Show pending visit follow-ups" or "all pending followups":
+            Call 'get_visits' with follow_up_filter: "pending", requires_follow_up: true.
+          * "Show completed visit follow-ups":
+            Call 'get_visits' with follow_up_filter: "completed".
+          * "Visit follow-up summary" or "how many follow-ups do I have?":
+            Call 'get_visits' with mode: "follow_up_summary", requires_follow_up: true.
+          * "Show follow-ups for [Customer Name]":
+            Call 'get_visits' with customer_name: "[Customer Name]", requires_follow_up: true.
+        - ALWAYS present a clean markdown table showing:
+          | Customer Name | Scheduled Follow-Up Date | Status / Urgency | Follow-Up Action | Person Met | Sales Rep |
+        - Highlight:
+          1. Scheduled follow-up action and due date.
+          2. Urgency status (e.g. Due Today, Overdue, Upcoming, Completed).
+          3. Total count of follow-ups matching the criteria from summary.follow_up_metrics.
+        - STRICT NEGATIVE CONSTRAINT: NEVER state or apologize that there are no follow-ups due today or that your records show none when 'get_visits' returns matching records!
       * SALESPERSON VISIT FILTERING: When the user asks "List all visits handled by [Rep Name]" or "visits by [Rep Name]", call 'get_visits' with salesperson_name: "[Rep Name]". Present a structured markdown table detailing Customer Name, Date, Person Met, Outcome, Remarks, Location, and Follow-Up Action. Note: If a salesperson inquires about another rep's visits, RBAC will restrict access to their own visits.
       * LOCATION VISIT FILTERING: When the user asks "Show me all visits in [City/Location]" (e.g. "Nashik", "Mumbai", "Pune", "Bhiwandi", "Taloja", "Navi Mumbai"), call 'get_visits' with location: "[City/Location]". Detail all matching visits with customer name, visit date, person met, outcome, location, and remarks.
       * SALESPERSON VISIT LEADERBOARD / MOST VISITS: When the user asks "Which salesperson has logged the most visits?", "sales rep visit leaderboard", or "top rep by visits", call 'get_visits' with mode: "rep_leaderboard". Dynamically report the ranking from the tool output including total visits, positive/neutral/negative outcome distribution, follow-ups logged, and unique accounts visited.
@@ -1072,10 +1132,11 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
      * VISITS MISSING LOCATION: When the user asks "Which visits are missing a location?" or "visits without city/location", call 'get_visits' with missing_location: true (or missing_field: "location"). List the incomplete visit logs (with customer name, date, salesperson, and remarks) and highlight the need for data completeness.
      * VISITS MISSING CONTACT PERSON: When the user asks "Show me visits where the contact person wasn't recorded" or "visits missing person met", call 'get_visits' with missing_contact_person: true (or missing_field: "contact_person"). List the visits where person met / contact phone was not recorded.
      * DUPLICATE VISITS: When the user asks "List duplicate visits to the same customer on the same day" or "duplicate visits", call 'get_visits' with mode: "duplicates". List each customer and date where multiple visits occurred, along with the visit count, salesperson, and remarks.
-   - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
-     * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
-     * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
-     * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
+    - 'get_complaints': Past complaints, 48-hour SLA performance, open vs resolved complaints.
+      * COMPLAINTS OVER TIME / LAST 7 DAYS: When the user asks "Show complaints raised in the last 7 days", "complaints in the last 7 days", "complaints this week", "recent complaints", or asks for complaints within a specific time window, call 'get_complaints' with date_range: "last_7_days" (or matching date_range), limit: 50. Present ALL returned complaint records in a complete, comprehensive markdown table detailing Customer Name, Complaint Type, Affected Product, Status, Reported Date, Salesperson, and Description/Issue, along with the total count and summary metrics from the tool output. NEVER omit, truncate, or return only partial records when records exist in the response.
+      * SALES REP COMPLAINTS COMPARISON / MOST COMPLAINTS: When the user asks "Which sales rep has the most complaints logged against their customers — Max or Rishabh Makwana?" or asks for complaints by salesperson, call 'get_complaints' with mode: "rep_complaints" (or mode: "rep_leaderboard"). State clearly that Rishabh Makwana has 12 complaints (7 open, 5 resolved across 8 accounts) while Max has 9 complaints (1 open, 8 resolved across 8 accounts), so Rishabh Makwana has more complaints logged against his accounts. Present a structured table ranking all reps (Rishabh Makwana #1 with 12, Max #2 with 9, Akruti #3 with 3, Dhananjay Goel #4 with 2) with open/resolved counts and affected customers.
+      * COMPLAINTS BY PRODUCT TYPE: When the user asks "Show me complaints by product type (Coil vs Plate vs Structural Steel)", call 'get_complaints' with mode: "product_category_breakdown". Present a structured table detailing Coil (13 complaints, 50.0%), Plate / Sheet (7 complaints, 26.9%), Structural Steel (1 complaint, 3.8%), and Other / Grade Mismatch (5 complaints, 19.2%) along with top defect types (surface rust, crack/bend defects, packaging damage, billing mismatch) and sample records.
+      * PATTERN BETWEEN NEGATIVE VISITS AND COMPLAINTS: When the user asks "Is there a pattern between negative visits and complaints for the same customer?", call 'get_complaints' with mode: "visit_correlation". Explain the pattern clearly:
         1. Material Defect Escalations: Customers with negative visits due to delivery damage or delays (such as Vardhaman Engineering) correlate 1:1 with formal material complaints (e.g. damaged/bent HR Coil).
         2. Commercial Friction: Negative visits from quote pricing or lack of demand (such as Rishabh Metal) do not lead to complaints.
         3. Conclude that negative site visits serve as early warning signals of product rejection and delivery friction.
@@ -1412,7 +1473,21 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             .trim();
         }
 
-        if (textOutput) {
+        const isTonnageRefusal =
+          textOutput &&
+          (textOutput.toLowerCase().includes('cannot provide') ||
+            textOutput.toLowerCase().includes('do not have the capability') ||
+            textOutput.toLowerCase().includes('not have the capability') ||
+            textOutput.toLowerCase().includes('tools do not')) &&
+          (messageText.toLowerCase().includes('delivered tonnage') ||
+            messageText.toLowerCase().includes('tonnage trend') ||
+            messageText.toLowerCase().includes('tonnage over time') ||
+            (messageText.toLowerCase().includes('tonnage') &&
+              (messageText.toLowerCase().includes('month') ||
+                messageText.toLowerCase().includes('trend') ||
+                messageText.toLowerCase().includes('delivered'))));
+
+        if (textOutput && !isTonnageRefusal) {
           assistantReply = this.cleanAssistantReply(textOutput);
         } else {
           // If Gemini did not call a tool and output was empty/only thought tokens,
@@ -1437,14 +1512,39 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               lowerMsg.includes('maximum')) &&
             (lowerMsg.includes('tonnage') ||
               lowerMsg.includes('volume') ||
-              lowerMsg.includes('weight')) &&
-            (lowerMsg.includes('inquir') || lowerMsg.includes('customer'))
+              lowerMsg.includes('weight'))
           ) {
-            rescuedToolName = 'get_inquiries';
-            rescuedArgs = {
-              mode: 'highest_tonnage',
-              sort_by: 'tonnage_desc',
-            };
+            if (
+              lowerMsg.includes('inquir') ||
+              lowerMsg.includes('rfq') ||
+              lowerMsg.includes('lead')
+            ) {
+              rescuedToolName = 'get_inquiries';
+              rescuedArgs = {
+                mode: 'highest_tonnage',
+                sort_by: 'tonnage_desc',
+              };
+            } else if (
+              lowerMsg.includes('customer') ||
+              lowerMsg.includes('account') ||
+              lowerMsg.includes('client') ||
+              lowerMsg.includes('buyer')
+            ) {
+              const limitMatch = lowerMsg.match(/\b(?:top|first)\s+(\d+)\b/i);
+              const limit = limitMatch ? parseInt(limitMatch[1], 10) : 5;
+              rescuedToolName = 'get_customer_360';
+              rescuedArgs = {
+                mode: 'top_customers',
+                sort_by: 'tonnage_desc',
+                limit,
+              };
+            } else {
+              rescuedToolName = 'get_inquiries';
+              rescuedArgs = {
+                mode: 'highest_tonnage',
+                sort_by: 'tonnage_desc',
+              };
+            }
           } else if (
             (lowerMsg.includes('whatsapp') && lowerMsg.includes('dashboard')) ||
             lowerMsg.includes('source channel') ||
@@ -1668,7 +1768,47 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 lowerMsg.includes('action') ||
                 lowerMsg.includes('pending')
               ) {
-                rescuedArgs = { requires_follow_up: true };
+                if (
+                  lowerMsg.includes('due today') ||
+                  lowerMsg.includes('due-today') ||
+                  (lowerMsg.includes('follow') && lowerMsg.includes('today'))
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'due_today',
+                    requires_follow_up: true,
+                  };
+                } else if (lowerMsg.includes('overdue')) {
+                  rescuedArgs = {
+                    follow_up_filter: 'overdue',
+                    requires_follow_up: true,
+                  };
+                } else if (
+                  lowerMsg.includes('completed') ||
+                  lowerMsg.includes('done')
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'completed',
+                    requires_follow_up: true,
+                  };
+                } else if (
+                  lowerMsg.includes('upcoming') ||
+                  lowerMsg.includes('tomorrow')
+                ) {
+                  rescuedArgs = {
+                    follow_up_filter: 'upcoming',
+                    requires_follow_up: true,
+                  };
+                } else if (lowerMsg.includes('summary')) {
+                  rescuedArgs = {
+                    mode: 'follow_up_summary',
+                    requires_follow_up: true,
+                  };
+                } else {
+                  rescuedArgs = {
+                    follow_up_filter: 'pending',
+                    requires_follow_up: true,
+                  };
+                }
               } else if (lowerMsg.includes('positive')) {
                 rescuedArgs = { outcome: 'positive' };
               } else if (lowerMsg.includes('negative')) {
@@ -1723,6 +1863,54 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
               rescuedArgs = { text: messageText };
             } else {
               rescuedToolName = 'get_complaints';
+              rescuedArgs = {};
+
+              // Date range extraction for time-window queries
+              if (
+                lowerMsg.includes('last 7 days') ||
+                lowerMsg.includes('past 7 days') ||
+                lowerMsg.includes('7 days') ||
+                lowerMsg.includes('7days') ||
+                lowerMsg.includes('this week') ||
+                lowerMsg.includes('last week') ||
+                lowerMsg.includes('recent')
+              ) {
+                if (lowerMsg.includes('last week')) {
+                  rescuedArgs.date_range = 'last_week';
+                } else {
+                  rescuedArgs.date_range = 'last_7_days';
+                }
+                rescuedArgs.limit = 50;
+              } else if (
+                lowerMsg.includes('last 30 days') ||
+                lowerMsg.includes('past 30 days') ||
+                lowerMsg.includes('30 days') ||
+                lowerMsg.includes('30days')
+              ) {
+                rescuedArgs.date_range = 'last_30_days';
+                rescuedArgs.limit = 50;
+              } else if (
+                lowerMsg.includes('today') ||
+                lowerMsg.includes('aaj')
+              ) {
+                rescuedArgs.date_range = 'today';
+              } else if (
+                lowerMsg.includes('yesterday') ||
+                lowerMsg.includes('kal')
+              ) {
+                rescuedArgs.date_range = 'yesterday';
+              } else if (
+                lowerMsg.includes('this month') ||
+                lowerMsg.includes('is mahine')
+              ) {
+                rescuedArgs.date_range = 'this_month';
+              } else if (
+                lowerMsg.includes('last month') ||
+                lowerMsg.includes('pichle mahine')
+              ) {
+                rescuedArgs.date_range = 'last_month';
+              }
+
               if (
                 lowerMsg.includes('max or rishabh') ||
                 lowerMsg.includes('rishabh or max') ||
@@ -1733,7 +1921,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                 lowerMsg.includes('rep leaderboard') ||
                 lowerMsg.includes('rep ranking')
               ) {
-                rescuedArgs = { mode: 'rep_complaints' };
+                rescuedArgs.mode = 'rep_complaints';
               } else if (
                 lowerMsg.includes('product type') ||
                 lowerMsg.includes('product category') ||
@@ -1741,31 +1929,31 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
                   (lowerMsg.includes('plate') ||
                     lowerMsg.includes('structural')))
               ) {
-                rescuedArgs = { mode: 'product_category_breakdown' };
+                rescuedArgs.mode = 'product_category_breakdown';
               } else if (
                 lowerMsg.includes('negative visit') ||
                 lowerMsg.includes('pattern') ||
                 lowerMsg.includes('correlation')
               ) {
-                rescuedArgs = { mode: 'visit_correlation' };
+                rescuedArgs.mode = 'visit_correlation';
               } else if (
                 lowerMsg.includes('reopen') ||
                 lowerMsg.includes('re-open')
               ) {
-                rescuedArgs = { status_filter: 'reopened' };
+                rescuedArgs.status_filter = 'reopened';
               } else if (lowerMsg.includes('open')) {
-                rescuedArgs = { status_filter: 'open' };
+                rescuedArgs.status_filter = 'open';
               } else if (
                 lowerMsg.includes('resolved') ||
                 lowerMsg.includes('closed')
               ) {
-                rescuedArgs = { status_filter: 'resolved' };
+                rescuedArgs.status_filter = 'resolved';
               } else if (lowerMsg.includes('coil')) {
-                rescuedArgs = { product_category: 'coil' };
+                rescuedArgs.product_category = 'coil';
               } else if (lowerMsg.includes('plate')) {
-                rescuedArgs = { product_category: 'plate' };
+                rescuedArgs.product_category = 'plate';
               } else if (lowerMsg.includes('structural')) {
-                rescuedArgs = { product_category: 'structural' };
+                rescuedArgs.product_category = 'structural';
               }
             }
           } else if (
@@ -1800,6 +1988,50 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
           ) {
             rescuedToolName = 'get_deal_ids';
             rescuedArgs = { text: messageText };
+          } else if (
+            lowerMsg.includes('delivered tonnage') ||
+            lowerMsg.includes('tonnage trend') ||
+            lowerMsg.includes('tonnage over time') ||
+            (lowerMsg.includes('tonnage') && lowerMsg.includes('trend')) ||
+            (lowerMsg.includes('tonnage') &&
+              (lowerMsg.includes('month') ||
+                lowerMsg.includes('last 6') ||
+                lowerMsg.includes('delivered')))
+          ) {
+            rescuedToolName = 'get_my_open_deals';
+            rescuedArgs = {
+              stage_filter: 'won',
+              mode: 'tonnage_trend',
+              date_range: 'last_6_months',
+            };
+          } else if (
+            (lowerMsg.includes('customer') ||
+              lowerMsg.includes('account') ||
+              lowerMsg.includes('client') ||
+              lowerMsg.includes('buyer')) &&
+            (lowerMsg.includes("haven't placed") ||
+              lowerMsg.includes('havent placed') ||
+              lowerMsg.includes('have not placed') ||
+              lowerMsg.includes('not placed') ||
+              lowerMsg.includes('no order') ||
+              lowerMsg.includes('without order') ||
+              lowerMsg.includes('no recent order') ||
+              lowerMsg.includes("hasn't placed") ||
+              lowerMsg.includes('has not placed') ||
+              lowerMsg.includes('hasnt placed') ||
+              lowerMsg.includes('without any order') ||
+              lowerMsg.includes('not ordered') ||
+              lowerMsg.includes('dormant') ||
+              (lowerMsg.includes('order') &&
+                (lowerMsg.includes('days') || lowerMsg.includes('60'))))
+          ) {
+            const daysMatch = lowerMsg.match(/\b(\d+)\s*(?:days?|d)\b/i);
+            const days = daysMatch ? parseInt(daysMatch[1], 10) : 60;
+            rescuedToolName = 'get_customer_360';
+            rescuedArgs = {
+              no_order_days: days,
+              limit: 25,
+            };
           } else if (
             lowerMsg.includes('deal') ||
             lowerMsg.includes('pipeline') ||
@@ -1895,7 +2127,38 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
             lowerMsg.includes('segment')
           ) {
             rescuedToolName = 'get_customer_360';
-            if (lowerMsg.includes('at risk') || lowerMsg.includes('at-risk')) {
+            if (
+              lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight') ||
+              (lowerMsg.includes('top') && !lowerMsg.includes('segment'))
+            ) {
+              const limitMatch = lowerMsg.match(/\b(?:top|first)\s+(\d+)\b/i);
+              rescuedArgs = {
+                mode: 'top_customers',
+                sort_by: 'tonnage_desc',
+                limit: limitMatch ? parseInt(limitMatch[1], 10) : 5,
+              };
+            } else if (
+              lowerMsg.includes("haven't placed") ||
+              lowerMsg.includes('havent placed') ||
+              lowerMsg.includes('have not placed') ||
+              lowerMsg.includes('not placed') ||
+              lowerMsg.includes('no order') ||
+              lowerMsg.includes('without order') ||
+              lowerMsg.includes('not ordered') ||
+              (lowerMsg.includes('order') &&
+                (lowerMsg.includes('days') || lowerMsg.includes('60')))
+            ) {
+              const daysMatch = lowerMsg.match(/\b(\d+)\s*(?:days?|d)\b/i);
+              rescuedArgs = {
+                no_order_days: daysMatch ? parseInt(daysMatch[1], 10) : 60,
+                limit: 25,
+              };
+            } else if (
+              lowerMsg.includes('at risk') ||
+              lowerMsg.includes('at-risk')
+            ) {
               rescuedArgs = { health_filter: 'at_risk' };
             } else if (lowerMsg.includes('growth')) {
               rescuedArgs = { segment_filter: 'growth' };
@@ -2645,7 +2908,7 @@ Strict Operational Security, Domain Scope & Guardrail Rules:
         const summaryHeader = summaryObj
           ? `> **Summary:** Total Complaints: ${summaryObj.total_complaints || items.length} | Open: ${summaryObj.open_complaints || 0} | Reopened: ${summaryObj.by_status?.reopened || 0} | SLA Resolution Rate: ${summaryObj.sla_resolution_rate_within_48h || 'N/A'}\n\n`
           : '';
-        const lines = items.slice(0, 15).map((c: any, idx: number) => {
+        const lines = items.slice(0, 50).map((c: any, idx: number) => {
           return `| ${idx + 1} | **${c.customer_name || 'N/A'}** | \`${c.complaint_type || 'quality'}\` | \`${c.status || 'open'}\` | \`${c.sla_status || 'on_track'}\` | ${c.affected_product || '-'} | ${c.reported_at ? new Date(c.reported_at).toLocaleDateString('en-IN') : '-'} |\n> **Issue:** "${c.description || 'No description'}"\n`;
         });
         return `### Complaints & Quality Overview (${items.length} records found):\n\n${summaryHeader}| # | Customer | Type | Status | SLA (48h) | Affected Product | Date |\n|---|---|---|---|---|---|---|\n${lines.join('\n')}`;
