@@ -8,7 +8,6 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const webhookRouter = require('./src/webhook');
 const {
   syncAllDatabaseToBigin,
-  clearAllBiginData,
   pullBiginToDatabase,
 } = require('./src/agents/biginSyncAgent');
 
