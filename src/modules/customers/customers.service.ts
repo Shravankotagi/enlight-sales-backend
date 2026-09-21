@@ -2,6 +2,7 @@ import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { CustomerInsightsService } from './customer-insights.service';
 import { phoneInList } from '../employees/employees.service';
+import { convertLineItemToMt } from '../pricing/pricing.engine';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -43,8 +44,6 @@ function cleanPhone(p?: string): string {
   const digits = String(p).replace(/\D/g, '');
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
-
-const { convertLineItemToMt } = require('../../utils/pricingEngine');
 
 function getDealTonnage(deal: any): number {
   if (!deal) return 0;
