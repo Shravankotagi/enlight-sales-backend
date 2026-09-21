@@ -1343,11 +1343,27 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
       }
 
       const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents,
-        config,
-      });
+      let response: any = null;
+      try {
+        response = await this.callWithTimeout(
+          ai.models.generateContent({
+            model: modelName,
+            contents,
+            config,
+          }),
+          25000,
+          'Initial Gemini tool decision timed out (25s limit)',
+        );
+      } catch (turn1Err: any) {
+        this.logger.warn(
+          `Turn 1 LLM call timed out or failed: ${turn1Err?.message}. Initiating deterministic rescue route.`,
+        );
+        response = {
+          text: 'cannot provide',
+          candidates: [],
+          functionCalls: [],
+        };
+      }
 
       // Track token usage for spend cap
       const usageMetadata = response.usageMetadata;
@@ -1451,6 +1467,9 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
                   'rep_visit_leaderboard',
                   'rep_complaints_leaderboard',
                   'duplicate_visits_groups',
+                  'top_delivered_customers',
+                  'accounts',
+                  'items',
                 ];
 
                 for (const key of arrayKeys) {
@@ -1509,36 +1528,48 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
             topP: 0.95,
           };
 
-          const finalResponse = await ai.models.generateContent({
-            model: modelName,
-            contents,
-            config: synthesisConfig,
-          });
-
-          if (finalResponse.usageMetadata) {
-            await this.guardrailsService.recordUsageAndCheckSpendCap(
-              {
-                promptTokens: finalResponse.usageMetadata.promptTokenCount || 0,
-                completionTokens:
-                  finalResponse.usageMetadata.candidatesTokenCount || 0,
-              },
-              caller.userId,
+          let textOutput = '';
+          try {
+            const finalResponse = await this.callWithTimeout(
+              ai.models.generateContent({
+                model: modelName,
+                contents,
+                config: synthesisConfig,
+              }),
+              15000,
+              'Synthesis LLM call timed out (15s limit)',
             );
-          }
 
-          let textOutput = finalResponse.text?.trim() || '';
-          if (
-            !textOutput &&
-            finalResponse.candidates &&
-            finalResponse.candidates.length > 0
-          ) {
-            const parts = finalResponse.candidates[0].content?.parts || [];
-            textOutput = parts
-              .filter((p: any) => !p.thought)
-              .map((p: any) => p.text || '')
-              .filter(Boolean)
-              .join('\n')
-              .trim();
+            if (finalResponse.usageMetadata) {
+              await this.guardrailsService.recordUsageAndCheckSpendCap(
+                {
+                  promptTokens:
+                    finalResponse.usageMetadata.promptTokenCount || 0,
+                  completionTokens:
+                    finalResponse.usageMetadata.candidatesTokenCount || 0,
+                },
+                caller.userId,
+              );
+            }
+
+            textOutput = finalResponse.text?.trim() || '';
+            if (
+              !textOutput &&
+              finalResponse.candidates &&
+              finalResponse.candidates.length > 0
+            ) {
+              const parts = finalResponse.candidates[0].content?.parts || [];
+              textOutput = parts
+                .filter((p: any) => !p.thought)
+                .map((p: any) => p.text || '')
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+            }
+          } catch (synthErr: any) {
+            this.logger.warn(
+              `Synthesis LLM call timed out or failed (${synthErr?.message}). Using fast structured tool fallback.`,
+            );
           }
 
           assistantReply = this.cleanAssistantReply(
@@ -2374,24 +2405,35 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
                     temperature: 0.1,
                     topP: 0.95,
                   };
-                  const synthRes = await ai.models.generateContent({
-                    model: modelName,
-                    contents: synthContents,
-                    config: synthConfig,
-                  });
-                  let synthText = synthRes.text?.trim() || '';
-                  if (
-                    !synthText &&
-                    synthRes.candidates &&
-                    synthRes.candidates.length > 0
-                  ) {
-                    const parts = synthRes.candidates[0].content?.parts || [];
-                    synthText = parts
-                      .filter((p: any) => !p.thought)
-                      .map((p: any) => p.text || '')
-                      .filter(Boolean)
-                      .join('\n')
-                      .trim();
+                  let synthText = '';
+                  try {
+                    const synthRes = await this.callWithTimeout(
+                      ai.models.generateContent({
+                        model: modelName,
+                        contents: synthContents,
+                        config: synthConfig,
+                      }),
+                      15000,
+                      'Rescue synthesis timed out (15s limit)',
+                    );
+                    synthText = synthRes.text?.trim() || '';
+                    if (
+                      !synthText &&
+                      synthRes.candidates &&
+                      synthRes.candidates.length > 0
+                    ) {
+                      const parts = synthRes.candidates[0].content?.parts || [];
+                      synthText = parts
+                        .filter((p: any) => !p.thought)
+                        .map((p: any) => p.text || '')
+                        .filter(Boolean)
+                        .join('\n')
+                        .trim();
+                    }
+                  } catch (rescueSynthErr: any) {
+                    this.logger.warn(
+                      `Rescue synthesis timed out or failed (${rescueSynthErr?.message}). Using fast structured tool fallback.`,
+                    );
                   }
                   assistantReply = this.cleanAssistantReply(
                     synthText ||
@@ -2440,6 +2482,29 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
       sessionId,
       reply: assistantReply,
     };
+  }
+
+  /**
+   * Helper to execute an async operation with a strict timeout/deadline.
+   * If the operation does not finish within timeoutMs, the returned promise rejects with timeoutErrorMessage.
+   */
+  private async callWithTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    timeoutErrorMessage = 'Operation timed out',
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(timeoutErrorMessage));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
