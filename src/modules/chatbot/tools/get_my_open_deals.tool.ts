@@ -58,12 +58,12 @@ export const getMyOpenDealsTool: ChatbotTool = {
         mode: {
           type: 'STRING',
           description:
-            'Query mode: "list" (default, returns records with summary), "summary" (returns pipeline sums, tonnage, and stage breakdown), "tonnage_trend" or "monthly_trend" (computes month-by-month delivered tonnage in MT, orders count, revenue, and trend analysis over the last 6 or specified months).',
+            'Query mode: "list" (default, returns records with summary), "summary" (returns pipeline sums, tonnage, and stage breakdown), "month_comparison" or "tonnage_comparison" (compares this month vs last month delivered tonnage MT, orders, and revenue), "tonnage_trend" or "monthly_trend" (computes month-by-month delivered tonnage in MT, orders count, revenue, and trend analysis over the last 6 or specified months).',
         },
         months_count: {
           type: 'INTEGER',
           description:
-            'Number of months for trend analysis (default: 6, max: 24). Only applicable when mode="tonnage_trend" or "monthly_trend".',
+            'Number of months for trend analysis (default: 6, max: 24; set to 2 for month-over-month comparison). Only applicable when mode="tonnage_trend", "monthly_trend", or "month_comparison".',
         },
         limit: {
           type: 'INTEGER',
@@ -190,7 +190,16 @@ export const getMyOpenDealsTool: ChatbotTool = {
     // Admin role receives no filtering (unfiltered view)
 
     // 2. Date filtering
+    const isComparisonMode =
+      mode === 'month_comparison' ||
+      mode === 'monthly_comparison' ||
+      mode === 'mom_comparison' ||
+      mode === 'tonnage_comparison' ||
+      dateRange === 'last_2_months' ||
+      Number(args?.months_count) === 2;
+
     const isTrendMode =
+      isComparisonMode ||
       mode === 'tonnage_trend' ||
       mode === 'monthly_trend' ||
       mode === 'trend' ||
@@ -199,7 +208,11 @@ export const getMyOpenDealsTool: ChatbotTool = {
       dateRange === 'last_12_months';
 
     const effectiveDateRange =
-      isTrendMode && !dateRange ? 'last_6_months' : dateRange;
+      isComparisonMode && !dateRange
+        ? 'last_2_months'
+        : isTrendMode && !dateRange
+          ? 'last_6_months'
+          : dateRange;
     const { from, to } = parseDateFilter(effectiveDateRange);
 
     if (isTrendMode && from) {
@@ -259,44 +272,51 @@ export const getMyOpenDealsTool: ChatbotTool = {
       if (!stageSummary[st]) {
         stageSummary[st] = { count: 0, total_value: 0, tonnage_mt: 0 };
       }
-      stageSummary[st].count++;
+      stageSummary[st].count += 1;
       stageSummary[st].total_value += amount;
       stageSummary[st].tonnage_mt =
         Math.round((stageSummary[st].tonnage_mt + roundedTonnage) * 1000) /
         1000;
 
-      totalPipelineVal += amount;
-      totalPipelineTonnage += roundedTonnage;
+      const isWon = st === 'won';
+      const isLost = st === 'lost';
 
-      if (st === 'won') {
+      if (!isLost) {
+        totalPipelineVal += amount;
+        totalPipelineTonnage += roundedTonnage;
+      }
+
+      if (isWon) {
+        wonCount++;
         wonTotalVal += amount;
         wonTotalTonnage += roundedTonnage;
-        wonCount++;
-      } else if (st === 'lost') {
+      } else if (isLost) {
         lostCount++;
       }
 
-      const rawInq = d.id || d.inquiry_id || '';
-      const cleanNum = rawInq
-        .replace(/^#?(?:DEAL|INQ)-?/i, '')
-        .replace(/-/g, '')
+      const rawDealUuid = d.id || '';
+      const rawInquiryUuid = d.inquiry_id || '';
+      const shortIdSuffix = (
+        rawInquiryUuid.replace(/-/g, '') ||
+        rawDealUuid.replace(/-/g, '') ||
+        '000000'
+      )
         .substring(0, 6)
         .toUpperCase();
-      const humanInquiryId = '#INQ-' + cleanNum;
 
       return {
-        inquiry_id: humanInquiryId,
-        deal_id: humanInquiryId,
-        deal_uuid: rawInq,
-        customer_name: d.customer_name || 'Unknown Customer',
-        customer_phone: d.customer_phone || '',
-        customer_gst: d.customer_gst || null,
-        customer_address: d.customer_address || null,
-        delivery_location: d.delivery_location || null,
-        payment_terms: d.payment_terms || null,
+        id: d.id,
+        deal_id: `#INQ-${shortIdSuffix}`,
+        deal_number: `DEAL-${shortIdSuffix}`,
+        customer_name: d.customer_name,
+        customer_phone: d.customer_phone,
+        customer_gst: d.customer_gst,
+        customer_address: d.customer_address,
+        delivery_location: d.delivery_location,
+        payment_terms: d.payment_terms,
         total_amount: amount,
         tonnage_mt: roundedTonnage,
-        stage: d.stage || 'new_inquiry',
+        stage: st,
         status: d.status || 'review',
         po_number: d.po_number || null,
         po_date: d.po_date || null,
@@ -436,12 +456,14 @@ export const getMyOpenDealsTool: ChatbotTool = {
       const numMonths = Math.min(
         Math.max(
           Number(args?.months_count) ||
-            (effectiveDateRange === 'last_3_months'
-              ? 3
-              : effectiveDateRange === 'last_12_months' ||
-                  effectiveDateRange === 'this_year'
-                ? 12
-                : 6),
+            (isComparisonMode || effectiveDateRange === 'last_2_months'
+              ? 2
+              : effectiveDateRange === 'last_3_months'
+                ? 3
+                : effectiveDateRange === 'last_12_months' ||
+                    effectiveDateRange === 'this_year'
+                  ? 12
+                  : 6),
           1,
         ),
         24,
@@ -646,12 +668,59 @@ export const getMyOpenDealsTool: ChatbotTool = {
         current_month_mtd: cleanMonthlyTrend[cleanMonthlyTrend.length - 1],
       };
 
+      // Construct dedicated comparison object for MoM analysis
+      const thisMonth = cleanMonthlyTrend[cleanMonthlyTrend.length - 1];
+      const lastMonth =
+        cleanMonthlyTrend.length >= 2
+          ? cleanMonthlyTrend[cleanMonthlyTrend.length - 2]
+          : cleanMonthlyTrend[0];
+      const diffTonnage =
+        Math.round(
+          (thisMonth.delivered_tonnage_mt - lastMonth.delivered_tonnage_mt) *
+            1000,
+        ) / 1000;
+      const diffOrders = thisMonth.orders_count - lastMonth.orders_count;
+      const diffRev = thisMonth.total_revenue - lastMonth.total_revenue;
+      const pctChange =
+        lastMonth.delivered_tonnage_mt > 0
+          ? `${(((thisMonth.delivered_tonnage_mt - lastMonth.delivered_tonnage_mt) / lastMonth.delivered_tonnage_mt) * 100).toFixed(1)}%`
+          : thisMonth.delivered_tonnage_mt > 0
+            ? '+100%'
+            : '0.0%';
+
+      const comparison = {
+        this_month: {
+          month: thisMonth.month,
+          month_name: thisMonth.month_name,
+          status: 'In Progress (Month-to-Date)',
+          delivered_tonnage_mt: thisMonth.delivered_tonnage_mt,
+          orders_count: thisMonth.orders_count,
+          total_revenue: thisMonth.total_revenue,
+          top_customers: thisMonth.top_customers,
+        },
+        last_month: {
+          month: lastMonth.month,
+          month_name: lastMonth.month_name,
+          status: 'Closed (Full Month)',
+          delivered_tonnage_mt: lastMonth.delivered_tonnage_mt,
+          orders_count: lastMonth.orders_count,
+          total_revenue: lastMonth.total_revenue,
+          top_customers: lastMonth.top_customers,
+        },
+        difference_tonnage_mt: diffTonnage,
+        difference_orders_count: diffOrders,
+        difference_revenue: diffRev,
+        percentage_change_tonnage: pctChange,
+        insights: `${thisMonth.month} is currently active with ${thisMonth.delivered_tonnage_mt} MT delivered across ${thisMonth.orders_count} orders MTD (Revenue: ₹${thisMonth.total_revenue.toLocaleString('en-IN')}), compared to ${lastMonth.delivered_tonnage_mt} MT across ${lastMonth.orders_count} orders in ${lastMonth.month}. Net difference: ${diffTonnage >= 0 ? '+' : ''}${diffTonnage} MT (${pctChange}).`,
+      };
+
       return {
         data: {
           summary: {
             ...summary,
             trend_summary: trendSummary,
           },
+          comparison,
           monthly_trend: cleanMonthlyTrend,
           top_delivered_customers: topCustomers,
           deals: filteredDeals.slice(0, limit),

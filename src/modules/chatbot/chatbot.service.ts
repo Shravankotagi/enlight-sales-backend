@@ -444,10 +444,11 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
      * Inquiries converted to orders vs lost: Call 'get_inquiries' with mode: "conversion_breakdown".
      * Sales rep conversion leaderboard: Call 'get_inquiries' with mode: "rep_conversion".
      * Dormant buyers with open inquiries: Call 'get_inquiries' with mode: "open_inquiries_dormant_buyers".
-     * Month-over-month comparison: Call 'get_inquiries' with mode: "month_comparison".
+     * Inquiries Month-over-month comparison: When asked to compare INQUIRIES or inquiry activity/channels this month vs last month, call 'get_inquiries' with mode: "month_comparison".
      * Monthly executive summary: Call 'get_inquiries' with mode: "monthly_summary".
      * Inquiries from at-risk customers: Call 'get_inquiries' with mode: "at_risk_inquiries". Report dynamically from tool data.
    - 'get_my_open_deals': Open deals, pipeline value, won orders count & total value, stage breakdown, and delivered tonnage trends over time.
+     * Tonnage / Orders Month-over-month comparison: When asked to compare TONNAGE, delivered volume, orders, or sales this month vs last month (e.g. "Compare this month's tonnage vs last month", "Compare delivered volume this month vs last month"), call 'get_my_open_deals' with stage_filter: "won", mode: "tonnage_trend", months_count: 2 (or date_range: "last_2_months"). NEVER call 'get_inquiries' for tonnage comparisons.
      * Delivered tonnage trend (last 6 months / custom period): Call 'get_my_open_deals' with stage_filter: "won", mode: "tonnage_trend", date_range: "last_6_months". Present a clean markdown table of Month, Delivered Tonnage (MT), Orders Count, and Total Revenue (₹).
    - 'get_customer_360': Customer profiles, lifetime won value, tonnage MT, visits history, complaints history, segment, and health status.
      * Top customer accounts by tonnage: Call 'get_customer_360' with mode: "top_customers", sort_by: "tonnage_desc", limit: 5.
@@ -1702,12 +1703,32 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
           } else if (
             (lowerMsg.includes('compare') ||
               lowerMsg.includes('vs') ||
-              lowerMsg.includes('versus')) &&
+              lowerMsg.includes('versus') ||
+              lowerMsg.includes('comparison')) &&
             lowerMsg.includes('this month') &&
             lowerMsg.includes('last month')
           ) {
-            rescuedToolName = 'get_inquiries';
-            rescuedArgs = { mode: 'month_comparison' };
+            if (
+              lowerMsg.includes('tonnage') ||
+              lowerMsg.includes('volume') ||
+              lowerMsg.includes('weight') ||
+              lowerMsg.includes('delivered') ||
+              lowerMsg.includes('mt') ||
+              lowerMsg.includes('order') ||
+              lowerMsg.includes('deal') ||
+              lowerMsg.includes('revenue') ||
+              lowerMsg.includes('sales')
+            ) {
+              rescuedToolName = 'get_my_open_deals';
+              rescuedArgs = {
+                stage_filter: 'won',
+                mode: 'tonnage_trend',
+                months_count: 2,
+              };
+            } else {
+              rescuedToolName = 'get_inquiries';
+              rescuedArgs = { mode: 'month_comparison' };
+            }
           } else if (
             (lowerMsg.includes('summary') || lowerMsg.includes('overview')) &&
             lowerMsg.includes('inquir') &&
@@ -2087,13 +2108,19 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
             (lowerMsg.includes('tonnage') &&
               (lowerMsg.includes('month') ||
                 lowerMsg.includes('last 6') ||
-                lowerMsg.includes('delivered')))
+                lowerMsg.includes('delivered') ||
+                lowerMsg.includes('compare') ||
+                lowerMsg.includes('vs')))
           ) {
+            const isMoM =
+              lowerMsg.includes('this month') &&
+              lowerMsg.includes('last month');
             rescuedToolName = 'get_my_open_deals';
             rescuedArgs = {
               stage_filter: 'won',
               mode: 'tonnage_trend',
-              date_range: 'last_6_months',
+              months_count: isMoM ? 2 : 6,
+              date_range: isMoM ? 'last_2_months' : 'last_6_months',
             };
           } else if (
             (lowerMsg.includes('customer') ||
@@ -2759,6 +2786,66 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
           response += `- **Active Inquiries:** ${conv.active_inquiries || 0}\n`;
           response += `- **Conversion Rate (Won / Total):** ${conv.inquiry_to_won_conversion_rate || '0%'}`;
 
+          return response;
+        }
+      }
+
+      // Special formatters for get_my_open_deals and get_team_pipeline analytical modes
+      if (
+        toolName === 'get_my_open_deals' ||
+        toolName === 'get_team_pipeline'
+      ) {
+        const dealData = parsed?.data || parsed;
+
+        // 1. Month-over-Month Delivered Tonnage & Orders Comparison
+        if (dealData?.comparison) {
+          const comp = dealData.comparison;
+          const tm = comp.this_month;
+          const lm = comp.last_month;
+          let response = `### Month-over-Month Delivered Tonnage Comparison:\n\n`;
+          response += `- **${tm.month_name || tm.month} (${tm.status}):**\n`;
+          response += `  - **Delivered Tonnage:** **${tm.delivered_tonnage_mt} MT**\n`;
+          response += `  - **Won Orders Count:** **${tm.orders_count}** orders\n`;
+          response += `  - **Total Revenue:** ₹${Number(tm.total_revenue || 0).toLocaleString('en-IN')}\n\n`;
+          response += `- **${lm.month_name || lm.month} (${lm.status}):**\n`;
+          response += `  - **Delivered Tonnage:** **${lm.delivered_tonnage_mt} MT**\n`;
+          response += `  - **Won Orders Count:** **${lm.orders_count}** orders\n`;
+          response += `  - **Total Revenue:** ₹${Number(lm.total_revenue || 0).toLocaleString('en-IN')}\n\n`;
+          response += `> **Net Difference:** **${comp.difference_tonnage_mt >= 0 ? '+' : ''}${comp.difference_tonnage_mt} MT** (${comp.percentage_change_tonnage}) | ${comp.difference_orders_count >= 0 ? '+' : ''}${comp.difference_orders_count} orders\n`;
+          if (comp.insights) {
+            response += `\n> **Analysis:** ${comp.insights}\n`;
+          }
+          return response;
+        }
+
+        // 2. Multi-Month Delivered Tonnage Trend
+        if (dealData?.monthly_trend && dealData?.summary?.trend_summary) {
+          const ts = dealData.summary.trend_summary;
+          const months = dealData.monthly_trend;
+          let response = `### Delivered Tonnage Trend (${ts.period}):\n\n`;
+          response += `> **Overall Trend Summary:** Total delivered volume across ${ts.months_evaluated} months is **${ts.total_delivered_tonnage_mt} MT** across **${ts.total_delivered_orders_count} won orders** (Total Revenue: ₹${Number(ts.total_delivered_revenue || 0).toLocaleString('en-IN')}, Monthly Average: **${ts.average_monthly_tonnage_mt} MT/month**).\n\n`;
+          response += `| Month | Delivered Volume (MT) | Won Orders | Total Revenue (₹) | Top Accounts |\n`;
+          response += `|---|---|---|---|---|\n`;
+          months.forEach((m: any) => {
+            const topAccs =
+              (m.top_customers || [])
+                .map((c: any) => `${c.customer} (${c.tonnage_mt} MT)`)
+                .join(', ') || '-';
+            response += `| **${m.month}** | **${m.delivered_tonnage_mt} MT** | ${m.orders_count} | ₹${Number(m.total_revenue || 0).toLocaleString('en-IN')} | ${topAccs} |\n`;
+          });
+          if (
+            dealData.top_delivered_customers &&
+            dealData.top_delivered_customers.length > 0
+          ) {
+            response += `\n### Top Accounts by Delivered Tonnage (${ts.period}):\n\n`;
+            response += `| Rank | Customer Account | Total Delivered (MT) | Orders | Total Value (₹) |\n`;
+            response += `|---|---|---|---|---|\n`;
+            dealData.top_delivered_customers
+              .slice(0, 5)
+              .forEach((c: any, idx: number) => {
+                response += `| ${idx + 1} | **${c.customer_name}** | **${c.total_tonnage_mt} MT** | ${c.orders_count} | ₹${Number(c.total_revenue || 0).toLocaleString('en-IN')} |\n`;
+              });
+          }
           return response;
         }
       }

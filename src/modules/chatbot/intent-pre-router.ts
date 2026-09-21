@@ -112,6 +112,34 @@ export class IntentPreRouter {
       };
     }
 
+    // 5. Month-over-Month Tonnage / Orders Comparison (e.g. "Compare this month's tonnage vs last month", "This month vs last month delivered volume")
+    const isTonnageTerm =
+      /\b(tonnage|volume|weight|delivered|mt|tons?|orders?|revenue|sales)\b/i.test(
+        lower,
+      );
+    const isComparisonTerm =
+      /\b(compare|comparison|vs|versus|growth|difference)\b/i.test(lower);
+    const isMoMTimeframe =
+      /\b(this\s+month|current\s+month|mtd)\b/i.test(lower) &&
+      /\b(last\s+month|previous\s+month)\b/i.test(lower);
+
+    if (
+      isTonnageTerm &&
+      (isComparisonTerm || isMoMTimeframe) &&
+      isMoMTimeframe
+    ) {
+      return {
+        matched: true,
+        toolName: 'get_my_open_deals',
+        toolArgs: {
+          stage_filter: 'won',
+          mode: 'tonnage_trend',
+          months_count: 2,
+        },
+        reason: 'deterministic_mom_tonnage_comparison',
+      };
+    }
+
     return { matched: false };
   }
 }
