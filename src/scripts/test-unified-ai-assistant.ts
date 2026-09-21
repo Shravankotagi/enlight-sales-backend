@@ -33,13 +33,9 @@ const mockSupabaseService: any = {
   getAdminClient: () => supabaseAdmin,
 };
 
-import { ToolRegistryService } from '../modules/chatbot/tools/tool-registry.service';
-
-const toolRegistryService = new ToolRegistryService(mockSupabaseService);
 const guardrailsService = new GuardrailsService(mockSupabaseService);
 const chatbotService = new ChatbotService(
   mockSupabaseService,
-  toolRegistryService,
   guardrailsService,
 );
 const whatsappChatService = new WhatsAppChatService(
