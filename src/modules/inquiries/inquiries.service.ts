@@ -168,12 +168,6 @@ const SALESPERSON_NAMES = [
   'kumar varma',
   'john',
   'andrew',
-  'test',
-  'customer',
-  'client',
-  'the customer',
-  'customer inquiry',
-  'web customer',
   'unknown',
   'self',
 ];
@@ -198,6 +192,17 @@ function isProductOrGenericName(name?: string | null): boolean {
     .trim()
     .replace(/[.:,\-_/()]/g, ' ');
   if (clean.length < 2) return true;
+
+  if (
+    clean === 'customer' ||
+    clean === 'client' ||
+    clean === 'the customer' ||
+    clean === 'customer inquiry' ||
+    clean === 'web customer' ||
+    clean === 'test'
+  ) {
+    return true;
+  }
 
   if (
     SALESPERSON_NAMES.some(
@@ -415,6 +420,24 @@ function isGenuineInquiry(item: any): boolean {
     )
   ) {
     return true;
+  }
+
+  // Reject synthetic / temporary test inquiries
+  if (
+    /test industries\s*\d*/i.test(rawText) ||
+    /test customer\s*\d*/i.test(rawText) ||
+    /test prospect\s*\d*/i.test(rawText) ||
+    /^test\s+(industries|customer|corp|company)\b/i.test(
+      item.customer_name || '',
+    ) ||
+    /^test\s+(industries|customer|corp|company)\b/i.test(
+      aiJson.companyName || '',
+    ) ||
+    /^test\s+(industries|customer|corp|company)\b/i.test(
+      aiJson.customer?.name || '',
+    )
+  ) {
+    return false;
   }
 
   // 4. Reject conversational questions, chatbot queries, commands, visit logs, and payments
@@ -869,6 +892,55 @@ export class InquiriesService implements OnModuleInit {
       return data;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async deleteInquiry(id: string, accessiblePhones?: string[] | null) {
+    try {
+      this.logger.log(`Deleting inquiry ${id} and associated records...`);
+
+      const { data: inquiry, error: fetchErr } = await this.supabase
+        .from('inquiries')
+        .select('id, sender_phone, salesperson_phone')
+        .eq('id', id)
+        .single();
+
+      if (fetchErr || !inquiry) {
+        throw new NotFoundException('Inquiry not found');
+      }
+
+      if (accessiblePhones && accessiblePhones.length > 0) {
+        const inqPhone = inquiry.salesperson_phone || inquiry.sender_phone;
+        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to delete this inquiry.',
+          );
+        }
+      }
+
+      // Delete associated deals if any
+      const { data: deals } = await this.supabase
+        .from('deals')
+        .select('id')
+        .eq('inquiry_id', id);
+
+      if (deals && deals.length > 0) {
+        for (const d of deals) {
+          await this.dealsService.deleteDeal(d.id, accessiblePhones);
+        }
+      }
+
+      const { error: delErr } = await this.supabase
+        .from('inquiries')
+        .delete()
+        .eq('id', id);
+
+      if (delErr) throw delErr;
+
+      return { success: true, message: 'Inquiry deleted successfully' };
+    } catch (error) {
+      this.logger.error('Error in deleteInquiry:', error);
       throw error;
     }
   }

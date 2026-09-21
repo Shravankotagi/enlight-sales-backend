@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -169,5 +170,16 @@ export class InquiriesController {
       'Content-Length': buffer.length,
     });
     return res.end(buffer);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async deleteInquiry(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.deleteInquiry(id, phones);
   }
 }
