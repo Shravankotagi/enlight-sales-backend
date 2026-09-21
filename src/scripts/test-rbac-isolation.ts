@@ -62,14 +62,21 @@ async function runRbacIsolationTests() {
     name: 'Rishabh Makwana',
   };
 
-  // Salesperson Max (EMP0004, 918262937458)
-  const maxContext: CallerContext = {
-    userId: '3a415ecd-5471-47ac-82f2-bf750c10ca11',
-    email: 'max@enlightmetals.com',
+  // Salesperson Akruti (EMP-003, 917977088031)
+  const akrutiContext: CallerContext = {
+    userId: '383b0ab8-a89d-4814-adf3-e8da4be13324',
+    email: 'akruti@enlightmetals.com',
     role: 'salesperson',
-    phone: '918262937458',
-    employeeId: '3a415ecd-5471-47ac-82f2-bf750c10ca11',
-    name: 'Max',
+    phone: '917977088031',
+    employeeId: '383b0ab8-a89d-4814-adf3-e8da4be13324',
+    name: 'Akruti',
+  };
+
+  const adminContext: CallerContext = {
+    userId: 'usr-admin-test-01',
+    email: 'admin@enlightmetals.com',
+    role: 'admin',
+    name: 'Admin Test',
   };
 
   let passed = 0;
@@ -86,13 +93,13 @@ async function runRbacIsolationTests() {
     }
   }
 
-  // --- Test 1: Rishabh queries Customer 360 for "Suryansh Metals Pvt Ltd" (Max's account) ---
+  // --- Test 1: Rishabh queries Customer 360 for "Western Fabricators" (Akruti's account) ---
   console.log(
-    '--- Test 1: Rishabh queries get_customer_360 for "Suryansh Metals Pvt Ltd" (Max\'s customer) ---',
+    '--- Test 1: Rishabh queries get_customer_360 for "Western Fabricators" (Akruti\'s customer) ---',
   );
   const res1Raw = await toolRegistry.executeTool(
     'get_customer_360',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
+    { customer_name: 'Western Fabricators' },
     rishabhContext,
   );
   const res1 = parseToolOutput(res1Raw);
@@ -100,54 +107,54 @@ async function runRbacIsolationTests() {
   assert(
     res1.message &&
       res1.message.includes(
-        'You do not have any company like "Suryansh Metals Pvt Ltd" in your assigned accounts',
+        'You do not have any company like "Western Fabricators" in your assigned accounts',
       ),
-    'Response contains "You do not have any company like Suryansh Metals Pvt Ltd in your assigned accounts."',
+    'Response contains "You do not have any company like Western Fabricators in your assigned accounts."',
     res1.message,
   );
 
-  // --- Test 2: Rishabh queries Customer 360 for "Enlight Fabricators Pvt Ltd" (Rishabh's own account) ---
+  // --- Test 2: Akruti queries Customer 360 for "Western Fabricators" (Akruti's own customer) ---
   console.log(
-    '\n--- Test 2: Rishabh queries get_customer_360 for "Enlight Fabricators Pvt Ltd" (Own customer) ---',
+    '\n--- Test 2: Akruti queries get_customer_360 for "Western Fabricators" (Own customer) ---',
   );
   const res2Raw = await toolRegistry.executeTool(
     'get_customer_360',
-    { customer_name: 'Enlight Fabricators Pvt Ltd' },
-    rishabhContext,
+    { customer_name: 'Western Fabricators' },
+    akrutiContext,
   );
   const res2 = parseToolOutput(res2Raw);
   assert(res2.notFound !== true, 'Response does not flag notFound');
   assert(
-    res2.customer_name === 'Enlight Fabricators Pvt Ltd',
-    'Returns profile for Enlight Fabricators Pvt Ltd',
+    res2.customer_name === 'Western Fabricators',
+    'Returns profile for Western Fabricators',
   );
 
-  // --- Test 3: Max queries Customer 360 for "Suryansh Metals Pvt Ltd" (Max's own account) ---
+  // --- Test 3: Admin queries Customer 360 for "Western Fabricators" ---
   console.log(
-    '\n--- Test 3: Max queries get_customer_360 for "Suryansh Metals Pvt Ltd" (Max\'s own account) ---',
+    '\n--- Test 3: Admin queries get_customer_360 for "Western Fabricators" ---',
   );
   const res3Raw = await toolRegistry.executeTool(
     'get_customer_360',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
-    maxContext,
+    { customer_name: 'Western Fabricators' },
+    adminContext,
   );
   const res3 = parseToolOutput(res3Raw);
   assert(
     res3.notFound !== true,
-    'Max can access Suryansh Metals Pvt Ltd (notFound is false/undefined)',
+    'Admin can access Western Fabricators (notFound is false/undefined)',
   );
   assert(
-    res3.customer_name === 'Suryansh Metals Pvt Ltd',
-    'Customer name is Suryansh Metals Pvt Ltd',
+    res3.customer_name === 'Western Fabricators',
+    'Customer name is Western Fabricators',
   );
 
-  // --- Test 4: Rishabh queries get_visits for "Suryansh Metals Pvt Ltd" ---
+  // --- Test 4: Rishabh queries get_visits for "Western Fabricators" ---
   console.log(
-    '\n--- Test 4: Rishabh queries get_visits for "Suryansh Metals Pvt Ltd" ---',
+    '\n--- Test 4: Rishabh queries get_visits for "Western Fabricators" ---',
   );
   const res4Raw = await toolRegistry.executeTool(
     'get_visits',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
+    { customer_name: 'Western Fabricators' },
     rishabhContext,
   );
   const res4 = parseToolOutput(res4Raw);
@@ -155,18 +162,18 @@ async function runRbacIsolationTests() {
   assert(
     res4.summary?.message &&
       res4.summary.message.includes(
-        'You do not have any company like "Suryansh Metals Pvt Ltd"',
+        'You do not have any company like "Western Fabricators"',
       ),
     'get_visits returns assigned accounts warning',
   );
 
-  // --- Test 5: Rishabh queries get_complaints for "Suryansh Metals Pvt Ltd" ---
+  // --- Test 5: Rishabh queries get_complaints for "Western Fabricators" ---
   console.log(
-    '\n--- Test 5: Rishabh queries get_complaints for "Suryansh Metals Pvt Ltd" ---',
+    '\n--- Test 5: Rishabh queries get_complaints for "Western Fabricators" ---',
   );
   const res5Raw = await toolRegistry.executeTool(
     'get_complaints',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
+    { customer_name: 'Western Fabricators' },
     rishabhContext,
   );
   const res5 = parseToolOutput(res5Raw);
@@ -174,18 +181,18 @@ async function runRbacIsolationTests() {
   assert(
     res5.summary?.message &&
       res5.summary.message.includes(
-        'You do not have any company like "Suryansh Metals Pvt Ltd"',
+        'You do not have any company like "Western Fabricators"',
       ),
     'get_complaints returns assigned accounts warning',
   );
 
-  // --- Test 6: Rishabh queries get_my_open_deals for "Suryansh Metals Pvt Ltd" ---
+  // --- Test 6: Rishabh queries get_my_open_deals for "Western Fabricators" ---
   console.log(
-    '\n--- Test 6: Rishabh queries get_my_open_deals for "Suryansh Metals Pvt Ltd" ---',
+    '\n--- Test 6: Rishabh queries get_my_open_deals for "Western Fabricators" ---',
   );
   const res6Raw = await toolRegistry.executeTool(
     'get_my_open_deals',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
+    { customer_name: 'Western Fabricators' },
     rishabhContext,
   );
   const res6 = parseToolOutput(res6Raw);
@@ -193,7 +200,7 @@ async function runRbacIsolationTests() {
   assert(
     res6.summary?.message &&
       res6.summary.message.includes(
-        'You do not have any company like "Suryansh Metals Pvt Ltd"',
+        'You do not have any company like "Western Fabricators"',
       ),
     'get_my_open_deals returns assigned accounts warning',
   );
@@ -210,7 +217,7 @@ async function runRbacIsolationTests() {
   };
   const res7Raw = await toolRegistry.executeTool(
     'get_customer_360',
-    { customer_name: 'Suryansh Metals Pvt Ltd' },
+    { customer_name: 'Western Fabricators' },
     invalidRepContext,
   );
   const res7 = parseToolOutput(res7Raw);
@@ -225,11 +232,11 @@ async function runRbacIsolationTests() {
 
   // --- Test 8: End-to-End Chatbot Orchestrator Test ---
   console.log(
-    '\n--- Test 8: Full Chatbot Orchestration for Rishabh asking: "Give me Customer 360 for Suryansh Metals Pvt Ltd including their visits and complaints" ---',
+    '\n--- Test 8: Full Chatbot Orchestration for Rishabh asking: "Give me Customer 360 for Western Fabricators including their visits and complaints" ---',
   );
   const chatResponse = await chatbotService.processChatMessage(
     rishabhContext,
-    'Give me Customer 360 for Suryansh Metals Pvt Ltd including their visits and complaints',
+    'Give me Customer 360 for Western Fabricators including their visits and complaints',
   );
   console.log(
     `\nChatbot Response:\n----------------------------------------\n${chatResponse.reply}\n----------------------------------------\n`,
@@ -239,13 +246,13 @@ async function runRbacIsolationTests() {
   assert(
     lowerReply.includes('you do not have any company like') ||
       lowerReply.includes('not in your assigned accounts') ||
-      lowerReply.includes('no company like suryansh metals') ||
-      lowerReply.includes('suryansh metals'),
-    'Chatbot informs Rishabh that Suryansh Metals Pvt Ltd is not in assigned accounts',
+      lowerReply.includes('no company like western fabricators') ||
+      lowerReply.includes('western fabricators'),
+    'Chatbot informs Rishabh that Western Fabricators is not in assigned accounts',
   );
   assert(
-    !lowerReply.includes('ec899ff9') && !lowerReply.includes('9812345670'),
-    "Zero cross-salesperson data leakage (Max's account details are completely absent)",
+    !lowerReply.includes('80 mt') && !lowerReply.includes('4,160,000'),
+    "Zero cross-salesperson data leakage (Akruti's account details are completely absent)",
   );
 
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===`);

@@ -15,21 +15,17 @@ async function runSalesManagerVisibilityTests() {
     '===============================================================\n',
   );
 
-  const { SupabaseService } = await import(
-    '../infrastructure/supabase/supabase.service'
-  );
+  const { SupabaseService } =
+    await import('../infrastructure/supabase/supabase.service');
   const { ConfigService } = await import('../config/config.service');
   const { ConfigService: NestConfigService } = await import('@nestjs/config');
-  const { EmployeesService } = await import(
-    '../modules/employees/employees.service'
-  );
+  const { EmployeesService } =
+    await import('../modules/employees/employees.service');
   const { DealsService } = await import('../modules/deals/deals.service');
-  const { InquiriesService } = await import(
-    '../modules/inquiries/inquiries.service'
-  );
-  const { CustomersService } = await import(
-    '../modules/customers/customers.service'
-  );
+  const { InquiriesService } =
+    await import('../modules/inquiries/inquiries.service');
+  const { CustomersService } =
+    await import('../modules/customers/customers.service');
   const { KraService } = await import('../modules/kra/kra.service');
 
   const configService = new ConfigService(new NestConfigService());

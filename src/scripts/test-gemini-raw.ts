@@ -53,9 +53,8 @@ async function main() {
     console.log('Retrying with LangChain Google GenAI fallback router...');
 
     try {
-      const { ChatGoogleGenerativeAI } = await import(
-        '@langchain/google-genai'
-      );
+      const { ChatGoogleGenerativeAI } =
+        await import('@langchain/google-genai');
       const { HumanMessage } = await import('@langchain/core/messages');
 
       const model = new ChatGoogleGenerativeAI({

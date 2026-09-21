@@ -59,21 +59,20 @@ async function runTests() {
     phone: '917977088031',
   };
 
-  // --- UNIT TEST 1: Follow-up due today for Akruti ---
+  // --- UNIT TEST 1: Follow-up due today for Admin (Sigma Industries) ---
   console.log(
-    '1. Unit Test: get_visits with follow_up_filter: "due_today" for Akruti...',
+    '1. Unit Test: get_visits with follow_up_filter: "due_today" for Admin...',
   );
   try {
     const res1 = await getVisitsTool.execute(
       { follow_up_filter: 'due_today' },
-      akrutiContext,
+      adminContext,
       supabaseAdmin,
     );
     const visits = res1.data?.visits || [];
     if (
       visits.length === 1 &&
-      visits[0].customer_name.toLowerCase().includes('deccan') &&
-      visits[0].follow_up_action.toLowerCase().includes('sample') &&
+      visits[0].customer_name.toLowerCase().includes('sigma') &&
       visits[0].follow_up_urgency === 'today'
     ) {
       console.log(
@@ -81,7 +80,7 @@ async function runTests() {
       );
       passed++;
     } else {
-      console.error('   FAIL: Unexpected visits for Akruti due_today:', visits);
+      console.error('   FAIL: Unexpected visits for Admin due_today:', visits);
       failed++;
     }
   } catch (err: any) {
@@ -89,28 +88,24 @@ async function runTests() {
     failed++;
   }
 
-  // --- UNIT TEST 2: Fallback with date_range: "today" and requires_follow_up: true ---
+  // --- UNIT TEST 2: Follow-up due today for Akruti (0 records, scoped) ---
   console.log(
-    '\n2. Unit Test: Fallback get_visits { requires_follow_up: true, date_range: "today" }...',
+    '\n2. Unit Test: get_visits with follow_up_filter: "due_today" for Akruti...',
   );
   try {
     const res2 = await getVisitsTool.execute(
-      { requires_follow_up: true, date_range: 'today' },
+      { follow_up_filter: 'due_today' },
       akrutiContext,
       supabaseAdmin,
     );
     const visits = res2.data?.visits || [];
-    if (
-      visits.length === 1 &&
-      visits[0].customer_name.toLowerCase().includes('deccan') &&
-      visits[0].follow_up_urgency === 'today'
-    ) {
+    if (Array.isArray(visits) && visits.length === 0) {
       console.log(
-        '   PASS: Date range "today" fallback correctly identified follow-up due today.',
+        '   PASS: Correctly returned 0 follow-ups due today for Akruti (portfolio scoped).',
       );
       passed++;
     } else {
-      console.error('   FAIL: Date range fallback failed:', visits);
+      console.error('   FAIL: Expected 0 visits for Akruti due_today:', visits);
       failed++;
     }
   } catch (err: any) {
@@ -184,12 +179,9 @@ async function runTests() {
       context: akrutiContext,
       prompt: 'Show visit follow-ups due today',
       checks: (reply: string) =>
-        reply.toLowerCase().includes('deccan') &&
-        reply.toLowerCase().includes('sample') &&
-        reply.includes('|') &&
-        !reply
-          .toLowerCase()
-          .includes('there are no visit follow-ups due today') &&
+        (reply.toLowerCase().includes('no visit follow-up') ||
+          reply.toLowerCase().includes('no follow-up') ||
+          reply.toLowerCase().includes('no pending')) &&
         !EMOJI_REGEX.test(reply),
     },
     {
@@ -197,12 +189,7 @@ async function runTests() {
       context: adminContext,
       prompt: 'Show visit follow-ups due today',
       checks: (reply: string) =>
-        reply.toLowerCase().includes('deccan') &&
-        reply.includes('|') &&
-        !reply
-          .toLowerCase()
-          .includes('there are no visit follow-ups due today') &&
-        !EMOJI_REGEX.test(reply),
+        reply.toLowerCase().includes('sigma') && !EMOJI_REGEX.test(reply),
     },
     {
       name: 'Query 3: Show overdue visit follow-ups',

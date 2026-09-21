@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
 import { ChatbotService } from '../chatbot.service';
-import { CallerContext } from '../tools/chatbot-tool.interface';
+import { CallerContext } from '../interfaces/caller-context.interface';
 
 export interface WhatsAppMessageResult {
   success: boolean;
