@@ -73,10 +73,10 @@ export class GuardrailsService {
     const text = input.trim();
     if (!text) return { safe: true };
 
-    // Conversational multi-turn decision tokens and short operational options must never be blocked as out_of_scope
-    const MULTI_TURN_SHORT_TOKENS =
-      /^(?:[1-9]|10|yes|no|y|n|confirm|proceed|cancel|ok|okay|option\s*[1-9])$/i;
-    if (MULTI_TURN_SHORT_TOKENS.test(text)) {
+    // Conversational multi-turn decision tokens, greetings, and menu/catalog options must never be blocked as out_of_scope
+    const GREETINGS_AND_SHORT_TOKENS =
+      /^(?:[1-9]|10|yes|no|y|n|confirm|proceed|cancel|ok|okay|option\s*[1-9]|option\s*10|hi|hello|hey|hii|heyy|start|menu|catalog|options|namaste|help|what can you do\??|good\s*(?:morning|afternoon|evening)|hola|edit|change|skip)$/i;
+    if (GREETINGS_AND_SHORT_TOKENS.test(text) || text.length <= 4) {
       return { safe: true };
     }
 
@@ -100,9 +100,11 @@ Classify the following user input:
 2. Domain Violations (Out of Scope):
 - General trivia, celebrities, or sports figures (e.g. "who is virat kohli", "who won the match")
 - Movies, entertainment, pop culture, or politics
-- Casual chit-chat, recipes, academic homework, or general non-business programming questions
+- Non-business recipes, academic homework, or general unrelated programming questions
 
-Enlight Metals Valid Scope includes: steel/metal products (HR coils, CR, TMT, GP, pipes), customer inquiries, quotes, orders, pricing, sales pipeline, inventory, reorders, complaints, visits, and company SOPs.
+Enlight Metals Valid Scope includes:
+- Greetings, introductions, help requests, menu navigation, and general assistant questions (e.g., "hi", "hello", "what can you do", "help", "menu")
+- Steel/metal products (HR coils, CR, TMT, GP, pipes), customer inquiries, quotes, orders, pricing, sales pipeline, inventory, reorders, complaints, visits, and company SOPs.
 
 User Prompt: "${text.slice(0, 1000)}"
 

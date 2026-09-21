@@ -191,10 +191,52 @@ async function runTestSuite() {
     failed++;
   }
 
-  // Test 5: Test Chat Message Processing (Proxy to em-os-bot)
+  // Test 5: Test Greeting 'Hi' Returns Catalog Flow Menu
   try {
     console.log(
-      `[Test 5] Testing End-to-End ChatbotService.processChatMessage (Proxy to bot)...`,
+      `[Test 5] Testing End-to-End Greeting 'Hi' (should bypass guardrails & return Catalog Menu)...`,
+    );
+    const salesCaller: CallerContext = {
+      userId: 'test-unified-sales-001',
+      email: 'sales@enlightmetals.com',
+      role: 'salesperson',
+      name: 'Rishabh Sales',
+      phone: '919619226169',
+    };
+
+    const chatResult = await chatbotService.processChatMessage(
+      salesCaller,
+      'Hi',
+    );
+
+    if (
+      chatResult &&
+      chatResult.reply &&
+      (chatResult.reply.includes('1.') ||
+        chatResult.reply.includes('SalesOS') ||
+        chatResult.reply.includes('Inquiry'))
+    ) {
+      console.log(
+        `  PASSED: Received Catalog Menu reply:\n${chatResult.reply}\n`,
+      );
+      passed++;
+    } else {
+      console.log(
+        `  FAILED: Did not receive expected catalog menu:\n`,
+        chatResult?.reply,
+        '\n',
+      );
+      failed++;
+    }
+  } catch (err: any) {
+    console.log(`  FAILED with error: ${err.message}\n`);
+    failed++;
+  }
+
+  // Test 6: Test Chat Message Processing (Proxy to em-os-bot)
+  try {
+    console.log(
+      `[Test 6] Testing End-to-End ChatbotService.processChatMessage (Proxy to bot)...`,
     );
     const salesCaller: CallerContext = {
       userId: 'test-unified-sales-001',
