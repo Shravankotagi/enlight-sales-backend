@@ -946,8 +946,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-            Array.isArray(row.media_urls) &&
-            row.media_urls.length > 0,
+          Array.isArray(row.media_urls) &&
+          row.media_urls.length > 0,
         );
         return {
           ...row,

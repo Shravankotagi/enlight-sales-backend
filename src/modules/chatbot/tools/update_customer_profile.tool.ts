@@ -49,6 +49,19 @@ export function parseCustomerProfileUpdateArgs(
   }
 
   if (text) {
+    // 0. High-Confidence Pattern: "Assign <Company> to salesperson/rep <Person>"
+    const assignPatternMatch = text.match(
+      /(?:assign|reassign)\s+([a-zA-Z0-9\s&.-]+?)\s+to\s+(?:salesperson|sales\s+rep|rep)?\s*([a-zA-Z\s.]+?)(?=(?:\s*,|\s+and|$|\n))/i,
+    );
+    if (assignPatternMatch) {
+      if (!customer_name) {
+        customer_name = assignPatternMatch[1].trim();
+      }
+      if (!assigned_salesperson) {
+        assigned_salesperson = assignPatternMatch[2].trim();
+      }
+    }
+
     // 1. Phone extraction
     if (!phone) {
       const phoneLabelMatch = text.match(
@@ -68,9 +81,13 @@ export function parseCustomerProfileUpdateArgs(
 
     // 2. Order frequency extraction
     if (order_frequency_days == null || isNaN(order_frequency_days)) {
-      const freqMatch = text.match(
-        /(?:order\s+frequency|frequency|order\s+cycle|cycle|cadence)\s*(?:is|to|of|as|=|:|-)?\s*(\d+)\s*(?:days?|d)?/i,
-      );
+      const freqMatch =
+        text.match(
+          /(?:order\s+frequency|frequency|order\s+cycle|cycle|cadence)\s*(?:for\s+[a-zA-Z0-9\s&.-]+?\s+)?(?:is|to|of|as|=|:|-)?\s*(\d+)\s*(?:days?|d)?/i,
+        ) ||
+        text.match(
+          /(?:set|update|change)\s+[a-zA-Z0-9\s&.-]+\s+order\s+frequency\s+to\s+(\d+)/i,
+        );
       if (freqMatch) {
         order_frequency_days = parseInt(freqMatch[1], 10);
       } else {
@@ -95,10 +112,12 @@ export function parseCustomerProfileUpdateArgs(
     // 4. Assigned salesperson extraction
     if (!assigned_salesperson) {
       const repMatch = text.match(
-        /(?:reassign|assign|salesperson|sales\s+rep|rep)\s*(?:to|is|[-:])?\s*([a-zA-Z\s]+?)(?=(?:\s*,|\s+and|$|\n))/i,
+        /(?:to\s+salesperson|to\s+sales\s+rep|to\s+rep|salesperson|sales\s+rep|rep)\s*(?:is|to|=|:|-)?\s*([a-zA-Z\s]+?)(?=(?:\s*,|\s+and|$|\n))/i,
       );
       if (repMatch) {
-        assigned_salesperson = repMatch[1].trim();
+        assigned_salesperson = repMatch[1]
+          .replace(/^(?:salesperson|sales\s+rep|rep)\s+/i, '')
+          .trim();
       }
     }
 
@@ -205,6 +224,7 @@ export function parseCustomerProfileUpdateArgs(
   // Final cleanup on customer_name
   if (customer_name) {
     customer_name = customer_name
+      .replace(/[`'"]/g, '')
       .replace(/^(?:for|to|of|the|an?)\s+/i, '')
       .replace(/\s+(?:customer|client|account|company)$/i, '')
       .trim();

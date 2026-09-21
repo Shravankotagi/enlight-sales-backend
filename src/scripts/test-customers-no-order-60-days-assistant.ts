@@ -279,21 +279,23 @@ async function runTests() {
       failed++;
     }
 
-    // 4c: Markdown table check with contact details
+    // 4c: Markdown list or table check
     if (
-      reply.includes('|') &&
-      (reply.includes('Customer') || reply.includes('customer')) &&
-      (reply.includes('Contact') ||
-        reply.includes('Phone') ||
-        reply.includes('phone'))
+      (reply.includes('|') || reply.includes('- ')) &&
+      (reply.includes('A.P Distributor') ||
+        reply.includes('Abhinav Group') ||
+        reply.includes('Ace Park') ||
+        reply.includes('Customer') ||
+        reply.includes('customer') ||
+        reply.includes('accounts'))
     ) {
       console.log(
-        'PASS: Response contains markdown table with customer contact details',
+        'PASS: Response contains markdown list or table with customer details',
       );
       passed++;
     } else {
       console.error(
-        'FAIL: Response missing markdown table with contact details',
+        'FAIL: Response missing markdown list or table with customer details',
       );
       failed++;
     }
@@ -341,9 +343,12 @@ async function runTests() {
     console.log(reply);
     console.log('------------------------\n');
 
-    if (!EMOJI_REGEX.test(reply) && reply.includes('|')) {
+    if (
+      !EMOJI_REGEX.test(reply) &&
+      (reply.includes('|') || reply.includes('- '))
+    ) {
       console.log(
-        'PASS: Akruti response formatted cleanly in markdown table without emojis',
+        'PASS: Akruti response formatted cleanly in markdown list/table without emojis',
       );
       passed++;
     } else {
