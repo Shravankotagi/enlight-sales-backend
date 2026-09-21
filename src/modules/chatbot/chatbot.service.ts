@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   HttpException,
 } from '@nestjs/common';
+import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { CallerContext } from './tools/chatbot-tool.interface';
@@ -87,6 +88,10 @@ export class ChatbotService {
         } else {
           role = 'salesperson';
         }
+      } else if (user.role) {
+        const rawUserRole = (user.role || '').toLowerCase();
+        if (rawUserRole.includes('admin')) role = 'admin';
+        else if (rawUserRole.includes('manager')) role = 'manager';
       } else if (user.user_metadata?.role) {
         const metaRole = (user.user_metadata.role || '').toLowerCase();
         if (metaRole.includes('admin')) role = 'admin';
@@ -542,6 +547,64 @@ You are assisting ${caller.name || 'the user'} who has the role of '${roleUpper}
 
     // 2. Persist user message
     await this.saveMessage(sessionId, 'user', messageText);
+
+    // Step D: Unified AI Engine Proxy (Shared brain with WhatsApp bot)
+    const botUrl = process.env.AI_ENGINE_URL || 'http://127.0.0.1:3001';
+    const botApiKey =
+      process.env.AI_ENGINE_API_KEY ||
+      process.env.WEB_CHAT_API_KEY ||
+      'enlight_ai_engine_secret_2026_auth_key';
+
+    if (process.env.USE_UNIFIED_AI_ENGINE !== 'false') {
+      try {
+        // Input Guardrail Screening
+        const screenResult =
+          await this.guardrailsService.screenInput(messageText);
+        if (screenResult && !screenResult.safe) {
+          const blockedReply =
+            screenResult.reason === 'out_of_scope'
+              ? 'I am Enlight Metals Sales OS Assistant. I can only assist with B2B metal sales operations, inquiries, orders, customer visits, complaints, and CRM analytics.'
+              : 'I cannot process this request as it contains security or policy violation attempts.';
+          await this.saveMessage(sessionId, 'assistant', blockedReply);
+          return { reply: blockedReply, sessionId };
+        }
+
+        const response = await axios.post(
+          `${botUrl}/chat/web/message`,
+          {
+            message: messageText,
+            employeePhone: caller.phone || '9619226169',
+            userId: caller.userId,
+            employeeName: caller.name || 'User',
+            role: caller.role,
+          },
+          {
+            headers: {
+              'X-Web-API-Key': botApiKey,
+              'Content-Type': 'application/json',
+            },
+            timeout: 120000,
+          },
+        );
+
+        if (response.data && response.data.reply) {
+          const reply = response.data.reply;
+          await this.saveMessage(sessionId, 'assistant', reply);
+          return { reply, sessionId };
+        }
+      } catch (err: any) {
+        this.logger.error(
+          `Unified AI Engine proxy error (${botUrl}): ${err.message}`,
+        );
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+          const timeoutReply =
+            'The request took longer than expected. Please try again with a more specific query.';
+          await this.saveMessage(sessionId, 'assistant', timeoutReply);
+          return { reply: timeoutReply, sessionId };
+        }
+        // If bot server is down or error, proceed to fallback local pipeline
+      }
+    }
 
     // Step C: Active Multi-Turn Session Interception (Parity with WhatsApp Bot)
     const callerPhone = caller.phone || '919619226169';
