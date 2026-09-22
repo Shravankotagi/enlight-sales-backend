@@ -13,6 +13,20 @@ import { GuardrailsService } from './guardrails/guardrails.service';
 export interface ChatMessageResult {
   reply: string;
   sessionId: string;
+  interactiveType?: 'buttons' | 'list' | 'text';
+  interactiveButtons?: Array<{
+    id: string;
+    title: string;
+    payload?: string;
+  }> | null;
+  interactiveList?: {
+    bodyText?: string;
+    buttonText?: string;
+    sections?: Array<{
+      title: string;
+      rows: Array<{ id: string; title: string; description?: string }>;
+    }>;
+  } | null;
 }
 
 @Injectable()
@@ -225,12 +239,12 @@ export class ChatbotService {
    */
   async getSessionHistory(
     sessionId: string,
-    limit: number = 10,
+    limit: number = 20,
     rolesFilter: string[] = ['user', 'assistant'],
   ): Promise<any[]> {
     const { data, error } = await this.supabaseAdmin
       .from('chat_messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, function_result, created_at')
       .eq('session_id', sessionId)
       .in('role', rolesFilter)
       .order('created_at', { ascending: false })
@@ -243,7 +257,19 @@ export class ChatbotService {
       );
       return [];
     }
-    return (data || []).reverse();
+    const formatted = (data || []).map((msg: any) => {
+      const interactiveMeta = msg.function_result;
+      return {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        created_at: msg.created_at,
+        interactiveType: interactiveMeta?.interactiveType || 'text',
+        interactiveButtons: interactiveMeta?.interactiveButtons || null,
+        interactiveList: interactiveMeta?.interactiveList || null,
+      };
+    });
+    return formatted.reverse();
   }
 
   /**
@@ -368,6 +394,9 @@ export class ChatbotService {
       'enlight_ai_engine_secret_2026_auth_key';
 
     let assistantReply: string;
+    let interactiveType: 'buttons' | 'list' | 'text' = 'text';
+    let interactiveButtons: any = null;
+    let interactiveList: any = null;
 
     try {
       const response = await axios.post(
@@ -388,8 +417,11 @@ export class ChatbotService {
         },
       );
 
-      assistantReply =
-        response.data?.reply || 'Your request has been processed.';
+      const resData = response.data || {};
+      assistantReply = resData.reply || 'Your request has been processed.';
+      interactiveType = resData.interactiveType || resData.type || 'text';
+      interactiveButtons = resData.interactiveButtons || null;
+      interactiveList = resData.interactiveList || null;
     } catch (err: any) {
       this.logger.error(
         `AI Engine proxy error (${botUrl}/chat/web/message): ${err.message}`,
@@ -409,12 +441,25 @@ export class ChatbotService {
       }
     }
 
-    // 7. Save assistant reply to session history
-    await this.saveMessage(session.id, 'assistant', assistantReply);
+    // 7. Save assistant reply to session history with interactive metadata
+    const interactiveMeta =
+      interactiveType !== 'text'
+        ? { interactiveType, interactiveButtons, interactiveList }
+        : null;
+    await this.saveMessage(
+      session.id,
+      'assistant',
+      assistantReply,
+      null,
+      interactiveMeta,
+    );
 
     return {
       reply: assistantReply,
       sessionId: session.id,
+      interactiveType,
+      interactiveButtons,
+      interactiveList,
     };
   }
 }
