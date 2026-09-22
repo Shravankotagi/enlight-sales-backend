@@ -1018,8 +1018,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-          Array.isArray(row.media_urls) &&
-          row.media_urls.length > 0,
+            Array.isArray(row.media_urls) &&
+            row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -1598,6 +1598,7 @@ export class InquiriesService implements OnModuleInit {
       } else {
         const targetStage = stage || 'new_inquiry';
         const dealInsertPayload: any = {
+          id: inquiryId,
           inquiry_id: inquiryId,
           stage: targetStage,
           customer_name: customerName,
@@ -1628,9 +1629,29 @@ export class InquiriesService implements OnModuleInit {
         dealId = newDeal.id;
       }
 
-      // Save / update line items in deal_items
+      // Sync pipeline fields directly back onto inquiries table
+      await this.supabase
+        .from('inquiries')
+        .update({
+          stage: stage || 'new_inquiry',
+          customer_name: customerName,
+          customer_phone: customerPhone || null,
+          delivery_location: deliveryLocation || null,
+          payment_terms: paymentTerms || null,
+          total_amount:
+            grandTotal !== null && grandTotal > 0 ? grandTotal : null,
+          po_number: poNumber || null,
+          po_date: poDate || null,
+        })
+        .eq('id', inquiryId);
+
+      // Save / update line items in inquiry_items (canonical) and deal_items (legacy mirror)
       if (Array.isArray(lineItemsSrc) && lineItemsSrc.length > 0) {
-        // Delete old items if any to avoid duplication
+        // Delete old items to prevent duplicates
+        await this.supabase
+          .from('inquiry_items')
+          .delete()
+          .eq('inquiry_id', inquiryId);
         await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
 
         const dealItemsToInsert = lineItemsSrc.map((item: any) => {
@@ -1645,18 +1666,39 @@ export class InquiriesService implements OnModuleInit {
           });
           return {
             deal_id: dealId,
-            sku_text: item.sku_text || item.description || 'Material',
-            dimensions: item.dimensions || null,
-            quantity: rawQty,
-            unit: rawUnit,
-            rate: r,
-            amount: Number(item.amount) || calc.amount,
-            confidence: Number(item.confidence) || 0.95,
+            sku_text:
+              item.sku_text ||
+              item.description ||
+              item.product_name ||
+              'Material',
+            dimensions: item.dimensions || item.spec || null,
+            grade: item.grade || null,
+            quantity: calc.quantity,
+            unit: calc.unit,
+            rate: calc.rate,
+            amount: calc.amount,
+            confidence: 0.95,
             created_at: new Date().toISOString(),
           };
         });
 
-        await this.supabase.from('deal_items').insert(dealItemsToInsert);
+        const inqItemsToInsert = dealItemsToInsert.map((it) => ({
+          inquiry_id: inquiryId,
+          sku_text: it.sku_text,
+          dimensions: it.dimensions,
+          grade: it.grade,
+          quantity: it.quantity,
+          unit: it.unit,
+          rate: it.rate,
+          amount: it.amount,
+          confidence: it.confidence,
+          created_at: it.created_at,
+        }));
+
+        await Promise.all([
+          this.supabase.from('inquiry_items').insert(inqItemsToInsert),
+          this.supabase.from('deal_items').insert(dealItemsToInsert),
+        ]);
       }
 
       // Automatically trigger live Zoho Bigin sync
