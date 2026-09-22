@@ -73,4 +73,26 @@ export class KbController {
     const success = await this.kbService.deleteDocument(id);
     return { success, id };
   }
+
+  /**
+   * Extracts text content from a base64 encoded document/PDF.
+   * Accessible to Admin and Manager roles.
+   */
+  @Post('extract-text')
+  async extractText(@Req() req: any, @Body() body: any) {
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
+    if (caller.role !== 'admin' && caller.role !== 'manager') {
+      throw new ForbiddenException(
+        'You must have manager or admin privileges to extract and upload documents.',
+      );
+    }
+
+    if (!body?.fileBase64) {
+      throw new ForbiddenException('fileBase64 is required');
+    }
+
+    return this.kbService.extractTextFromPdf(body.fileBase64, body.fileName);
+  }
 }

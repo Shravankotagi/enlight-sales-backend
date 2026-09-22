@@ -246,4 +246,72 @@ export class KbService {
     }
     return true;
   }
+
+  /**
+   * Extracts plain text and markdown structure from a base64 encoded PDF document using Gemini multimodal vision/OCR.
+   */
+  async extractTextFromPdf(
+    fileBase64: string,
+    fileName?: string,
+  ): Promise<{ text: string; charCount: number; title: string }> {
+    const apiKey =
+      process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        'Gemini API key is required for document text extraction',
+      );
+    }
+
+    const cleanBase64 = fileBase64
+      .replace(/^data:application\/pdf;base64,/, '')
+      .replace(/^data:[^;]+;base64,/, '')
+      .trim();
+    const cleanTitle = fileName
+      ? fileName
+          .replace(/\.[^/.]+$/, '')
+          .replace(/[-_]/g, ' ')
+          .trim()
+      : 'Document';
+
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey });
+
+      const modelName = process.env.GEMINI_OCR_MODEL || 'gemini-2.5-flash';
+      const response: any = await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: 'application/pdf',
+            },
+          },
+          'Extract and return the full text content of this PDF document accurately in clean Markdown format. Preserve all headings, SOP numbers, clauses, bullet points, policies, tables, and specifications. Do not include any conversational commentary — output only the clean extracted document content.',
+        ],
+      });
+
+      const text = (response?.text || '').trim();
+      if (!text) {
+        throw new Error(
+          'No text could be extracted from the uploaded PDF document.',
+        );
+      }
+
+      this.logger.log(
+        `Extracted ${text.length} characters from PDF '${cleanTitle}'.`,
+      );
+
+      return {
+        text,
+        charCount: text.length,
+        title: cleanTitle,
+      };
+    } catch (err: any) {
+      this.logger.error('Failed to extract text from PDF via Gemini:', err);
+      throw new Error(
+        `Failed to extract text from PDF document: ${err.message}`,
+      );
+    }
+  }
 }
