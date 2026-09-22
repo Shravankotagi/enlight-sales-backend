@@ -23,6 +23,49 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+export const CANONICAL_FUNNEL_STAGES = [
+  { key: 'new_inquiry', label: 'New Inquiry' },
+  { key: 'quoted', label: 'Price Quote' },
+  { key: 'negotiation', label: 'Negotiation' },
+  { key: 'on_hold', label: 'On Hold' },
+  { key: 'won', label: 'Closed Won' },
+  { key: 'lost', label: 'Closed Lost' },
+];
+
+export function normalizeDealStage(stage?: string | null): string {
+  if (!stage) return 'new_inquiry';
+  const s = String(stage).toLowerCase().trim();
+  if (
+    [
+      'quoted',
+      'quotation_sent',
+      'proposal',
+      'qualified',
+      'saved',
+      'confirmed',
+      'processed',
+      'quotation_ready',
+      'price quote',
+      'proposal/price quote',
+    ].includes(s)
+  ) {
+    return 'quoted';
+  }
+  if (['negotiation', 'negotiation/review'].includes(s)) {
+    return 'negotiation';
+  }
+  if (['on_hold', 'hold', 'on hold'].includes(s)) {
+    return 'on_hold';
+  }
+  if (['won', 'closed_won', 'closed won'].includes(s)) {
+    return 'won';
+  }
+  if (['lost', 'closed_lost', 'closed lost'].includes(s)) {
+    return 'lost';
+  }
+  return 'new_inquiry';
+}
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -142,10 +185,14 @@ export class ReportsService {
       const deals = dealsResult.data || [];
       const inquiries = inquiriesResult.data || [];
 
-      const wonDeals = deals.filter((d) => d.stage === 'won');
-      const lostDeals = deals.filter((d) => d.stage === 'lost');
+      const wonDeals = deals.filter(
+        (d) => normalizeDealStage(d.stage) === 'won',
+      );
+      const lostDeals = deals.filter(
+        (d) => normalizeDealStage(d.stage) === 'lost',
+      );
       const pendingDeals = deals.filter(
-        (d) => !['won', 'lost'].includes(d.stage),
+        (d) => !['won', 'lost'].includes(normalizeDealStage(d.stage)),
       );
 
       const pipelineValue = pendingDeals.reduce(
@@ -514,17 +561,9 @@ export class ReportsService {
       }
 
       if (Array.isArray(salespersonPhone) && salespersonPhone.length === 0) {
-        const stages = [
-          { key: 'new_deals', label: 'New Deals' },
-          { key: 'qualified', label: 'Qualified' },
-          { key: 'quoted', label: 'Quoted' },
-          { key: 'negotiation', label: 'Negotiation' },
-          { key: 'won', label: 'Won' },
-          { key: 'lost', label: 'Lost' },
-        ];
         return {
           period: { month: monthName, year: y },
-          funnel: stages.map(({ key, label }) => ({
+          funnel: CANONICAL_FUNNEL_STAGES.map(({ key, label }) => ({
             stage: key,
             label,
             count: 0,
@@ -538,8 +577,12 @@ export class ReportsService {
       let dealsQuery = this.supabase.from('deals').select('*');
 
       if (!isAllTime) {
+        const fromDateOnly = start.split('T')[0];
+        const toDateOnly = end.split('T')[0];
         dealsQuery = dealsQuery.or(
-          `and(created_at.gte.${start},created_at.lte.${end}),and(stage.eq.won,won_at.gte.${start},won_at.lte.${end})`,
+          `and(won_at.gte.${start},won_at.lte.${end}),` +
+            `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
+            `and(created_at.gte.${start},created_at.lte.${end})`,
         );
       }
 
@@ -553,30 +596,10 @@ export class ReportsService {
       const { data: deals } = await dealsQuery;
       const safeDeals = deals || [];
 
-      const stages = [
-        { key: 'new_deals', label: 'New Deals' },
-        { key: 'qualified', label: 'Qualified' },
-        { key: 'quoted', label: 'Quoted' },
-        { key: 'negotiation', label: 'Negotiation' },
-        { key: 'won', label: 'Won' },
-        { key: 'lost', label: 'Lost' },
-      ];
-
-      const funnel = stages.map(({ key, label }) => {
-        const stageDeals = safeDeals.filter((d) => {
-          if (key === 'new_deals') {
-            return (
-              d.stage === 'new_inquiry' ||
-              d.stage === 'new_deals' ||
-              d.stage === 'new' ||
-              d.stage === 'inquiry' ||
-              d.stage === 'review' ||
-              d.stage === 'lead' ||
-              !d.stage
-            );
-          }
-          return d.stage === key;
-        });
+      const funnel = CANONICAL_FUNNEL_STAGES.map(({ key, label }) => {
+        const stageDeals = safeDeals.filter(
+          (d) => normalizeDealStage(d.stage) === key,
+        );
         const count = stageDeals.length;
         return {
           stage: key,
@@ -653,8 +676,7 @@ export class ReportsService {
         .select(
           'id, created_at, won_at, stage, salesperson_phone, inquiry_type, po_date',
         )
-        .neq('inquiry_type', 'unknown')
-        .eq('stage', 'won');
+        .or('stage.eq.won,stage.eq.closed_won');
 
       if (!isAllTime) {
         const fromDateOnly = start.split('T')[0];
@@ -782,14 +804,12 @@ export class ReportsService {
             conversion_rate: 0,
             total_inquiries: 0,
           },
-          funnel: [
-            { stage: 'new_deals', label: 'New Deals', count: 0, value: 0 },
-            { stage: 'qualified', label: 'Qualified', count: 0, value: 0 },
-            { stage: 'quoted', label: 'Quoted', count: 0, value: 0 },
-            { stage: 'negotiation', label: 'Negotiation', count: 0, value: 0 },
-            { stage: 'won', label: 'Won', count: 0, value: 0 },
-            { stage: 'lost', label: 'Lost', count: 0, value: 0 },
-          ],
+          funnel: CANONICAL_FUNNEL_STAGES.map(({ key, label }) => ({
+            stage: key,
+            label,
+            count: 0,
+            value: 0,
+          })),
           by_customer: [],
           by_type: [],
           lost_reasons: {},
@@ -843,10 +863,14 @@ export class ReportsService {
       const deals = dealsResult.data || [];
       const inquiries = inquiriesResult.data || [];
 
-      const wonDeals = deals.filter((d: any) => d.stage === 'won');
-      const lostDeals = deals.filter((d: any) => d.stage === 'lost');
+      const wonDeals = deals.filter(
+        (d: any) => normalizeDealStage(d.stage) === 'won',
+      );
+      const lostDeals = deals.filter(
+        (d: any) => normalizeDealStage(d.stage) === 'lost',
+      );
       const pendingDeals = deals.filter(
-        (d: any) => !['won', 'lost'].includes(d.stage),
+        (d: any) => !['won', 'lost'].includes(normalizeDealStage(d.stage)),
       );
 
       const pipelineValue = pendingDeals.reduce(
@@ -900,31 +924,11 @@ export class ReportsService {
         {} as Record<string, number>,
       );
 
-      // Funnel stages
-      const stages = [
-        { key: 'new_deals', label: 'New Deals' },
-        { key: 'qualified', label: 'Qualified' },
-        { key: 'quoted', label: 'Quoted' },
-        { key: 'negotiation', label: 'Negotiation' },
-        { key: 'won', label: 'Won' },
-        { key: 'lost', label: 'Lost' },
-      ];
-
-      const funnel = stages.map(({ key, label }) => {
-        const stageDeals = deals.filter((d: any) => {
-          if (key === 'new_deals') {
-            return (
-              d.stage === 'new_inquiry' ||
-              d.stage === 'new_deals' ||
-              d.stage === 'new' ||
-              d.stage === 'inquiry' ||
-              d.stage === 'review' ||
-              d.stage === 'lead' ||
-              !d.stage
-            );
-          }
-          return d.stage === key;
-        });
+      // Funnel stages (canonical 6 stages)
+      const funnel = CANONICAL_FUNNEL_STAGES.map(({ key, label }) => {
+        const stageDeals = deals.filter(
+          (d: any) => normalizeDealStage(d.stage) === key,
+        );
         const stageCount = stageDeals.length;
         const stageValue = stageDeals.reduce(
           (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
