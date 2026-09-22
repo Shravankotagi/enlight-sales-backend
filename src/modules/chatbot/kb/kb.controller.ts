@@ -8,10 +8,21 @@ import {
   UseGuards,
   Req,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../../common/guards/jwt.guard';
 import { KbService, IngestDocumentDto } from './kb.service';
 import { ChatbotService } from '../chatbot.service';
+
+const ALLOWED_KB_EXTENSIONS = [
+  '.pdf',
+  '.txt',
+  '.md',
+  '.markdown',
+  '.text',
+  '.json',
+  '.csv',
+];
 
 @Controller('chat/kb')
 @UseGuards(JwtAuthGuard)
@@ -36,12 +47,28 @@ export class KbController {
       );
     }
 
+    if (!body?.title?.trim() || !body?.content?.trim()) {
+      throw new BadRequestException('Document title and content are required.');
+    }
+
+    const sourceFile = body.sourceFileUrl || body.source_file_url;
+    if (sourceFile) {
+      const extIndex = sourceFile.lastIndexOf('.');
+      const ext =
+        extIndex !== -1 ? sourceFile.slice(extIndex).toLowerCase() : '';
+      if (ext && !ALLOWED_KB_EXTENSIONS.includes(ext)) {
+        throw new BadRequestException(
+          `Unsupported file format "${sourceFile}". Supported formats are: .pdf, .txt, .md, .csv, .json.`,
+        );
+      }
+    }
+
     const dto: IngestDocumentDto = {
-      title: body.title,
-      content: body.content,
+      title: body.title.trim(),
+      content: body.content.trim(),
       visibilityRole: body.visibilityRole || body.visibility_role || 'all',
       uploadedBy: caller.userId,
-      sourceFileUrl: body.sourceFileUrl || body.source_file_url,
+      sourceFileUrl: sourceFile,
     };
 
     return this.kbService.ingestDocument(dto);
@@ -72,5 +99,38 @@ export class KbController {
     }
     const success = await this.kbService.deleteDocument(id);
     return { success, id };
+  }
+
+  /**
+   * Extracts text content from a base64 encoded document/PDF.
+   * Accessible to Admin and Manager roles.
+   */
+  @Post('extract-text')
+  async extractText(@Req() req: any, @Body() body: any) {
+    const caller = await this.chatbotService.resolveCallerContext(
+      req.employee || req.user,
+    );
+    if (caller.role !== 'admin' && caller.role !== 'manager') {
+      throw new ForbiddenException(
+        'You must have manager or admin privileges to extract and upload documents.',
+      );
+    }
+
+    if (!body?.fileBase64) {
+      throw new BadRequestException('fileBase64 is required.');
+    }
+
+    if (body?.fileName) {
+      const extIndex = body.fileName.lastIndexOf('.');
+      const ext =
+        extIndex !== -1 ? body.fileName.slice(extIndex).toLowerCase() : '';
+      if (ext && ext !== '.pdf') {
+        throw new BadRequestException(
+          `Unsupported file format "${body.fileName}". Only PDF (.pdf) documents are supported for automated text extraction.`,
+        );
+      }
+    }
+
+    return this.kbService.extractTextFromPdf(body.fileBase64, body.fileName);
   }
 }
