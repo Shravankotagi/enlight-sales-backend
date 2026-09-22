@@ -214,16 +214,20 @@ async function runTestSuite() {
       chatResult.reply &&
       (chatResult.reply.includes('1.') ||
         chatResult.reply.includes('SalesOS') ||
-        chatResult.reply.includes('Inquiry'))
+        chatResult.reply.includes('Inquiry')) &&
+      chatResult.interactiveType === 'list' &&
+      chatResult.interactiveList &&
+      Array.isArray(chatResult.interactiveList.sections) &&
+      chatResult.interactiveList.sections.length >= 3
     ) {
       console.log(
-        `  PASSED: Received Catalog Menu reply:\n${chatResult.reply}\n`,
+        `  PASSED: Received Catalog Menu reply with ${chatResult.interactiveList.sections.length} interactive sections:\n${chatResult.reply}\n`,
       );
       passed++;
     } else {
       console.log(
-        `  FAILED: Did not receive expected catalog menu:\n`,
-        chatResult?.reply,
+        `  FAILED: Did not receive expected catalog menu with interactive sections:\n`,
+        chatResult,
         '\n',
       );
       failed++;
@@ -259,6 +263,46 @@ async function runTestSuite() {
       passed++;
     } else {
       console.log(`  FAILED: No reply received:`, chatResult, '\n');
+      failed++;
+    }
+  } catch (err: any) {
+    console.log(`  FAILED with error: ${err.message}\n`);
+    failed++;
+  }
+
+  // Test 7: Test Interactive Button ID Normalization ('btn_post_menu')
+  try {
+    console.log(
+      `[Test 7] Testing Button ID Normalization ('btn_post_menu' -> Menu Catalog Flow)...`,
+    );
+    const salesCaller: CallerContext = {
+      userId: 'test-unified-sales-001',
+      email: 'sales@enlightmetals.com',
+      role: 'salesperson',
+      name: 'Rishabh Sales',
+      phone: '919619226169',
+    };
+
+    const chatResult = await chatbotService.processChatMessage(
+      salesCaller,
+      'btn_post_menu',
+    );
+
+    if (
+      chatResult &&
+      chatResult.interactiveType === 'list' &&
+      chatResult.interactiveList
+    ) {
+      console.log(
+        `  PASSED: 'btn_post_menu' normalized and returned interactive catalog menu.\n`,
+      );
+      passed++;
+    } else {
+      console.log(
+        `  FAILED: 'btn_post_menu' did not return catalog list:\n`,
+        chatResult,
+        '\n',
+      );
       failed++;
     }
   } catch (err: any) {

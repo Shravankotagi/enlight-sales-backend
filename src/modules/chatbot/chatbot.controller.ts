@@ -56,6 +56,9 @@ export class ChatbotController {
       success: true,
       sessionId: result.sessionId,
       reply: result.reply,
+      interactiveType: result.interactiveType || 'text',
+      interactiveButtons: result.interactiveButtons || null,
+      interactiveList: result.interactiveList || null,
       caller: {
         role: caller.role,
         name: caller.name,
