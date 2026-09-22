@@ -66,6 +66,118 @@ export function normalizeDealStage(stage?: string | null): string {
   return 'new_inquiry';
 }
 
+export function isProductInquiry(inq: any): boolean {
+  if (!inq) return false;
+  const rawText = (inq.raw_text || '').trim();
+  const channel = String(inq.source_channel || '').toLowerCase();
+  if (
+    inq.inquiry_type === 'inquiry' ||
+    inq.inquiry_type === 'purchase_order' ||
+    inq.inquiry_type === 'quotation_sent' ||
+    channel.includes('whatsapp') ||
+    channel.includes('dashboard') ||
+    channel.includes('assistant') ||
+    channel.includes('chatbot') ||
+    channel.includes('ai') ||
+    channel === 'manual' ||
+    channel === 'form' ||
+    channel === 'upload'
+  ) {
+    return true;
+  }
+  if (
+    rawText.startsWith('[Inquiry Attachment:') ||
+    rawText.startsWith('[Inquiry Document Attached]') ||
+    rawText.startsWith('[PO Document Attached:') ||
+    (Array.isArray(inq.media_urls) && inq.media_urls.length > 0)
+  ) {
+    return true;
+  }
+  const ai = inq.ai_extraction_json || {};
+  const lineItems = ai.line_items || ai.lineItems || [];
+  if (
+    Array.isArray(lineItems) &&
+    lineItems.length > 0 &&
+    lineItems.some(
+      (i: any) =>
+        (Number(i.quantity) > 0 ||
+          Number(i.quantity_tons) > 0 ||
+          Number(i.quantity_mt) > 0) &&
+        (i.sku_text || i.product_name || i.product || i.description),
+    )
+  ) {
+    return true;
+  }
+  if (
+    inq.sender_name ||
+    inq.customer_name ||
+    ai.companyName ||
+    ai.customer_name
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function resolveInquiryPipelineStage(
+  inq: any,
+  dealsList: any[] = [],
+): string {
+  // 1. Direct 1-to-1 match by inquiry_id
+  const directMatch = dealsList.find(
+    (d: any) => d.inquiry_id && d.inquiry_id === inq.id,
+  );
+  if (directMatch) return normalizeDealStage(directMatch.stage);
+
+  // 2. Match ONLY to an active open in-progress deal for this customer
+  const ai = inq.ai_extraction_json || {};
+  const cName = (
+    inq.customer_name ||
+    ai.companyName ||
+    ai.customer_name ||
+    inq.sender_name ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  if (cName) {
+    const matchingDeals = dealsList.filter(
+      (d: any) => (d.customer_name || '').toLowerCase().trim() === cName,
+    );
+    const openDeal = matchingDeals.find(
+      (d: any) => !['won', 'lost'].includes((d.stage || '').toLowerCase()),
+    );
+    if (openDeal) return normalizeDealStage(openDeal.stage);
+  }
+
+  const st = (inq.status || '').toLowerCase().trim();
+  const isPo =
+    inq.inquiry_type === 'purchase_order' ||
+    inq.source_channel === 'whatsapp_po' ||
+    (inq.raw_text || '').includes('[PO Document Attached');
+
+  if (isPo && (st === 'confirmed' || st === 'won' || st === 'processed'))
+    return 'won';
+  if (st === 'won') return 'won';
+  if (st === 'negotiation') return 'negotiation';
+  if (st === 'on_hold' || st === 'hold') return 'on_hold';
+  if (
+    [
+      'quoted',
+      'quotation_sent',
+      'confirmed',
+      'saved',
+      'processed',
+      'quotation_ready',
+    ].includes(st) ||
+    inq.inquiry_type === 'quotation_sent'
+  ) {
+    return 'quoted';
+  }
+  if (st === 'lost') return 'lost';
+  return 'new_inquiry';
+}
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -575,6 +687,7 @@ export class ReportsService {
       }
 
       let dealsQuery = this.supabase.from('deals').select('*');
+      let inquiriesQuery = this.supabase.from('inquiries').select('*');
 
       if (!isAllTime) {
         const fromDateOnly = start.split('T')[0];
@@ -584,37 +697,83 @@ export class ReportsService {
             `and(po_date.gte.${fromDateOnly},po_date.lte.${toDateOnly}),` +
             `and(created_at.gte.${start},created_at.lte.${end})`,
         );
+        inquiriesQuery = inquiriesQuery
+          .gte('created_at', start)
+          .lte('created_at', end);
       }
 
       if (salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
         ]);
-        if (orFilter) dealsQuery = dealsQuery.or(orFilter);
+        if (orFilter) {
+          dealsQuery = dealsQuery.or(orFilter);
+          inquiriesQuery = inquiriesQuery.or(orFilter);
+        }
       }
 
-      const { data: deals } = await dealsQuery;
-      const safeDeals = deals || [];
+      const [dealsRes, inqsRes] = await Promise.all([
+        dealsQuery,
+        inquiriesQuery,
+      ]);
+
+      const safeDeals = dealsRes.data || [];
+      const safeInqs = (inqsRes.data || []).filter(isProductInquiry);
+
+      // Build pipeline units directly from genuine product inquiries
+      const pipelineUnits = safeInqs.map((inq: any) => {
+        const stage = resolveInquiryPipelineStage(inq, safeDeals);
+        const ai = inq.ai_extraction_json || {};
+        const cName = (
+          inq.customer_name ||
+          ai.companyName ||
+          ai.customer_name ||
+          inq.sender_name ||
+          ''
+        )
+          .trim()
+          .toLowerCase();
+        const d = safeDeals.find(
+          (dl: any) =>
+            dl.inquiry_id === inq.id ||
+            (dl.customer_name &&
+              dl.customer_name.toLowerCase().trim() === cName &&
+              !['won', 'lost'].includes((dl.stage || '').toLowerCase())),
+        );
+        const value =
+          Number(d?.total_amount) ||
+          Number(ai.totalAmount) ||
+          Number(ai.total_amount) ||
+          0;
+        return { stage, value };
+      });
+
+      const funnelSource =
+        pipelineUnits.length > 0
+          ? pipelineUnits
+          : safeDeals.map((d: any) => ({
+              stage: normalizeDealStage(d.stage),
+              value: Number(d.total_amount) || 0,
+            }));
 
       const funnel = CANONICAL_FUNNEL_STAGES.map(({ key, label }) => {
-        const stageDeals = safeDeals.filter(
-          (d) => normalizeDealStage(d.stage) === key,
+        const stageItems = funnelSource.filter((p: any) => p.stage === key);
+        const count = stageItems.length;
+        const value = stageItems.reduce(
+          (sum: number, p: any) => sum + (Number(p.value) || 0),
+          0,
         );
-        const count = stageDeals.length;
         return {
           stage: key,
           label,
           count,
-          value: stageDeals.reduce(
-            (sum, d) => sum + (Number(d.total_amount) || 0),
-            0,
-          ),
+          value,
         };
       });
 
       const maxCount = Math.max(...funnel.map((f) => f.count), 1);
       const wonCount = funnel.find((f) => f.stage === 'won')?.count || 0;
-      const totalBase = safeDeals.length;
+      const totalBase = funnelSource.length;
 
       const overallWinRate =
         totalBase > 0 ? Math.round((wonCount / totalBase) * 100) : 0;
@@ -822,9 +981,7 @@ export class ReportsService {
       let dealsQuery = this.supabase.from('deals').select('*, deal_items(*)');
 
       // 2. Query all inquiries in period
-      let inquiriesQuery = this.supabase
-        .from('inquiries')
-        .select('id, created_at, salesperson_phone');
+      let inquiriesQuery = this.supabase.from('inquiries').select('*');
 
       if (!isAllTime) {
         const fromDateOnly = start.split('T')[0];
@@ -861,7 +1018,8 @@ export class ReportsService {
       if (inquiriesResult.error) throw inquiriesResult.error;
 
       const deals = dealsResult.data || [];
-      const inquiries = inquiriesResult.data || [];
+      const rawInquiries = inquiriesResult.data || [];
+      const inquiries = rawInquiries.filter(isProductInquiry);
 
       const wonDeals = deals.filter(
         (d: any) => normalizeDealStage(d.stage) === 'won',
@@ -924,14 +1082,48 @@ export class ReportsService {
         {} as Record<string, number>,
       );
 
+      // Build pipeline units directly from genuine product inquiries
+      const pipelineUnits = inquiries.map((inq: any) => {
+        const stage = resolveInquiryPipelineStage(inq, deals);
+        const ai = inq.ai_extraction_json || {};
+        const cName = (
+          inq.customer_name ||
+          ai.companyName ||
+          ai.customer_name ||
+          inq.sender_name ||
+          ''
+        )
+          .trim()
+          .toLowerCase();
+        const d = deals.find(
+          (dl: any) =>
+            dl.inquiry_id === inq.id ||
+            (dl.customer_name &&
+              dl.customer_name.toLowerCase().trim() === cName &&
+              !['won', 'lost'].includes((dl.stage || '').toLowerCase())),
+        );
+        const value =
+          Number(d?.total_amount) ||
+          Number(ai.totalAmount) ||
+          Number(ai.total_amount) ||
+          0;
+        return { stage, value };
+      });
+
+      const funnelSource =
+        pipelineUnits.length > 0
+          ? pipelineUnits
+          : deals.map((d: any) => ({
+              stage: normalizeDealStage(d.stage),
+              value: Number(d.total_amount) || 0,
+            }));
+
       // Funnel stages (canonical 6 stages)
       const funnel = CANONICAL_FUNNEL_STAGES.map(({ key, label }) => {
-        const stageDeals = deals.filter(
-          (d: any) => normalizeDealStage(d.stage) === key,
-        );
-        const stageCount = stageDeals.length;
-        const stageValue = stageDeals.reduce(
-          (sum: number, d: any) => sum + (Number(d.total_amount) || 0),
+        const stageItems = funnelSource.filter((p: any) => p.stage === key);
+        const stageCount = stageItems.length;
+        const stageValue = stageItems.reduce(
+          (sum: number, p: any) => sum + (Number(p.value) || 0),
           0,
         );
         return {
