@@ -14,21 +14,33 @@ const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 import { ZohoService } from '../zoho/zoho.service';
+import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 
-function getCompanyLogoPath(): string | null {
+function getCompanyLogoBuffer(): Buffer | null {
   const possiblePaths = [
     path.join(process.cwd(), 'assets', 'logo.png'),
     path.join(process.cwd(), 'assets', 'logo.jpg'),
     path.join(process.cwd(), 'assets', 'logo.jpeg'),
     path.join(process.cwd(), 'backend', 'assets', 'logo.png'),
+    path.join(process.cwd(), 'dist', 'assets', 'logo.png'),
     path.join(__dirname, '../../../assets/logo.png'),
     path.join(__dirname, '../../../assets/logo.jpg'),
     path.join(__dirname, '../../../assets/logo.jpeg'),
     path.join(__dirname, '../../assets/logo.png'),
     path.join(__dirname, '../assets/logo.png'),
+    path.join(__dirname, 'assets/logo.png'),
   ];
   for (const p of possiblePaths) {
-    if (fs.existsSync(p)) return p;
+    if (fs.existsSync(p)) {
+      try {
+        return fs.readFileSync(p);
+      } catch {}
+    }
+  }
+  if (ENLIGHT_LOGO_BASE64) {
+    try {
+      return Buffer.from(ENLIGHT_LOGO_BASE64, 'base64');
+    } catch {}
   }
   return null;
 }
@@ -2203,50 +2215,57 @@ MIDC Industrial Zone, Mumbai - 400001`;
       detectedMime = 'application/pdf';
     }
 
-    const promptText = `You are an expert OCR parser for steel purchase inquiry and purchase order (PO) documents received by supplier 'Enlight Metals Private Limited'. Extract ALL data from this document and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+    const promptText = `You are an expert OCR & document parser for Enlight Metals Private Limited, a premier Indian B2B metal & steel distributor.
+Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or Material Requirement formatted in Tally ERP, Busy, SAP, etc.) and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": "The buyer / client company issuing this inquiry (from the top letterhead / header banner or explicit 'Customer/Buyer' section). NEVER return Enlight Metals as customer_name.",
+  "customer_name": "The legal company name of the buyer / client issuing this PO (under 'Invoice To:', 'Bill To:', 'Buyer:', 'Customer:', 'M/s:'). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
-  "customer_phone": "phone number if present else null",
-  "customer_email": "email if present else null",
-  "customer_gst": "GST number of the customer if present else null",
-  "customer_address": "company address if present else null",
-  "delivery_location": "full delivery address / location as stated in document e.g. MIDC Industrial Area, Nashik, Maharashtra - 422010",
-  "payment_terms": "payment terms e.g. 30 Days Credit or 45 Days Credit",
-  "preferred_make": "preferred brand/make e.g. SAIL / JSW / TATA if stated else null",
-  "additional_notes": "non-product contextual notes, delivery timeline instructions (e.g. 'Delivery within 10 days of order confirmation'), preferred make, contact info, special remarks. NEVER put product line items or product rows here.",
-  "po_number": "PO Number / Ref number if present else null",
-  "po_date": "PO Date in YYYY-MM-DD or present date format",
+  "customer_phone": "Phone number under Invoice To else null",
+  "customer_email": "Email under Invoice To else null",
+  "customer_gst": "15-character GSTIN number of the customer if present else null",
+  "customer_pan": "PAN number of customer if present else null",
+  "customer_address": "Complete factory/office billing address of customer under Invoice To",
+  "delivery_location": "Destination site / ship-to address from 'Consignee (Ship to)', 'Delivery Address', or 'Destination'. NEVER include Enlight Metals' supplier address.",
+  "payment_terms": "Payment terms from 'Mode/Terms of Payment' e.g. Pmt immediate after delivery, 30 Days Credit, 100% Advance",
+  "delivery_terms": "Terms of delivery from 'Terms of Delivery' or 'Remarks'",
+  "preferred_make": "Preferred brand/make e.g. SAIL / JSW / TATA if stated else null",
+  "additional_notes": "Non-product contextual remarks, TC/E-way bill requirements. NEVER put product line items here.",
+  "po_number": "Explicit PO/Voucher Number e.g. 'PO/26-27/63', 'PO-26-27-00718' from 'Voucher No.', 'PO No', 'Purchase Order No'. Set null if only inquiry/RFQ.",
+  "po_date": "PO Date converted to YYYY-MM-DD (Year 2026 e.g. '2026-09-12')",
   "line_items": [
     {
-      "sku_text": "full material description e.g. MS Sheet 5MM THK E250",
-      "dimensions": "specs / dimensions e.g. 1250 x 2500",
+      "sku_text": "Material / product category name e.g. HR PLATE, CR SHEET, MS ANGLE, GI PIPE",
+      "dimensions": "Specs / dimensions e.g. 05X1500X6300MM, 50X50X6, 12MM",
+      "grade": "Steel grade if present e.g. IS2062 E250BR, FE550D else null",
+      "hsn_code": "HSN/SAC code if stated e.g. 72083840 else null",
       "quantity": numeric_quantity,
-      "unit": "exact unit stated e.g. Nos, MT, Kg, Pcs, Sheets",
-      "rate": numeric_rate_or_0,
-      "amount": numeric_amount_or_0
+      "unit": "Exact unit of measure: 'MT', 'KG', 'Nos', 'PCS', 'Sheets'",
+      "rate": numeric_pre_gst_rate_per_unit,
+      "amount": numeric_pre_gst_line_amount,
+      "due_on": "Delivery due date in YYYY-MM-DD if stated else null"
     }
   ],
-  "basic_amount": numeric_po_basic_value_before_tax_or_0,
+  "basic_amount": numeric_total_pre_tax_value_or_0,
   "gst_amount": numeric_total_gst_amount_or_0,
-  "total_amount": numeric_total_po_value_including_gst_or_0,
+  "total_amount": numeric_grand_total_including_tax_or_0,
   "overall_confidence": 0.98
 }
 
 CRITICAL EXTRACTION RULES:
 1. SUPPLIER vs BUYER IDENTIFICATION (STRICT):
-- The recipient/supplier is 'Enlight Metals Private Limited'. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
-- The 'customer_name' is the issuing client/buyer company whose name appears at the top header, letterhead, or logo banner (e.g. 'DYNAMIC ENGINEERING WORKS PVT. LTD.', 'APEX STRUCTURAL & STEEL WORKS PVT. LTD.', 'RATHI INFRASTRUCTURE PROJECTS LTD.', 'KIRLOSKAR FABRICATION SYSTEMS LTD.').
-- If no company name exists on the letterhead, extract the company from the sign-off or leave null.
+- Enlight Metals Private Limited (Shop No 606 Sn 272, Clover Hills Plaza, NIBM Undri Road, Pune - 411048, GST: 27AAICE5263E1ZN) is the SUPPLIER. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
+- The 'customer_name' is the legal corporate name under 'Invoice To:' / 'Bill To:' (e.g. 'Suraj SIM Techno Works Pvt Ltd', 'SB Scafform Technovert Pvt. Ltd.'). NEVER put building/street address in customer_name.
 
-2. LINE ITEMS vs ADDITIONAL NOTES (STRICT):
-- Line items: Every distinct product row must be extracted into the "line_items" array with its full description, spec, size, quantity, and unit.
-- Additional notes: Must ONLY contain non-product contextual remarks such as delivery timeline requirements (e.g. "Delivery within 10 days of order confirmation"), preferred make, special conditions, or contact details.
-- Product rows / line items MUST NEVER appear in "additional_notes".
+2. STEEL LINE ITEM & UOM RULES (STRICT):
+- Columns typically appear as: [Sl No.] | [Description of Goods] | [Due on] | [Quantity] | [Rate] | [per / UOM] | [Amount]
+- Description: Separate product title (sku_text: 'HR PLATE') and size/spec (dimensions: '05X1500X6300MM').
+- Quantity & UOM: Extract quantity from 'Quantity' column. Extract unit strictly from the 'per' or 'UOM' column ('M.T' / 'MT' → 'MT', 'KG' → 'KG', 'Nos' → 'Nos').
+- ⚠️ CRITICAL NEGATIVE RULE: Words in the description like 'HR PLATE', 'CR SHEET', 'MS ANGLE', 'COIL', 'BEAM', 'PIPE' are PRODUCT NAMES, NEVER UNITS! If the table says '60.000 M.T' with per 'M.T', the unit is STRICTLY 'MT', NEVER 'Plates'!
 
-3. PRESERVE EXACT UNITS & DETAILS:
-- Keep exact units (Nos, MT, Kg, Pcs, Sheets). Never convert or fabricate units.
-- Extract complete payment terms (e.g. "30 Days Credit") and full delivery location (e.g. "MIDC Industrial Area, Nashik, Maharashtra - 422010").
+3. COMMERCIAL TERMS & TOTALS:
+- Extract 'Mode/Terms of Payment' into 'payment_terms'.
+- Extract 'Consignee (Ship to)' into 'delivery_location'.
+- basic_amount is the pre-tax total of all line items. total_amount is the grand total.
 
 Return ONLY the JSON.`;
 
@@ -2301,6 +2320,73 @@ Return ONLY the JSON.`;
           }
 
           if (parsed) {
+            // Post-process line items & units
+            if (Array.isArray(parsed.line_items)) {
+              parsed.line_items = parsed.line_items.map((item: any) => {
+                const skuText = (
+                  item.sku_text ||
+                  item.description ||
+                  item.product ||
+                  'Material'
+                ).trim();
+                const dims = (item.dimensions || '').trim();
+                let rawUnit = String(item.unit || 'MT').trim();
+                const uUpper = rawUnit.toUpperCase();
+
+                if (
+                  [
+                    'M.T',
+                    'M.T.',
+                    'MT',
+                    'TON',
+                    'TONS',
+                    'TONNE',
+                    'TONNES',
+                    'MTS',
+                    'T',
+                  ].includes(uUpper)
+                ) {
+                  rawUnit = 'MT';
+                } else if (
+                  ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS'].includes(uUpper)
+                ) {
+                  rawUnit = 'KG';
+                } else if (
+                  ['NOS', 'NO', 'NO.', 'NUMBER', 'NUMBERS'].includes(uUpper)
+                ) {
+                  rawUnit = 'Nos';
+                } else if (['PCS', 'PC', 'PIECE', 'PIECES'].includes(uUpper)) {
+                  rawUnit = 'Pcs';
+                }
+
+                const rate = Number(item.rate || 0);
+                const qty = Number(item.quantity || 0);
+                const amt = Number(item.amount || 0) || Math.round(qty * rate);
+
+                if (
+                  /^(?:plate|plates|sheet|sheets|coil|coils|beam|channel|pipe)$/i.test(
+                    rawUnit,
+                  ) &&
+                  (rate > 1000 ||
+                    /m\.?t/i.test(skuText) ||
+                    /m\.?t/i.test(dims) ||
+                    /\bmt\b/i.test(skuText))
+                ) {
+                  rawUnit = 'MT';
+                }
+
+                return {
+                  ...item,
+                  sku_text: skuText,
+                  dimensions: dims,
+                  quantity: qty,
+                  unit: rawUnit,
+                  rate: rate,
+                  amount: amt,
+                };
+              });
+            }
+
             return {
               success: true,
               data: parsed,
@@ -2648,10 +2734,10 @@ ${rawText}`;
 
         // ================= PAGE 1 =================
         // 1. Company Header (Top Left) & Proforma Invoice Meta (Top Right)
-        const logoPath = getCompanyLogoPath();
-        if (logoPath && fs.existsSync(logoPath)) {
+        const logoBuffer = getCompanyLogoBuffer();
+        if (logoBuffer) {
           try {
-            doc.image(logoPath, leftX, 40, { width: 140 });
+            doc.image(logoBuffer, leftX, 40, { width: 140 });
           } catch {
             doc
               .fillColor('#0F172A')
