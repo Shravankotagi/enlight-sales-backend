@@ -725,7 +725,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, po_date, won_at, lost_reason, updated_at',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, po_date, won_at, lost_reason',
         )
         .order('created_at', { ascending: false });
 
