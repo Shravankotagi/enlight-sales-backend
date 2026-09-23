@@ -407,6 +407,7 @@ export class ChatbotService {
           userId: caller.userId,
           employeeName: caller.name || 'User',
           role: caller.role,
+          resetSession: !sessionId,
         },
         {
           headers: {
