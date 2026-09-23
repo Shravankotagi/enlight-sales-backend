@@ -604,8 +604,20 @@ function resolveInquiryEntities(
     assigned_salesperson_name: resolvedSalesperson,
     salesperson_phone: item.salesperson_phone || item.sender_phone || '',
     delivery_location:
-      extractedDeliveryLocation || item.delivery_location || '',
-    deliveryLocation: extractedDeliveryLocation || item.delivery_location || '',
+      item.delivery_location || extractedDeliveryLocation || '',
+    deliveryLocation: item.delivery_location || extractedDeliveryLocation || '',
+    payment_terms:
+      item.payment_terms ||
+      aiJson.payment_terms ||
+      aiJson.paymentTerms ||
+      aiJson.payment_term ||
+      '',
+    paymentTerms:
+      item.payment_terms ||
+      aiJson.payment_terms ||
+      aiJson.paymentTerms ||
+      aiJson.payment_term ||
+      '',
   };
 }
 
@@ -713,7 +725,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, po_date, won_at, lost_reason, updated_at',
         )
         .order('created_at', { ascending: false });
 
