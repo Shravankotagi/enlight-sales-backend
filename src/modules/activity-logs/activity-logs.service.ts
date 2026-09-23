@@ -5,9 +5,20 @@ export interface ActivityLogInput {
   salesperson_name?: string;
   salesperson_phone?: string;
   description: string;
-  module: 'Inquiries' | 'Orders' | 'Visits' | 'Complaints' | string;
+  module:
+    | 'Inquiries'
+    | 'Orders'
+    | 'Visits'
+    | 'Complaints'
+    | 'Customers'
+    | string;
   customer_name?: string;
   timestamp?: string;
+  source?: string;
+  action_type?: string;
+  entity_id?: string;
+  entity_type?: string;
+  change_detail?: any;
 }
 
 @Injectable()
@@ -26,28 +37,74 @@ export class ActivityLogsService {
    */
   logActivity(data: ActivityLogInput): void {
     try {
-      const payload = {
-        timestamp: data.timestamp || new Date().toISOString(),
-        salesperson_name: data.salesperson_name || 'Sales Team',
-        salesperson_phone: data.salesperson_phone || null,
-        description: data.description,
-        module: data.module,
-        customer_name: data.customer_name || null,
-        source: 'system',
-        action_type: 'activity',
-      };
+      let normalizedModule = data.module || 'General';
+      const lowerMod = String(normalizedModule).toLowerCase();
+      if (lowerMod.includes('inquir')) normalizedModule = 'Inquiries';
+      else if (lowerMod.includes('order') || lowerMod.includes('deal'))
+        normalizedModule = 'Orders';
+      else if (lowerMod.includes('visit')) normalizedModule = 'Visits';
+      else if (lowerMod.includes('complaint')) normalizedModule = 'Complaints';
+      else if (lowerMod.includes('customer')) normalizedModule = 'Customers';
 
-      Promise.resolve(this.supabase.from('activity_logs').insert(payload))
-        .then(({ error }) => {
-          if (error) {
+      const cleanPhone = data.salesperson_phone
+        ? String(data.salesperson_phone).replace(/\D/g, '')
+        : null;
+
+      Promise.resolve()
+        .then(async () => {
+          try {
+            let salespersonName = data.salesperson_name;
+            if (
+              (!salespersonName || salespersonName === 'Sales Team') &&
+              cleanPhone
+            ) {
+              const last10 = cleanPhone.slice(-10);
+              const { data: emp } = await this.supabase
+                .from('employees')
+                .select('name')
+                .or(
+                  `phone.eq.${cleanPhone},phone.eq.${last10},phone.eq.91${last10},phone.eq.+91${last10}`,
+                )
+                .limit(1)
+                .single();
+              if (emp && emp.name) {
+                salespersonName = emp.name;
+              }
+            }
+
+            const payload = {
+              timestamp: data.timestamp || new Date().toISOString(),
+              salesperson_name: salespersonName || 'Sales Team',
+              salesperson_phone: cleanPhone,
+              actor_phone: cleanPhone,
+              actor_name: salespersonName || 'Sales Team',
+              description: data.description,
+              module: normalizedModule,
+              customer_name: data.customer_name || null,
+              source: data.source || 'dashboard',
+              action_type: data.action_type || 'activity',
+              entity_id: data.entity_id || null,
+              entity_type: data.entity_type || null,
+              change_detail: data.change_detail || {},
+            };
+
+            const { error } = await this.supabase
+              .from('activity_logs')
+              .insert(payload);
+            if (error) {
+              this.logger.warn(
+                `Non-blocking activity log insert warning: ${error.message}`,
+              );
+            }
+          } catch (innerErr: any) {
             this.logger.warn(
-              `Non-blocking activity log insert warning: ${error.message}`,
+              `Non-blocking activity log insert error: ${innerErr?.message}`,
             );
           }
         })
         .catch((err: any) => {
           this.logger.warn(
-            `Non-blocking activity log insert error: ${err?.message}`,
+            `Non-blocking activity log task error: ${err?.message}`,
           );
         });
     } catch (err: any) {

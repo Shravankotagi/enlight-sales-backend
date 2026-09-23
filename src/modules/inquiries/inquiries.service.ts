@@ -1724,6 +1724,23 @@ export class InquiriesService implements OnModuleInit {
           .catch(() => {});
       }
 
+      // Non-blocking activity log
+      try {
+        const custName = customerName || 'Customer';
+        const hexId = inquiryId.replace(/-/g, '').slice(0, 6).toUpperCase();
+        this.activityLogsService.logActivity({
+          salesperson_phone: salespersonPhone || null,
+          description: `Inquiry INQ-${hexId} details updated for ${custName}${stage ? ` (Stage: ${stage})` : ''}`,
+          module: 'Inquiries',
+          customer_name: custName,
+          entity_id: inquiryId,
+          entity_type: 'inquiry',
+          action_type: 'inquiry_updated',
+        });
+      } catch (actErr: any) {
+        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      }
+
       this.logger.log(
         `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${stage}' in pipeline`,
       );
