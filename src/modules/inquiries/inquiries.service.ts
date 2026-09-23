@@ -821,6 +821,10 @@ export class InquiriesService implements OnModuleInit {
             cleanAiJson.delivery_location = entities.delivery_location;
             cleanAiJson.deliveryLocation = entities.delivery_location;
           }
+          if (entities.payment_terms) {
+            cleanAiJson.payment_terms = entities.payment_terms;
+            cleanAiJson.paymentTerms = entities.payment_terms;
+          }
         }
 
         return {
@@ -908,9 +912,22 @@ export class InquiriesService implements OnModuleInit {
           dealByName,
           empPhoneMap,
         );
+        let cleanAiJson = data.ai_extraction_json;
+        if (cleanAiJson && typeof cleanAiJson === 'object') {
+          cleanAiJson = { ...cleanAiJson };
+          if (entities.delivery_location) {
+            cleanAiJson.delivery_location = entities.delivery_location;
+            cleanAiJson.deliveryLocation = entities.delivery_location;
+          }
+          if (entities.payment_terms) {
+            cleanAiJson.payment_terms = entities.payment_terms;
+            cleanAiJson.paymentTerms = entities.payment_terms;
+          }
+        }
         return {
           ...data,
           ...entities,
+          ai_extraction_json: cleanAiJson,
         };
       }
       return data;
