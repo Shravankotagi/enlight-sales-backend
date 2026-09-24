@@ -774,6 +774,7 @@ export class DealsService {
       // 1. Search for existing deal to update and mark WON
       let dealId = data.deal_id || null;
       let existingDeal: any = null;
+      let inquiryId = data.inquiry_id || null;
 
       if (dealId) {
         const { data: d } = await this.supabase
@@ -781,12 +782,15 @@ export class DealsService {
           .select('*')
           .eq('id', dealId)
           .single();
-        if (d) existingDeal = d;
-      } else if (data.inquiry_id) {
+        if (d) {
+          existingDeal = d;
+          if (!inquiryId && d.inquiry_id) inquiryId = d.inquiry_id;
+        }
+      } else if (inquiryId) {
         const { data: d } = await this.supabase
           .from('deals')
           .select('*')
-          .eq('inquiry_id', data.inquiry_id)
+          .eq('inquiry_id', inquiryId)
           .limit(1);
         if (d && d.length > 0) {
           existingDeal = d[0];
@@ -794,29 +798,173 @@ export class DealsService {
         }
       }
 
-      // Auto-link to open pipeline deal for this customer
+      // Auto-link to matching inquiry and deal for this customer based on Company Name + Products
       if (!existingDeal && customerName) {
-        const { data: openDeals } = await this.supabase
+        const cleanCustomer = customerName.trim();
+
+        // 1. Fetch candidate deals with line items for this customer
+        const { data: candidateDeals } = await this.supabase
           .from('deals')
-          .select('*')
-          .ilike('customer_name', customerName)
+          .select('*, deal_items(*)')
+          .ilike('customer_name', cleanCustomer)
           .not('stage', 'in', '("won","lost")')
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (openDeals && openDeals.length > 0) {
-          existingDeal = openDeals[0];
-          dealId = existingDeal.id;
+          .order('created_at', { ascending: false });
+
+        // 2. Fetch candidate inquiries from inquiries table for this customer
+        const { data: candidateInquiries } = await this.supabase
+          .from('inquiries')
+          .select('*')
+          .or(
+            `sender_name.ilike.${cleanCustomer},customer_name.ilike.${cleanCustomer}`,
+          )
+          .not('status', 'in', '("won","lost")')
+          .order('created_at', { ascending: false });
+
+        // Extract products from the incoming PO line items
+        const orderProductTokens = lineItems
+          .map((item: any) => {
+            const raw = String(
+              item.sku_text || item.product_name || item.description || '',
+            ).toLowerCase();
+            return raw.replace(/[^a-z0-9]/g, ' ').trim();
+          })
+          .filter(Boolean);
+
+        let bestDeal: any = null;
+        let bestScore = -1;
+        let bestInquiryId: string | null = null;
+
+        // Score candidate deals based on product overlap, stage, and recency
+        if (candidateDeals && candidateDeals.length > 0) {
+          for (const deal of candidateDeals) {
+            let score = 0;
+            const dealStage = (deal.stage || '').toLowerCase().trim();
+            if (dealStage === 'negotiation') score += 20;
+            else if (dealStage === 'quoted' || dealStage === 'qualified')
+              score += 15;
+            else if (dealStage === 'new_inquiry' || dealStage === 'review')
+              score += 5;
+
+            const dItems = Array.isArray(deal.deal_items)
+              ? deal.deal_items
+              : [];
+            const dealProductTokens = dItems
+              .map((di: any) => {
+                const raw = String(
+                  di.sku_text || di.description || '',
+                ).toLowerCase();
+                return raw.replace(/[^a-z0-9]/g, ' ').trim();
+              })
+              .filter(Boolean);
+
+            // Check product overlaps
+            let matchedProductsCount = 0;
+            for (const oToken of orderProductTokens) {
+              const hasMatch = dealProductTokens.some((dToken: string) => {
+                return (
+                  (oToken.length >= 3 && dToken.includes(oToken)) ||
+                  (dToken.length >= 3 && oToken.includes(dToken)) ||
+                  oToken
+                    .split(' ')
+                    .some((word) => word.length >= 4 && dToken.includes(word))
+                );
+              });
+              if (hasMatch) matchedProductsCount++;
+            }
+
+            if (matchedProductsCount > 0) {
+              score += matchedProductsCount * 25;
+            }
+
+            if (score > bestScore) {
+              bestScore = score;
+              bestDeal = deal;
+              bestInquiryId = deal.inquiry_id || null;
+            }
+          }
+        }
+
+        // If no deal matched with products but inquiries exist with product relevance
+        if (
+          (!bestDeal || bestScore < 20) &&
+          candidateInquiries &&
+          candidateInquiries.length > 0
+        ) {
+          for (const inq of candidateInquiries) {
+            let inqScore = 0;
+            const inqStatus = (inq.status || '').toLowerCase().trim();
+            if (inqStatus === 'negotiation') inqScore += 20;
+            else if (inqStatus === 'quoted' || inqStatus === 'confirmed')
+              inqScore += 15;
+            else inqScore += 5;
+
+            const aiJson = (inq.ai_extraction_json as any) || {};
+            const inqItems = Array.isArray(aiJson.line_items)
+              ? aiJson.line_items
+              : Array.isArray(aiJson.lineItems)
+                ? aiJson.lineItems
+                : [];
+            const inqTokens = inqItems
+              .map((it: any) =>
+                String(it.sku_text || it.description || '').toLowerCase(),
+              )
+              .filter(Boolean);
+            const inqRawText = String(inq.raw_text || '').toLowerCase();
+
+            let matchedCount = 0;
+            for (const oToken of orderProductTokens) {
+              const hasItemMatch = inqTokens.some(
+                (iToken: string) =>
+                  iToken.includes(oToken) || oToken.includes(iToken),
+              );
+              const hasTextMatch =
+                oToken.length >= 3 && inqRawText.includes(oToken);
+              if (hasItemMatch || hasTextMatch) matchedCount++;
+            }
+
+            if (matchedCount > 0) {
+              inqScore += matchedCount * 25;
+            }
+
+            if (inqScore > bestScore) {
+              bestScore = inqScore;
+              bestInquiryId = inq.id;
+              const matchingDealForInq = (candidateDeals || []).find(
+                (d) => d.inquiry_id === inq.id,
+              );
+              if (matchingDealForInq) {
+                bestDeal = matchingDealForInq;
+              }
+            }
+          }
+        }
+
+        if (bestDeal) {
+          existingDeal = bestDeal;
+          dealId = bestDeal.id;
+          if (!inquiryId && bestDeal.inquiry_id) {
+            inquiryId = bestDeal.inquiry_id;
+          }
+        }
+        if (!inquiryId && bestInquiryId) {
+          inquiryId = bestInquiryId;
         }
       }
 
       // 2. Resolve inquiry ID from deal or payload
-      let inquiryId =
-        data.inquiry_id || (existingDeal ? existingDeal.inquiry_id : null);
+      if (!inquiryId && existingDeal?.inquiry_id) {
+        inquiryId = existingDeal.inquiry_id;
+      }
       const targetSourceChannel = data.source_channel || 'web_dashboard';
 
       if (inquiryId) {
         const inqUpdates: any = {
           status: 'confirmed',
+          stage: 'won',
+          won_at: nowIso,
+          po_number: poNumber,
+          po_date: poDate,
+          total_amount: totalAmount,
         };
         if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
           inqUpdates.media_urls = data.media_urls;
@@ -931,11 +1079,18 @@ export class DealsService {
         await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }
 
-      // 3. If linked to an inquiry, update the inquiry status
+      // 3. If linked to an inquiry, update the inquiry status & stage
       if (savedDeal.inquiry_id) {
         await this.supabase
           .from('inquiries')
-          .update({ status: 'confirmed' })
+          .update({
+            status: 'confirmed',
+            stage: 'won',
+            won_at: nowIso,
+            po_number: poNumber,
+            po_date: poDate,
+            total_amount: totalAmount,
+          })
           .eq('id', savedDeal.inquiry_id);
       }
 
