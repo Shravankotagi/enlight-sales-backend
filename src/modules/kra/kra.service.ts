@@ -2145,20 +2145,31 @@ export class KraService {
     if (complaintsList.length === 0) return [];
 
     try {
-      const [{ data: employees }, { data: deals }] = await Promise.all([
-        this.supabase.from('employees').select('name, phone, role'),
-        this.supabase
-          .from('deals')
-          .select(
-            'id, po_number, customer_name, deal_items(sku_text, dimensions, quantity, unit)',
-          ),
-      ]);
+      const [{ data: employees }, { data: deals }, { data: allAttachments }] =
+        await Promise.all([
+          this.supabase.from('employees').select('name, phone, role'),
+          this.supabase
+            .from('deals')
+            .select(
+              'id, po_number, customer_name, deal_items(sku_text, dimensions, quantity, unit)',
+            ),
+          this.supabase.from('complaint_attachments').select('*'),
+        ]);
 
       const empMap = new Map<string, string>();
       (employees || []).forEach((e) => {
         if (e.phone) {
           const clean = e.phone.replace(/\D/g, '').slice(-10);
           if (clean) empMap.set(clean, e.name);
+        }
+      });
+
+      const attachmentMap = new Map<string, any[]>();
+      (allAttachments || []).forEach((att: any) => {
+        if (att && att.complaint_id) {
+          const list = attachmentMap.get(att.complaint_id) || [];
+          list.push(att);
+          attachmentMap.set(att.complaint_id, list);
         }
       });
 
@@ -2252,9 +2263,28 @@ export class KraService {
         }
 
         const finalProd = resolvedProd || 'Steel Material';
+        const rawDate = c.complaint_date || c.created_at || c.reported_at;
+        const complaintDate = rawDate
+          ? String(rawDate).split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        const rawResDate = c.resolution_date || c.resolved_at;
+        const resolutionDate = rawResDate
+          ? String(rawResDate).split('T')[0]
+          : null;
+        const compAttachments = attachmentMap.get(c.id) || [];
+        const mediaUrls = compAttachments
+          .map((a: any) => a.file_url)
+          .filter(Boolean);
 
         return {
           ...c,
+          complaint_date: complaintDate,
+          raised_by: c.raised_by || '',
+          challan_no: c.challan_no || '',
+          customer_communication: c.customer_communication || '',
+          resolution_date: resolutionDate,
+          attachments: compAttachments,
+          media_urls: mediaUrls.length > 0 ? mediaUrls : c.media_urls || [],
           po_number: poNum,
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
@@ -2276,8 +2306,24 @@ export class KraService {
           lower === 'steel' ||
           lower === 'null';
         const finalProd = isGeneric ? 'Steel Material' : rawProd;
+        const rawDate = c.complaint_date || c.created_at || c.reported_at;
+        const complaintDate = rawDate
+          ? String(rawDate).split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        const rawResDate = c.resolution_date || c.resolved_at;
+        const resolutionDate = rawResDate
+          ? String(rawResDate).split('T')[0]
+          : null;
+
         return {
           ...c,
+          complaint_date: complaintDate,
+          raised_by: c.raised_by || '',
+          challan_no: c.challan_no || '',
+          customer_communication: c.customer_communication || '',
+          resolution_date: resolutionDate,
+          attachments: [],
+          media_urls: c.media_urls || [],
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
           product_name: finalProd,
@@ -2363,15 +2409,22 @@ export class KraService {
 
     const payload: Record<string, any> = {
       customer_name: data.customer_name,
+      complaint_date: data.complaint_date || nowIso.split('T')[0],
+      raised_by: data.raised_by || 'Customer Contact',
       deal_id: targetDealId,
       po_number: targetPoNumber,
+      challan_no: data.challan_no || null,
       product_name: finalProd,
       affected_product: finalProd,
       complaint_type: data.complaint_type || 'Quality Defect',
       description: cleanDesc,
       status: data.status || 'reported',
       corrective_action: data.corrective_action || null,
+      customer_communication: data.customer_communication || null,
       resolution_notes: data.resolution_notes || null,
+      resolution_date:
+        data.resolution_date ||
+        (data.status === 'resolved' ? nowIso.split('T')[0] : null),
       reported_at: nowIso,
       created_at: nowIso,
       sla_due_at,
@@ -2412,6 +2465,42 @@ export class KraService {
       created = fallbackData;
     } else {
       created = resData;
+    }
+
+    // Insert attachments if provided
+    if (
+      created?.id &&
+      Array.isArray(data.attachments) &&
+      data.attachments.length > 0
+    ) {
+      try {
+        const attRows = data.attachments
+          .map((att: any) => ({
+            complaint_id: created.id,
+            file_url:
+              typeof att === 'string'
+                ? att
+                : att.file_url || att.url || att.base64 || '',
+            file_name:
+              typeof att === 'string'
+                ? 'Attachment'
+                : att.file_name || att.name || 'Attachment',
+            file_type:
+              typeof att === 'string'
+                ? 'application/octet-stream'
+                : att.file_type || att.type || 'application/octet-stream',
+            uploaded_at: nowIso,
+          }))
+          .filter((r: any) => Boolean(r.file_url));
+        if (attRows.length > 0) {
+          await this.supabase.from('complaint_attachments').insert(attRows);
+        }
+      } catch (attErr: any) {
+        this.logger.warn(
+          'Non-blocking complaint_attachments insert notice:',
+          attErr?.message,
+        );
+      }
     }
 
     // Log to kra_logs (KRA 8)
@@ -2457,7 +2546,7 @@ export class KraService {
   ) {
     const { data: existingComplaint, error: fetchErr } = await this.supabase
       .from('complaints')
-      .select('id, reported_by, status, resolution_notes')
+      .select('id, reported_by, status, resolution_notes, resolution_date')
       .eq('id', id)
       .single();
     if (fetchErr || !existingComplaint) {
@@ -2478,9 +2567,14 @@ export class KraService {
     const updateData: Record<string, any> = {};
     if (data.customer_name !== undefined)
       updateData.customer_name = data.customer_name;
+    if (data.complaint_date !== undefined)
+      updateData.complaint_date = data.complaint_date;
+    if (data.raised_by !== undefined) updateData.raised_by = data.raised_by;
     if (data.deal_id !== undefined) updateData.deal_id = data.deal_id || null;
     if (data.po_number !== undefined)
       updateData.po_number = data.po_number || null;
+    if (data.challan_no !== undefined)
+      updateData.challan_no = data.challan_no || null;
     if (
       data.product_name !== undefined ||
       data.affected_product !== undefined
@@ -2501,6 +2595,10 @@ export class KraService {
     }
     if (data.corrective_action !== undefined)
       updateData.corrective_action = data.corrective_action;
+    if (data.customer_communication !== undefined)
+      updateData.customer_communication = data.customer_communication;
+    if (data.resolution_date !== undefined)
+      updateData.resolution_date = data.resolution_date;
     if (data.status !== undefined) {
       updateData.status = data.status;
       if (data.status === 'resolved') {
@@ -2515,12 +2613,52 @@ export class KraService {
           );
         }
         updateData.resolved_at = new Date().toISOString();
+        if (!updateData.resolution_date) {
+          updateData.resolution_date = new Date().toISOString().split('T')[0];
+        }
       } else if (data.status === 'reported' || data.status === 'reopened') {
         updateData.resolved_at = null;
+        updateData.resolution_date = null;
       }
     }
     if (data.resolution_notes !== undefined) {
       updateData.resolution_notes = data.resolution_notes;
+    }
+
+    if (Array.isArray(data.attachments) && data.attachments.length > 0) {
+      try {
+        const newAtts = data.attachments.filter(
+          (a: any) => !a.id && (a.file_url || a.url || typeof a === 'string'),
+        );
+        if (newAtts.length > 0) {
+          const rows = newAtts
+            .map((att: any) => ({
+              complaint_id: id,
+              file_url:
+                typeof att === 'string'
+                  ? att
+                  : att.file_url || att.url || att.base64 || '',
+              file_name:
+                typeof att === 'string'
+                  ? 'Attachment'
+                  : att.file_name || att.name || 'Attachment',
+              file_type:
+                typeof att === 'string'
+                  ? 'application/octet-stream'
+                  : att.file_type || att.type || 'application/octet-stream',
+              uploaded_at: new Date().toISOString(),
+            }))
+            .filter((r: any) => Boolean(r.file_url));
+          if (rows.length > 0) {
+            await this.supabase.from('complaint_attachments').insert(rows);
+          }
+        }
+      } catch (attErr: any) {
+        this.logger.warn(
+          'Non-blocking complaint_attachments update notice:',
+          attErr?.message,
+        );
+      }
     }
 
     const { data: updated, error } = await this.supabase
