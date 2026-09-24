@@ -2925,10 +2925,13 @@ export class KraService {
       );
     if (data.remarks) remarksParts.push(data.remarks);
 
+    const rawContact = data.contact_phone || data.contact_no || '';
+    const cleanContact = rawContact.replace(/\D/g, '').slice(-10);
+
     const payload: any = {
       customer_name: data.customer_name,
       person_met: data.person_met || 'Contact Person',
-      contact_no: data.contact_phone || data.contact_no || '',
+      contact_no: cleanContact,
       customer_address:
         data.location || data.city || data.customer_address || '',
       remarks: remarksParts.join(' '),
@@ -3221,8 +3224,12 @@ export class KraService {
     if (data.customer_name) payload.customer_name = data.customer_name;
     if (data.person_met !== undefined)
       payload.person_met = data.person_met || 'Contact Person';
-    if (data.contact_phone !== undefined || data.contact_no !== undefined)
-      payload.contact_no = data.contact_phone || data.contact_no || '';
+    if (data.contact_phone !== undefined || data.contact_no !== undefined) {
+      const rawContact = data.contact_phone || data.contact_no || '';
+      payload.contact_no = rawContact
+        ? rawContact.replace(/\D/g, '').slice(-10)
+        : '';
+    }
     if (
       data.location !== undefined ||
       data.city !== undefined ||
