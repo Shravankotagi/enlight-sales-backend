@@ -2941,6 +2941,24 @@ export class KraService {
       follow_up_date,
       follow_up_status,
       follow_up_completed_at,
+      email: data.email || null,
+      designation: data.designation || null,
+      customer_type: data.customer_type || null,
+      visit_type: data.visit_type || 'First Visit',
+      outcome: data.outcome ? data.outcome.toLowerCase() : 'positive',
+      customer_probability: data.customer_probability || data.probability || null,
+      product_details: data.product_details || data.material_requirement || data.requirement || null,
+      monthly_consumption: data.monthly_consumption || null,
+      current_requirement: data.current_requirement || null,
+      next_purchase_expected: data.next_purchase_expected || null,
+      delivery_location: data.delivery_location || null,
+      preferred_make: data.preferred_make || null,
+      payment_terms: data.payment_terms || null,
+      gps_photo_url: data.gps_photo_url || null,
+      gps_latitude: data.gps_latitude || null,
+      gps_longitude: data.gps_longitude || null,
+      gps_accuracy: data.gps_accuracy || null,
+      attachments: Array.isArray(data.attachments) ? data.attachments : [],
     };
 
     let created: any;
@@ -3246,6 +3264,27 @@ export class KraService {
       payload.follow_up_status = follow_up_status;
     if (follow_up_completed_at !== undefined)
       payload.follow_up_completed_at = follow_up_completed_at;
+    if (data.email !== undefined) payload.email = data.email || null;
+    if (data.designation !== undefined) payload.designation = data.designation || null;
+    if (data.customer_type !== undefined) payload.customer_type = data.customer_type || null;
+    if (data.visit_type !== undefined) payload.visit_type = data.visit_type || null;
+    if (data.outcome !== undefined) payload.outcome = data.outcome ? data.outcome.toLowerCase() : 'positive';
+    if (data.customer_probability !== undefined || data.probability !== undefined)
+      payload.customer_probability = data.customer_probability || data.probability || null;
+    if (data.product_details !== undefined || data.material_requirement !== undefined || data.requirement !== undefined)
+      payload.product_details = data.product_details || data.material_requirement || data.requirement || null;
+    if (data.monthly_consumption !== undefined) payload.monthly_consumption = data.monthly_consumption || null;
+    if (data.current_requirement !== undefined) payload.current_requirement = data.current_requirement || null;
+    if (data.next_purchase_expected !== undefined) payload.next_purchase_expected = data.next_purchase_expected || null;
+    if (data.delivery_location !== undefined) payload.delivery_location = data.delivery_location || null;
+    if (data.preferred_make !== undefined) payload.preferred_make = data.preferred_make || null;
+    if (data.payment_terms !== undefined) payload.payment_terms = data.payment_terms || null;
+    if (data.gps_photo_url !== undefined) payload.gps_photo_url = data.gps_photo_url || null;
+    if (data.gps_latitude !== undefined) payload.gps_latitude = data.gps_latitude || null;
+    if (data.gps_longitude !== undefined) payload.gps_longitude = data.gps_longitude || null;
+    if (data.gps_accuracy !== undefined) payload.gps_accuracy = data.gps_accuracy || null;
+    if (data.attachments !== undefined)
+      payload.attachments = Array.isArray(data.attachments) ? data.attachments : [];
 
     let query = this.supabase
       .from('customer_visits')
