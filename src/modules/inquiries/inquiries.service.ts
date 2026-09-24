@@ -1867,7 +1867,7 @@ export class InquiriesService implements OnModuleInit {
       const details = payload.details || {};
       const resendApiKey = process.env.RESEND_API_KEY || '';
       const fromEmail =
-        process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+        process.env.RESEND_FROM_EMAIL || 'quotes@enlightmetals.com';
 
       let emailSent = false;
       let emailNotice = '';
