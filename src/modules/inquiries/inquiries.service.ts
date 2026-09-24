@@ -1850,26 +1850,22 @@ export class InquiriesService implements OnModuleInit {
         }
       }
 
-      let customerEmail = (
+      const customerEmail = (
         payload.customer_email ||
         inquiry.customer_email ||
         ''
       )
         .trim()
         .toLowerCase();
-      if (
-        !customerEmail ||
-        customerEmail.includes('example.com') ||
-        !customerEmail.includes('@')
-      ) {
-        customerEmail = 'shravankotagi314@gmail.com';
+      if (!customerEmail || !customerEmail.includes('@')) {
+        throw new BadRequestException(
+          'Please provide a valid customer email address to send the quotation.',
+        );
       }
       const customerName =
         payload.customer_name || inquiry.customer_name || 'Valued Customer';
       const details = payload.details || {};
-      const resendApiKey =
-        process.env.RESEND_API_KEY ||
-        ['re_e9csFE46_rtWH3LBQ', 'ywF73hnTm1qbrm4n'].join('');
+      const resendApiKey = process.env.RESEND_API_KEY || '';
       const fromEmail =
         process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
