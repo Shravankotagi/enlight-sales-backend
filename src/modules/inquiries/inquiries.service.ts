@@ -491,12 +491,65 @@ function isGenuineInquiry(item: any): boolean {
   return true;
 }
 
+function getAssignedPhoneFromCustomerMap(
+  customerName: string,
+  customerOwnerMap?: Map<string, string>,
+): string | null {
+  if (!customerName || !customerOwnerMap || customerOwnerMap.size === 0)
+    return null;
+  const clean = customerName.toLowerCase().trim();
+  if (customerOwnerMap.has(clean)) return customerOwnerMap.get(clean)!;
+
+  const stripped = clean
+    .replace(
+      /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|co\s+limited|llp|limited|pvt|ltd|inc|corp|co|corporation)\b/gi,
+      '',
+    )
+    .replace(/[^a-z0-9]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!stripped) return null;
+
+  for (const [name, phone] of customerOwnerMap.entries()) {
+    if (name === clean) return phone;
+    const mapStripped = name
+      .replace(
+        /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|co\s+limited|llp|limited|pvt|ltd|inc|corp|co|corporation)\b/gi,
+        '',
+      )
+      .replace(/[^a-z0-9]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (
+      mapStripped &&
+      (stripped === mapStripped ||
+        stripped.startsWith(mapStripped) ||
+        mapStripped.startsWith(stripped))
+    ) {
+      return phone;
+    }
+  }
+  return null;
+}
+
 function resolveInquiryEntities(
   item: any,
   dealByInqId?: Map<string, string>,
   dealByName?: Map<string, string>,
   empPhoneMap?: Map<string, string>,
-) {
+  customerOwnerMap?: Map<string, string>,
+): {
+  customer_name: string;
+  customer_phone: string;
+  salesperson_name: string;
+  assigned_salesperson_name: string;
+  salesperson_phone: string;
+  delivery_location: string;
+  deliveryLocation: string;
+  payment_terms: string;
+  paymentTerms: string;
+} {
   const aiJson = (item.ai_extraction_json as any) || {};
   const senderName = item.sender_name || '';
   const senderNameLower = senderName.toLowerCase().trim();
@@ -569,11 +622,14 @@ function resolveInquiryEntities(
     ? String(rawCustomerPhone).trim()
     : '';
 
-  // 3. Resolve Salesperson Name
-  const phone = (item.salesperson_phone || item.sender_phone || '').replace(
-    /\D/g,
-    '',
+  // 3. Resolve Salesperson Name & Phone (with CRM Customer Owner priority)
+  const assignedFromCust = getAssignedPhoneFromCustomerMap(
+    extractedCustomerName,
+    customerOwnerMap,
   );
+  const effectiveSpPhone =
+    assignedFromCust || item.salesperson_phone || item.sender_phone || '';
+  const phone = effectiveSpPhone.replace(/\D/g, '');
   const p10 = phone.slice(-10);
   const resolvedSalesperson =
     (p10 && empPhoneMap?.get(p10)) ||
@@ -602,7 +658,7 @@ function resolveInquiryEntities(
     customer_phone: extractedCustomerPhone || '',
     salesperson_name: resolvedSalesperson,
     assigned_salesperson_name: resolvedSalesperson,
-    salesperson_phone: item.salesperson_phone || item.sender_phone || '',
+    salesperson_phone: effectiveSpPhone,
     delivery_location:
       item.delivery_location || extractedDeliveryLocation || '',
     deliveryLocation: item.delivery_location || extractedDeliveryLocation || '',
@@ -755,8 +811,8 @@ export class InquiriesService implements OnModuleInit {
       // Extract inquiry IDs to scope the deals query efficiently
       const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
 
-      // Concurrently fetch deals and employees in parallel using Promise.all
-      const [dealsRes, employeesRes] = await Promise.all([
+      // Concurrently fetch deals, employees, and recurring_customers in parallel using Promise.all
+      const [dealsRes, employeesRes, customersRes] = await Promise.all([
         inquiryIds.length > 0
           ? this.supabase
               .from('deals')
@@ -764,10 +820,14 @@ export class InquiriesService implements OnModuleInit {
               .in('inquiry_id', inquiryIds)
           : Promise.resolve({ data: [] }),
         this.supabase.from('employees').select('name, phone'),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone, is_active'),
       ]);
 
       const deals = dealsRes.data || [];
       const employees = employeesRes.data || [];
+      const customers = customersRes.data || [];
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
@@ -792,6 +852,16 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
 
@@ -808,6 +878,7 @@ export class InquiriesService implements OnModuleInit {
           dealByInqId,
           dealByName,
           empPhoneMap,
+          customerOwnerMap,
         );
 
         // Strip duplicate nested base64 data from ai_extraction_json for high performance list transfer
@@ -836,15 +907,33 @@ export class InquiriesService implements OnModuleInit {
         };
       });
 
+      // Strict RBAC scope enforcement for Salesperson and Sales Manager personas
+      const reqPhones = filters?.salespersonPhones || filters?.salespersonPhone;
+      let scopedData = lightweightData;
+      if (reqPhones) {
+        const phoneList = Array.isArray(reqPhones) ? reqPhones : [reqPhones];
+        const allowedPhoneSet = new Set(
+          phoneList
+            .map((p: string) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+        scopedData = lightweightData.filter((item: any) => {
+          const itemPhoneClean = (item.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return allowedPhoneSet.has(itemPhoneClean);
+        });
+      }
+
       // Strict backend sort guarantee: always newest first
-      lightweightData.sort((a: any, b: any) => {
+      scopedData.sort((a: any, b: any) => {
         const timeA = new Date(a.created_at || 0).getTime() || 0;
         const timeB = new Date(b.created_at || 0).getTime() || 0;
         if (timeB !== timeA) return timeB - timeA;
         return String(b.id || '').localeCompare(String(a.id || ''));
       });
 
-      return lightweightData;
+      return scopedData;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -1019,9 +1108,19 @@ export class InquiriesService implements OnModuleInit {
       const { data, error } = await query;
       if (error) throw error;
 
-      const { data: deals } = await this.supabase
-        .from('deals')
-        .select('inquiry_id, customer_name, customer_phone');
+      const [dealsRes, employeesRes, customersRes] = await Promise.all([
+        this.supabase
+          .from('deals')
+          .select('inquiry_id, customer_name, customer_phone'),
+        this.supabase.from('employees').select('name, phone'),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone, is_active'),
+      ]);
+
+      const deals = dealsRes.data || [];
+      const employees = employeesRes.data || [];
+      const customers = customersRes.data || [];
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
@@ -1037,10 +1136,6 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const { data: employees } = await this.supabase
-        .from('employees')
-        .select('name, phone');
-
       const empPhoneMap = new Map<string, string>();
       employees?.forEach((e: any) => {
         if (e.name && e.phone) {
@@ -1050,12 +1145,23 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
       const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
           row,
           dealByInqId,
           dealByName,
           empPhoneMap,
+          customerOwnerMap,
         );
         const hasMedia = Boolean(
           row.media_urls &&
@@ -1077,15 +1183,33 @@ export class InquiriesService implements OnModuleInit {
         };
       });
 
+      let scopedReviewList = reviewList;
+      if (salespersonPhones) {
+        const phoneList = Array.isArray(salespersonPhones)
+          ? salespersonPhones
+          : [salespersonPhones];
+        const allowedPhoneSet = new Set(
+          phoneList
+            .map((p: string) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+        scopedReviewList = reviewList.filter((item: any) => {
+          const itemPhoneClean = (item.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return allowedPhoneSet.has(itemPhoneClean);
+        });
+      }
+
       // Strict backend sort guarantee: always newest first
-      reviewList.sort((a: any, b: any) => {
+      scopedReviewList.sort((a: any, b: any) => {
         const timeA = new Date(a.created_at || 0).getTime() || 0;
         const timeB = new Date(b.created_at || 0).getTime() || 0;
         if (timeB !== timeA) return timeB - timeA;
         return String(b.id || '').localeCompare(String(a.id || ''));
       });
 
-      return reviewList;
+      return scopedReviewList;
     } catch (error) {
       this.logger.error('Error in findReviewQueue:', error);
       throw error;
@@ -1277,20 +1401,60 @@ export class InquiriesService implements OnModuleInit {
         query = query.or(orFilter);
       }
 
-      const { data, error } = await query;
+      const [{ data, error }, { data: customers }] = await Promise.all([
+        query,
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone, is_active'),
+      ]);
       if (error) throw error;
+
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
 
       const genuineData = (data || []).filter(isGenuineInquiry);
 
+      let scopedGenuine = genuineData;
+      if (salespersonPhones) {
+        const phoneList = Array.isArray(salespersonPhones)
+          ? salespersonPhones
+          : [salespersonPhones];
+        const allowedPhoneSet = new Set(
+          phoneList
+            .map((p: string) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+        scopedGenuine = genuineData.filter((item: any) => {
+          const entities = resolveInquiryEntities(
+            item,
+            undefined,
+            undefined,
+            undefined,
+            customerOwnerMap,
+          );
+          const itemPhoneClean = (entities.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return allowedPhoneSet.has(itemPhoneClean);
+        });
+      }
+
       return {
-        total: genuineData.length,
-        pending: genuineData.filter((i) => i.status === 'pending').length,
-        processed: genuineData.filter((i) => i.status === 'processed').length,
-        review: genuineData.filter((i) =>
+        total: scopedGenuine.length,
+        pending: scopedGenuine.filter((i) => i.status === 'pending').length,
+        processed: scopedGenuine.filter((i) => i.status === 'processed').length,
+        review: scopedGenuine.filter((i) =>
           ['review', 'needs_review'].includes(i.status),
         ).length,
         by_channel: {
-          whatsapp: genuineData.filter((i) => i.source_channel === 'whatsapp')
+          whatsapp: scopedGenuine.filter((i) => i.source_channel === 'whatsapp')
             .length,
         },
       };
@@ -1383,6 +1547,31 @@ export class InquiriesService implements OnModuleInit {
       customerName ||
       'Customer';
 
+    let effectiveSalespersonPhone =
+      salespersonPhone || data.salesperson_phone || '910000000000';
+
+    if (finalCustomerName && finalCustomerName !== 'Customer') {
+      try {
+        const { data: matchedCust } = await this.supabase
+          .from('recurring_customers')
+          .select('assigned_salesperson_phone')
+          .ilike('customer_name', finalCustomerName.trim())
+          .limit(1);
+        if (
+          matchedCust &&
+          matchedCust.length > 0 &&
+          matchedCust[0].assigned_salesperson_phone
+        ) {
+          effectiveSalespersonPhone = matchedCust[0].assigned_salesperson_phone;
+        }
+      } catch (custLookupErr: any) {
+        this.logger.warn(
+          'Customer salesperson lookup warning:',
+          custLookupErr.message,
+        );
+      }
+    }
+
     const payload: any = {
       source_channel: data.source_channel || 'web_dashboard',
       raw_text: rawText,
@@ -1391,8 +1580,7 @@ export class InquiriesService implements OnModuleInit {
         data.sender_phone || data.customer_phone || salespersonPhone || '',
       sender_name: finalCustomerName,
       status: data.status || 'review',
-      salesperson_phone:
-        salespersonPhone || data.salesperson_phone || '910000000000',
+      salesperson_phone: effectiveSalespersonPhone,
       ai_extraction_json: aiExtractionJson,
       overall_confidence: Number(data.overall_confidence) || 0.95,
       created_at: nowIso,
