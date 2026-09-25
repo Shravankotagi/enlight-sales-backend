@@ -69,6 +69,8 @@ import {
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
 import { detectHsnCode } from '../../utils/hsnDetector';
+export { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 
 function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
@@ -489,48 +491,6 @@ function isGenuineInquiry(item: any): boolean {
   }
 
   return true;
-}
-
-function getAssignedPhoneFromCustomerMap(
-  customerName: string,
-  customerOwnerMap?: Map<string, string>,
-): string | null {
-  if (!customerName || !customerOwnerMap || customerOwnerMap.size === 0)
-    return null;
-  const clean = customerName.toLowerCase().trim();
-  if (customerOwnerMap.has(clean)) return customerOwnerMap.get(clean)!;
-
-  const stripped = clean
-    .replace(
-      /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|co\s+limited|llp|limited|pvt|ltd|inc|corp|co|corporation)\b/gi,
-      '',
-    )
-    .replace(/[^a-z0-9]/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!stripped) return null;
-
-  for (const [name, phone] of customerOwnerMap.entries()) {
-    if (name === clean) return phone;
-    const mapStripped = name
-      .replace(
-        /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|co\s+limited|llp|limited|pvt|ltd|inc|corp|co|corporation)\b/gi,
-        '',
-      )
-      .replace(/[^a-z0-9]/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (
-      mapStripped &&
-      (stripped === mapStripped ||
-        stripped.startsWith(mapStripped) ||
-        mapStripped.startsWith(stripped))
-    ) {
-      return phone;
-    }
-  }
-  return null;
 }
 
 function resolveInquiryEntities(
@@ -1328,8 +1288,16 @@ export class InquiriesService implements OnModuleInit {
         status === 'pending'
       ) {
         await this.syncInquiryToDeal(id, 'new_inquiry', details);
+      } else if (status === 'lost') {
+        await this.syncInquiryToDeal(id, 'lost', details);
+      } else if (status === 'won') {
+        await this.syncInquiryToDeal(id, 'won', details);
+      } else if (status === 'negotiation') {
+        await this.syncInquiryToDeal(id, 'negotiation', details);
+      } else if (status === 'on_hold' || status === 'hold') {
+        await this.syncInquiryToDeal(id, 'on_hold', details);
       } else {
-        await this.syncInquiryToDeal(id, undefined, details);
+        await this.syncInquiryToDeal(id, details?.stage || undefined, details);
       }
 
       // Non-blocking activity log
@@ -1819,6 +1787,16 @@ export class InquiriesService implements OnModuleInit {
         };
         if (poNumber) dealUpdatePayload.po_number = poNumber;
         if (poDate) dealUpdatePayload.po_date = poDate;
+        if (targetStage === 'lost') {
+          dealUpdatePayload.lost_reason =
+            details.lost_reason ||
+            details.lostReason ||
+            details.loss_reason ||
+            inquiry.lost_reason ||
+            null;
+        } else if (targetStage === 'won') {
+          dealUpdatePayload.won_at = new Date().toISOString();
+        }
 
         await this.supabase
           .from('deals')
@@ -1844,6 +1822,16 @@ export class InquiriesService implements OnModuleInit {
         };
         if (poNumber) dealInsertPayload.po_number = poNumber;
         if (poDate) dealInsertPayload.po_date = poDate;
+        if (targetStage === 'lost') {
+          dealInsertPayload.lost_reason =
+            details.lost_reason ||
+            details.lostReason ||
+            details.loss_reason ||
+            inquiry.lost_reason ||
+            null;
+        } else if (targetStage === 'won') {
+          dealInsertPayload.won_at = new Date().toISOString();
+        }
 
         const { data: newDeal, error: dealError } = await this.supabase
           .from('deals')

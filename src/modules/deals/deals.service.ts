@@ -9,6 +9,7 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ZohoService } from '../zoho/zoho.service';
+import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -135,10 +136,27 @@ export class DealsService {
         }
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
+      const [dealsRes, customersRes] = await Promise.all([
+        query,
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone')
+          .eq('is_active', true),
+      ]);
 
-      const lightweightDeals = (data || []).map((d: any) => {
+      if (dealsRes.error) throw dealsRes.error;
+
+      const customerOwnerMap = new Map<string, string>();
+      customersRes.data?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
+      const lightweightDeals = (dealsRes.data || []).map((d: any) => {
         let computedTotal = Number(d.total_amount) || 0;
         if (
           computedTotal <= 0 &&
@@ -158,13 +176,38 @@ export class DealsService {
         }
 
         const hasMedia = Boolean(d.inquiry_id);
+        const assignedOwnerPhone = getAssignedPhoneFromCustomerMap(
+          d.customer_name,
+          customerOwnerMap,
+        );
+        const effectiveSalespersonPhone =
+          assignedOwnerPhone || d.salesperson_phone || '';
+
         return {
           ...d,
+          salesperson_phone: effectiveSalespersonPhone,
           total_amount: computedTotal > 0 ? computedTotal : null,
           has_media: hasMedia,
           media_urls: hasMedia ? ['attached_document'] : [],
         };
       });
+
+      if (filters?.salesperson_phone) {
+        const phoneList = Array.isArray(filters.salesperson_phone)
+          ? filters.salesperson_phone
+          : [filters.salesperson_phone];
+        const allowedPhoneSet = new Set(
+          phoneList
+            .map((p: string) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+        return lightweightDeals.filter((d: any) => {
+          const pClean = (d.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return allowedPhoneSet.has(pClean);
+        });
+      }
 
       return lightweightDeals;
     } catch (error) {
@@ -384,32 +427,41 @@ export class DealsService {
         if (stage === 'lost') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'lost' })
+            .update({
+              status: 'lost',
+              stage: 'lost',
+              lost_reason: lostReason || null,
+            })
             .eq('id', data.inquiry_id);
         } else if (stage === 'won') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'confirmed' })
+            .update({
+              status: 'confirmed',
+              stage: 'won',
+              po_number: poNumber || data.po_number || null,
+              po_date: poDate || data.po_date || null,
+            })
             .eq('id', data.inquiry_id);
         } else if (stage === 'quoted') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'quoted' })
+            .update({ status: 'quoted', stage: 'quoted' })
             .eq('id', data.inquiry_id);
         } else if (stage === 'negotiation') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'negotiation' })
+            .update({ status: 'negotiation', stage: 'negotiation' })
             .eq('id', data.inquiry_id);
         } else if (stage === 'on_hold') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'on_hold' })
+            .update({ status: 'on_hold', stage: 'on_hold' })
             .eq('id', data.inquiry_id);
         } else if (stage === 'qualified') {
           await this.supabase
             .from('inquiries')
-            .update({ status: 'confirmed' })
+            .update({ status: 'confirmed', stage: 'qualified' })
             .eq('id', data.inquiry_id);
         }
       }

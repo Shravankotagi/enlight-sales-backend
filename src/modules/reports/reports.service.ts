@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -286,16 +287,67 @@ export class ReportsService {
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
       }
 
-      const [dealsResult, inquiriesResult] = await Promise.all([
-        dealsQuery,
-        inquiriesQuery,
-      ]);
+      const [dealsResult, inquiriesResult, customersResult] = await Promise.all(
+        [
+          dealsQuery,
+          inquiriesQuery,
+          this.supabase
+            .from('recurring_customers')
+            .select('customer_name, assigned_salesperson_phone')
+            .eq('is_active', true),
+        ],
+      );
 
       if (dealsResult.error) throw dealsResult.error;
       if (inquiriesResult.error) throw inquiriesResult.error;
 
-      const deals = dealsResult.data || [];
-      const inquiries = inquiriesResult.data || [];
+      const customerOwnerMap = new Map<string, string>();
+      customersResult.data?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
+      let deals = dealsResult.data || [];
+      const rawInquiries = inquiriesResult.data || [];
+      let inquiries = rawInquiries.filter(isProductInquiry);
+
+      if (salespersonPhone) {
+        const phoneList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        const allowedSet = new Set(
+          phoneList
+            .map((p) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+
+        deals = deals.filter((d: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              d.customer_name,
+              customerOwnerMap,
+            ) ||
+            d.salesperson_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+
+        inquiries = inquiries.filter((inq: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              inq.customer_name,
+              customerOwnerMap,
+            ) ||
+            inq.salesperson_phone ||
+            inq.sender_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+      }
 
       const wonDeals = deals.filter(
         (d) => normalizeDealStage(d.stage) === 'won',
@@ -513,8 +565,28 @@ export class ReportsService {
         );
       }
 
+      const customerOwnerMap = new Map<string, string>();
+      recurring.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
       const salespersonReports = Array.from(phones).map((phone) => {
-        const spDeals = deals.filter((d) => d.salesperson_phone === phone);
+        const currentClean = String(phone).replace(/\D/g, '').slice(-10);
+        const spDeals = deals.filter((d) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              d.customer_name,
+              customerOwnerMap,
+            ) ||
+            d.salesperson_phone ||
+            '';
+          return owner.replace(/\D/g, '').slice(-10) === currentClean;
+        });
         const spVisits = visits.filter((v) => v.salesperson_phone === phone);
         const spKraLogs = kraLogs.filter((k) => k.salesperson_phone === phone);
         const spPayments = payments.filter(
@@ -712,13 +784,61 @@ export class ReportsService {
         }
       }
 
-      const [dealsRes, inqsRes] = await Promise.all([
+      const [dealsRes, inqsRes, customersRes] = await Promise.all([
         dealsQuery,
         inquiriesQuery,
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone')
+          .eq('is_active', true),
       ]);
 
-      const safeDeals = dealsRes.data || [];
-      const safeInqs = (inqsRes.data || []).filter(isProductInquiry);
+      const customerOwnerMap = new Map<string, string>();
+      customersRes.data?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
+      let safeDeals = dealsRes.data || [];
+      let safeInqs = (inqsRes.data || []).filter(isProductInquiry);
+
+      if (salespersonPhone) {
+        const phoneList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        const allowedSet = new Set(
+          phoneList
+            .map((p) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+
+        safeDeals = safeDeals.filter((d: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              d.customer_name,
+              customerOwnerMap,
+            ) ||
+            d.salesperson_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+
+        safeInqs = safeInqs.filter((inq: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              inq.customer_name,
+              customerOwnerMap,
+            ) ||
+            inq.salesperson_phone ||
+            inq.sender_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+      }
 
       // Build pipeline units directly from genuine product inquiries
       const pipelineUnits = safeInqs.map((inq: any) => {
@@ -833,7 +953,7 @@ export class ReportsService {
       let dealsQuery = this.supabase
         .from('deals')
         .select(
-          'id, created_at, won_at, stage, salesperson_phone, inquiry_type, po_date',
+          'id, created_at, won_at, stage, salesperson_phone, customer_name, inquiry_type, po_date',
         )
         .or('stage.eq.won,stage.eq.closed_won');
 
@@ -854,8 +974,49 @@ export class ReportsService {
         if (orFilter) dealsQuery = dealsQuery.or(orFilter);
       }
 
-      const { data: wonDeals, error: dealsErr } = await dealsQuery;
-      if (dealsErr) throw dealsErr;
+      const [dealsRes, customersRes] = await Promise.all([
+        dealsQuery,
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone')
+          .eq('is_active', true),
+      ]);
+
+      if (dealsRes.error) throw dealsRes.error;
+
+      const customerOwnerMap = new Map<string, string>();
+      customersRes.data?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
+      let wonDeals = dealsRes.data || [];
+
+      if (salespersonPhone) {
+        const phoneList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        const allowedSet = new Set(
+          phoneList
+            .map((p) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+
+        wonDeals = wonDeals.filter((d: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              d.customer_name,
+              customerOwnerMap,
+            ) ||
+            d.salesperson_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+      }
 
       const dealIds = (wonDeals || []).map((d: any) => d.id);
       if (dealIds.length === 0) {
@@ -1009,17 +1170,67 @@ export class ReportsService {
       }
 
       // Execute queries in parallel in ONE batch
-      const [dealsResult, inquiriesResult] = await Promise.all([
-        dealsQuery,
-        inquiriesQuery,
-      ]);
+      const [dealsResult, inquiriesResult, customersResult] = await Promise.all(
+        [
+          dealsQuery,
+          inquiriesQuery,
+          this.supabase
+            .from('recurring_customers')
+            .select('customer_name, assigned_salesperson_phone')
+            .eq('is_active', true),
+        ],
+      );
 
       if (dealsResult.error) throw dealsResult.error;
       if (inquiriesResult.error) throw inquiriesResult.error;
 
-      const deals = dealsResult.data || [];
+      const customerOwnerMap = new Map<string, string>();
+      customersResult.data?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
+
+      let deals = dealsResult.data || [];
       const rawInquiries = inquiriesResult.data || [];
-      const inquiries = rawInquiries.filter(isProductInquiry);
+      let inquiries = rawInquiries.filter(isProductInquiry);
+
+      if (salespersonPhone) {
+        const phoneList = Array.isArray(salespersonPhone)
+          ? salespersonPhone
+          : [salespersonPhone];
+        const allowedSet = new Set(
+          phoneList
+            .map((p) => String(p).replace(/\D/g, '').slice(-10))
+            .filter(Boolean),
+        );
+
+        deals = deals.filter((d: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              d.customer_name,
+              customerOwnerMap,
+            ) ||
+            d.salesperson_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+
+        inquiries = inquiries.filter((inq: any) => {
+          const owner =
+            getAssignedPhoneFromCustomerMap(
+              inq.customer_name,
+              customerOwnerMap,
+            ) ||
+            inq.salesperson_phone ||
+            inq.sender_phone ||
+            '';
+          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+        });
+      }
 
       const wonDeals = deals.filter(
         (d: any) => normalizeDealStage(d.stage) === 'won',
