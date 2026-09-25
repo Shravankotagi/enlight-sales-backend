@@ -50,6 +50,8 @@ export class ChatbotController {
       caller,
       dto.message,
       dto.sessionId,
+      dto.image,
+      dto.gps,
     );
 
     return {

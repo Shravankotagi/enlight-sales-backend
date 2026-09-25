@@ -267,6 +267,8 @@ export class ChatbotService {
         interactiveType: interactiveMeta?.interactiveType || 'text',
         interactiveButtons: interactiveMeta?.interactiveButtons || null,
         interactiveList: interactiveMeta?.interactiveList || null,
+        image: interactiveMeta?.image || null,
+        gps: interactiveMeta?.gps || null,
       };
     });
     return formatted.reverse();
@@ -349,6 +351,8 @@ export class ChatbotService {
     caller: CallerContext,
     messageText: string,
     sessionId?: string,
+    image?: { base64: string; mimeType: string },
+    gps?: { latitude: number; longitude: number; accuracy?: number },
   ): Promise<ChatMessageResult> {
     this.logger.log(
       `Processing chat message from user ${caller.userId} (${caller.role}): "${messageText.slice(0, 60)}"`,
@@ -369,8 +373,15 @@ export class ChatbotService {
     // 3. Resolve / Create persistent chat session
     const session = await this.getOrCreateSession(caller, 'web', sessionId);
 
-    // 4. Save user message to chat history
-    await this.saveMessage(session.id, 'user', messageText);
+    // 4. Save user message to chat history with attachment metadata
+    const userMeta =
+      image || gps
+        ? {
+            image: image ? { mimeType: image.mimeType, base64: image.base64 } : null,
+            gps: gps || null,
+          }
+        : null;
+    await this.saveMessage(session.id, 'user', messageText, null, userMeta);
 
     // 5. Input Guardrail Screening
     const screenResult = await this.guardrailsService.screenInput(messageText);
@@ -408,6 +419,8 @@ export class ChatbotService {
           employeeName: caller.name || 'User',
           role: caller.role,
           resetSession: !sessionId,
+          image,
+          gps,
         },
         {
           headers: {

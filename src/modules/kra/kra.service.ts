@@ -2997,23 +2997,67 @@ export class KraService {
     if (data.customer_name && data.customer_name.trim()) {
       try {
         const cName = data.customer_name.trim();
+        const effectiveSalespersonPhone =
+          salespersonPhone &&
+          salespersonPhone !== 'Web Admin' &&
+          salespersonPhone.replace(/\D/g, '').length >= 10
+            ? salespersonPhone.replace(/\D/g, '').slice(-10)
+            : data.salesperson_phone &&
+                data.salesperson_phone !== 'Web Admin' &&
+                data.salesperson_phone.replace(/\D/g, '').length >= 10
+              ? data.salesperson_phone.replace(/\D/g, '').slice(-10)
+              : null;
+
         const { data: existing } = await this.supabase
           .from('recurring_customers')
-          .select('id')
+          .select('id, contact_person, customer_phone, customer_address, assigned_salesperson_phone')
           .ilike('customer_name', cName)
           .limit(1);
 
         if (!existing || existing.length === 0) {
           await this.supabase.from('recurring_customers').insert({
             customer_name: cName,
-            contact_person: data.person_met || null,
-            customer_phone: data.contact_phone || data.contact_no || null,
-            address: data.location || data.city || null,
+            contact_person:
+              data.person_met && data.person_met !== 'Contact Person'
+                ? data.person_met
+                : null,
+            customer_phone: cleanContact || null,
+            customer_address:
+              data.customer_address || data.location || data.city || null,
             avg_order_frequency_days: 30,
             is_active: true,
-            assigned_salesperson_phone: salespersonPhone || null,
+            assigned_salesperson_phone: effectiveSalespersonPhone,
             created_at: visited_at,
           });
+        } else {
+          const cust = existing[0];
+          const updatePayload: any = {};
+          if (
+            !cust.contact_person &&
+            data.person_met &&
+            data.person_met !== 'Contact Person'
+          ) {
+            updatePayload.contact_person = data.person_met;
+          }
+          if (!cust.customer_phone && cleanContact) {
+            updatePayload.customer_phone = cleanContact;
+          }
+          if (
+            !cust.customer_address &&
+            (data.customer_address || data.location || data.city)
+          ) {
+            updatePayload.customer_address =
+              data.customer_address || data.location || data.city;
+          }
+          if (!cust.assigned_salesperson_phone && effectiveSalespersonPhone) {
+            updatePayload.assigned_salesperson_phone = effectiveSalespersonPhone;
+          }
+          if (Object.keys(updatePayload).length > 0) {
+            await this.supabase
+              .from('recurring_customers')
+              .update(updatePayload)
+              .eq('id', cust.id);
+          }
         }
       } catch (err: any) {
         this.logger.warn(

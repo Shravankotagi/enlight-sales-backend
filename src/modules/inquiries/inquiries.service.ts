@@ -2295,9 +2295,9 @@ CRITICAL EXTRACTION RULES:
 Return ONLY the JSON.`;
 
     const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
       'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
     ];
 
     let lastError: any = null;
@@ -2487,9 +2487,9 @@ Inquiry Text:
 ${rawText}`;
 
     const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
       'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
     ];
 
     let lastError: any = null;
