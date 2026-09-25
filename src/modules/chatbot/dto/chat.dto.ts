@@ -18,6 +18,27 @@ export class SendChatMessageDto {
   @IsOptional()
   @IsUUID()
   sessionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional base64 image data with MIME type',
+    example: { base64: 'data:image/jpeg;base64,...', mimeType: 'image/jpeg' },
+  })
+  @IsOptional()
+  image?: {
+    base64: string;
+    mimeType: string;
+  };
+
+  @ApiPropertyOptional({
+    description: 'Optional GPS coordinates captured from browser geolocation',
+    example: { latitude: 18.5204, longitude: 73.8567, accuracy: 15 },
+  })
+  @IsOptional()
+  gps?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  };
 }
 
 export class ChatSessionResponseDto {

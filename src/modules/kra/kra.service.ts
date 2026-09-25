@@ -2941,6 +2941,24 @@ export class KraService {
       follow_up_date,
       follow_up_status,
       follow_up_completed_at,
+      email: data.email || null,
+      designation: data.designation || null,
+      customer_type: data.customer_type || null,
+      visit_type: data.visit_type || 'First Visit',
+      outcome: data.outcome ? data.outcome.toLowerCase() : 'positive',
+      customer_probability: data.customer_probability || data.probability || null,
+      product_details: data.product_details || data.material_requirement || data.requirement || null,
+      monthly_consumption: data.monthly_consumption || null,
+      current_requirement: data.current_requirement || null,
+      next_purchase_expected: data.next_purchase_expected || null,
+      delivery_location: data.delivery_location || null,
+      preferred_make: data.preferred_make || null,
+      payment_terms: data.payment_terms || null,
+      gps_photo_url: data.gps_photo_url || null,
+      gps_latitude: data.gps_latitude || null,
+      gps_longitude: data.gps_longitude || null,
+      gps_accuracy: data.gps_accuracy || null,
+      attachments: Array.isArray(data.attachments) ? data.attachments : [],
     };
 
     let created: any;
@@ -2979,23 +2997,67 @@ export class KraService {
     if (data.customer_name && data.customer_name.trim()) {
       try {
         const cName = data.customer_name.trim();
+        const effectiveSalespersonPhone =
+          salespersonPhone &&
+          salespersonPhone !== 'Web Admin' &&
+          salespersonPhone.replace(/\D/g, '').length >= 10
+            ? salespersonPhone.replace(/\D/g, '').slice(-10)
+            : data.salesperson_phone &&
+                data.salesperson_phone !== 'Web Admin' &&
+                data.salesperson_phone.replace(/\D/g, '').length >= 10
+              ? data.salesperson_phone.replace(/\D/g, '').slice(-10)
+              : null;
+
         const { data: existing } = await this.supabase
           .from('recurring_customers')
-          .select('id')
+          .select('id, contact_person, customer_phone, customer_address, assigned_salesperson_phone')
           .ilike('customer_name', cName)
           .limit(1);
 
         if (!existing || existing.length === 0) {
           await this.supabase.from('recurring_customers').insert({
             customer_name: cName,
-            contact_person: data.person_met || null,
-            customer_phone: data.contact_phone || data.contact_no || null,
-            address: data.location || data.city || null,
+            contact_person:
+              data.person_met && data.person_met !== 'Contact Person'
+                ? data.person_met
+                : null,
+            customer_phone: cleanContact || null,
+            customer_address:
+              data.customer_address || data.location || data.city || null,
             avg_order_frequency_days: 30,
             is_active: true,
-            assigned_salesperson_phone: salespersonPhone || null,
+            assigned_salesperson_phone: effectiveSalespersonPhone,
             created_at: visited_at,
           });
+        } else {
+          const cust = existing[0];
+          const updatePayload: any = {};
+          if (
+            !cust.contact_person &&
+            data.person_met &&
+            data.person_met !== 'Contact Person'
+          ) {
+            updatePayload.contact_person = data.person_met;
+          }
+          if (!cust.customer_phone && cleanContact) {
+            updatePayload.customer_phone = cleanContact;
+          }
+          if (
+            !cust.customer_address &&
+            (data.customer_address || data.location || data.city)
+          ) {
+            updatePayload.customer_address =
+              data.customer_address || data.location || data.city;
+          }
+          if (!cust.assigned_salesperson_phone && effectiveSalespersonPhone) {
+            updatePayload.assigned_salesperson_phone = effectiveSalespersonPhone;
+          }
+          if (Object.keys(updatePayload).length > 0) {
+            await this.supabase
+              .from('recurring_customers')
+              .update(updatePayload)
+              .eq('id', cust.id);
+          }
         }
       } catch (err: any) {
         this.logger.warn(
@@ -3246,6 +3308,27 @@ export class KraService {
       payload.follow_up_status = follow_up_status;
     if (follow_up_completed_at !== undefined)
       payload.follow_up_completed_at = follow_up_completed_at;
+    if (data.email !== undefined) payload.email = data.email || null;
+    if (data.designation !== undefined) payload.designation = data.designation || null;
+    if (data.customer_type !== undefined) payload.customer_type = data.customer_type || null;
+    if (data.visit_type !== undefined) payload.visit_type = data.visit_type || null;
+    if (data.outcome !== undefined) payload.outcome = data.outcome ? data.outcome.toLowerCase() : 'positive';
+    if (data.customer_probability !== undefined || data.probability !== undefined)
+      payload.customer_probability = data.customer_probability || data.probability || null;
+    if (data.product_details !== undefined || data.material_requirement !== undefined || data.requirement !== undefined)
+      payload.product_details = data.product_details || data.material_requirement || data.requirement || null;
+    if (data.monthly_consumption !== undefined) payload.monthly_consumption = data.monthly_consumption || null;
+    if (data.current_requirement !== undefined) payload.current_requirement = data.current_requirement || null;
+    if (data.next_purchase_expected !== undefined) payload.next_purchase_expected = data.next_purchase_expected || null;
+    if (data.delivery_location !== undefined) payload.delivery_location = data.delivery_location || null;
+    if (data.preferred_make !== undefined) payload.preferred_make = data.preferred_make || null;
+    if (data.payment_terms !== undefined) payload.payment_terms = data.payment_terms || null;
+    if (data.gps_photo_url !== undefined) payload.gps_photo_url = data.gps_photo_url || null;
+    if (data.gps_latitude !== undefined) payload.gps_latitude = data.gps_latitude || null;
+    if (data.gps_longitude !== undefined) payload.gps_longitude = data.gps_longitude || null;
+    if (data.gps_accuracy !== undefined) payload.gps_accuracy = data.gps_accuracy || null;
+    if (data.attachments !== undefined)
+      payload.attachments = Array.isArray(data.attachments) ? data.attachments : [];
 
     let query = this.supabase
       .from('customer_visits')
