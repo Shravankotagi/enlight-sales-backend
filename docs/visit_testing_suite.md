@@ -139,6 +139,7 @@ The test suite utilizes real records already present in your database:
 | **T8.1** | Attempt to update Visit ID | [Cold Start] | `Update visit for Akruti Motors, change visit id to VIS-12345` | Shows validation warning: *"Visit ID is system-generated and cannot be edited"*, and lists editable fields. Does NOT update unrelated fields. |
 | **T8.2** | Attempt to change Customer Name in update flow | [Cold Start] | `Update visit for Akruti Motors, change customer name to Apex Steel` | Shows validation warning: *"Customer Name cannot be edited for an existing record. This visit is permanently linked to Akruti Motors"*. Offers option to cancel. |
 | **T8.3** | Attempt to change system timestamp | [Cold Start] | `Update visit for Akruti Motors, change created_at to yesterday` | Rejects direct modification of system timestamp columns. |
+| **T8.4** | Attempt to replace or remove photo | [Cold Start] | `Update visit for Akruti Motors, replace previously added photo with a new picture` | Rejects photo replacement/deletion with explicit audit policy: *"Previously uploaded photos cannot be replaced or removed. Existing photos are permanent records preserved for verified visit audit compliance. You can always attach additional photos to this visit report."* Displays allowed editable fields list. |
 
 ---
 
