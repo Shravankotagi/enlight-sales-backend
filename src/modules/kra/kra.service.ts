@@ -2657,41 +2657,64 @@ export class KraService {
       updateData.resolution_notes = data.resolution_notes;
     }
 
-    if (Array.isArray(data.attachments) && data.attachments.length > 0) {
+    if (Array.isArray(data.attachments)) {
       try {
+        const keptIds = data.attachments
+          .filter((a: any) => a && a.id)
+          .map((a: any) => a.id);
+
+        if (keptIds.length > 0) {
+          await this.supabase
+            .from('complaint_attachments')
+            .delete()
+            .eq('complaint_id', id)
+            .not('id', 'in', `(${keptIds.join(',')})`);
+        } else {
+          await this.supabase
+            .from('complaint_attachments')
+            .delete()
+            .eq('complaint_id', id);
+        }
+
         const newAtts = data.attachments.filter(
           (a: any) => !a.id && (a.file_url || a.url || typeof a === 'string'),
         );
         if (newAtts.length > 0) {
-          const rows = await Promise.all(
-            newAtts.map(async (att: any) => {
-              const rawUrl =
-                typeof att === 'string'
-                  ? att
-                  : att.file_url || att.url || att.base64 || '';
-              const rawName =
-                typeof att === 'string'
-                  ? 'Attachment'
-                  : att.file_name || att.name || 'Attachment';
-              const rawType =
-                typeof att === 'string'
-                  ? 'application/octet-stream'
-                  : att.file_type || att.type || 'application/octet-stream';
+          const remainingSlots = Math.max(0, 3 - keptIds.length);
+          const attsToAdd = newAtts.slice(0, remainingSlots);
+          if (attsToAdd.length > 0) {
+            const rows = await Promise.all(
+              attsToAdd.map(async (att: any) => {
+                const rawUrl =
+                  typeof att === 'string'
+                    ? att
+                    : att.file_url || att.url || att.base64 || '';
+                const rawName =
+                  typeof att === 'string'
+                    ? 'Attachment'
+                    : att.file_name || att.name || 'Attachment';
+                const rawType =
+                  typeof att === 'string'
+                    ? 'application/octet-stream'
+                    : att.file_type || att.type || 'application/octet-stream';
 
-              const compressed = await compressBase64Image(rawUrl, rawName);
+                const compressed = await compressBase64Image(rawUrl, rawName);
 
-              return {
-                complaint_id: id,
-                file_url: compressed.fileUrl,
-                file_name: rawName,
-                file_type: compressed.fileType || rawType,
-                uploaded_at: new Date().toISOString(),
-              };
-            }),
-          );
-          const validRows = rows.filter((r: any) => Boolean(r.file_url));
-          if (validRows.length > 0) {
-            await this.supabase.from('complaint_attachments').insert(validRows);
+                return {
+                  complaint_id: id,
+                  file_url: compressed.fileUrl,
+                  file_name: rawName,
+                  file_type: compressed.fileType || rawType,
+                  uploaded_at: new Date().toISOString(),
+                };
+              }),
+            );
+            const validRows = rows.filter((r: any) => Boolean(r.file_url));
+            if (validRows.length > 0) {
+              await this.supabase
+                .from('complaint_attachments')
+                .insert(validRows);
+            }
           }
         }
       } catch (attErr: any) {
