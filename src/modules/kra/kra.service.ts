@@ -2144,16 +2144,37 @@ export class KraService {
     const complaintsList = data || [];
     if (complaintsList.length === 0) return [];
 
+    const complaintIds = complaintsList.map((c) => c.id).filter(Boolean);
+    const missingDealIds = complaintsList
+      .filter((c) => !c.po_number && c.deal_id)
+      .map((c) =>
+        c.deal_id
+          .replace(/^#?DEAL-/i, '')
+          .trim()
+          .toLowerCase(),
+      )
+      .filter(Boolean);
+
     try {
       const [{ data: employees }, { data: deals }, { data: allAttachments }] =
         await Promise.all([
           this.supabase.from('employees').select('name, phone, role'),
-          this.supabase
-            .from('deals')
-            .select(
-              'id, po_number, customer_name, deal_items(sku_text, dimensions, quantity, unit)',
-            ),
-          this.supabase.from('complaint_attachments').select('*'),
+          missingDealIds.length > 0
+            ? this.supabase
+                .from('deals')
+                .select(
+                  'id, po_number, customer_name, deal_items(sku_text, dimensions, quantity, unit)',
+                )
+                .in('id', missingDealIds)
+            : Promise.resolve({ data: [] }),
+          complaintIds.length > 0
+            ? this.supabase
+                .from('complaint_attachments')
+                .select(
+                  'id, complaint_id, file_name, file_type, file_size, file_url, uploaded_at',
+                )
+                .in('complaint_id', complaintIds)
+            : Promise.resolve({ data: [] }),
         ]);
 
       const empMap = new Map<string, string>();
