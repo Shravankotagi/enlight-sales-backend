@@ -8,6 +8,7 @@ import {
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import { compressBase64Image } from '../../utils/imageCompressor';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -2488,33 +2489,43 @@ export class KraService {
       created = resData;
     }
 
-    // Insert attachments if provided
+    // Insert attachments if provided (capped at max 3 files, compressed)
     if (
       created?.id &&
       Array.isArray(data.attachments) &&
       data.attachments.length > 0
     ) {
       try {
-        const attRows = data.attachments
-          .map((att: any) => ({
-            complaint_id: created.id,
-            file_url:
+        const rawAtts = data.attachments.slice(0, 3);
+        const attRows = await Promise.all(
+          rawAtts.map(async (att: any) => {
+            const rawUrl =
               typeof att === 'string'
                 ? att
-                : att.file_url || att.url || att.base64 || '',
-            file_name:
+                : att.file_url || att.url || att.base64 || '';
+            const rawName =
               typeof att === 'string'
                 ? 'Attachment'
-                : att.file_name || att.name || 'Attachment',
-            file_type:
+                : att.file_name || att.name || 'Attachment';
+            const rawType =
               typeof att === 'string'
                 ? 'application/octet-stream'
-                : att.file_type || att.type || 'application/octet-stream',
-            uploaded_at: nowIso,
-          }))
-          .filter((r: any) => Boolean(r.file_url));
-        if (attRows.length > 0) {
-          await this.supabase.from('complaint_attachments').insert(attRows);
+                : att.file_type || att.type || 'application/octet-stream';
+
+            const compressed = await compressBase64Image(rawUrl, rawName);
+
+            return {
+              complaint_id: created.id,
+              file_url: compressed.fileUrl,
+              file_name: rawName,
+              file_type: compressed.fileType || rawType,
+              uploaded_at: nowIso,
+            };
+          }),
+        );
+        const validRows = attRows.filter((r: any) => Boolean(r.file_url));
+        if (validRows.length > 0) {
+          await this.supabase.from('complaint_attachments').insert(validRows);
         }
       } catch (attErr: any) {
         this.logger.warn(
@@ -2652,26 +2663,35 @@ export class KraService {
           (a: any) => !a.id && (a.file_url || a.url || typeof a === 'string'),
         );
         if (newAtts.length > 0) {
-          const rows = newAtts
-            .map((att: any) => ({
-              complaint_id: id,
-              file_url:
+          const rows = await Promise.all(
+            newAtts.map(async (att: any) => {
+              const rawUrl =
                 typeof att === 'string'
                   ? att
-                  : att.file_url || att.url || att.base64 || '',
-              file_name:
+                  : att.file_url || att.url || att.base64 || '';
+              const rawName =
                 typeof att === 'string'
                   ? 'Attachment'
-                  : att.file_name || att.name || 'Attachment',
-              file_type:
+                  : att.file_name || att.name || 'Attachment';
+              const rawType =
                 typeof att === 'string'
                   ? 'application/octet-stream'
-                  : att.file_type || att.type || 'application/octet-stream',
-              uploaded_at: new Date().toISOString(),
-            }))
-            .filter((r: any) => Boolean(r.file_url));
-          if (rows.length > 0) {
-            await this.supabase.from('complaint_attachments').insert(rows);
+                  : att.file_type || att.type || 'application/octet-stream';
+
+              const compressed = await compressBase64Image(rawUrl, rawName);
+
+              return {
+                complaint_id: id,
+                file_url: compressed.fileUrl,
+                file_name: rawName,
+                file_type: compressed.fileType || rawType,
+                uploaded_at: new Date().toISOString(),
+              };
+            }),
+          );
+          const validRows = rows.filter((r: any) => Boolean(r.file_url));
+          if (validRows.length > 0) {
+            await this.supabase.from('complaint_attachments').insert(validRows);
           }
         }
       } catch (attErr: any) {
