@@ -8,6 +8,7 @@ import {
   Body,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { KraService } from './kra.service';
 import { EmployeesService } from '../employees/employees.service';
@@ -200,6 +201,14 @@ export class KraController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    const role = (employee?.role || '').toLowerCase();
+    const isAuthorized = role.includes('admin') || role.includes('manager');
+    if (!isAuthorized) {
+      throw new ForbiddenException(
+        'Access Denied: Field visits can only be updated by Sales Managers and Administrators.',
+      );
+    }
+
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.kraService.updateVisit(
@@ -211,6 +220,14 @@ export class KraController {
 
   @Delete('visits/:id')
   async deleteVisit(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    const role = (employee?.role || '').toLowerCase();
+    const isAuthorized = role.includes('admin') || role.includes('manager');
+    if (!isAuthorized) {
+      throw new ForbiddenException(
+        'Access Denied: Field visits can only be deleted by Sales Managers and Administrators.',
+      );
+    }
+
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.kraService.deleteVisit(
