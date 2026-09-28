@@ -151,6 +151,19 @@ export class KraController {
     );
   }
 
+  @Get('complaints/:id/attachments')
+  async getComplaintAttachments(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.kraService.getComplaintAttachments(
+      id,
+      phones === null ? undefined : phones,
+    );
+  }
+
   @Post('complaints')
   async createComplaint(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.kraService.createComplaint(body, employee?.phone);

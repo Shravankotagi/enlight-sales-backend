@@ -2109,6 +2109,40 @@ export class KraService {
     }
   }
 
+  async getComplaintAttachments(
+    id: string,
+    accessiblePhones?: string[] | null,
+  ) {
+    const { data: existingComplaint, error: fetchErr } = await this.supabase
+      .from('complaints')
+      .select('id, reported_by')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existingComplaint) {
+      throw new NotFoundException('Complaint not found');
+    }
+
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      if (
+        !existingComplaint.reported_by ||
+        !phoneInList(existingComplaint.reported_by, accessiblePhones)
+      ) {
+        throw new ForbiddenException(
+          'Access Denied: You do not have permission to view this complaint.',
+        );
+      }
+    }
+
+    const { data, error } = await this.supabase
+      .from('complaint_attachments')
+      .select('id, complaint_id, file_name, file_type, file_url, uploaded_at')
+      .eq('complaint_id', id);
+
+    if (error) throw error;
+    return data || [];
+  }
+
   async getComplaints(
     salespersonPhone?: string[] | string,
     from?: string,
@@ -2171,9 +2205,7 @@ export class KraService {
           complaintIds.length > 0
             ? this.supabase
                 .from('complaint_attachments')
-                .select(
-                  'id, complaint_id, file_name, file_type, file_url, uploaded_at',
-                )
+                .select('id, complaint_id, file_name, file_type, uploaded_at')
                 .in('complaint_id', complaintIds)
             : Promise.resolve({ data: [] }),
         ]);
@@ -2294,9 +2326,6 @@ export class KraService {
           ? String(rawResDate).split('T')[0]
           : null;
         const compAttachments = attachmentMap.get(c.id) || [];
-        const mediaUrls = compAttachments
-          .map((a: any) => a.file_url)
-          .filter(Boolean);
 
         return {
           ...c,
@@ -2306,7 +2335,7 @@ export class KraService {
           customer_communication: c.customer_communication || '',
           resolution_date: resolutionDate,
           attachments: compAttachments,
-          media_urls: mediaUrls.length > 0 ? mediaUrls : c.media_urls || [],
+          media_urls: [],
           po_number: poNum,
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
@@ -2345,7 +2374,7 @@ export class KraService {
           customer_communication: c.customer_communication || '',
           resolution_date: resolutionDate,
           attachments: [],
-          media_urls: c.media_urls || [],
+          media_urls: [],
           created_at: c.created_at || c.reported_at,
           reported_at: c.reported_at || c.created_at,
           product_name: finalProd,
