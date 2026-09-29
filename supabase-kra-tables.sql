@@ -86,6 +86,32 @@ create table if not exists complaints (
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS affected_product text;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS sla_due_at timestamptz;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolution_notes text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_date date;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS raised_by text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS deal_id uuid;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS po_number text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS product_name text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS challan_no text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS corrective_action text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS customer_communication text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolution_date date;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS created_at timestamptz default now();
+
+CREATE TABLE IF NOT EXISTS complaint_attachments (
+  id uuid default gen_random_uuid() primary key,
+  complaint_id uuid not null references complaints(id) on delete cascade,
+  file_url text not null,
+  file_name text,
+  file_type text,
+  uploaded_at timestamptz default now()
+);
+
+CREATE INDEX IF NOT EXISTS complaint_attachments_complaint_id_idx
+  ON complaint_attachments(complaint_id);
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('complaint-evidence', 'complaint-evidence', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
 
 -- Payment tracking (KRA 5)
 create table if not exists payment_tracking (
