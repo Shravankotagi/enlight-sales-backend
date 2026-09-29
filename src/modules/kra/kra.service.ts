@@ -127,6 +127,17 @@ export class KraService {
     return this.supabaseService.getAdminClient();
   }
 
+  private resolveComplaintAttachmentUrl(fileUrl?: string | null) {
+    if (!fileUrl || fileUrl.startsWith('data:') || /^https?:\/\//i.test(fileUrl)) {
+      return fileUrl || null;
+    }
+    return this.supabase.storage
+      .from('complaint-evidence')
+      .getPublicUrl(fileUrl)
+      .data
+      .publicUrl;
+  }
+
   private getMonthRange(month?: number, year?: number) {
     const now = new Date();
     const m = month !== undefined ? month : now.getMonth();
@@ -2140,7 +2151,10 @@ export class KraService {
       .eq('complaint_id', id);
 
     if (error) throw error;
-    return data || [];
+    return (data || []).map((attachment: any) => ({
+      ...attachment,
+      file_url: this.resolveComplaintAttachmentUrl(attachment.file_url),
+    }));
   }
 
   async getComplaints(
@@ -2205,7 +2219,9 @@ export class KraService {
           complaintIds.length > 0
             ? this.supabase
                 .from('complaint_attachments')
-                .select('id, complaint_id, file_name, file_type, uploaded_at')
+                .select(
+                  'id, complaint_id, file_url, file_name, file_type, uploaded_at',
+                )
                 .in('complaint_id', complaintIds)
             : Promise.resolve({ data: [] }),
         ]);
@@ -2222,7 +2238,10 @@ export class KraService {
       (allAttachments || []).forEach((att: any) => {
         if (att && att.complaint_id) {
           const list = attachmentMap.get(att.complaint_id) || [];
-          list.push(att);
+          list.push({
+            ...att,
+            file_url: this.resolveComplaintAttachmentUrl(att.file_url),
+          });
           attachmentMap.set(att.complaint_id, list);
         }
       });
