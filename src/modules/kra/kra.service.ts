@@ -1825,7 +1825,7 @@ export class KraService {
           custRecord?.city ||
           custRecord?.customer_address;
         const outcomeMatch =
-          v.visit_outcome || rawRemarks.match(/\[Outcome:\s*([^\]]+)\]/i)?.[1];
+          v.outcome || rawRemarks.match(/\[Outcome:\s*([^\]]+)\]/i)?.[1];
         const reqMatch =
           v.material_requirement ||
           rawRemarks.match(
@@ -3057,7 +3057,7 @@ export class KraService {
       designation: data.designation || null,
       customer_type: data.customer_type || null,
       visit_type: data.visit_type || 'First Visit',
-      outcome: data.outcome ? data.outcome.toLowerCase() : 'positive',
+      outcome: data.outcome ? data.outcome.toLowerCase() : null,
       customer_probability:
         data.customer_probability || data.probability || null,
       product_details:
@@ -3436,7 +3436,7 @@ export class KraService {
     if (data.visit_type !== undefined)
       payload.visit_type = data.visit_type || null;
     if (data.outcome !== undefined)
-      payload.outcome = data.outcome ? data.outcome.toLowerCase() : 'positive';
+      payload.outcome = data.outcome ? data.outcome.toLowerCase() : null;
     if (
       data.customer_probability !== undefined ||
       data.probability !== undefined
