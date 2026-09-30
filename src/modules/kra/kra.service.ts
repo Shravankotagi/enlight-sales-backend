@@ -10,6 +10,14 @@ import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { compressBase64Image } from '../../utils/imageCompressor';
 
+const POST_LOG_COMPLAINT_EDITABLE_FIELDS = new Set([
+  'raised_by',
+  'complaint_type',
+  'description',
+  'status',
+  'resolution_notes',
+]);
+
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
   fieldNames: string[] = ['salesperson_phone'],
@@ -2624,6 +2632,15 @@ export class KraService {
     data: any,
     accessiblePhones?: string[] | null,
   ) {
+    const lockedFields = Object.keys(data || {}).filter(
+      (field) => !POST_LOG_COMPLAINT_EDITABLE_FIELDS.has(field),
+    );
+    if (lockedFields.length > 0) {
+      throw new BadRequestException(
+        `Only Complaint Raised By, Complaint Type, Complaint Description, Status, and Resolution Notes can be updated after logging. Locked fields: ${lockedFields.join(', ')}.`,
+      );
+    }
+
     const { data: existingComplaint, error: fetchErr } = await this.supabase
       .from('complaints')
       .select('id, reported_by, status, resolution_notes, resolution_date')
@@ -2645,24 +2662,7 @@ export class KraService {
     }
 
     const updateData: Record<string, any> = {};
-    if (data.customer_name !== undefined)
-      updateData.customer_name = data.customer_name;
-    if (data.complaint_date !== undefined)
-      updateData.complaint_date = data.complaint_date;
     if (data.raised_by !== undefined) updateData.raised_by = data.raised_by;
-    if (data.deal_id !== undefined) updateData.deal_id = data.deal_id || null;
-    if (data.po_number !== undefined)
-      updateData.po_number = data.po_number || null;
-    if (data.challan_no !== undefined)
-      updateData.challan_no = data.challan_no || null;
-    if (
-      data.product_name !== undefined ||
-      data.affected_product !== undefined
-    ) {
-      const prod = data.product_name || data.affected_product;
-      updateData.product_name = prod;
-      updateData.affected_product = prod;
-    }
     if (data.complaint_type !== undefined)
       updateData.complaint_type = data.complaint_type;
     if (data.description !== undefined) {
@@ -2673,12 +2673,6 @@ export class KraService {
       }
       updateData.description = d;
     }
-    if (data.corrective_action !== undefined)
-      updateData.corrective_action = data.corrective_action;
-    if (data.customer_communication !== undefined)
-      updateData.customer_communication = data.customer_communication;
-    if (data.resolution_date !== undefined)
-      updateData.resolution_date = data.resolution_date;
     if (data.status !== undefined) {
       updateData.status = data.status;
       if (data.status === 'resolved') {
@@ -2703,74 +2697,6 @@ export class KraService {
     }
     if (data.resolution_notes !== undefined) {
       updateData.resolution_notes = data.resolution_notes;
-    }
-
-    if (Array.isArray(data.attachments)) {
-      try {
-        const keptIds = data.attachments
-          .filter((a: any) => a && a.id)
-          .map((a: any) => a.id);
-
-        if (keptIds.length > 0) {
-          await this.supabase
-            .from('complaint_attachments')
-            .delete()
-            .eq('complaint_id', id)
-            .not('id', 'in', `(${keptIds.join(',')})`);
-        } else {
-          await this.supabase
-            .from('complaint_attachments')
-            .delete()
-            .eq('complaint_id', id);
-        }
-
-        const newAtts = data.attachments.filter(
-          (a: any) => !a.id && (a.file_url || a.url || typeof a === 'string'),
-        );
-        if (newAtts.length > 0) {
-          const remainingSlots = Math.max(0, 3 - keptIds.length);
-          const attsToAdd = newAtts.slice(0, remainingSlots);
-          if (attsToAdd.length > 0) {
-            const rows = await Promise.all(
-              attsToAdd.map(async (att: any) => {
-                const rawUrl =
-                  typeof att === 'string'
-                    ? att
-                    : att.file_url || att.url || att.base64 || '';
-                const rawName =
-                  typeof att === 'string'
-                    ? 'Attachment'
-                    : att.file_name || att.name || 'Attachment';
-                const rawType =
-                  typeof att === 'string'
-                    ? 'application/octet-stream'
-                    : att.file_type || att.type || 'application/octet-stream';
-
-                const compressed = await compressBase64Image(rawUrl, rawName);
-
-                return {
-                  complaint_id: id,
-                  file_url: compressed.fileUrl,
-                  file_name: rawName,
-                  file_type: compressed.fileType || rawType,
-                  uploaded_at: new Date().toISOString(),
-                };
-              }),
-            );
-            const validRows = rows.filter((r: any) => Boolean(r.file_url));
-            if (validRows.length > 0) {
-              await this.supabase
-                .from('complaint_attachments')
-                .insert(validRows);
-            }
-          }
-        }
-      } catch (attErr: any) {
-        this.logger.warn(
-          'Non-blocking complaint_attachments update notice:',
-          attErr?.message,
-        );
-      }
     }
 
     const { data: updated, error } = await this.supabase
