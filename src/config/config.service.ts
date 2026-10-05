@@ -10,39 +10,51 @@ export class ConfigService {
   }
 
   get supabaseUrl(): string {
-    return (
+    const url =
       this.configService.get<string>('supabase.url') ||
-      process.env.SUPABASE_URL ||
-      'https://dzjqheusezwkhjmpnjsr.supabase.co'
-    );
+      process.env.SUPABASE_URL;
+    if (!url) {
+      throw new Error('Missing SUPABASE_URL in configuration or environment');
+    }
+    return url;
   }
 
   get supabaseKey(): string {
-    return (
+    const key =
       this.configService.get<string>('supabase.key') ||
-      process.env.SUPABASE_KEY ||
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6anFoZXVzZXp3a2hqbXBuanNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MzY0NjIsImV4cCI6MjEwMDIxMjQ2Mn0.WXK8mx4NJlsWlkqIGkDQZHK3QUASjhrqwNXcfB_f0E8'
-    );
+      process.env.SUPABASE_KEY;
+    if (!key) {
+      throw new Error('Missing SUPABASE_KEY in configuration or environment');
+    }
+    return key;
   }
 
   get supabaseServiceKey(): string {
-    return (
+    const serviceKey =
+      this.configService.get<string>('supabase.serviceKey') ||
       process.env.SUPABASE_SERVICE_KEY ||
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6anFoZXVzZXp3a2hqbXBuanNyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDYzNjQ2MiwiZXhwIjoyMTAwMjEyNDYyfQ.rSnHhXgOM6XuC1HCSPqlWodagwur71vdZWbZtVgz9aE'
-    );
+      process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      throw new Error(
+        'Missing SUPABASE_SERVICE_KEY in configuration or environment',
+      );
+    }
+    return serviceKey;
   }
 
   get superAdminEmail(): string {
     return (
       this.configService.get<string>('admin.superAdminEmail') ||
-      'your_email@example.com'
+      process.env.SUPER_ADMIN_EMAIL ||
+      ''
     );
   }
 
   get superAdminPassword(): string {
     return (
       this.configService.get<string>('admin.superAdminPassword') ||
-      'password123'
+      process.env.SUPER_ADMIN_PASSWORD ||
+      ''
     );
   }
 

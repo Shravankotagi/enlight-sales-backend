@@ -6,14 +6,25 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ZohoService } from './zoho.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('zoho')
 @UseGuards(JwtAuthGuard)
 export class ZohoController {
   constructor(private readonly zohoService: ZohoService) {}
+
+  private assertAdmin(employee: any) {
+    const role = String(employee?.role || '').toLowerCase();
+    if (!role.includes('admin')) {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can run this Zoho operation.',
+      );
+    }
+  }
 
   // GET /zoho/status - sync status
   @Get('status')
@@ -24,7 +35,8 @@ export class ZohoController {
   // POST /zoho/pull-initial-sync - Trigger full inbound sync from Zoho Bigin
   @Post('pull-initial-sync')
   @HttpCode(HttpStatus.OK)
-  async pullInitialSync() {
+  async pullInitialSync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
     return this.zohoService.pullInitialSyncFromBigin();
   }
 
@@ -58,14 +70,16 @@ export class ZohoController {
   // POST /zoho/wipe - wipe all Bigin data
   @Post('wipe')
   @HttpCode(HttpStatus.OK)
-  async wipeBigin() {
+  async wipeBigin(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
     return this.zohoService.wipeAllBiginData();
   }
 
   // POST /zoho/resync - full clean re-sync of all data
   @Post('resync')
   @HttpCode(HttpStatus.OK)
-  async fullResync() {
+  async fullResync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
     return this.zohoService.fullResyncAllData();
   }
 

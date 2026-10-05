@@ -243,12 +243,17 @@ export class DealsService {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
             .from('inquiries')
-            .select('media_urls')
+            .select('media_urls, raw_text')
             .eq('id', data.inquiry_id)
             .limit(1)
-            .single();
-          if (inq && inq.media_urls) {
-            data.media_urls = inq.media_urls;
+            .maybeSingle();
+          if (inq) {
+            if (Array.isArray(inq.media_urls) && inq.media_urls.length > 0) {
+              data.media_urls = inq.media_urls;
+            }
+            if (inq.raw_text && !data.raw_text) {
+              data.raw_text = inq.raw_text;
+            }
           }
         }
 
@@ -262,62 +267,42 @@ export class DealsService {
           );
 
         if (!hasValidMedia) {
-          const { data: allMediaInqs } = await this.supabase
-            .from('inquiries')
-            .select('id, sender_name, raw_text, created_at')
-            .not('media_urls', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(50);
-
+          // If no media on linked inquiry, only match an inquiry that explicitly shares the same PO number and customer
+          const dPo = (data.po_number || '').trim();
           const dName = (data.customer_name || '').toLowerCase().trim();
-          const dPo = (data.po_number || '').toLowerCase().trim();
-          const dClean = dName.replace(/[^a-z0-9]/g, ' ');
-          const dWords = dClean
-            .split(/\s+/)
-            .filter(
-              (w) =>
-                w.length >= 3 &&
-                ![
-                  'pvt',
-                  'ltd',
-                  'private',
-                  'limited',
-                  'enterprises',
-                  'steels',
-                  'steel',
-                ].includes(w),
-            );
-
-          const matched = (allMediaInqs || []).find((mi: any) => {
-            const sName = (mi.sender_name || '').toLowerCase().trim();
-            const rawTxt = (mi.raw_text || '').toLowerCase();
-
-            if (dPo && rawTxt && rawTxt.includes(dPo)) return true;
-            if (sName && (sName.includes(dName) || dName.includes(sName)))
-              return true;
-            if (dWords.length > 0 && dWords.some((w) => rawTxt.includes(w)))
-              return true;
-
-            return false;
-          });
-
-          if (matched && matched.id) {
-            const { data: matchedInq } = await this.supabase
+          if (
+            dPo &&
+            dPo.length >= 4 &&
+            !['none', 'null', 'auto', 'pending'].includes(dPo.toLowerCase())
+          ) {
+            const { data: poInqs } = await this.supabase
               .from('inquiries')
-              .select('media_urls')
-              .eq('id', matched.id)
-              .single();
-            if (matchedInq && matchedInq.media_urls) {
-              data.media_urls = matchedInq.media_urls;
-            }
-            if (!data.inquiry_id) {
-              data.inquiry_id = matched.id;
-              // Persist link back to deals table asynchronously
-              this.supabase
-                .from('deals')
-                .update({ inquiry_id: matched.id })
-                .eq('id', id)
-                .then(() => {});
+              .select(
+                'id, sender_name, customer_name, raw_text, media_urls, po_number',
+              )
+              .not('media_urls', 'is', null)
+              .ilike('po_number', dPo)
+              .limit(5);
+
+            const matched = (poInqs || []).find((mi: any) => {
+              const miCust = (mi.customer_name || mi.sender_name || '')
+                .toLowerCase()
+                .trim();
+              if (dName && miCust) {
+                return dName.includes(miCust) || miCust.includes(dName);
+              }
+              return false;
+            });
+
+            if (
+              matched &&
+              Array.isArray(matched.media_urls) &&
+              matched.media_urls.length > 0
+            ) {
+              data.media_urls = matched.media_urls;
+              if (matched.raw_text && !data.raw_text) {
+                data.raw_text = matched.raw_text;
+              }
             }
           }
         }
@@ -658,13 +643,14 @@ export class DealsService {
   async createOrder(data: any, salespersonPhone?: string) {
     try {
       const wonAt = data.won_at || new Date().toISOString();
+      const totalAmount = Math.max(0, Number(data.total_amount || 0));
       const insertPayload: any = {
         customer_name: data.customer_name,
         stage: 'won',
         inquiry_type: 'purchase_order',
         po_number: data.po_number || null,
         po_date: data.po_date || null,
-        total_amount: Number(data.total_amount || 0),
+        total_amount: totalAmount,
         won_at: wonAt,
         delivery_location: data.delivery_location || null,
         delivery_date: data.delivery_date || null,
@@ -687,16 +673,30 @@ export class DealsService {
       if (dealError) throw dealError;
 
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        const itemRows = data.items.map((item: any) => ({
-          deal_id: deal.id,
-          sku_text: item.sku_text,
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity || 0),
-          unit: item.unit || 'MT',
-          rate: Number(item.rate || 0),
-          amount: Number(item.amount || item.quantity * item.rate || 0),
-          created_at: new Date().toISOString(),
-        }));
+        const itemRows = data.items
+          .map((item: any) => {
+            const quantity = Math.max(0, Number(item.quantity || 0));
+            const rate = Math.max(0, Number(item.rate || 0));
+            const amount = Math.max(
+              0,
+              Number(
+                item.amount !== undefined && item.amount !== null
+                  ? item.amount
+                  : quantity * rate,
+              ),
+            );
+            return {
+              deal_id: deal.id,
+              sku_text: item.sku_text,
+              dimensions: item.dimensions || null,
+              quantity,
+              unit: item.unit || 'MT',
+              rate,
+              amount,
+              created_at: new Date().toISOString(),
+            };
+          })
+          .filter((row: any) => row.sku_text && row.quantity > 0);
 
         const { error: itemsError } = await this.supabase
           .from('deal_items')

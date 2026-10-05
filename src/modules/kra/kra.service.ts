@@ -136,14 +136,16 @@ export class KraService {
   }
 
   private resolveComplaintAttachmentUrl(fileUrl?: string | null) {
-    if (!fileUrl || fileUrl.startsWith('data:') || /^https?:\/\//i.test(fileUrl)) {
+    if (
+      !fileUrl ||
+      fileUrl.startsWith('data:') ||
+      /^https?:\/\//i.test(fileUrl)
+    ) {
       return fileUrl || null;
     }
     return this.supabase.storage
       .from('complaint-evidence')
-      .getPublicUrl(fileUrl)
-      .data
-      .publicUrl;
+      .getPublicUrl(fileUrl).data.publicUrl;
   }
 
   private getMonthRange(month?: number, year?: number) {
