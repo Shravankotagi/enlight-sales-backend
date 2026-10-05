@@ -1125,8 +1125,8 @@ export class InquiriesService implements OnModuleInit {
         );
         const hasMedia = Boolean(
           row.media_urls &&
-            Array.isArray(row.media_urls) &&
-            row.media_urls.length > 0,
+          Array.isArray(row.media_urls) &&
+          row.media_urls.length > 0,
         );
         return {
           ...row,
@@ -1185,7 +1185,7 @@ export class InquiriesService implements OnModuleInit {
     try {
       const { data: existingInq, error: fetchErr } = await this.supabase
         .from('inquiries')
-        .select('id, salesperson_phone, sender_phone')
+        .select('id, salesperson_phone, sender_phone, ai_extraction_json')
         .eq('id', id)
         .single();
       if (fetchErr || !existingInq) {
@@ -1262,7 +1262,12 @@ export class InquiriesService implements OnModuleInit {
         ) {
           updatePayload.media_urls = details.media_urls;
         }
-        updatePayload.ai_extraction_json = details;
+        const priorSharedAt = (existingInq as any)?.ai_extraction_json
+          ?.quotation_shared_at;
+        updatePayload.ai_extraction_json =
+          priorSharedAt && !details.quotation_shared_at
+            ? { ...details, quotation_shared_at: priorSharedAt }
+            : details;
       }
 
       const { data, error } = await this.supabase
@@ -2118,14 +2123,13 @@ export class InquiriesService implements OnModuleInit {
             itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
           }
 
-          // Professional Plain Text Email Body - all real inquiry/order data
-          const textContent = `Dear ${customerName},
+          const orderTextContent = `Dear ${customerName},
 
 Thank you for partnering with Enlight Metals Private Limited.
 
-Please find attached our official ${isOrderDoc ? 'Purchase Order Quotation & Audit' : 'Commercial Price Quotation'} (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
+Please find attached our official Purchase Order Quotation & Audit (Ref #: ${qRefNum}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
 
-${isOrderDoc ? 'PO Order' : 'Summary:'}
+PO Order
 - Reference Number: ${qRefNum}
 - Issue Date: ${todayDateStr}
 - Items & Specifications:
@@ -2142,6 +2146,26 @@ Warm regards,
 Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`;
+
+          const quotationTextContent = `Dear ${customerName},
+
+Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
+
+Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
+
+We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
+
+Thank you once again for considering us.
+
+Bank Details:
+- Bank Name: Kotak Mahindra Bank
+- IFSC Code: KKBK0001792
+- Account Number: 2500112233
+- Account Name: Enlight Metals Private Limited`;
+
+          const textContent = isOrderDoc
+            ? orderTextContent
+            : quotationTextContent;
 
           const salespersonName =
             details.salespersonName ||
@@ -2282,6 +2306,14 @@ MIDC Industrial Zone, Mumbai - 400001`;
             body: JSON.stringify({
               from: fromAddress,
               to: [customerEmail],
+              ...(isOrderDoc
+                ? {}
+                : {
+                    cc: [
+                      'dj@enlightmetals.com',
+                      'vedant@enlightmetals.com',
+                    ].filter((email) => email !== customerEmail),
+                  }),
               subject: docSubject,
               text: textContent,
               attachments,
@@ -2306,10 +2338,26 @@ MIDC Industrial Zone, Mumbai - 400001`;
       }
 
       // Update inquiry status to quoted if it is an inquiry record
+      let quotationSharedAt: string | null = null;
       if (!isDealRecord) {
+        const isOrderDocument = Boolean(payload?.details?.isOrder === true);
+        const inquiryUpdate: Record<string, unknown> = { status: 'quoted' };
+        if (!isOrderDocument) {
+          quotationSharedAt = new Date().toISOString();
+          const existingAi =
+            inquiry?.ai_extraction_json &&
+            typeof inquiry.ai_extraction_json === 'object' &&
+            !Array.isArray(inquiry.ai_extraction_json)
+              ? inquiry.ai_extraction_json
+              : {};
+          inquiryUpdate.ai_extraction_json = {
+            ...existingAi,
+            quotation_shared_at: quotationSharedAt,
+          };
+        }
         await this.supabase
           .from('inquiries')
-          .update({ status: 'quoted' })
+          .update(inquiryUpdate)
           .eq('id', id);
 
         // Automatically sync to pipeline / deals table with stage 'quoted'
@@ -2351,6 +2399,8 @@ MIDC Industrial Zone, Mumbai - 400001`;
           description: `Quotation sent to ${customerName}`,
           module: 'Inquiries',
           customer_name: customerName,
+          entity_id: quotationSharedAt ? id : undefined,
+          entity_type: quotationSharedAt ? 'inquiry' : undefined,
         });
       } catch (actErr: any) {
         this.logger.warn('Non-blocking activity log notice:', actErr?.message);
@@ -2361,6 +2411,7 @@ MIDC Industrial Zone, Mumbai - 400001`;
         email_sent: emailSent,
         message: emailNotice,
         inquiry_id: id,
+        quotation_shared_at: quotationSharedAt,
       };
     } catch (err) {
       this.logger.error('Error in sendQuotation:', err);
