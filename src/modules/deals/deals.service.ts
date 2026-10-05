@@ -277,13 +277,17 @@ export class DealsService {
           ) {
             const { data: poInqs } = await this.supabase
               .from('inquiries')
-              .select('id, sender_name, customer_name, raw_text, media_urls, po_number')
+              .select(
+                'id, sender_name, customer_name, raw_text, media_urls, po_number',
+              )
               .not('media_urls', 'is', null)
               .ilike('po_number', dPo)
               .limit(5);
 
             const matched = (poInqs || []).find((mi: any) => {
-              const miCust = (mi.customer_name || mi.sender_name || '').toLowerCase().trim();
+              const miCust = (mi.customer_name || mi.sender_name || '')
+                .toLowerCase()
+                .trim();
               if (dName && miCust) {
                 return dName.includes(miCust) || miCust.includes(dName);
               }
@@ -639,13 +643,14 @@ export class DealsService {
   async createOrder(data: any, salespersonPhone?: string) {
     try {
       const wonAt = data.won_at || new Date().toISOString();
+      const totalAmount = Math.max(0, Number(data.total_amount || 0));
       const insertPayload: any = {
         customer_name: data.customer_name,
         stage: 'won',
         inquiry_type: 'purchase_order',
         po_number: data.po_number || null,
         po_date: data.po_date || null,
-        total_amount: Number(data.total_amount || 0),
+        total_amount: totalAmount,
         won_at: wonAt,
         delivery_location: data.delivery_location || null,
         delivery_date: data.delivery_date || null,
@@ -668,16 +673,30 @@ export class DealsService {
       if (dealError) throw dealError;
 
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        const itemRows = data.items.map((item: any) => ({
-          deal_id: deal.id,
-          sku_text: item.sku_text,
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity || 0),
-          unit: item.unit || 'MT',
-          rate: Number(item.rate || 0),
-          amount: Number(item.amount || item.quantity * item.rate || 0),
-          created_at: new Date().toISOString(),
-        }));
+        const itemRows = data.items
+          .map((item: any) => {
+            const quantity = Math.max(0, Number(item.quantity || 0));
+            const rate = Math.max(0, Number(item.rate || 0));
+            const amount = Math.max(
+              0,
+              Number(
+                item.amount !== undefined && item.amount !== null
+                  ? item.amount
+                  : quantity * rate,
+              ),
+            );
+            return {
+              deal_id: deal.id,
+              sku_text: item.sku_text,
+              dimensions: item.dimensions || null,
+              quantity,
+              unit: item.unit || 'MT',
+              rate,
+              amount,
+              created_at: new Date().toISOString(),
+            };
+          })
+          .filter((row: any) => row.sku_text && row.quantity > 0);
 
         const { error: itemsError } = await this.supabase
           .from('deal_items')
