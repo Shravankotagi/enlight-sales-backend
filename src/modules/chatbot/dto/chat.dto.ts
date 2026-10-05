@@ -20,8 +20,8 @@ export class SendChatMessageDto {
   sessionId?: string;
 
   @ApiPropertyOptional({
-    description: 'Optional base64 image data with MIME type',
-    example: { base64: 'data:image/jpeg;base64,...', mimeType: 'image/jpeg' },
+    description: 'Optional base64 image or PDF attachment data with MIME type',
+    example: { base64: 'data:application/pdf;base64,...', mimeType: 'application/pdf' },
   })
   @IsOptional()
   image?: {
