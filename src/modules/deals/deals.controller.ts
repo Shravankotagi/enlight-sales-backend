@@ -24,6 +24,14 @@ export class DealsController {
     private readonly employeesService: EmployeesService,
   ) {}
 
+  private async rejectUnassignedCustomer(employee: any, customerName?: string) {
+    const role = String(employee?.role || '').toLowerCase();
+    if (role.includes('admin')) return;
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    await this.dealsService.assertAssignedCustomer(customerName, phones || []);
+  }
+
   @Get()
   async findAll(
     @CurrentEmployee() employee: any,
@@ -190,11 +198,13 @@ export class DealsController {
 
   @Post('order')
   async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
+    await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.createOrder(body, employee.phone);
   }
 
   @Post('process-po')
   async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
+    await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.processPo(body, employee.phone);
   }
 

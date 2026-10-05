@@ -11,6 +11,41 @@ import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ZohoService } from '../zoho/zoho.service';
 import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 
+function customerNameMatchesAssigned(
+  inputName: string,
+  assignedList: string[],
+): boolean {
+  const cleanInput = inputName.trim().toLowerCase();
+  if (!cleanInput) return false;
+  if (assignedList.some((c) => c.trim().toLowerCase() === cleanInput)) {
+    return true;
+  }
+
+  const stripSuffixes = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(
+        /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|llp|limited|pvt|ltd|inc|corp)\b/gi,
+        '',
+      )
+      .replace(/[^a-z0-9]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const strippedInput = stripSuffixes(cleanInput);
+  if (!strippedInput) return false;
+
+  return assignedList.some((c) => {
+    const strippedC = stripSuffixes(c);
+    return (
+      !!strippedC &&
+      (strippedC === strippedInput ||
+        strippedInput.startsWith(strippedC) ||
+        strippedC.startsWith(strippedInput))
+    );
+  });
+}
+
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
   fieldNames: string[] = ['salesperson_phone'],
@@ -637,6 +672,50 @@ export class DealsService {
     } catch (error) {
       this.logger.error('Error in getPipelineSummary:', error);
       throw error;
+    }
+  }
+
+  async assertAssignedCustomer(
+    customerName: string | undefined,
+    phones: string[] | null,
+  ) {
+    const name = String(customerName || '').trim();
+    if (!name || !phones || phones.length === 0) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const orFilter = buildMultiFieldOrFilter(phones, [
+      'assigned_salesperson_phone',
+    ]);
+    if (!orFilter) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const { data, error } = await this.supabase
+      .from('recurring_customers')
+      .select('customer_name')
+      .eq('is_active', true)
+      .or(orFilter);
+
+    if (error) {
+      this.logger.warn(`Assigned customer check failed: ${error.message}`);
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const assignedNames = (data || [])
+      .map((row: any) => String(row.customer_name || '').trim())
+      .filter(Boolean);
+
+    if (!customerNameMatchesAssigned(name, assignedNames)) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
     }
   }
 
