@@ -5,12 +5,10 @@ export default () => ({
     key: process.env.SUPABASE_KEY,
   },
   admin: {
-    superAdminEmail: process.env.SUPER_ADMIN_EMAIL || 'super.admin@example.com',
-    superAdminPassword: process.env.SUPER_ADMIN_PASSWORD || 'superadmin123',
+    superAdminEmail: process.env.SUPER_ADMIN_EMAIL || '',
+    superAdminPassword: process.env.SUPER_ADMIN_PASSWORD || '',
   },
   database: {
-    url:
-      process.env.DATABASE_URL ||
-      'postgresql://postgres.uihbeodokuhfpgfdlpky:[YOUR-PASSWORD]@aws-0-ca-central-1.pooler.supabase.com:6543/postgres',
+    url: process.env.DATABASE_URL || '',
   },
 });

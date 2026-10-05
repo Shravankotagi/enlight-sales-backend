@@ -83,12 +83,17 @@ async function bootstrap() {
     }),
   );
 
-  // Setup Swagger safely
-  try {
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api/docs', app, document);
-  } catch (err: any) {
-    console.warn('Swagger init notice:', err?.message || err);
+  // Setup Swagger safely (disabled in production unless explicitly enabled)
+  if (
+    process.env.NODE_ENV !== 'production' ||
+    process.env.ENABLE_SWAGGER === 'true'
+  ) {
+    try {
+      const document = SwaggerModule.createDocument(app, swaggerConfig);
+      SwaggerModule.setup('api/docs', app, document);
+    } catch (err: any) {
+      console.warn('Swagger init notice:', err?.message || err);
+    }
   }
 
   app.useGlobalFilters(new HttpExceptionFilter());

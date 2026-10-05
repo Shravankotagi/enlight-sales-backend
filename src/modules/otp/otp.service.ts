@@ -80,11 +80,34 @@ export class OtpService {
     }
   }
 
+  private otpRequestTimestamps = new Map<string, number[]>();
+
+  private checkOtpRateLimit(phone: string): void {
+    const now = Date.now();
+    const windowMs = 2 * 60 * 1000;
+    const maxAttempts = 3;
+
+    const timestamps = (this.otpRequestTimestamps.get(phone) || []).filter(
+      (ts) => now - ts < windowMs,
+    );
+
+    if (timestamps.length >= maxAttempts) {
+      throw new BadRequestException(
+        'Too many OTP requests. Please wait a minute before requesting another OTP.',
+      );
+    }
+
+    timestamps.push(now);
+    this.otpRequestTimestamps.set(phone, timestamps);
+  }
+
   // Request OTP
   async requestOtp(
     phone: string,
   ): Promise<{ message: string; dev_otp?: string }> {
     try {
+      this.checkOtpRateLimit(phone);
+
       // Check if employee exists
       const employee = await this.employeesService.findByPhone(phone);
       if (!employee) {
