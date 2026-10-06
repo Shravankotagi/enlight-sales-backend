@@ -415,26 +415,36 @@ export class ZohoService implements OnModuleInit {
 
     try {
       const since = await this.readLastCustomerSyncTimestamp();
+      const cleanSince = since ? since.replace(/\.\d{3}/, '') : null;
       const restoreOverwritten = !(await this.hasCompletedOwnershipRestore());
       const lookup = await this.loadActiveSalespersonLookup();
       const baseUrl = 'https://www.zohoapis.in/bigin/v1';
       const headers: Record<string, string> = await this.getAuthHeaders();
-      if (since) headers['If-Modified-Since'] = since;
+      if (cleanSince) headers['If-Modified-Since'] = cleanSince;
 
       this.logger.log(
-        `[ZohoSync] Customer sync starting${since ? ` since ${since}` : ' (full accounts pull)'}.`,
+        `[ZohoSync] Customer sync starting${cleanSince ? ` since ${cleanSince}` : ' (full accounts pull)'}.`,
       );
 
       let page = 1;
       let hasMore = true;
       while (hasMore) {
         const query = [`page=${page}`, 'per_page=100'];
-        if (since) query.push(`modified_since=${encodeURIComponent(since)}`);
+        if (cleanSince)
+          query.push(`modified_since=${encodeURIComponent(cleanSince)}`);
         const accRes = await firstValueFrom(
           this.httpService.get(`${baseUrl}/Accounts?${query.join('&')}`, {
             headers,
+            validateStatus: (status) =>
+              (status >= 200 && status < 300) || status === 304,
           }),
         );
+        if (accRes.status === 304) {
+          this.logger.log(
+            '[ZohoSync] Bigin accounts not modified since last sync.',
+          );
+          break;
+        }
         const accounts = accRes.data?.data || [];
         if (accounts.length === 0) break;
 
@@ -529,7 +539,7 @@ export class ZohoService implements OnModuleInit {
       results.companiesImported =
         results.recordsCreated + results.recordsUpdated;
       const advanceTimestamp = results.errors.length === 0;
-      const finishedAt = new Date().toISOString();
+      const finishedAt = new Date().toISOString().replace(/\.\d{3}/, '');
       const description = `Zoho Bigin Customers Sync: Created: ${results.recordsCreated} | Updated: ${results.recordsUpdated} | Skipped (Unassigned): ${results.recordsSkipped} | Errors: ${results.errors.length}`;
       await this.writeCustomerSyncLog({
         actionType: advanceTimestamp ? 'sync' : 'sync_failed',
@@ -1213,11 +1223,12 @@ export class ZohoService implements OnModuleInit {
         return;
       }
 
+      this.logger.log(
+        '[ZohoService] Running 2-hour recurring customer sync from Zoho Bigin...',
+      );
+      await this.pullInitialSyncFromBigin();
+
       if (process.env.ZOHO_READ_ONLY_MODE === 'true') {
-        this.logger.log(
-          '[ZohoService] Running 2-hour recurring customer sync from Zoho Bigin...',
-        );
-        await this.pullInitialSyncFromBigin();
         return;
       }
 
