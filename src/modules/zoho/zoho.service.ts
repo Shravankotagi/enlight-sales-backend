@@ -85,6 +85,7 @@ export class ZohoService implements OnModuleInit {
   private cachedLayout: { id: string; name: string; pipeline: string } | null =
     null;
   private rateLimitCooldownUntil = 0;
+  private isSyncRunning = false;
   private readonly accountCache = new Map<string, string>();
   private readonly contactCache = new Map<string, string>();
   private readonly failedDealAttempts = new Map<string, number>();
@@ -186,16 +187,13 @@ export class ZohoService implements OnModuleInit {
       return;
     }
     this.logger.log(
-      'Initializing Zoho Bigin Auto-Sync Engine (Interval: 5 minutes)...',
+      'Initializing Zoho Bigin Auto-Sync Engine (Interval: 30 seconds)...',
     );
-    this.syncInterval = setInterval(
-      () => {
-        this.autoSyncRoutine().catch((err) => {
-          this.logger.warn(`Auto-sync notice: ${err?.message}`);
-        });
-      },
-      5 * 60 * 1000,
-    );
+    this.syncInterval = setInterval(() => {
+      this.autoSyncRoutine().catch((err) => {
+        this.logger.warn(`Auto-sync notice: ${err?.message}`);
+      });
+    }, 30 * 1000);
   }
 
   private get supabase() {
@@ -1262,8 +1260,15 @@ export class ZohoService implements OnModuleInit {
     };
   }
 
-  // ── Recurring Auto-Sync Engine (Runs every 5 minutes) ──────────────────────
+  // ── Recurring Auto-Sync Engine (Runs every 30 seconds) ─────────────────────
   async autoSyncRoutine(): Promise<void> {
+    if (this.isSyncRunning) {
+      this.logger.debug(
+        '[ZohoService] Previous sync cycle still active. Skipping tick.',
+      );
+      return;
+    }
+    this.isSyncRunning = true;
     try {
       if (this.isSyncPaused()) {
         this.logger.log(
@@ -1277,14 +1282,14 @@ export class ZohoService implements OnModuleInit {
 
       if (process.env.ZOHO_READ_ONLY_MODE === 'true') {
         this.logger.log(
-          '[ZohoService] Running 5-minute recurring inbound sync from Zoho Bigin...',
+          '[ZohoService] Running 30-second recurring inbound sync from Zoho Bigin...',
         );
         await this.pullInitialSyncFromBigin();
         return;
       }
 
       this.logger.log(
-        '[ZohoService] Running 5-minute recurring auto-sync to Zoho Bigin...',
+        '[ZohoService] Running recurring auto-sync to Zoho Bigin...',
       );
       const { data: pendingDeals } = await this.supabase
         .from('deals')
@@ -1321,6 +1326,34 @@ export class ZohoService implements OnModuleInit {
         this.setRateLimited();
       }
       this.logger.warn(`Auto-sync routine notice: ${err?.message}`);
+    } finally {
+      this.isSyncRunning = false;
+    }
+  }
+
+  async pullInitialSyncForAdmin(): Promise<{
+    success: boolean;
+    usersImported: number;
+    companiesImported: number;
+    contactsImported: number;
+    dealsImported: number;
+    errors: string[];
+  }> {
+    if (this.isSyncRunning) {
+      return {
+        success: false,
+        usersImported: 0,
+        companiesImported: 0,
+        contactsImported: 0,
+        dealsImported: 0,
+        errors: ['A Bigin sync is already running.'],
+      };
+    }
+    this.isSyncRunning = true;
+    try {
+      return await this.pullInitialSyncFromBigin();
+    } finally {
+      this.isSyncRunning = false;
     }
   }
 

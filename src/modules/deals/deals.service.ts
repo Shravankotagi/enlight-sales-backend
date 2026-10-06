@@ -9,7 +9,10 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ZohoService } from '../zoho/zoho.service';
-import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+import {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+} from '../../utils/customerOwnerMap';
 
 function customerNameMatchesAssigned(
   inputName: string,
@@ -171,25 +174,31 @@ export class DealsService {
         }
       }
 
-      const [dealsRes, customersRes] = await Promise.all([
+      const [dealsRes, customersRes, employeesRes] = await Promise.all([
         query,
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone')
-          .eq('is_active', true),
+          .select('customer_name, assigned_salesperson_phone, updated_at')
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false }),
+        this.supabase.from('employees').select('name, phone'),
       ]);
 
       if (dealsRes.error) throw dealsRes.error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customersRes.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
+      const empPhoneMap = new Map<string, string>();
+      employeesRes.data?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
         }
       });
+
+      const customerOwnerMap = buildCustomerOwnerMap(
+        customersRes.data || [],
+        empPhoneMap,
+      );
 
       const lightweightDeals = (dealsRes.data || []).map((d: any) => {
         let computedTotal = Number(d.total_amount) || 0;

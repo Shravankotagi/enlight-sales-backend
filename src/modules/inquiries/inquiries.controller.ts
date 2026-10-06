@@ -142,7 +142,12 @@ export class InquiriesController {
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.sendQuotation(id, body, phones);
+    return this.inquiriesService.sendQuotation(
+      id,
+      body,
+      phones,
+      employee?.name,
+    );
   }
 
   @Post('parse-document')
