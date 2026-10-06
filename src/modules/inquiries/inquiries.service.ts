@@ -16,6 +16,8 @@ import { phoneInList } from '../employees/employees.service';
 import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 
+const QUOTATION_FROM_EMAIL = 'quotes@enlightmetals.com';
+
 function getCompanyLogoBuffer(): Buffer | null {
   const possiblePaths = [
     path.join(process.cwd(), 'assets', 'logo.png'),
@@ -69,14 +71,8 @@ import {
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
 import { detectHsnCode } from '../../utils/hsnDetector';
-export {
-  getAssignedPhoneFromCustomerMap,
-  buildCustomerOwnerMap,
-} from '../../utils/customerOwnerMap';
-import {
-  getAssignedPhoneFromCustomerMap,
-  buildCustomerOwnerMap,
-} from '../../utils/customerOwnerMap';
+export { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 
 function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
@@ -788,10 +784,7 @@ export class InquiriesService implements OnModuleInit {
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select(
-            'customer_name, assigned_salesperson_phone, is_active, updated_at',
-          )
-          .order('updated_at', { ascending: false }),
+          .select('customer_name, assigned_salesperson_phone, is_active'),
       ]);
 
       const deals = dealsRes.data || [];
@@ -821,7 +814,15 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
 
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
@@ -1076,10 +1077,7 @@ export class InquiriesService implements OnModuleInit {
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select(
-            'customer_name, assigned_salesperson_phone, is_active, updated_at',
-          )
-          .order('updated_at', { ascending: false }),
+          .select('customer_name, assigned_salesperson_phone, is_active'),
       ]);
 
       const deals = dealsRes.data || [];
@@ -1109,7 +1107,15 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
+        }
+      });
 
       const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
@@ -1370,29 +1376,23 @@ export class InquiriesService implements OnModuleInit {
         query = query.or(orFilter);
       }
 
-      const [{ data, error }, { data: customers }, { data: employees }] =
-        await Promise.all([
-          query,
-          this.supabase
-            .from('recurring_customers')
-            .select(
-              'customer_name, assigned_salesperson_phone, is_active, updated_at',
-            )
-            .order('updated_at', { ascending: false }),
-          this.supabase.from('employees').select('name, phone'),
-        ]);
+      const [{ data, error }, { data: customers }] = await Promise.all([
+        query,
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone, is_active'),
+      ]);
       if (error) throw error;
 
-      const empPhoneMap = new Map<string, string>();
-      employees?.forEach((e: any) => {
-        if (e.name && e.phone) {
-          const clean = String(e.phone).replace(/\D/g, '');
-          empPhoneMap.set(clean, e.name);
-          empPhoneMap.set(clean.slice(-10), e.name);
+      const customerOwnerMap = new Map<string, string>();
+      customers?.forEach((c: any) => {
+        if (c.customer_name && c.assigned_salesperson_phone) {
+          customerOwnerMap.set(
+            c.customer_name.trim().toLowerCase(),
+            c.assigned_salesperson_phone,
+          );
         }
       });
-
-      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       const genuineData = (data || []).filter(isGenuineInquiry);
 
@@ -2051,12 +2051,263 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  private isValidEmail(value: unknown): value is string {
+    return (
+      typeof value === 'string' &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+    );
+  }
+
+  private async resolveQuotationSenderEmail(employee: any): Promise<string> {
+    const directEmail = String(employee?.email || '')
+      .trim()
+      .toLowerCase();
+    if (this.isValidEmail(directEmail)) return directEmail;
+
+    const employeeId = String(
+      employee?.employee_id || employee?.id || '',
+    ).trim();
+    const phone = String(employee?.phone || '')
+      .replace(/\D/g, '')
+      .slice(-10);
+    const filters = [
+      employeeId ? `employee_id.eq.${employeeId}` : null,
+      employee?.id ? `id.eq.${employee.id}` : null,
+      phone ? `phone.ilike.%${phone}` : null,
+    ].filter(Boolean);
+
+    if (filters.length > 0) {
+      const { data } = await this.supabase
+        .from('employees')
+        .select('email')
+        .or(filters.join(','))
+        .limit(1)
+        .maybeSingle();
+      const employeeEmail = String(data?.email || '')
+        .trim()
+        .toLowerCase();
+      if (this.isValidEmail(employeeEmail)) return employeeEmail;
+    }
+
+    throw new BadRequestException(
+      'Your employee email is not configured. Ask an admin to add it before sending a quotation.',
+    );
+  }
+
+  private buildQuotationEmailContent(
+    inquiry: any,
+    payload: any,
+  ): {
+    subject: string;
+    text: string;
+    referenceNumber: string;
+    customerName: string;
+    customerEmail: string;
+    isOrderDoc: boolean;
+  } {
+    const details = payload?.details || {};
+    const aiJson = (inquiry?.ai_extraction_json as any) || {};
+    const customerEmail = String(
+      payload?.customer_email || inquiry?.customer_email || '',
+    )
+      .trim()
+      .toLowerCase();
+    const customerName =
+      details.customerName ||
+      details.companyName ||
+      payload?.customer_name ||
+      inquiry?.customer_name ||
+      'Valued Customer';
+    const isOrderDoc = Boolean(details?.isOrder === true);
+    const poRefNum =
+      details.poNumber ||
+      inquiry?.po_number ||
+      aiJson.po_number ||
+      `PO-${Math.floor(1000 + Math.random() * 9000)}`;
+    const referenceNumber =
+      payload?.quotation_reference ||
+      (isOrderDoc
+        ? poRefNum
+        : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+    const productType = details.productType || aiJson.productType || '';
+    const productForm = details.productForm || aiJson.productForm || '';
+    const thickness = details.thickness || aiJson.thickness || '';
+    const width = details.width || aiJson.width || '';
+    const length = details.length || aiJson.length || '';
+    const quantityTons = Number(
+      details.quantityTons || aiJson.quantityTons || aiJson.totalQuantity || 0,
+    );
+    const paymentTerms =
+      details.paymentTerms ||
+      aiJson.paymentTerms ||
+      inquiry?.payment_terms ||
+      '';
+    const deliveryLoc =
+      details.deliveryLocation ||
+      aiJson.deliveryLocation ||
+      inquiry?.delivery_location ||
+      '';
+    const baseAmt = Number(details.totalAmount || aiJson.totalAmount || 0);
+    const gstAmt = Math.round(baseAmt * 0.18);
+    const grandTotal = baseAmt + gstAmt;
+    const specText =
+      [
+        productType,
+        productForm ? `(${productForm})` : '',
+        thickness,
+        width ? `x ${width}` : '',
+        length ? `x ${length}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || 'Steel Material';
+    const lineItemsList =
+      Array.isArray(details.lineItems) && details.lineItems.length > 0
+        ? details.lineItems
+        : aiJson.line_items || [];
+    const itemsSummary =
+      Array.isArray(lineItemsList) && lineItemsList.length > 0
+        ? lineItemsList
+            .map(
+              (item: any, idx: number) =>
+                `  ${idx + 1}. ${item.sku_text || 'Material'}${
+                  item.dimensions ? ` (${item.dimensions})` : ''
+                } - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(
+                  item.rate || 0,
+                ).toLocaleString('en-IN')}/unit = Rs. ${Number(
+                  item.amount || 0,
+                ).toLocaleString('en-IN')}`,
+            )
+            .join('\n')
+        : `  - Specification: ${specText}\n${
+            quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''
+          }`;
+
+    const todayDateStr = new Date().toLocaleDateString('en-IN');
+    const text = isOrderDoc
+      ? `Dear ${customerName},
+
+Thank you for partnering with Enlight Metals Private Limited.
+
+Please find attached our official Purchase Order Quotation & Audit (Ref #: ${referenceNumber}) detailing the complete material specifications, unit rates, delivery location, and commercial terms.
+
+PO Order
+- Reference Number: ${referenceNumber}
+- Issue Date: ${todayDateStr}
+- Items & Specifications:
+${itemsSummary}
+- Subtotal (Base Amount): Rs. ${
+          baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'
+        }
+- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+- Grand Total (incl. GST): Rs. ${
+          grandTotal > 0
+            ? grandTotal.toLocaleString('en-IN')
+            : 'To be confirmed'
+        }
+${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}${
+          deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''
+        }
+The attached PDF document contains our official pricing structure and complete commercial terms.
+
+Warm regards,
+
+Sales Operations Team
+Enlight Metals Private Limited
+MIDC Industrial Zone, Mumbai - 400001`
+      : `Dear ${customerName},
+
+Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
+
+Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
+
+We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
+
+Thank you once again for considering us.`;
+
+    return {
+      subject: isOrderDoc
+        ? `Purchase Order ${referenceNumber} - ${customerName} | Enlight Metals`
+        : `Official Commercial Quotation ${referenceNumber} - ${customerName}`,
+      text,
+      referenceNumber,
+      customerName,
+      customerEmail,
+      isOrderDoc,
+    };
+  }
+
+  private buildQuotationCc(
+    senderEmail: string,
+    customerEmail: string,
+  ): string[] {
+    const normalizedCustomerEmail = customerEmail.trim().toLowerCase();
+    return Array.from(
+      new Set(
+        [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
+          .map((email) => email.trim().toLowerCase())
+          .filter(
+            (email) =>
+              this.isValidEmail(email) && email !== normalizedCustomerEmail,
+          ),
+      ),
+    );
+  }
+
+  async previewQuotation(
+    id: string,
+    payload: any,
+    employee: any,
+    accessiblePhones?: string[] | null,
+  ) {
+    const { data: inquiry } = await this.supabase
+      .from('inquiries')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    const record =
+      inquiry ||
+      (
+        await this.supabase
+          .from('deals')
+          .select('*, deal_items(*)')
+          .eq('id', id)
+          .maybeSingle()
+      ).data;
+
+    if (!record)
+      throw new NotFoundException('Inquiry or Order record not found');
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      const recordPhone = record.salesperson_phone || record.sender_phone;
+      if (recordPhone && !phoneInList(recordPhone, accessiblePhones)) {
+        throw new ForbiddenException(
+          'Access Denied: You do not have permission to send quotations for this record.',
+        );
+      }
+    }
+
+    const content = this.buildQuotationEmailContent(record, payload);
+    const employeeEmail = await this.resolveQuotationSenderEmail(employee);
+    return {
+      customer_email: content.customerEmail,
+      sender_email: QUOTATION_FROM_EMAIL,
+      employee_email: employeeEmail,
+      cc: this.buildQuotationCc(employeeEmail, content.customerEmail),
+      subject: content.subject,
+      body: content.text,
+      quotation_reference: content.referenceNumber,
+    };
+  }
+
   async sendQuotation(
     id: string,
     payload: any,
     accessiblePhones?: string[] | null,
-    senderName?: string,
+    employee?: any,
   ) {
+    const senderName =
+      typeof employee === 'string' ? employee : employee?.name || '';
     try {
       // 1. Fetch inquiry or deal record
       let inquiry: any = null;
@@ -2119,24 +2370,27 @@ export class InquiriesService implements OnModuleInit {
           'Please provide a valid customer email address to send the quotation.',
         );
       }
+      const employeeEmail = await this.resolveQuotationSenderEmail(employee);
+      const emailContent = this.buildQuotationEmailContent(inquiry, {
+        ...payload,
+        customer_email: customerEmail,
+      });
       const customerName =
-        payload.customer_name || inquiry.customer_name || 'Valued Customer';
+        emailContent.customerName ||
+        payload.customer_name ||
+        inquiry.customer_name ||
+        'Valued Customer';
       const details = payload.details || {};
       const resendApiKey = process.env.RESEND_API_KEY || '';
-      const fromEmail =
-        process.env.RESEND_FROM_EMAIL || 'quotes@enlightmetals.com';
+      const fromEmail = QUOTATION_FROM_EMAIL;
 
       let emailSent = false;
       let emailNotice = '';
 
       if (resendApiKey) {
         try {
-          const isOrderDoc = Boolean(details?.isOrder === true);
-          const poRefNum =
-            details.poNumber || `PO-${Math.floor(1000 + Math.random() * 9000)}`;
-          const qRefNum = isOrderDoc
-            ? poRefNum
-            : `QT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          const isOrderDoc = emailContent.isOrderDoc;
+          const qRefNum = emailContent.referenceNumber;
           const todayDateStr = new Date().toLocaleDateString('en-IN');
 
           // Pull actual inquiry data - payload.details first, then inquiry's ai_extraction_json
@@ -2233,9 +2487,9 @@ We kindly request you to review the quotation carefully. If you have any issues 
 
 Thank you once again for considering us.`;
 
-          const textContent = isOrderDoc
-            ? orderTextContent
-            : quotationTextContent;
+          const textContent =
+            String(payload.email_body || '').trim() ||
+            (isOrderDoc ? orderTextContent : quotationTextContent);
 
           const salespersonName =
             details.salespersonName ||
@@ -2252,7 +2506,6 @@ Thank you once again for considering us.`;
             ...details,
             salespersonName,
             salesperson_name: salespersonName,
-            senderName: !isOrderDoc ? senderName || '' : '',
             productType,
             productForm,
             thickness,
@@ -2359,14 +2612,10 @@ Thank you once again for considering us.`;
             });
           }
 
-          const fromAddress =
-            fromEmail === 'onboarding@resend.dev'
-              ? 'onboarding@resend.dev'
-              : `Enlight Metals <${fromEmail}>`;
+          const fromAddress = `Enlight Metals <${fromEmail}>`;
 
-          const docSubject = isOrderDoc
-            ? `Purchase Order ${qRefNum} - ${customerName} | Enlight Metals`
-            : `Official Commercial Quotation ${qRefNum} - ${customerName}`;
+          const docSubject =
+            String(payload.email_subject || '').trim() || emailContent.subject;
 
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -2377,14 +2626,7 @@ Thank you once again for considering us.`;
             body: JSON.stringify({
               from: fromAddress,
               to: [customerEmail],
-              ...(isOrderDoc
-                ? {}
-                : {
-                    cc: [
-                      'dj@enlightmetals.com',
-                      'vedant@enlightmetals.com',
-                    ].filter((email) => email !== customerEmail),
-                  }),
+              cc: this.buildQuotationCc(employeeEmail, customerEmail),
               subject: docSubject,
               text: textContent,
               attachments,
@@ -2995,6 +3237,13 @@ ${rawText}`;
             year: 'numeric',
           });
 
+        const salesperson =
+          details?.salespersonName ||
+          details?.salesperson_name ||
+          details?.salesperson ||
+          (details as any)?.activeSalespersonName ||
+          'Max';
+
         const compName = (
           details?.companyName ||
           customerName ||
@@ -3153,34 +3402,45 @@ ${rawText}`;
         // Space before Place of Supply
         currY += 10;
 
-        const placeY = currY;
         doc
           .fillColor('#1E293B')
           .font(fontBold)
           .fontSize(8.5)
-          .text('Place Of Supply: ', leftX, placeY, { continued: true })
+          .text('Place Of Supply: ', leftX, currY, { continued: true })
           .font(fontRegular)
           .fillColor('#475569')
           .text(placeOfSupply);
-        currY = placeY + 16;
+        currY += 16;
 
+        // Right Column: Order Date & Sales Person
         const rightBoxX = 395;
+        const metaRightY = currY - 34;
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Order Date :', rightBoxX, placeY, {
-            width: 75,
-            lineBreak: false,
-          });
+          .text('Order Date :', rightBoxX, metaRightY, { width: 75 });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(todayDate, rightBoxX + 75, placeY, {
+          .text(todayDate, rightBoxX + 75, metaRightY, {
             width: 85,
             align: 'right',
-            lineBreak: false,
+          });
+
+        doc
+          .fillColor('#475569')
+          .font(fontRegular)
+          .fontSize(8.5)
+          .text('Sales person :', rightBoxX, metaRightY + 16, { width: 75 });
+        doc
+          .fillColor('#0F172A')
+          .font(fontRegular)
+          .fontSize(8.5)
+          .text(salesperson, rightBoxX + 75, metaRightY + 16, {
+            width: 85,
+            align: 'right',
           });
 
         // 3. Line Items Table (Header bg: #525E6F)
@@ -3252,43 +3512,17 @@ ${rawText}`;
           ) || Number(details.totalAmount || 0);
         const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
 
-        const drawItemHeader = (headerY: number) => {
-          doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
-          doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
-          doc.text('#', leftX, headerY + 7.5, {
-            width: 26,
-            align: 'center',
-            lineBreak: false,
-          });
-          doc.text('Item & Description', 70, headerY + 7.5, {
-            width: 205,
-            lineBreak: false,
-          });
-          doc.text('HSN/SAC', 278, headerY + 7.5, {
-            width: 62,
-            align: 'center',
-            lineBreak: false,
-          });
-          doc.text('Qty', 342, headerY + 7.5, {
-            width: 68,
-            align: 'right',
-            lineBreak: false,
-          });
-          doc.text('Rate', 412, headerY + 7.5, {
-            width: 65,
-            align: 'right',
-            lineBreak: false,
-          });
-          doc.text('Amount', 479, headerY + 7.5, {
-            width: 76.28,
-            align: 'right',
-            lineBreak: false,
-          });
-          return headerY + 24;
-        };
-
         const tableY = currY + 14;
-        let rowY = drawItemHeader(tableY);
+        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
+        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
+        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
+        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
+        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
+        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
+        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
+        doc.text('Amount', 479, tableY + 7.5, { width: 76.28, align: 'right' });
+
+        let rowY = tableY + 24;
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8.5);
           const skuH = doc.heightOfString(item.sku_text, { width: 205 });
@@ -3299,11 +3533,6 @@ ${rawText}`;
                 .heightOfString(item.dimensions, { width: 205 }) + 3
             : 0;
           const rowH = Math.max(34, skuH + dimH + 18);
-
-          if (rowY + rowH > doc.page.maxY()) {
-            doc.addPage();
-            rowY = drawItemHeader(doc.page.margins.top);
-          }
 
           doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
 
@@ -3390,11 +3619,6 @@ ${rawText}`;
 
           rowY += rowH;
         });
-
-        if (rowY + 90 > doc.page.maxY()) {
-          doc.addPage();
-          rowY = doc.page.margins.top;
-        }
 
         // 4. Financial Totals & Summary Block
         const summaryY = rowY + 22;
@@ -3587,27 +3811,7 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Authorized Signature', leftX, 310, { lineBreak: false });
-
-        const signatureName = String(
-          details?.senderName ||
-            details?.salespersonName ||
-            details?.salesperson_name ||
-            '',
-        ).trim();
-        if (signatureName) {
-          doc
-            .fillColor('#0F172A')
-            .font(fontRegular)
-            .fontSize(10)
-            .text(signatureName, leftX, 328, { lineBreak: false });
-          doc
-            .moveTo(leftX, 372)
-            .lineTo(leftX + 160, 372)
-            .strokeColor('#0F172A')
-            .lineWidth(0.8)
-            .stroke();
-        }
+          .text('Authorized Signature', leftX, 310);
 
         doc.end();
       } catch (err) {

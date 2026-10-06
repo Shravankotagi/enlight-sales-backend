@@ -142,12 +142,18 @@ export class InquiriesController {
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.sendQuotation(
-      id,
-      body,
-      phones,
-      employee?.name,
-    );
+    return this.inquiriesService.sendQuotation(id, body, phones, employee);
+  }
+
+  @Post('quotation-preview/:id')
+  async previewQuotation(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.previewQuotation(id, body, employee, phones);
   }
 
   @Post('parse-document')
@@ -166,18 +172,8 @@ export class InquiriesController {
   }
 
   @Post('generate-pdf')
-  async generatePdf(
-    @CurrentEmployee() employee: any,
-    @Body() body: any,
-    @Res() res: any,
-  ) {
-    const senderName = String(
-      body?.senderName || employee?.name || body?.salespersonName || '',
-    ).trim();
-    const buffer = await this.inquiriesService.generateQuotationPdfBuffer({
-      ...body,
-      senderName,
-    });
+  async generatePdf(@Body() body: any, @Res() res: any) {
+    const buffer = await this.inquiriesService.generateQuotationPdfBuffer(body);
     const filename = `${body.piNumber || 'Quotation'}.pdf`;
     res.set({
       'Content-Type': 'application/pdf',
