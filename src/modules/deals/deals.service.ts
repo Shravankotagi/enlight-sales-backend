@@ -4,7 +4,9 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
@@ -81,6 +83,235 @@ export class DealsService {
     return this.supabaseService.getAdminClient();
   }
 
+  private cleanPoValue(value: unknown): string | null {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const cleaned = String(value).trim();
+    return cleaned || null;
+  }
+
+  private async allocateSystemPo(
+    reservationToken: string,
+    dealId?: string | null,
+  ): Promise<string> {
+    const context = {
+      reservationToken: reservationToken
+        ? `${reservationToken.slice(0, 24)}${reservationToken.length > 24 ? '…' : ''}`
+        : null,
+      dealId: dealId || null,
+    };
+    this.logger.log(
+      `[SystemPO] allocate_system_po started ${JSON.stringify(context)}`,
+    );
+
+    const { data, error } = await this.supabase.rpc('allocate_system_po', {
+      p_reservation_token: reservationToken,
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || !/^EM\/PO\/\d+$/.test(String(data))) {
+      this.logger.error(
+        `[SystemPO] allocate_system_po failed ${JSON.stringify({
+          ...context,
+          error: error
+            ? {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                hint: error.hint,
+              }
+            : null,
+          returnedData: data ?? null,
+        })}`,
+      );
+      throw new BadRequestException(
+        'System PO generation is unavailable. Please try again.',
+      );
+    }
+
+    this.logger.log(
+      `[SystemPO] allocate_system_po succeeded ${JSON.stringify({
+        ...context,
+        poNumber: String(data),
+      })}`,
+    );
+    return String(data);
+  }
+
+  private async checkPoAvailability(
+    poNumber: string,
+    reservationToken?: string | null,
+    dealId?: string | null,
+  ): Promise<{ available: boolean; reason?: string; po_number?: string }> {
+    const { data, error } = await this.supabase.rpc('check_po_availability', {
+      p_po_number: poNumber,
+      p_reservation_token: reservationToken || null,
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || typeof data !== 'object') {
+      this.logger.error(
+        `PO availability check failed: ${error?.message || 'invalid response'}`,
+      );
+      throw new BadRequestException(
+        'PO availability could not be checked. Please try again.',
+      );
+    }
+
+    return data as { available: boolean; reason?: string; po_number?: string };
+  }
+
+  async claimPoNumber(
+    poNumber: string,
+    reservationToken?: string | null,
+    dealId?: string | null,
+  ): Promise<void> {
+    const { data, error } = await this.supabase.rpc('claim_po_number', {
+      p_po_number: poNumber,
+      p_reservation_token: reservationToken || null,
+      p_deal_id: dealId || null,
+    });
+
+    if (error) {
+      this.logger.error(`PO claim failed: ${error.message}`);
+      throw new BadRequestException(
+        'PO number could not be reserved. Please try again.',
+      );
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.claimed) {
+      throw new ConflictException(
+        result?.reason ||
+          `PO number "${poNumber}" is already allocated. Please choose another number.`,
+      );
+    }
+  }
+
+  async resolvePoNumbers(input: {
+    requestedPo?: unknown;
+    generatedPo?: unknown;
+    referencePo?: unknown;
+    reservationToken?: string | null;
+    existingDeal?: any;
+    dealId?: string | null;
+  }): Promise<{
+    poNumber: string;
+    generatedPoNumber: string;
+    referencePoNumber: string | null;
+    poSource: string;
+    reservationToken: string;
+    poGeneratedAt: string;
+  }> {
+    const reservationToken =
+      this.cleanPoValue(input.reservationToken) || `order:${randomUUID()}`;
+    const existingDealPo = this.cleanPoValue(input.existingDeal?.po_number);
+    const existingGeneratedCandidate = this.cleanPoValue(
+      input.existingDeal?.generated_po_number,
+    );
+    const existingGenerated =
+      (existingGeneratedCandidate &&
+      /^EM\/PO\/\d+$/i.test(existingGeneratedCandidate)
+        ? existingGeneratedCandidate
+        : null) ||
+      (existingDealPo && /^EM\/PO\/\d+$/i.test(existingDealPo)
+        ? existingDealPo
+        : null);
+    let generatedPoNumber = existingGenerated;
+
+    const requestedGenerated = this.cleanPoValue(input.generatedPo);
+    if (!generatedPoNumber && requestedGenerated) {
+      const generatedAvailability = await this.checkPoAvailability(
+        requestedGenerated,
+        reservationToken,
+        input.dealId || input.existingDeal?.id || null,
+      );
+      if (
+        generatedAvailability.available &&
+        /^EM\/PO\/\d+$/.test(requestedGenerated)
+      ) {
+        generatedPoNumber = requestedGenerated;
+      }
+    }
+
+    if (!generatedPoNumber) {
+      generatedPoNumber = await this.allocateSystemPo(
+        reservationToken,
+        input.dealId || input.existingDeal?.id || null,
+      );
+    }
+
+    await this.claimPoNumber(
+      generatedPoNumber,
+      reservationToken,
+      input.dealId || input.existingDeal?.id || null,
+    );
+
+    const requestedPoRaw = this.cleanPoValue(input.requestedPo);
+    const legacyPo =
+      !existingGenerated &&
+      existingDealPo &&
+      !/^EM\/PO\/\d+$/i.test(existingDealPo)
+        ? existingDealPo
+        : null;
+    const requestedPo =
+      requestedPoRaw &&
+      (!legacyPo || requestedPoRaw.toLowerCase() !== legacyPo.toLowerCase())
+        ? requestedPoRaw
+        : null;
+    const poNumber = requestedPo || generatedPoNumber;
+    const referencePoNumber =
+      this.cleanPoValue(input.referencePo) || legacyPo || null;
+
+    const availability = await this.checkPoAvailability(
+      poNumber,
+      reservationToken,
+      input.dealId || input.existingDeal?.id || null,
+    );
+    if (!availability.available) {
+      throw new ConflictException(
+        availability.reason ||
+          `PO number "${poNumber}" is already allocated. Please choose another number.`,
+      );
+    }
+
+    return {
+      poNumber,
+      generatedPoNumber,
+      referencePoNumber,
+      poSource:
+        poNumber.toLowerCase() === generatedPoNumber.toLowerCase()
+          ? 'generated'
+          : 'user_edit',
+      reservationToken,
+      poGeneratedAt:
+        this.cleanPoValue(input.existingDeal?.po_generated_at) ||
+        new Date().toISOString(),
+    };
+  }
+
+  async allocatePoNumber(reservationToken?: string, dealId?: string) {
+    const token =
+      this.cleanPoValue(reservationToken) || `draft:${randomUUID()}`;
+    const poNumber = await this.allocateSystemPo(token, dealId);
+    return {
+      po_number: poNumber,
+      generated_po_number: poNumber,
+      po_reservation_token: token,
+    };
+  }
+
+  async getPoAvailability(
+    poNumber: string,
+    reservationToken?: string,
+    dealId?: string,
+  ) {
+    return this.checkPoAvailability(
+      poNumber,
+      reservationToken || null,
+      dealId || null,
+    );
+  }
+
   async findAll(filters?: {
     stage?: string;
     salesperson_phone?: string[] | string;
@@ -99,7 +330,7 @@ export class DealsService {
         .from('deals')
         .select(
           `
-          id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
+          id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
           inquiries (source_channel, inquiry_type)
         `,
@@ -373,11 +604,16 @@ export class DealsService {
     accessiblePhones?: string[] | null,
     poNumber?: string,
     poDate?: string,
+    referencePoNumber?: string,
+    generatedPoNumber?: string,
+    poReservationToken?: string,
   ) {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, salesperson_phone, stage, po_number')
+        .select(
+          'id, salesperson_phone, stage, po_number, reference_po_number, generated_po_number, po_generated_at, po_date',
+        )
         .eq('id', id)
         .single();
       if (fetchErr || !existingDeal) {
@@ -399,35 +635,39 @@ export class DealsService {
         .toLowerCase()
         .trim();
       const targetStage = (stage || '').toLowerCase().trim();
-      const effectivePoNumber = (
-        poNumber ||
-        existingDeal.po_number ||
-        ''
-      ).trim();
+      let poResolution: Awaited<ReturnType<DealsService['resolvePoNumbers']>> | null =
+        null;
 
-      // Rule: Gated stage transitions:
-      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' without a PO.
-      if (
-        (currentStage === 'new_inquiry' ||
-          currentStage === 'review' ||
-          !existingDeal.stage) &&
-        targetStage === 'won' &&
-        !effectivePoNumber
-      ) {
-        throw new BadRequestException(
-          `Cannot mark deal as WON from '${currentStage}' stage without a Purchase Order (PO). The deal must first be Quoted or have PO details.`,
+      if (targetStage === 'won') {
+        poResolution = await this.resolvePoNumbers({
+          requestedPo: poNumber,
+          generatedPo: generatedPoNumber,
+          referencePo:
+            referencePoNumber || existingDeal.reference_po_number,
+          reservationToken: poReservationToken,
+          existingDeal,
+          dealId: id,
+        });
+        await this.claimPoNumber(
+          poResolution.poNumber,
+          poResolution.reservationToken,
+          id,
         );
       }
 
-      const updateData: any = { stage };
-      if (stage === 'lost' && lostReason) {
+      const updateData: any = { stage: targetStage };
+      if (targetStage === 'lost' && lostReason) {
         updateData.lost_reason = lostReason;
       }
-      if (stage === 'won') {
+      if (targetStage === 'won' && poResolution) {
         updateData.won_at = new Date().toISOString();
-        if (poNumber && poNumber.trim()) {
-          updateData.po_number = poNumber.trim();
-        }
+        updateData.po_number = poResolution.poNumber;
+        updateData.reference_po_number = poResolution.referencePoNumber;
+        updateData.generated_po_number = poResolution.generatedPoNumber;
+        updateData.po_source = poResolution.poSource;
+        updateData.po_status = 'confirmed';
+        updateData.po_generated_at = poResolution.poGeneratedAt;
+        updateData.po_confirmed_at = updateData.won_at;
         if (poDate && poDate.trim()) {
           updateData.po_date = poDate.trim();
         }
@@ -444,7 +684,7 @@ export class DealsService {
 
       // Sync linked inquiry status in 1-to-1 manner
       if (data && data.inquiry_id) {
-        if (stage === 'lost') {
+        if (targetStage === 'lost') {
           await this.supabase
             .from('inquiries')
             .update({
@@ -453,32 +693,38 @@ export class DealsService {
               lost_reason: lostReason || null,
             })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'won') {
+        } else if (targetStage === 'won' && poResolution) {
           await this.supabase
             .from('inquiries')
             .update({
               status: 'confirmed',
               stage: 'won',
-              po_number: poNumber || data.po_number || null,
-              po_date: poDate || data.po_date || null,
+              po_number: poResolution.poNumber,
+              reference_po_number: poResolution.referencePoNumber,
+              generated_po_number: poResolution.generatedPoNumber,
+              po_source: poResolution.poSource,
+              po_status: 'confirmed',
+              po_generated_at: poResolution.poGeneratedAt,
+              po_confirmed_at: updateData.won_at,
+              po_date: poDate || existingDeal.po_date || null,
             })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'quoted') {
+        } else if (targetStage === 'quoted') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'quoted', stage: 'quoted' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'negotiation') {
+        } else if (targetStage === 'negotiation') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'negotiation', stage: 'negotiation' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'on_hold') {
+        } else if (targetStage === 'on_hold') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'on_hold', stage: 'on_hold' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'qualified') {
+        } else if (targetStage === 'qualified') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'confirmed', stage: 'qualified' })
@@ -488,7 +734,7 @@ export class DealsService {
 
       // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
       let effectiveTotal = Number(data?.total_amount) || 0;
-      if (stage === 'won') {
+      if (targetStage === 'won') {
         if (effectiveTotal <= 0) {
           const { data: items } = await this.supabase
             .from('deal_items')
@@ -515,7 +761,7 @@ export class DealsService {
       }
 
       // Automatically create or update payment tracking record when a deal is marked WON
-      if (stage === 'won' && data) {
+      if (targetStage === 'won' && data) {
         const wonDate = data.won_at ? new Date(data.won_at) : new Date();
         const dueDate = new Date(wonDate.getTime() + 30 * 24 * 60 * 60 * 1000);
         const dueDateStr = dueDate.toISOString().split('T')[0];
@@ -611,7 +857,7 @@ export class DealsService {
         this.activityLogsService.logActivity({
           salesperson_name: 'Sales Team',
           salesperson_phone: data?.salesperson_phone || null,
-          description: `Order for ${custName} updated to ${stage}`,
+          description: `Order for ${custName} updated to ${targetStage}`,
           module: 'Orders',
           customer_name: custName,
         });
@@ -723,11 +969,29 @@ export class DealsService {
     try {
       const wonAt = data.won_at || new Date().toISOString();
       const totalAmount = Math.max(0, Number(data.total_amount || 0));
+      const poResolution = await this.resolvePoNumbers({
+        requestedPo: data.po_number,
+        generatedPo: data.generated_po_number,
+        referencePo:
+          data.reference_po_number || data.customer_po_number,
+        reservationToken:
+          data.po_reservation_token || data.po_draft_token,
+      });
+      await this.claimPoNumber(
+        poResolution.poNumber,
+        poResolution.reservationToken,
+      );
       const insertPayload: any = {
         customer_name: data.customer_name,
         stage: 'won',
         inquiry_type: 'purchase_order',
-        po_number: data.po_number || null,
+        po_number: poResolution.poNumber,
+        reference_po_number: poResolution.referencePoNumber,
+        generated_po_number: poResolution.generatedPoNumber,
+        po_source: poResolution.poSource,
+        po_status: 'confirmed',
+        po_generated_at: poResolution.poGeneratedAt,
+        po_confirmed_at: wonAt,
         po_date: data.po_date || null,
         total_amount: totalAmount,
         won_at: wonAt,
@@ -750,6 +1014,12 @@ export class DealsService {
         .single();
 
       if (dealError) throw dealError;
+
+      await this.claimPoNumber(
+        poResolution.poNumber,
+        poResolution.reservationToken,
+        deal.id,
+      );
 
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
         const itemRows = data.items
@@ -873,10 +1143,15 @@ export class DealsService {
     try {
       const now = new Date();
       const nowIso = now.toISOString();
-      const todayStr = nowIso.slice(0, 10).replace(/-/g, '');
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      const poNumber = data.po_number?.trim() || `PO-${todayStr}-${randomNum}`;
       const poDate = data.po_date || nowIso.split('T')[0];
+      let poNumber = '';
+      let generatedPoNumber = '';
+      let referencePoNumber: string | null = null;
+      let poSource = 'generated';
+      let poGeneratedAt = nowIso;
+      const poReservationToken =
+        this.cleanPoValue(data.po_reservation_token || data.po_draft_token) ||
+        `order:${randomUUID()}`;
 
       const customerName = data.customer_name?.trim() || null;
       const customerPhone = data.customer_phone || null;
@@ -1086,6 +1361,24 @@ export class DealsService {
       if (!inquiryId && existingDeal?.inquiry_id) {
         inquiryId = existingDeal.inquiry_id;
       }
+
+      const poResolution = await this.resolvePoNumbers({
+        requestedPo: data.po_number,
+        generatedPo: data.generated_po_number,
+        referencePo:
+          data.reference_po_number || data.customer_po_number,
+        reservationToken: poReservationToken,
+        existingDeal,
+        dealId,
+      });
+      poNumber = poResolution.poNumber;
+      generatedPoNumber = poResolution.generatedPoNumber;
+      referencePoNumber = poResolution.referencePoNumber;
+      poSource = poResolution.poSource;
+      poGeneratedAt = poResolution.poGeneratedAt;
+
+      await this.claimPoNumber(poNumber, poReservationToken, dealId);
+
       const targetSourceChannel = data.source_channel || 'web_dashboard';
 
       if (inquiryId) {
@@ -1094,6 +1387,12 @@ export class DealsService {
           stage: 'won',
           won_at: nowIso,
           po_number: poNumber,
+          reference_po_number: referencePoNumber,
+          generated_po_number: generatedPoNumber,
+          po_source: poSource,
+          po_status: 'confirmed',
+          po_generated_at: poGeneratedAt,
+          po_confirmed_at: nowIso,
           po_date: poDate,
           total_amount: totalAmount,
         };
@@ -1117,6 +1416,14 @@ export class DealsService {
               salesperson_phone: phone,
               status: 'confirmed',
               inquiry_type: 'inquiry',
+              po_number: poNumber,
+              reference_po_number: referencePoNumber,
+              generated_po_number: generatedPoNumber,
+              po_source: poSource,
+              po_status: 'confirmed',
+              po_generated_at: poGeneratedAt,
+              po_confirmed_at: nowIso,
+              po_date: poDate,
               created_at: nowIso,
             })
             .select()
@@ -1143,6 +1450,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
             delivery_location:
@@ -1169,6 +1482,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
             delivery_location: deliveryLocation,
@@ -1185,6 +1504,8 @@ export class DealsService {
         savedDeal = created;
         dealId = savedDeal.id;
       }
+
+      await this.claimPoNumber(poNumber, poReservationToken, dealId);
 
       // 2. Replace / Update line items with exact PO values
       if (Array.isArray(lineItems) && lineItems.length > 0) {
@@ -1219,6 +1540,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
           })
