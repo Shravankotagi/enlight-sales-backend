@@ -2306,6 +2306,8 @@ Thank you once again for considering us.`;
     accessiblePhones?: string[] | null,
     employee?: any,
   ) {
+    const senderName =
+      typeof employee === 'string' ? employee : employee?.name || '';
     try {
       // 1. Fetch inquiry or deal record
       let inquiry: any = null;
