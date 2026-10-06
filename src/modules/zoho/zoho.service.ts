@@ -284,14 +284,16 @@ export class ZohoService implements OnModuleInit {
     const byName = new Map<string, string>();
     const { data, error } = await this.supabase
       .from('employees')
-      .select('name, phone, email, zoho_user_id, is_active');
+      .select('name, phone, email, role, is_active');
     if (error) throw new Error(error.message);
     for (const emp of data || []) {
       if (emp.is_active === false) continue;
+      const role = String(emp.role || '').toLowerCase();
+      if (role === 'admin') continue; // Admins are not field sales reps
       const phone = String(emp.phone || '').trim();
       if (!cleanPhone(phone)) continue;
+      if (phone.replace(/\D/g, '').endsWith('9975003940')) continue; // Skip Dhananjay Goel
       if (emp.email) byEmail.set(String(emp.email).toLowerCase().trim(), phone);
-      if (emp.zoho_user_id) byZohoId.set(String(emp.zoho_user_id), phone);
       const name = this.normalizePersonName(emp.name);
       if (name) byName.set(name, phone);
     }
@@ -454,7 +456,6 @@ export class ZohoService implements OnModuleInit {
             if (!companyName) continue;
             const phone = acc.Phone || '';
             const address = acc.Billing_City || acc.Billing_Street || '';
-            const industry = acc.Industry || '';
             const gst = String(acc.Description || '').match(
               /\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b/i,
             )?.[0];
@@ -482,11 +483,9 @@ export class ZohoService implements OnModuleInit {
                   customer_phone: phone || null,
                   customer_address: address || null,
                   customer_gst: gst || null,
-                  assigned_salesperson_phone: mappedPhone,
-                  industry: industry || 'Steel & Manufacturing',
+                  assigned_salesperson_phone: mappedPhone || 'unassigned',
                   is_active: true,
                   avg_order_frequency_days: 30,
-                  zoho_account_id: acc.id ? String(acc.id) : null,
                 });
               if (insertErr) throw new Error(insertErr.message);
               results.recordsCreated++;
@@ -501,18 +500,22 @@ export class ZohoService implements OnModuleInit {
               if (phone) updateData.customer_phone = phone;
               if (address) updateData.customer_address = address;
               if (gst) updateData.customer_gst = gst;
-              if (industry) updateData.industry = industry;
-              if (acc.id) updateData.zoho_account_id = String(acc.id);
 
-              if (!currentPhone && mappedPhone) {
+              const isUnassigned =
+                !currentPhone ||
+                currentPhone === 'unassigned' ||
+                currentPhone === 'null';
+
+              if (isUnassigned && mappedPhone) {
                 updateData.assigned_salesperson_phone = mappedPhone;
               } else if (isOverwrittenOwner && mappedPhone) {
                 updateData.assigned_salesperson_phone = mappedPhone;
               } else if (isOverwrittenOwner && !mappedPhone) {
-                updateData.assigned_salesperson_phone = null;
+                updateData.assigned_salesperson_phone = 'unassigned';
                 results.recordsSkipped++;
                 skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
-              } else if (!currentPhone && !mappedPhone) {
+              } else if (isUnassigned && !mappedPhone) {
+                updateData.assigned_salesperson_phone = 'unassigned';
                 results.recordsSkipped++;
                 skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
               }
