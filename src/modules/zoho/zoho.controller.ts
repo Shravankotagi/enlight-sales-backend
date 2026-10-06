@@ -37,7 +37,7 @@ export class ZohoController {
   @HttpCode(HttpStatus.OK)
   async pullInitialSync(@CurrentEmployee() employee: any) {
     this.assertAdmin(employee);
-    return this.zohoService.pullInitialSyncForAdmin();
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
   }
 
   // POST /zoho/sync-visit - Push visit to Bigin Contacts module (Image 2)

@@ -166,8 +166,18 @@ export class InquiriesController {
   }
 
   @Post('generate-pdf')
-  async generatePdf(@Body() body: any, @Res() res: any) {
-    const buffer = await this.inquiriesService.generateQuotationPdfBuffer(body);
+  async generatePdf(
+    @CurrentEmployee() employee: any,
+    @Body() body: any,
+    @Res() res: any,
+  ) {
+    const senderName = String(
+      body?.senderName || employee?.name || body?.salespersonName || '',
+    ).trim();
+    const buffer = await this.inquiriesService.generateQuotationPdfBuffer({
+      ...body,
+      senderName,
+    });
     const filename = `${body.piNumber || 'Quotation'}.pdf`;
     res.set({
       'Content-Type': 'application/pdf',

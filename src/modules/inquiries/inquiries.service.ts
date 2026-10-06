@@ -3080,31 +3080,34 @@ ${rawText}`;
         // Space before Place of Supply
         currY += 10;
 
+        const placeY = currY;
         doc
           .fillColor('#1E293B')
           .font(fontBold)
           .fontSize(8.5)
-          .text('Place Of Supply: ', leftX, currY, { continued: true })
+          .text('Place Of Supply: ', leftX, placeY, { continued: true })
           .font(fontRegular)
           .fillColor('#475569')
           .text(placeOfSupply);
-        currY += 16;
+        currY = placeY + 16;
 
-        // Right Column: Order Date & Sales Person
         const rightBoxX = 395;
-        const metaRightY = currY - 34;
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Order Date :', rightBoxX, metaRightY, { width: 75 });
+          .text('Order Date :', rightBoxX, placeY, {
+            width: 75,
+            lineBreak: false,
+          });
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(todayDate, rightBoxX + 75, metaRightY, {
+          .text(todayDate, rightBoxX + 75, placeY, {
             width: 85,
             align: 'right',
+            lineBreak: false,
           });
 
         // 3. Line Items Table (Header bg: #525E6F)
@@ -3511,7 +3514,7 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Authorized Signature', leftX, 310);
+          .text('Authorized Signature', leftX, 310, { lineBreak: false });
 
         const signatureName = String(
           details?.senderName ||
@@ -3524,7 +3527,7 @@ ${rawText}`;
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(10)
-            .text(signatureName, leftX, 328);
+            .text(signatureName, leftX, 328, { lineBreak: false });
           doc
             .moveTo(leftX, 372)
             .lineTo(leftX + 160, 372)
