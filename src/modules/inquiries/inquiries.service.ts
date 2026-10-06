@@ -747,7 +747,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, po_date, won_at, lost_reason',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason',
         )
         .order('created_at', { ascending: false });
 
@@ -1755,12 +1755,26 @@ export class InquiriesService implements OnModuleInit {
         grandTotal = rawBase + Math.round(rawBase * 0.18);
       }
 
-      const poNumber =
+      const sourcePoNumber =
         details.po_number ||
         details.poNumber ||
         aiJson.poNumber ||
         aiJson.po_number ||
         inquiry.po_number ||
+        undefined;
+      const requestedSystemPo =
+        details.system_po_number ||
+        details.internal_po_number ||
+        (details.edit_system_po || details._editing_system_po
+          ? sourcePoNumber
+          : null);
+      const referencePoNumber =
+        details.reference_po_number ||
+        details.referencePoNumber ||
+        aiJson.reference_po_number ||
+        aiJson.referencePoNumber ||
+        inquiry.reference_po_number ||
+        (!requestedSystemPo ? sourcePoNumber : null) ||
         undefined;
       const poDate =
         details.po_date ||
@@ -1773,14 +1787,45 @@ export class InquiriesService implements OnModuleInit {
       // Check if a deal already exists for this inquiry
       const { data: existingDeals } = await this.supabase
         .from('deals')
-        .select('id, stage')
+        .select(
+          'id, stage, po_number, reference_po_number, generated_po_number, po_generated_at, inquiry_id',
+        )
         .eq('inquiry_id', inquiryId)
         .limit(1);
 
       let dealId: string;
+      let poNumber: string | null = null;
+      let generatedPoNumber: string | null = null;
+      let poSource: string | null = null;
+      let poGeneratedAt: string | null = null;
+      let poReservationToken: string | null = null;
+      const targetStage = stage || existingDeals?.[0]?.stage || 'new_inquiry';
+
+      if (targetStage === 'won') {
+        const poResolution = await this.dealsService.resolvePoNumbers({
+          requestedPo: requestedSystemPo,
+          generatedPo: details.generated_po_number,
+          referencePo: referencePoNumber,
+          reservationToken:
+            details.po_reservation_token ||
+            `inquiry-stage:${inquiryId}:${Date.now()}`,
+          existingDeal: existingDeals?.[0] || null,
+          dealId: existingDeals?.[0]?.id || null,
+        });
+        poNumber = poResolution.poNumber;
+        generatedPoNumber = poResolution.generatedPoNumber;
+        poSource = poResolution.poSource;
+        poGeneratedAt = poResolution.poGeneratedAt;
+        poReservationToken = poResolution.reservationToken;
+        await this.dealsService.claimPoNumber(
+          poNumber,
+          poReservationToken,
+          existingDeals?.[0]?.id || null,
+        );
+      }
+
       if (existingDeals && existingDeals.length > 0) {
         dealId = existingDeals[0].id;
-        const targetStage = stage || existingDeals[0].stage || 'new_inquiry';
         const dealUpdatePayload: any = {
           stage: targetStage,
           customer_name: customerName,
@@ -1792,7 +1837,15 @@ export class InquiriesService implements OnModuleInit {
             grandTotal !== null && grandTotal > 0 ? grandTotal : null,
           status: 'auto_created',
         };
-        if (poNumber) dealUpdatePayload.po_number = poNumber;
+        if (poNumber) {
+          dealUpdatePayload.po_number = poNumber;
+          dealUpdatePayload.reference_po_number = referencePoNumber || null;
+          dealUpdatePayload.generated_po_number = generatedPoNumber;
+          dealUpdatePayload.po_source = poSource;
+          dealUpdatePayload.po_status = 'confirmed';
+          dealUpdatePayload.po_generated_at = poGeneratedAt;
+          dealUpdatePayload.po_confirmed_at = new Date().toISOString();
+        }
         if (poDate) dealUpdatePayload.po_date = poDate;
         if (targetStage === 'lost') {
           dealUpdatePayload.lost_reason =
@@ -1810,7 +1863,6 @@ export class InquiriesService implements OnModuleInit {
           .update(dealUpdatePayload)
           .eq('id', dealId);
       } else {
-        const targetStage = stage || 'new_inquiry';
         const dealInsertPayload: any = {
           id: inquiryId,
           inquiry_id: inquiryId,
@@ -1827,7 +1879,15 @@ export class InquiriesService implements OnModuleInit {
           overall_confidence: Number(inquiry.overall_confidence) || 0.95,
           created_at: new Date().toISOString(),
         };
-        if (poNumber) dealInsertPayload.po_number = poNumber;
+        if (poNumber) {
+          dealInsertPayload.po_number = poNumber;
+          dealInsertPayload.reference_po_number = referencePoNumber || null;
+          dealInsertPayload.generated_po_number = generatedPoNumber;
+          dealInsertPayload.po_source = poSource;
+          dealInsertPayload.po_status = 'confirmed';
+          dealInsertPayload.po_generated_at = poGeneratedAt;
+          dealInsertPayload.po_confirmed_at = new Date().toISOString();
+        }
         if (poDate) dealInsertPayload.po_date = poDate;
         if (targetStage === 'lost') {
           dealInsertPayload.lost_reason =
@@ -1851,6 +1911,13 @@ export class InquiriesService implements OnModuleInit {
           return null;
         }
         dealId = newDeal.id;
+        if (poNumber) {
+          await this.dealsService.claimPoNumber(
+            poNumber,
+            poReservationToken,
+            dealId,
+          );
+        }
       }
 
       // Sync pipeline fields directly back onto inquiries table
@@ -1865,6 +1932,12 @@ export class InquiriesService implements OnModuleInit {
           total_amount:
             grandTotal !== null && grandTotal > 0 ? grandTotal : null,
           po_number: poNumber || null,
+          reference_po_number: poNumber ? referencePoNumber || null : undefined,
+          generated_po_number: poNumber ? generatedPoNumber : undefined,
+          po_source: poNumber ? poSource : undefined,
+          po_status: poNumber ? 'confirmed' : undefined,
+          po_generated_at: poNumber ? poGeneratedAt : undefined,
+          po_confirmed_at: poNumber ? new Date().toISOString() : undefined,
           po_date: poDate || null,
         })
         .eq('id', inquiryId);

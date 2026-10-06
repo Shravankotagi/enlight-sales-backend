@@ -164,6 +164,27 @@ export class DealsController {
     );
   }
 
+  @Get('po/allocate')
+  async allocatePo(
+    @Query('reservation_token') reservationToken?: string,
+    @Query('deal_id') dealId?: string,
+  ) {
+    return this.dealsService.allocatePoNumber(reservationToken, dealId);
+  }
+
+  @Get('po/availability')
+  async checkPoAvailability(
+    @Query('po_number') poNumber?: string,
+    @Query('reservation_token') reservationToken?: string,
+    @Query('deal_id') dealId?: string,
+  ) {
+    return this.dealsService.getPoAvailability(
+      poNumber || '',
+      reservationToken,
+      dealId,
+    );
+  }
+
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     const { phones } =
@@ -182,6 +203,9 @@ export class DealsController {
       lost_reason?: string;
       po_number?: string;
       po_date?: string;
+      reference_po_number?: string;
+      generated_po_number?: string;
+      po_reservation_token?: string;
     },
   ) {
     const { phones } =
@@ -193,6 +217,9 @@ export class DealsController {
       phones,
       body.po_number,
       body.po_date,
+      body.reference_po_number,
+      body.generated_po_number,
+      body.po_reservation_token,
     );
   }
 
