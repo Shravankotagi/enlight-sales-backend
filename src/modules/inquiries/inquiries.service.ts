@@ -3513,7 +3513,12 @@ ${rawText}`;
           .fontSize(10)
           .text('Authorized Signature', leftX, 310);
 
-        const signatureName = String(details?.senderName || '').trim();
+        const signatureName = String(
+          details?.senderName ||
+            details?.salespersonName ||
+            details?.salesperson_name ||
+            '',
+        ).trim();
         if (signatureName) {
           doc
             .fillColor('#0F172A')
