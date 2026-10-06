@@ -59,10 +59,13 @@ export function buildCustomerOwnerMap(
     const cleanKey = c.customer_name.trim().toLowerCase();
     if (map.has(cleanKey)) continue;
 
+    const cleanPhone = String(c.assigned_salesperson_phone)
+      .replace(/\D/g, '')
+      .slice(-10);
+    // Admin Dhananjay Goel (9975003940) or unassigned should never override field reps
+    if (!cleanPhone || cleanPhone === '9975003940') continue;
+
     if (validEmployeePhones && validEmployeePhones.size > 0) {
-      const cleanPhone = String(c.assigned_salesperson_phone)
-        .replace(/\D/g, '')
-        .slice(-10);
       const isValid =
         validEmployeePhones instanceof Map
           ? validEmployeePhones.has(cleanPhone)
