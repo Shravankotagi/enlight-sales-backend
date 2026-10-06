@@ -116,7 +116,15 @@ as $$
 declare
   existing_po text;
   candidate_po text;
+  candidate_number bigint;
+  max_system_number bigint;
 begin
+  -- Serialize generated-number selection. User-edited PO claims still remain
+  -- protected by the registry unique constraint and the retry below.
+  perform pg_advisory_xact_lock(hashtext('enlight-system-po-allocator'));
+
+  -- Check after taking the lock so concurrent retries with the same token
+  -- remain idempotent and return the first reservation.
   if p_reservation_token is not null and btrim(p_reservation_token) <> '' then
     select po_number
       into existing_po
@@ -131,7 +139,30 @@ begin
   end if;
 
   loop
-    candidate_po := 'EM/PO/' || nextval('system_po_number_seq')::text;
+    -- Reuse the lowest free number. Existing abandoned reservations, claimed
+    -- system POs, user-edited values, and legacy seeded values all remain
+    -- occupied because they are present in the registry.
+    select coalesce(
+      max((substring(po_number from '^EM/PO/([0-9]+)$'))::bigint),
+      0
+    ) + 1
+      into max_system_number
+    from po_number_allocations
+    where po_number ~ '^EM/PO/[0-9]+$';
+
+    select candidate.n
+      into candidate_number
+    from generate_series(1, max_system_number) as candidate(n)
+    where not exists (
+      select 1
+      from po_number_allocations allocation
+      where allocation.normalized_po_number =
+        lower('EM/PO/' || candidate.n::text)
+    )
+    order by candidate.n
+    limit 1;
+
+    candidate_po := 'EM/PO/' || candidate_number::text;
 
     begin
       insert into po_number_allocations (
@@ -152,8 +183,9 @@ begin
       return candidate_po;
     exception
       when unique_violation then
-        -- A manually claimed EM/PO/N may have advanced more slowly than the
-        -- sequence. Move forward and retry without exposing a collision.
+        -- A concurrent manual claim may have occupied the candidate after
+        -- the availability lookup. Recompute and retry without exposing a
+        -- collision.
         null;
     end;
   end loop;
@@ -300,8 +332,62 @@ exception
 end;
 $$;
 
+create or replace function release_po_reservation(
+  p_reservation_token text,
+  p_po_number text default null,
+  p_deal_id uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  allocation_row po_number_allocations%rowtype;
+begin
+  if nullif(btrim(coalesce(p_reservation_token, '')), '') is null then
+    return jsonb_build_object(
+      'released', false,
+      'reason', 'Reservation token is required'
+    );
+  end if;
+
+  select *
+    into allocation_row
+  from po_number_allocations
+  where reservation_token = btrim(p_reservation_token)
+    and allocation_kind = 'system_generated'
+    and claimed_at is null
+    and (
+      p_po_number is null
+      or normalized_po_number = lower(btrim(p_po_number))
+    )
+    and (
+      (p_deal_id is null and deal_id is null)
+      or (p_deal_id is not null and deal_id = p_deal_id)
+    )
+  for update;
+
+  if allocation_row.id is null then
+    return jsonb_build_object(
+      'released', false,
+      'reason', 'No matching unclaimed PO reservation found'
+    );
+  end if;
+
+  delete from po_number_allocations
+  where id = allocation_row.id;
+
+  return jsonb_build_object(
+    'released', true,
+    'po_number', allocation_row.po_number
+  );
+end;
+$$;
+
 grant execute on function allocate_system_po(text, uuid) to service_role;
 grant execute on function check_po_availability(text, text, uuid) to service_role;
 grant execute on function claim_po_number(text, text, uuid) to service_role;
+grant execute on function release_po_reservation(text, text, uuid) to service_role;
 
 commit;
