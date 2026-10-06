@@ -190,6 +190,41 @@ export class DealsService {
     }
   }
 
+  async releasePoReservation(
+    reservationToken?: string | null,
+    poNumber?: string | null,
+    dealId?: string | null,
+  ): Promise<{ released: boolean; po_number?: string; reason?: string }> {
+    const token = this.cleanPoValue(reservationToken);
+    if (!token) {
+      return {
+        released: false,
+        reason: 'Reservation token is required',
+      };
+    }
+
+    const { data, error } = await this.supabase.rpc('release_po_reservation', {
+      p_reservation_token: token,
+      p_po_number: this.cleanPoValue(poNumber),
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || typeof data !== 'object') {
+      this.logger.error(
+        `PO reservation release failed: ${error?.message || 'invalid response'}`,
+      );
+      throw new BadRequestException(
+        'PO reservation could not be released. Please try again.',
+      );
+    }
+
+    return data as {
+      released: boolean;
+      po_number?: string;
+      reason?: string;
+    };
+  }
+
   async resolvePoNumbers(input: {
     requestedPo?: unknown;
     generatedPo?: unknown;
