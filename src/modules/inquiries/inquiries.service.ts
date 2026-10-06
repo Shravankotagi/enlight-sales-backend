@@ -69,8 +69,14 @@ import {
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
 import { detectHsnCode } from '../../utils/hsnDetector';
-export { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
-import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+export {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+} from '../../utils/customerOwnerMap';
+import {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+} from '../../utils/customerOwnerMap';
 
 function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
   if (!salespersonPhones) return null;
@@ -782,7 +788,10 @@ export class InquiriesService implements OnModuleInit {
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
+          .select(
+            'customer_name, assigned_salesperson_phone, is_active, updated_at',
+          )
+          .order('updated_at', { ascending: false }),
       ]);
 
       const deals = dealsRes.data || [];
@@ -812,15 +821,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
@@ -1075,7 +1076,10 @@ export class InquiriesService implements OnModuleInit {
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
+          .select(
+            'customer_name, assigned_salesperson_phone, is_active, updated_at',
+          )
+          .order('updated_at', { ascending: false }),
       ]);
 
       const deals = dealsRes.data || [];
@@ -1105,15 +1109,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
@@ -1374,23 +1370,29 @@ export class InquiriesService implements OnModuleInit {
         query = query.or(orFilter);
       }
 
-      const [{ data, error }, { data: customers }] = await Promise.all([
-        query,
-        this.supabase
-          .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
-      ]);
+      const [{ data, error }, { data: customers }, { data: employees }] =
+        await Promise.all([
+          query,
+          this.supabase
+            .from('recurring_customers')
+            .select(
+              'customer_name, assigned_salesperson_phone, is_active, updated_at',
+            )
+            .order('updated_at', { ascending: false }),
+          this.supabase.from('employees').select('name, phone'),
+        ]);
       if (error) throw error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
+      const empPhoneMap = new Map<string, string>();
+      employees?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
         }
       });
+
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       const genuineData = (data || []).filter(isGenuineInquiry);
 
@@ -1980,6 +1982,7 @@ export class InquiriesService implements OnModuleInit {
     id: string,
     payload: any,
     accessiblePhones?: string[] | null,
+    senderName?: string,
   ) {
     try {
       // 1. Fetch inquiry or deal record
@@ -2176,6 +2179,7 @@ Thank you once again for considering us.`;
             ...details,
             salespersonName,
             salesperson_name: salespersonName,
+            senderName: !isOrderDoc ? senderName || '' : '',
             productType,
             productForm,
             thickness,
@@ -2918,13 +2922,6 @@ ${rawText}`;
             year: 'numeric',
           });
 
-        const salesperson =
-          details?.salespersonName ||
-          details?.salesperson_name ||
-          details?.salesperson ||
-          (details as any)?.activeSalespersonName ||
-          'Max';
-
         const compName = (
           details?.companyName ||
           customerName ||
@@ -3106,20 +3103,6 @@ ${rawText}`;
           .font(fontRegular)
           .fontSize(8.5)
           .text(todayDate, rightBoxX + 75, metaRightY, {
-            width: 85,
-            align: 'right',
-          });
-
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text('Sales person :', rightBoxX, metaRightY + 16, { width: 75 });
-        doc
-          .fillColor('#0F172A')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text(salesperson, rightBoxX + 75, metaRightY + 16, {
             width: 85,
             align: 'right',
           });
@@ -3493,6 +3476,21 @@ ${rawText}`;
           .font(fontBold)
           .fontSize(10)
           .text('Authorized Signature', leftX, 310);
+
+        const signatureName = String(details?.senderName || '').trim();
+        if (signatureName) {
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(10)
+            .text(signatureName, leftX, 328);
+          doc
+            .moveTo(leftX, 372)
+            .lineTo(leftX + 160, 372)
+            .strokeColor('#0F172A')
+            .lineWidth(0.8)
+            .stroke();
+        }
 
         doc.end();
       } catch (err) {

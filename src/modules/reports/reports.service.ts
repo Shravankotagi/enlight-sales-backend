@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
-import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+import {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+} from '../../utils/customerOwnerMap';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -293,23 +296,18 @@ export class ReportsService {
           inquiriesQuery,
           this.supabase
             .from('recurring_customers')
-            .select('customer_name, assigned_salesperson_phone')
-            .eq('is_active', true),
+            .select('customer_name, assigned_salesperson_phone, updated_at')
+            .eq('is_active', true)
+            .order('updated_at', { ascending: false }),
         ],
       );
 
       if (dealsResult.error) throw dealsResult.error;
       if (inquiriesResult.error) throw inquiriesResult.error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customersResult.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(
+        customersResult.data || [],
+      );
 
       let deals = dealsResult.data || [];
       const rawInquiries = inquiriesResult.data || [];
@@ -565,15 +563,7 @@ export class ReportsService {
         );
       }
 
-      const customerOwnerMap = new Map<string, string>();
-      recurring.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(recurring);
 
       const salespersonReports = Array.from(phones).map((phone) => {
         const currentClean = String(phone).replace(/\D/g, '').slice(-10);
@@ -789,19 +779,12 @@ export class ReportsService {
         inquiriesQuery,
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone')
-          .eq('is_active', true),
+          .select('customer_name, assigned_salesperson_phone, updated_at')
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false }),
       ]);
 
-      const customerOwnerMap = new Map<string, string>();
-      customersRes.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customersRes.data || []);
 
       let safeDeals = dealsRes.data || [];
       let safeInqs = (inqsRes.data || []).filter(isProductInquiry);
@@ -978,21 +961,14 @@ export class ReportsService {
         dealsQuery,
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone')
-          .eq('is_active', true),
+          .select('customer_name, assigned_salesperson_phone, updated_at')
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false }),
       ]);
 
       if (dealsRes.error) throw dealsRes.error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customersRes.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customersRes.data || []);
 
       let wonDeals = dealsRes.data || [];
 
@@ -1176,23 +1152,18 @@ export class ReportsService {
           inquiriesQuery,
           this.supabase
             .from('recurring_customers')
-            .select('customer_name, assigned_salesperson_phone')
-            .eq('is_active', true),
+            .select('customer_name, assigned_salesperson_phone, updated_at')
+            .eq('is_active', true)
+            .order('updated_at', { ascending: false }),
         ],
       );
 
       if (dealsResult.error) throw dealsResult.error;
       if (inquiriesResult.error) throw inquiriesResult.error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customersResult.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(
+        customersResult.data || [],
+      );
 
       let deals = dealsResult.data || [];
       const rawInquiries = inquiriesResult.data || [];

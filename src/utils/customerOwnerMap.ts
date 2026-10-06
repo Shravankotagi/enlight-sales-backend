@@ -39,3 +39,38 @@ export function getAssignedPhoneFromCustomerMap(
   }
   return null;
 }
+
+export function buildCustomerOwnerMap(
+  customers?: any[],
+  validEmployeePhones?: Set<string> | Map<string, any>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!Array.isArray(customers) || customers.length === 0) return map;
+
+  // Sort descending by updated_at so newer rows take precedence over older rows
+  const sorted = [...customers].sort((a, b) => {
+    const tA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const tB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return tB - tA;
+  });
+
+  for (const c of sorted) {
+    if (!c.customer_name || !c.assigned_salesperson_phone) continue;
+    const cleanKey = c.customer_name.trim().toLowerCase();
+    if (map.has(cleanKey)) continue;
+
+    if (validEmployeePhones && validEmployeePhones.size > 0) {
+      const cleanPhone = String(c.assigned_salesperson_phone)
+        .replace(/\D/g, '')
+        .slice(-10);
+      const isValid =
+        validEmployeePhones instanceof Map
+          ? validEmployeePhones.has(cleanPhone)
+          : validEmployeePhones.has(cleanPhone);
+      if (!isValid) continue;
+    }
+
+    map.set(cleanKey, c.assigned_salesperson_phone);
+  }
+  return map;
+}
