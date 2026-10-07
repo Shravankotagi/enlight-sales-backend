@@ -463,7 +463,7 @@ export class ZohoService implements OnModuleInit {
             const mappedPhone = this.resolveBiginOwnerPhone(acc.Owner, lookup);
             const { data: existingCust, error: findErr } = await this.supabase
               .from('recurring_customers')
-              .select('id, assigned_salesperson_phone')
+              .select('id, assigned_salesperson_phone, notes')
               .ilike('customer_name', companyName)
               .limit(1);
             if (findErr) throw new Error(findErr.message);
@@ -475,6 +475,7 @@ export class ZohoService implements OnModuleInit {
                 .replace(/\D/g, '')
                 .endsWith('9975003940');
 
+            const noteContent = `Zoho Bigin Account Owner: ${ownerName}${acc.id ? ` | Zoho Account ID: ${acc.id}` : ''}`;
             if (!existingCust || existingCust.length === 0) {
               const { error: insertErr } = await this.supabase
                 .from('recurring_customers')
@@ -486,6 +487,7 @@ export class ZohoService implements OnModuleInit {
                   assigned_salesperson_phone: mappedPhone || 'unassigned',
                   is_active: true,
                   avg_order_frequency_days: 30,
+                  notes: noteContent,
                 });
               if (insertErr) throw new Error(insertErr.message);
               results.recordsCreated++;
@@ -500,6 +502,9 @@ export class ZohoService implements OnModuleInit {
               if (phone) updateData.customer_phone = phone;
               if (address) updateData.customer_address = address;
               if (gst) updateData.customer_gst = gst;
+              if (!existingCust[0]?.notes && acc.id) {
+                updateData.notes = noteContent;
+              }
 
               const isUnassigned =
                 !currentPhone ||

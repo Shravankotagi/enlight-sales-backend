@@ -182,7 +182,9 @@ export function convertLineItemToMt(item: LineItemInput): {
   const isRound =
     combinedText.includes('round bar') ||
     combinedText.includes('bright bar') ||
-    combinedText.includes('round');
+    (combinedText.includes('round') &&
+      !combinedText.includes('pipe') &&
+      !combinedText.includes('tube'));
   if (isRound) {
     const diaMatch = combinedText.match(
       /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)/,
@@ -206,24 +208,95 @@ export function convertLineItemToMt(item: LineItemInput): {
     }
   }
 
-  // 3c. MS Angles: Weight (KG) = (A + B - t) * t * 0.00785 * Length (m) * Nos -> MT = KG / 1000
+  // 3c. MS Flat Bar & GI Earthing Strip: Width(mm) * Thickness(mm) * 0.00785 * Length(m) * Qty / 1000
+  const isFlat =
+    combinedText.includes('flat bar') ||
+    combinedText.includes('ms flat') ||
+    combinedText.includes('earthing strip') ||
+    (combinedText.includes('flat') &&
+      !combinedText.includes('sheet') &&
+      !combinedText.includes('plate'));
+  if (isFlat) {
+    const flatMatch = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
+    );
+    if (flatMatch) {
+      const v1 = parseFloat(flatMatch[1]);
+      const v2 = parseFloat(flatMatch[2]);
+      const widthMm = Math.max(v1, v2);
+      const thkMm = Math.min(v1, v2);
+      const lenMatch = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
+      );
+      const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
+      const galvanizeFactor =
+        combinedText.includes('earthing') || combinedText.includes('gi')
+          ? 1.05
+          : 1.0;
+      const wtKg = widthMm * thkMm * 0.00785 * lenM * galvanizeFactor * qty;
+      return {
+        mt: Math.round((wtKg / 1000) * 1000) / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3d. MS Square Bar: Side(mm)^2 * 0.00785 * Length(m) * Qty / 1000
+  const isSquareBar =
+    combinedText.includes('square bar') ||
+    (combinedText.includes('square') && combinedText.includes('bar'));
+  if (isSquareBar) {
+    const sqMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:mm)?/);
+    if (sqMatch) {
+      const sideMm = parseFloat(sqMatch[1]);
+      const lenMatch = combinedText.match(
+        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
+      );
+      const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
+      const wtKg = sideMm * sideMm * 0.00785 * lenM * qty;
+      return {
+        mt: Math.round((wtKg / 1000) * 1000) / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
+    }
+  }
+
+  // 3e. MS Angles: Weight (KG) = (A + B - t) * t * 0.00785 * Length (m) * Nos -> MT = KG / 1000
   const isAngle =
     combinedText.includes('angle') || combinedText.includes('isa');
   if (isAngle) {
-    const angleMatch = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+    const angle3Match = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
     );
-    if (angleMatch) {
-      const a = parseFloat(angleMatch[1]);
-      const b = parseFloat(angleMatch[2]);
-      const t = parseFloat(angleMatch[3]);
+    const angle2Match = combinedText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
+    );
+    let a = 0;
+    let b = 0;
+    let t = 0;
+    if (angle3Match) {
+      a = parseFloat(angle3Match[1]);
+      b = parseFloat(angle3Match[2]);
+      t = parseFloat(angle3Match[3]);
+    } else if (angle2Match) {
+      const v1 = parseFloat(angle2Match[1]);
+      const v2 = parseFloat(angle2Match[2]);
+      a = Math.max(v1, v2);
+      b = a; // Equal angle: 50x5 -> 50x50x5
+      t = Math.min(v1, v2);
+    }
+    if (a > 0 && b > 0 && t > 0) {
       const lenMatch = combinedText.match(
         /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
       );
       const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
       const wtKg = (a + b - t) * t * 0.00785 * len * qty;
       return {
-        mt: wtKg / 1000,
+        mt: Math.round((wtKg / 1000) * 1000) / 1000,
         canConvert: true,
         originalQty: qty,
         originalUnit: rawUnit,
@@ -231,32 +304,73 @@ export function convertLineItemToMt(item: LineItemInput): {
     }
   }
 
-  // 3d. MS Channels / Beams / Joist / Square Pipe:
+  // 3f. MS Pipes & Tubes (Round Pipe, Square Pipe, Rectangular Tube):
   const isPipe =
     combinedText.includes('pipe') ||
     combinedText.includes('tube') ||
     combinedText.includes('shs') ||
-    combinedText.includes('rhs') ||
-    combinedText.includes('square');
+    combinedText.includes('rhs');
   if (isPipe) {
-    const pipeMatch = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*]\s*(\d+(?:\.\d+)?)/,
+    const isSquareOrRect =
+      combinedText.includes('square') ||
+      combinedText.includes('rect') ||
+      combinedText.includes('shs') ||
+      combinedText.includes('rhs');
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const crossSectionText = combinedText.replace(
+      /[xX*×]\s*\d+(?:\.\d+)?\s*(?:m|meter|mtr)\b/g,
+      '',
     );
-    if (pipeMatch) {
-      const od = parseFloat(pipeMatch[1]);
-      const t = parseFloat(pipeMatch[3]);
-      const len = 6;
-      const wtKg = (od - t) * t * 0.0157 * len * qty;
-      return {
-        mt: wtKg / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
+    const dim3Match = crossSectionText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
+    );
+    const dim2Match = crossSectionText.match(
+      /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
+    );
+
+    if (isSquareOrRect) {
+      if (dim3Match) {
+        const w = parseFloat(dim3Match[1]);
+        const h = parseFloat(dim3Match[2]);
+        const t = parseFloat(dim3Match[3]);
+        const wtPerMeter = (w + h - 2 * t) * t * 0.0157;
+        const wtKg = wtPerMeter * len * qty;
+        return {
+          mt: Math.round((wtKg / 1000) * 1000) / 1000,
+          canConvert: true,
+          originalQty: qty,
+          originalUnit: rawUnit,
+        };
+      } else if (dim2Match) {
+        const side = parseFloat(dim2Match[1]);
+        const t = parseFloat(dim2Match[2]);
+        const wtPerMeter = (side - t) * t * 0.0314;
+        const wtKg = wtPerMeter * len * qty;
+        return {
+          mt: Math.round((wtKg / 1000) * 1000) / 1000,
+          canConvert: true,
+          originalQty: qty,
+          originalUnit: rawUnit,
+        };
+      }
+    } else {
+      // Round pipe: (OD - t) * t * 0.02466 * len * qty / 1000
+      if (dim2Match) {
+        const od = Math.max(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
+        const t = Math.min(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
+        const wtKg = (od - t) * t * 0.02466 * len * qty;
+        return {
+          mt: Math.round((wtKg / 1000) * 1000) / 1000,
+          canConvert: true,
+          originalQty: qty,
+          originalUnit: rawUnit,
+        };
+      }
     }
   }
 
-  // 3e. Cable Trays (Perforated & Ladder): Girth(m) * Thk(mm) * 7.85 * Length(m) * Qty / 1000
+  // 3g. Cable Trays (Perforated & Ladder): Girth(m) * Thk(mm) * 7.85 * Length(m) * Qty / 1000
   if (combinedText.includes('cable tray')) {
     let widthMm = 300;
     const wMatch = combinedText.match(
@@ -278,8 +392,8 @@ export function convertLineItemToMt(item: LineItemInput): {
     const girthM = (widthMm + 2 * collarMm) / 1000;
     const lenM = 2.5; // standard 2.5m section
     const thkMm = 1.6; // standard 1.6mm sheet
-    const isPerforated = !combinedText.includes('ladder');
-    const factor = isPerforated ? 0.88 : 1.0;
+    const isLadder = combinedText.includes('ladder');
+    const factor = isLadder ? 0.55 : 0.88;
     const wtPerPieceKg = girthM * lenM * thkMm * 7.85 * factor;
     const totalMt = Math.round(((wtPerPieceKg * qty) / 1000) * 1000) / 1000;
     return {
@@ -290,7 +404,7 @@ export function convertLineItemToMt(item: LineItemInput): {
     };
   }
 
-  // 3f. Slotted Angle:
+  // 3h. Slotted Angle:
   if (combinedText.includes('slotted angle')) {
     const wtPerPieceKg = 3.5; // standard 40x40x2mm 2.5m piece
     return {
@@ -301,8 +415,23 @@ export function convertLineItemToMt(item: LineItemInput): {
     };
   }
 
-  // 3g. Standard Sheets / Plates / Coils / CR Coils / HR Coils / Chequered Plates:
-  // Weight (KG) = Length (m) * Width (m) * Thickness (mm) * 8 * Nos
+  // 3i. Solar Mounting Structure / Purlins:
+  if (
+    combinedText.includes('solar') ||
+    combinedText.includes('purlin') ||
+    combinedText.includes('mounting structure')
+  ) {
+    const wtPerPieceKg = 17.5; // Standard 3.2m C/Z purlin piece
+    return {
+      mt: Math.round(((wtPerPieceKg * qty) / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
+  }
+
+  // 3j. Standard Sheets / Plates / Coils / CR / HR / HRPO / GP / Galvalume / Chequered:
+  // Weight (KG) = Length (m) * Width (m) * Thickness (mm) * 7.85 * Nos
   let thickness: number | null = null;
   const thkMatch = combinedText.match(
     /(\d+(?:\.\d+)?)\s*(?:mm\s*thk|mm\s*thickness|\bthk\b)/,
@@ -347,7 +476,7 @@ export function convertLineItemToMt(item: LineItemInput): {
 
   if (!widthM || !lengthM) {
     const dim3Match = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
+      /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
     );
     if (dim3Match) {
       const n1 = parseFloat(dim3Match[1]);
@@ -361,7 +490,7 @@ export function convertLineItemToMt(item: LineItemInput): {
       lengthM = l > 20 ? l / 1000 : l;
     } else {
       const dim2Match = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
+        /(\d+(?:\.\d+)?)\s*(?:mm|m)?\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*(?:mm|m)?/,
       );
       if (dim2Match) {
         const d1 = parseFloat(dim2Match[1]);
@@ -394,8 +523,12 @@ export function convertLineItemToMt(item: LineItemInput): {
   }
 
   if (thickness && widthM && lengthM && isSheetOrPlate) {
-    const wtPerPieceKg = lengthM * widthM * thickness * 7.85;
-    const totalMt = (wtPerPieceKg * qty) / 1000;
+    const isChequered =
+      combinedText.includes('chequered') || combinedText.includes('checker');
+    const wtPerPieceKg = isChequered
+      ? lengthM * widthM * (thickness * 7.85 + 2.1)
+      : lengthM * widthM * thickness * 7.85;
+    const totalMt = Math.round(((wtPerPieceKg * qty) / 1000) * 1000) / 1000;
     return {
       mt: totalMt,
       canConvert: true,
@@ -571,21 +704,25 @@ export function calculateLineItem(item: LineItemInput): CalculatedLineItem {
     ) || 0;
   const unit = normalizeUnit(item.unit);
 
-  let amount = item.amount && Number(item.amount) > 0 ? Number(item.amount) : 0;
-  if (!amount && quantity > 0 && rate > 0) {
-    const conv = convertLineItemToMt(item);
-    if (
-      conv.canConvert &&
-      conv.mt !== null &&
-      conv.mt > 0 &&
-      (rate > 1000 || unit === 'MT')
-    ) {
-      amount = Math.round(conv.mt * rate);
-    } else if (unit === 'KG' && rate > 1000) {
-      amount = Math.round((quantity / 1000) * rate);
+  const conv = convertLineItemToMt(item);
+  let amount = 0;
+
+  if (
+    item.isManualAmount &&
+    item.amount !== undefined &&
+    Number(item.amount) > 0
+  ) {
+    amount = Number(item.amount);
+  } else if (quantity > 0 && rate > 0) {
+    if (conv.canConvert && conv.mt !== null && conv.mt > 0) {
+      amount = Math.round(conv.mt * rate * 100) / 100;
+    } else if (unit === 'KG') {
+      amount = Math.round((quantity / 1000) * rate * 100) / 100;
     } else {
-      amount = Math.round(quantity * rate);
+      amount = Math.round(quantity * rate * 100) / 100;
     }
+  } else if (item.amount && Number(item.amount) > 0) {
+    amount = Number(item.amount);
   }
 
   return {
