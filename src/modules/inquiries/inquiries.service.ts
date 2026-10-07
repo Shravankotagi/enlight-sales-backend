@@ -70,6 +70,7 @@ import {
   calculateTotalTonnageMt,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
+import { UnitConverterService } from '../pricing/unit-converter.service';
 import { detectHsnCode } from '../../utils/hsnDetector';
 export { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
 import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
@@ -648,6 +649,7 @@ export class InquiriesService implements OnModuleInit {
     private dealsService: DealsService,
     private activityLogsService: ActivityLogsService,
     private zohoService: ZohoService,
+    private unitConverterService?: UnitConverterService,
   ) {}
 
   private get supabase() {
@@ -2495,6 +2497,7 @@ Thank you once again for considering us.`;
             details.salespersonName ||
             details.salesperson_name ||
             details.salesperson ||
+            senderName ||
             (inquiry as any).salesperson_name ||
             (inquiry as any).assigned_salesperson_name ||
             (aiJson as any).salespersonName ||
@@ -2952,6 +2955,31 @@ Return ONLY the JSON.`;
               });
             }
 
+            if (
+              Array.isArray(parsed.line_items) &&
+              parsed.line_items.length > 0 &&
+              this.unitConverterService
+            ) {
+              try {
+                const batchConv =
+                  await this.unitConverterService.convertLineItems(
+                    parsed.line_items,
+                  );
+                parsed.line_items = parsed.line_items.map(
+                  (it: any, i: number) => ({
+                    ...it,
+                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
+                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                  }),
+                );
+                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+              } catch (e: any) {
+                this.logger.warn(
+                  `Document unit conversion fallback: ${e.message}`,
+                );
+              }
+            }
+
             return {
               success: true,
               data: parsed,
@@ -3071,6 +3099,29 @@ ${rawText}`;
           }
 
           if (parsed) {
+            if (
+              Array.isArray(parsed.line_items) &&
+              parsed.line_items.length > 0 &&
+              this.unitConverterService
+            ) {
+              try {
+                const batchConv =
+                  await this.unitConverterService.convertLineItems(
+                    parsed.line_items,
+                  );
+                parsed.line_items = parsed.line_items.map(
+                  (it: any, i: number) => ({
+                    ...it,
+                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
+                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                  }),
+                );
+                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+              } catch (e: any) {
+                this.logger.warn(`Text unit conversion fallback: ${e.message}`);
+              }
+            }
+
             return {
               success: true,
               data: parsed,
