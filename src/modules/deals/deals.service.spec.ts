@@ -14,6 +14,15 @@ describe('DealsService system PO resolution', () => {
       if (name === 'check_po_availability') {
         return { data: availability, error: null };
       }
+      if (name === 'release_po_reservation') {
+        return {
+          data: {
+            released: true,
+            po_number: 'EM/PO/42',
+          },
+          error: null,
+        };
+      }
       return { data: { claimed: true }, error: null };
     });
 
@@ -95,5 +104,99 @@ describe('DealsService system PO resolution', () => {
       referencePoNumber: 'PO-CUSTOMER-42',
       poSource: 'user_edit',
     });
+  });
+
+  it('releases only the matching unclaimed reservation context', async () => {
+    const { service, rpc } = createService();
+
+    await expect(
+      service.releasePoReservation(
+        'dashboard:reservation',
+        'EM/PO/42',
+        'deal-id',
+      ),
+    ).resolves.toEqual({
+      released: true,
+      po_number: 'EM/PO/42',
+    });
+
+    expect(rpc).toHaveBeenCalledWith('release_po_reservation', {
+      p_reservation_token: 'dashboard:reservation',
+      p_po_number: 'EM/PO/42',
+      p_deal_id: 'deal-id',
+    });
+  });
+
+  it('does not call the database when a reservation token is missing', async () => {
+    const { service, rpc } = createService();
+
+    await expect(service.releasePoReservation()).resolves.toEqual({
+      released: false,
+      reason: 'Reservation token is required',
+    });
+    expect(rpc).not.toHaveBeenCalledWith(
+      'release_po_reservation',
+      expect.anything(),
+    );
+  });
+
+  it('reuses a released allocation through the backend service', async () => {
+    const allocations = new Map<
+      string,
+      { po: string; claimed: boolean }
+    >();
+    const rpc = jest.fn(async (name: string, args: any) => {
+      if (name === 'allocate_system_po') {
+        let number = 1;
+        while (
+          [...allocations.values()].some(
+            allocation => allocation.po === `EM/PO/${number}`,
+          )
+        ) {
+          number += 1;
+        }
+        const po = `EM/PO/${number}`;
+        allocations.set(args.p_reservation_token, { po, claimed: false });
+        return { data: po, error: null };
+      }
+
+      if (name === 'release_po_reservation') {
+        const allocation = allocations.get(args.p_reservation_token);
+        if (!allocation || allocation.claimed) {
+          return {
+            data: {
+              released: false,
+              reason: 'No matching unclaimed PO reservation found',
+            },
+            error: null,
+          };
+        }
+        allocations.delete(args.p_reservation_token);
+        return {
+          data: { released: true, po_number: allocation.po },
+          error: null,
+        };
+      }
+
+      return { data: { available: true }, error: null };
+    });
+    const service = new DealsService(
+      { getAdminClient: () => ({ rpc }) } as any,
+      {} as any,
+      {} as any,
+    );
+
+    const first = await service.allocatePoNumber('cancelled-draft');
+    const release = await service.releasePoReservation(
+      first.po_reservation_token,
+      first.po_number,
+    );
+    const reused = await service.allocatePoNumber('replacement-draft');
+
+    expect(release).toEqual({
+      released: true,
+      po_number: first.po_number,
+    });
+    expect(reused.po_number).toBe(first.po_number);
   });
 });

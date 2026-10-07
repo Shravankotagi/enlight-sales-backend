@@ -185,6 +185,22 @@ export class DealsController {
     );
   }
 
+  @Post('po/release')
+  async releasePoReservation(
+    @Body()
+    body: {
+      reservation_token?: string;
+      po_number?: string;
+      deal_id?: string;
+    },
+  ) {
+    return this.dealsService.releasePoReservation(
+      body.reservation_token,
+      body.po_number,
+      body.deal_id,
+    );
+  }
+
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     const { phones } =
