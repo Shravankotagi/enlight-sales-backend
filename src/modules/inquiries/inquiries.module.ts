@@ -6,6 +6,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { DealsModule } from '../deals/deals.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { ZohoModule } from '../zoho/zoho.module';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { ZohoModule } from '../zoho/zoho.module';
     DealsModule,
     EmployeesModule,
     ZohoModule,
+    PricingModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'enlight-sales-jwt-secret-2026',
       signOptions: { expiresIn: '7d' },

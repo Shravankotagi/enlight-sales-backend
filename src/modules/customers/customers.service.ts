@@ -954,12 +954,20 @@ export class CustomersService {
 
         // Omit ghost seed records that have 0 activity for this salesperson/scope
         const isVirtual = String(customer.id || '').startsWith('virtual-');
+        const isAssigned =
+          Boolean(customer.assigned_salesperson_phone) &&
+          customer.assigned_salesperson_phone !== 'unassigned' &&
+          customer.assigned_salesperson_phone !== 'null';
+
         if (
           !isVirtual &&
+          !isAssigned &&
           totalActivityCount === 0 &&
           !customer.contact_person &&
           !customer.notes &&
-          !customer.customer_gst
+          !customer.customer_gst &&
+          !customer.customer_phone &&
+          !customer.customer_address
         ) {
           continue;
         }

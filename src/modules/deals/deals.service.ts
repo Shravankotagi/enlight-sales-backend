@@ -15,6 +15,7 @@ import {
   getAssignedPhoneFromCustomerMap,
   buildCustomerOwnerMap,
 } from '../../utils/customerOwnerMap';
+import { convertLineItemToMt } from '../pricing/pricing.engine';
 
 function customerNameMatchesAssigned(
   inputName: string,
@@ -396,7 +397,7 @@ export class DealsService {
           `
           id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
-          inquiries (source_channel, inquiry_type)
+          inquiries (source_channel, inquiry_type, raw_text, customer_phone)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -519,10 +520,16 @@ export class DealsService {
         const effectiveSalespersonPhone =
           assignedOwnerPhone || d.salesperson_phone || '';
 
+        const inqRawText = d.inquiries?.raw_text || d.raw_text || null;
+        const resolvedPhone =
+          d.customer_phone || d.inquiries?.customer_phone || null;
+
         return {
           ...d,
           salesperson_phone: effectiveSalespersonPhone,
           total_amount: computedTotal > 0 ? computedTotal : null,
+          raw_text: inqRawText,
+          customer_phone: resolvedPhone,
           has_media: hasMedia,
           media_urls: hasMedia ? ['attached_document'] : [],
         };
@@ -701,19 +708,16 @@ export class DealsService {
         }
       }
 
-      const currentStage = (existingDeal.stage || 'new_inquiry')
-        .toLowerCase()
-        .trim();
       const targetStage = (stage || '').toLowerCase().trim();
-      let poResolution: Awaited<ReturnType<DealsService['resolvePoNumbers']>> | null =
-        null;
+      let poResolution: Awaited<
+        ReturnType<DealsService['resolvePoNumbers']>
+      > | null = null;
 
       if (targetStage === 'won') {
         poResolution = await this.resolvePoNumbers({
           requestedPo: poNumber,
           generatedPo: generatedPoNumber,
-          referencePo:
-            referencePoNumber || existingDeal.reference_po_number,
+          referencePo: referencePoNumber || existingDeal.reference_po_number,
           reservationToken: poReservationToken,
           existingDeal,
           dealId: id,
@@ -1042,10 +1046,8 @@ export class DealsService {
       const poResolution = await this.resolvePoNumbers({
         requestedPo: data.po_number,
         generatedPo: data.generated_po_number,
-        referencePo:
-          data.reference_po_number || data.customer_po_number,
-        reservationToken:
-          data.po_reservation_token || data.po_draft_token,
+        referencePo: data.reference_po_number || data.customer_po_number,
+        reservationToken: data.po_reservation_token || data.po_draft_token,
       });
       await this.claimPoNumber(
         poResolution.poNumber,
@@ -1104,6 +1106,24 @@ export class DealsService {
                   : quantity * rate,
               ),
             );
+            const converted = convertLineItemToMt(item);
+            const weightMt =
+              item.weight_mt !== undefined &&
+              item.weight_mt !== null &&
+              !isNaN(Number(item.weight_mt))
+                ? Number(item.weight_mt)
+                : converted.canConvert && converted.mt !== null
+                  ? converted.mt
+                  : null;
+            const unitWeightKg =
+              item.unit_weight_kg !== undefined &&
+              item.unit_weight_kg !== null &&
+              !isNaN(Number(item.unit_weight_kg))
+                ? Number(item.unit_weight_kg)
+                : quantity > 0 && weightMt !== null
+                  ? Math.round(((weightMt * 1000) / quantity) * 100) / 100
+                  : null;
+
             return {
               deal_id: deal.id,
               sku_text: item.sku_text,
@@ -1112,6 +1132,8 @@ export class DealsService {
               unit: item.unit || 'MT',
               rate,
               amount,
+              weight_mt: weightMt,
+              unit_weight_kg: unitWeightKg,
               created_at: new Date().toISOString(),
             };
           })
@@ -1435,8 +1457,7 @@ export class DealsService {
       const poResolution = await this.resolvePoNumbers({
         requestedPo: data.po_number,
         generatedPo: data.generated_po_number,
-        referencePo:
-          data.reference_po_number || data.customer_po_number,
+        referencePo: data.reference_po_number || data.customer_po_number,
         reservationToken: poReservationToken,
         existingDeal,
         dealId,
@@ -1583,22 +1604,45 @@ export class DealsService {
       if (Array.isArray(lineItems) && lineItems.length > 0) {
         await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
 
-        const dealItemsToInsert = lineItems.map((item: any) => ({
-          deal_id: dealId,
-          sku_text:
-            item.sku_text || item.product_name || item.description || null,
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity) || null,
-          unit: item.unit || 'MT',
-          rate: Number(item.rate) || null,
-          amount:
-            Number(item.amount) ||
-            (Number(item.quantity) && Number(item.rate)
-              ? Number(item.quantity) * Number(item.rate)
-              : null),
-          confidence: Number(item.confidence) || 0.98,
-          created_at: nowIso,
-        }));
+        const dealItemsToInsert = lineItems.map((item: any) => {
+          const qty = Number(item.quantity) || null;
+          const converted = convertLineItemToMt(item);
+          const weightMt =
+            item.weight_mt !== undefined &&
+            item.weight_mt !== null &&
+            !isNaN(Number(item.weight_mt))
+              ? Number(item.weight_mt)
+              : converted.canConvert && converted.mt !== null
+                ? converted.mt
+                : null;
+          const unitWeightKg =
+            item.unit_weight_kg !== undefined &&
+            item.unit_weight_kg !== null &&
+            !isNaN(Number(item.unit_weight_kg))
+              ? Number(item.unit_weight_kg)
+              : qty && weightMt !== null
+                ? Math.round(((weightMt * 1000) / qty) * 100) / 100
+                : null;
+
+          return {
+            deal_id: dealId,
+            sku_text:
+              item.sku_text || item.product_name || item.description || null,
+            dimensions: item.dimensions || null,
+            quantity: qty,
+            unit: item.unit || 'MT',
+            rate: Number(item.rate) || null,
+            amount:
+              Number(item.amount) ||
+              (Number(item.quantity) && Number(item.rate)
+                ? Number(item.quantity) * Number(item.rate)
+                : null),
+            weight_mt: weightMt,
+            unit_weight_kg: unitWeightKg,
+            confidence: Number(item.confidence) || 0.98,
+            created_at: nowIso,
+          };
+        });
 
         await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }
