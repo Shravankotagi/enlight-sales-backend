@@ -72,6 +72,32 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+export function normalizeSourceProvenance(data: any) {
+  if (!data || typeof data !== 'object') return data;
+
+  const rawText =
+    typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+  const isGeneratedPlaceholder =
+    /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):/i.test(
+      rawText,
+    );
+
+  data.source_original_text =
+    rawText && !isGeneratedPlaceholder ? rawText : null;
+  data.source_extracted_text =
+    typeof data.source_extracted_text === 'string'
+      ? data.source_extracted_text
+      : null;
+  data.source_media_urls = Array.isArray(data.media_urls)
+    ? data.media_urls.filter(
+        (url: unknown) =>
+          typeof url === 'string' && url.trim() && url !== 'attached_document',
+      )
+    : [];
+
+  return data;
+}
+
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
@@ -634,7 +660,7 @@ export class DealsService {
         }
       }
 
-      return data;
+      return normalizeSourceProvenance(data);
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
@@ -1453,7 +1479,9 @@ export class DealsService {
             .from('inquiries')
             .insert({
               source_channel: targetSourceChannel,
-              raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
+              raw_text:
+                this.cleanPoValue(data.source_original_text) ||
+                `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
               media_urls: data.media_urls,
               sender_name: customerName,
               sender_phone: customerPhone,
