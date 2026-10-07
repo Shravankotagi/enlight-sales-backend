@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { DealsService } from './deals.service';
+import { DealsService, normalizeSourceProvenance } from './deals.service';
 
 describe('DealsService system PO resolution', () => {
   const createService = (
@@ -198,5 +198,31 @@ describe('DealsService system PO resolution', () => {
       po_number: first.po_number,
     });
     expect(reused.po_number).toBe(first.po_number);
+  });
+});
+
+describe('source provenance normalization', () => {
+  it('preserves real source text and renderable source media', () => {
+    const deal = normalizeSourceProvenance({
+      raw_text: 'Customer needs 10 MT HR coil at ₹50/MT.',
+      media_urls: ['data:application/pdf;base64,document'],
+    });
+
+    expect(deal.source_original_text).toBe(
+      'Customer needs 10 MT HR coil at ₹50/MT.',
+    );
+    expect(deal.source_media_urls).toEqual([
+      'data:application/pdf;base64,document',
+    ]);
+  });
+
+  it('does not expose generated document placeholders as original text', () => {
+    const deal = normalizeSourceProvenance({
+      raw_text: '[PO Document Attached: EM/PO/26] Customer - Original PO Document',
+      media_urls: ['attached_document'],
+    });
+
+    expect(deal.source_original_text).toBeNull();
+    expect(deal.source_media_urls).toEqual([]);
   });
 });
