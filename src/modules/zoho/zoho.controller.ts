@@ -40,6 +40,38 @@ export class ZohoController {
     return this.zohoService.pullInitialSyncForAdmin(employee?.name);
   }
 
+  // GET /zoho/pull-initial-sync - Browser/GET trigger
+  @Get('pull-initial-sync')
+  @HttpCode(HttpStatus.OK)
+  async pullInitialSyncGet(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // POST /zoho/sync - trigger manual auto-sync (Read-Only pull)
+  @Post('sync')
+  @HttpCode(HttpStatus.OK)
+  async triggerSync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // GET /zoho/sync - GET trigger
+  @Get('sync')
+  @HttpCode(HttpStatus.OK)
+  async triggerSyncGet(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // Aliases for /bigin-sync and /bigin-import within /zoho
+  @Get('bigin-sync')
+  @Post('bigin-sync')
+  @HttpCode(HttpStatus.OK)
+  async biginSyncAlias(@CurrentEmployee() employee: any) {
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
   // POST /zoho/sync-visit - Push visit to Bigin Contacts module (Image 2)
   @Post('sync-visit')
   @HttpCode(HttpStatus.OK)
@@ -57,14 +89,6 @@ export class ZohoController {
   ) {
     const contactId = await this.zohoService.syncVisitToBiginContact(visitData);
     return { success: !!contactId, contact_id: contactId };
-  }
-
-  // POST /zoho/sync - trigger manual auto-sync
-  @Post('sync')
-  @HttpCode(HttpStatus.OK)
-  async triggerSync() {
-    await this.zohoService.autoSyncRoutine();
-    return { success: true, message: 'Auto-sync triggered' };
   }
 
   // POST /zoho/wipe - wipe all Bigin data
