@@ -123,6 +123,13 @@ Standard Steel Formulas:
 CRITICAL RULES:
 - If unit is already MT, weight_mt = quantity.
 - If unit is KG, weight_mt = quantity / 1000.
+- If dimensions/diameter/thickness are omitted by customer, use Indian industry standard defaults:
+  * TMT Bar: 12mm dia, 12m length (~10.67 kg/piece)
+  * Steel Plate: 10mm thickness, 1.25m x 2.5m (~245.3 kg/piece)
+  * Steel Sheet: 1.6mm thickness, 1.25m x 2.5m (~39.25 kg/piece)
+  * Round Bar: 16mm dia, 6m length (~9.47 kg/piece)
+  * MS Angle: 50x50x5mm, 6m length (~22.37 kg/piece)
+  * MS Pipe: 50mm OD x 2.5mm thk, 6m length (~17.55 kg/piece)
 - Do NOT mistake Width (e.g. 300mm) for Thickness! Cable tray sheet thickness is typically 1.2mm - 2.0mm.
 - Return ONLY a JSON object with this exact structure (no markdown, no backticks):
 {

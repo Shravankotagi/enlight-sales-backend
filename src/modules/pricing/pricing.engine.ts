@@ -159,23 +159,20 @@ export function convertLineItemToMt(item: LineItemInput): {
   // 3a. MS TMT Bars / Rebars: Weight (KG) = (Diameter^2 / 162) * Length (m) * Nos -> MT = KG / 1000
   const isTmt = combinedText.includes('tmt') || combinedText.includes('rebar');
   if (isTmt) {
-    const diaMatch = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)/,
-    );
-    if (diaMatch) {
-      const dia = parseFloat(diaMatch[1]);
-      const lenMatch = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
-      );
-      const len = lenMatch ? parseFloat(lenMatch[1]) : 12;
-      const wtKg = ((dia * dia) / 162) * len * qty;
-      return {
-        mt: wtKg / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
-    }
+    const diaMatch =
+      combinedText.match(/(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)\b/) ||
+      combinedText.match(/\btmt\s*[-/]?\s*(\d{1,2})\b/) ||
+      combinedText.match(/\b(\d{1,2})\s*[-/]?\s*tmt\b/);
+    const dia = diaMatch ? parseFloat(diaMatch[1]) : 12; // Standard 12mm TMT fallback
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 12;
+    const wtKg = ((dia * dia) / 162) * len * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
   }
 
   // 3b. MS Round Bars: Weight (KG) = (pi / 4) * Diameter^2(cm) * Length(cm) * 7.85 / 1000 * Nos
@@ -187,25 +184,20 @@ export function convertLineItemToMt(item: LineItemInput): {
       !combinedText.includes('tube'));
   if (isRound) {
     const diaMatch = combinedText.match(
-      /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)/,
+      /(\d+(?:\.\d+)?)\s*(?:mm|dia|diameter)\b/,
     );
-    if (diaMatch) {
-      const dia = parseFloat(diaMatch[1]);
-      const lenMatch = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
-      );
-      const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
-      const diaCm = dia / 10;
-      const lenCm = len * 100;
-      const wtKg =
-        (Math.PI / 4) * (diaCm * diaCm) * lenCm * (7.85 / 1000) * qty;
-      return {
-        mt: wtKg / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
-    }
+    const dia = diaMatch ? parseFloat(diaMatch[1]) : 16; // Standard 16mm Round Bar fallback
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const diaCm = dia / 10;
+    const lenCm = len * 100;
+    const wtKg = (Math.PI / 4) * (diaCm * diaCm) * lenCm * (7.85 / 1000) * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
   }
 
   // 3c. MS Flat Bar & GI Earthing Strip: Width(mm) * Thickness(mm) * 0.00785 * Length(m) * Qty / 1000
@@ -220,27 +212,27 @@ export function convertLineItemToMt(item: LineItemInput): {
     const flatMatch = combinedText.match(
       /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
     );
+    let widthMm = 50;
+    let thkMm = 6;
     if (flatMatch) {
       const v1 = parseFloat(flatMatch[1]);
       const v2 = parseFloat(flatMatch[2]);
-      const widthMm = Math.max(v1, v2);
-      const thkMm = Math.min(v1, v2);
-      const lenMatch = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
-      );
-      const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
-      const galvanizeFactor =
-        combinedText.includes('earthing') || combinedText.includes('gi')
-          ? 1.05
-          : 1.0;
-      const wtKg = widthMm * thkMm * 0.00785 * lenM * galvanizeFactor * qty;
-      return {
-        mt: Math.round((wtKg / 1000) * 1000) / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
+      widthMm = Math.max(v1, v2);
+      thkMm = Math.min(v1, v2);
     }
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const galvanizeFactor =
+      combinedText.includes('earthing') || combinedText.includes('gi')
+        ? 1.05
+        : 1.0;
+    const wtKg = widthMm * thkMm * 0.00785 * lenM * galvanizeFactor * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
   }
 
   // 3d. MS Square Bar: Side(mm)^2 * 0.00785 * Length(m) * Qty / 1000
@@ -249,20 +241,16 @@ export function convertLineItemToMt(item: LineItemInput): {
     (combinedText.includes('square') && combinedText.includes('bar'));
   if (isSquareBar) {
     const sqMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:mm)?/);
-    if (sqMatch) {
-      const sideMm = parseFloat(sqMatch[1]);
-      const lenMatch = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
-      );
-      const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
-      const wtKg = sideMm * sideMm * 0.00785 * lenM * qty;
-      return {
-        mt: Math.round((wtKg / 1000) * 1000) / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
-    }
+    const sideMm = sqMatch ? parseFloat(sqMatch[1]) : 12; // Standard 12mm square bar fallback
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const lenM = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const wtKg = sideMm * sideMm * 0.00785 * lenM * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
   }
 
   // 3e. MS Angles: Weight (KG) = (A + B - t) * t * 0.00785 * Length (m) * Nos -> MT = KG / 1000
@@ -275,9 +263,9 @@ export function convertLineItemToMt(item: LineItemInput): {
     const angle2Match = combinedText.match(
       /(\d+(?:\.\d+)?)\s*(?:mm)?\s*[xX*×]\s*(\d+(?:\.\d+)?)/,
     );
-    let a = 0;
-    let b = 0;
-    let t = 0;
+    let a = 50;
+    let b = 50;
+    let t = 5;
     if (angle3Match) {
       a = parseFloat(angle3Match[1]);
       b = parseFloat(angle3Match[2]);
@@ -289,22 +277,78 @@ export function convertLineItemToMt(item: LineItemInput): {
       b = a; // Equal angle: 50x5 -> 50x50x5
       t = Math.min(v1, v2);
     }
-    if (a > 0 && b > 0 && t > 0) {
-      const lenMatch = combinedText.match(
-        /(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/,
-      );
-      const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
-      const wtKg = (a + b - t) * t * 0.00785 * len * qty;
-      return {
-        mt: Math.round((wtKg / 1000) * 1000) / 1000,
-        canConvert: true,
-        originalQty: qty,
-        originalUnit: rawUnit,
-      };
-    }
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const wtKg = (a + b - t) * t * 0.00785 * len * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
   }
 
-  // 3f. MS Pipes & Tubes (Round Pipe, Square Pipe, Rectangular Tube):
+  // 3f. MS Channels (ISMC):
+  const isChannel =
+    combinedText.includes('channel') || combinedText.includes('ismc');
+  if (isChannel) {
+    const sizeMatch =
+      combinedText.match(/(?:ismc|channel)\s*(\d{2,3})/i) ||
+      combinedText.match(/(\d{2,3})\s*(?:mm)?\s*channel/i);
+    const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 100;
+    const CHANNEL_WT: Record<number, number> = {
+      75: 7.14,
+      100: 9.56,
+      125: 13.1,
+      150: 16.8,
+      175: 19.6,
+      200: 22.3,
+      250: 30.4,
+    };
+    const wtPerMeter = CHANNEL_WT[size] || size * 0.0956;
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const wtKg = wtPerMeter * len * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
+  }
+
+  // 3g. MS Beams (ISMB / Joists):
+  const isBeam =
+    combinedText.includes('beam') ||
+    combinedText.includes('ismb') ||
+    combinedText.includes('joist');
+  if (isBeam) {
+    const sizeMatch =
+      combinedText.match(/(?:ismb|beam)\s*(\d{2,3})/i) ||
+      combinedText.match(/(\d{2,3})\s*(?:mm)?\s*beam/i);
+    const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 150;
+    const BEAM_WT: Record<number, number> = {
+      100: 11.5,
+      125: 13.3,
+      150: 15.0,
+      175: 19.3,
+      200: 25.4,
+      250: 37.3,
+      300: 44.2,
+    };
+    const wtPerMeter = BEAM_WT[size] || size * 0.1;
+    const lenMatch = combinedText.match(/(\d+(?:\.\d+)?)\s*(?:m|meter|mtr)\b/);
+    const len = lenMatch ? parseFloat(lenMatch[1]) : 6;
+    const wtKg = wtPerMeter * len * qty;
+    return {
+      mt: Math.round((wtKg / 1000) * 1000) / 1000,
+      canConvert: true,
+      originalQty: qty,
+      originalUnit: rawUnit,
+    };
+  }
+
+  // 3h. MS Pipes & Tubes (Round Pipe, Square Pipe, Rectangular Tube):
   const isPipe =
     combinedText.includes('pipe') ||
     combinedText.includes('tube') ||
@@ -353,13 +397,10 @@ export function convertLineItemToMt(item: LineItemInput): {
           originalQty: qty,
           originalUnit: rawUnit,
         };
-      }
-    } else {
-      // Round pipe: (OD - t) * t * 0.02466 * len * qty / 1000
-      if (dim2Match) {
-        const od = Math.max(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
-        const t = Math.min(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
-        const wtKg = (od - t) * t * 0.02466 * len * qty;
+      } else {
+        // Square/Rect tube fallback: 50x50x2.5mm, 6m
+        const wtPerMeter = (50 - 2.5) * 2.5 * 0.0314;
+        const wtKg = wtPerMeter * len * qty;
         return {
           mt: Math.round((wtKg / 1000) * 1000) / 1000,
           canConvert: true,
@@ -367,6 +408,21 @@ export function convertLineItemToMt(item: LineItemInput): {
           originalUnit: rawUnit,
         };
       }
+    } else {
+      // Round pipe: (OD - t) * t * 0.02466 * len * qty / 1000
+      let od = 50;
+      let t = 2.5;
+      if (dim2Match) {
+        od = Math.max(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
+        t = Math.min(parseFloat(dim2Match[1]), parseFloat(dim2Match[2]));
+      }
+      const wtKg = (od - t) * t * 0.02466 * len * qty;
+      return {
+        mt: Math.round((wtKg / 1000) * 1000) / 1000,
+        canConvert: true,
+        originalQty: qty,
+        originalUnit: rawUnit,
+      };
     }
   }
 
@@ -503,26 +559,31 @@ export function convertLineItemToMt(item: LineItemInput): {
     }
   }
 
-  // Fallback to standard sheet dimensions (1.25m x 2.5m = 1250mm x 2500mm) if thickness is known
-  // and length/width are omitted for sheet/plate items
+  // Fallback to standard sheet/plate dimensions (1.25m x 2.5m = 1250mm x 2500mm)
   const isSheetOrPlate =
     combinedText.includes('sheet') ||
     combinedText.includes('plate') ||
     combinedText.includes('chequered') ||
+    combinedText.includes('checker') ||
     combinedText.includes('cr ') ||
     combinedText.includes('hr ') ||
     combinedText.includes('hrpo') ||
     combinedText.includes('galvalume') ||
     combinedText.includes('gp ') ||
+    combinedText.includes('gi ') ||
     normUnit === 'Sheets' ||
     normUnit === 'Plates';
 
-  if (thickness && (!widthM || !lengthM) && isSheetOrPlate) {
-    widthM = 1.25;
-    lengthM = 2.5;
-  }
+  if (isSheetOrPlate) {
+    if (!thickness) {
+      const isPlate = combinedText.includes('plate') || normUnit === 'Plates';
+      thickness = isPlate ? 10 : 1.6; // 10mm nominal for plates, 1.6mm (16G) for sheets
+    }
+    if (!widthM || !lengthM) {
+      widthM = 1.25;
+      lengthM = 2.5;
+    }
 
-  if (thickness && widthM && lengthM && isSheetOrPlate) {
     const isChequered =
       combinedText.includes('chequered') || combinedText.includes('checker');
     const wtPerPieceKg = isChequered
