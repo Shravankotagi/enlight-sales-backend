@@ -300,6 +300,7 @@ export class KraService {
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
 
@@ -718,6 +719,7 @@ export class KraService {
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }

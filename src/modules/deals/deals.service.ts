@@ -14,6 +14,7 @@ import { ZohoService } from '../zoho/zoho.service';
 import {
   getAssignedPhoneFromCustomerMap,
   buildCustomerOwnerMap,
+  isValidSalespersonPhone,
 } from '../../utils/customerOwnerMap';
 import { convertLineItemToMt } from '../pricing/pricing.engine';
 
@@ -389,12 +390,8 @@ export class DealsService {
         }
       }
 
-      if (filters?.salesperson_phone) {
-        const orFilter = buildMultiFieldOrFilter(filters.salesperson_phone, [
-          'salesperson_phone',
-        ]);
-        if (orFilter) query = query.or(orFilter);
-      }
+      // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
+      // ensuring deals for assigned customers are never prematurely dropped at DB layer.
       if (filters?.from && filters?.to) {
         // Each date field is tested as a complete [from, to] pair - prevents
         // cross-column mismatches (e.g. created_at >= from AND won_at <= to).
@@ -491,8 +488,12 @@ export class DealsService {
           d.customer_name,
           customerOwnerMap,
         );
+        const validDirectPhone =
+          d.salesperson_phone && isValidSalespersonPhone(d.salesperson_phone)
+            ? d.salesperson_phone
+            : null;
         const effectiveSalespersonPhone =
-          assignedOwnerPhone || d.salesperson_phone || '';
+          validDirectPhone || assignedOwnerPhone || d.salesperson_phone || '';
 
         const inqRawText = d.inquiries?.raw_text || d.raw_text || null;
         const resolvedPhone =
@@ -501,6 +502,8 @@ export class DealsService {
         return {
           ...d,
           salesperson_phone: effectiveSalespersonPhone,
+          raw_salesperson_phone: d.salesperson_phone || null,
+          assigned_owner_phone: assignedOwnerPhone || null,
           total_amount: computedTotal > 0 ? computedTotal : null,
           raw_text: inqRawText,
           customer_phone: resolvedPhone,
@@ -519,10 +522,20 @@ export class DealsService {
             .filter(Boolean),
         );
         return lightweightDeals.filter((d: any) => {
-          const pClean = (d.salesperson_phone || '')
+          const directClean = (d.salesperson_phone || '')
             .replace(/\D/g, '')
             .slice(-10);
-          return allowedPhoneSet.has(pClean);
+          const rawDirectClean = (d.raw_salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const assignedClean = (d.assigned_owner_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return (
+            allowedPhoneSet.has(directClean) ||
+            allowedPhoneSet.has(rawDirectClean) ||
+            allowedPhoneSet.has(assignedClean)
+          );
         });
       }
 
