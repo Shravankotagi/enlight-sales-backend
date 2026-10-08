@@ -1,3 +1,8 @@
+import * as dns from 'dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import WebSocket from 'ws';
 if (typeof (globalThis as any).WebSocket === 'undefined') {
   (globalThis as any).WebSocket = WebSocket;
@@ -83,12 +88,17 @@ async function bootstrap() {
     }),
   );
 
-  // Setup Swagger safely
-  try {
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api/docs', app, document);
-  } catch (err: any) {
-    console.warn('Swagger init notice:', err?.message || err);
+  // Setup Swagger safely (disabled in production unless explicitly enabled)
+  if (
+    process.env.NODE_ENV !== 'production' ||
+    process.env.ENABLE_SWAGGER === 'true'
+  ) {
+    try {
+      const document = SwaggerModule.createDocument(app, swaggerConfig);
+      SwaggerModule.setup('api/docs', app, document);
+    } catch (err: any) {
+      console.warn('Swagger init notice:', err?.message || err);
+    }
   }
 
   app.useGlobalFilters(new HttpExceptionFilter());
@@ -96,5 +106,10 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
   console.log(`[Express Server] Running on port ${port}`);
+
+  if (typeof module !== 'undefined' && (module as any).hot) {
+    (module as any).hot.accept();
+    (module as any).hot.dispose(() => app.close());
+  }
 }
 bootstrap();

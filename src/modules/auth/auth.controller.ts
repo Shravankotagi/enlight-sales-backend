@@ -1,13 +1,12 @@
 import {
-  Body,
   Controller,
   Get,
   Post,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { SignInDto, SignUpDto } from './dto/auth.dto';
 import { SupabaseGuard } from '../../common/guards/supabase.guard';
 import {
   ApiTags,
@@ -22,31 +21,19 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('signup')
-  @ApiOperation({ summary: 'Register a new user' })
-  @ApiResponse({
-    status: 201,
-    description: 'User successfully registered',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request',
-  })
-  async signUp(@Body() signUpDto: SignUpDto) {
-    return this.authService.signUp(signUpDto.email, signUpDto.password);
+  @ApiOperation({ summary: 'Register a new user (Disabled)' })
+  async signUp() {
+    throw new ForbiddenException(
+      'Public email registration is disabled. Please log in using WhatsApp OTP authentication.',
+    );
   }
 
   @Post('signin')
-  @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({
-    status: 200,
-    description: 'User successfully logged in',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized',
-  })
-  async signIn(@Body() signInDto: SignInDto) {
-    return this.authService.signIn(signInDto.email, signInDto.password);
+  @ApiOperation({ summary: 'Login user (Disabled)' })
+  async signIn() {
+    throw new ForbiddenException(
+      'Email password login is disabled. Please log in using WhatsApp OTP authentication.',
+    );
   }
 
   @Post('signout')

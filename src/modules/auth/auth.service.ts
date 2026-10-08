@@ -89,8 +89,10 @@ export class AuthService {
     }
   }
 
-  async signOut(token: string) {
-    console.log('user token:', token);
+  async signOut(token?: string) {
+    if (token) {
+      this.logger.debug('User session termination requested');
+    }
     const { error } = await this.supabaseService.getClient().auth.signOut();
 
     if (error) {

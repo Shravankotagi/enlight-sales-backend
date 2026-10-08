@@ -136,14 +136,16 @@ export class KraService {
   }
 
   private resolveComplaintAttachmentUrl(fileUrl?: string | null) {
-    if (!fileUrl || fileUrl.startsWith('data:') || /^https?:\/\//i.test(fileUrl)) {
+    if (
+      !fileUrl ||
+      fileUrl.startsWith('data:') ||
+      /^https?:\/\//i.test(fileUrl)
+    ) {
       return fileUrl || null;
     }
     return this.supabase.storage
       .from('complaint-evidence')
-      .getPublicUrl(fileUrl)
-      .data
-      .publicUrl;
+      .getPublicUrl(fileUrl).data.publicUrl;
   }
 
   private getMonthRange(month?: number, year?: number) {
@@ -298,6 +300,7 @@ export class KraService {
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
 
@@ -716,6 +719,7 @@ export class KraService {
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }

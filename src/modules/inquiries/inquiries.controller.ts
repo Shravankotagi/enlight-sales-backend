@@ -142,7 +142,18 @@ export class InquiriesController {
   ) {
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.sendQuotation(id, body, phones);
+    return this.inquiriesService.sendQuotation(id, body, phones, employee);
+  }
+
+  @Post('quotation-preview/:id')
+  async previewQuotation(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    return this.inquiriesService.previewQuotation(id, body, employee, phones);
   }
 
   @Post('parse-document')

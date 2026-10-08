@@ -47,17 +47,16 @@ export class EmployeesService {
       if (error) throw error;
 
       const allEmployees = data || [];
+
+      // Admin callers always receive the complete employee directory across all roles
+      if (!currentEmployee || currentEmployee.role === 'admin') {
+        return allEmployees;
+      }
+
       const isPersonalMode =
         mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
-      let effectiveEmp = currentEmployee;
-      if (currentEmployee?.role === 'admin' && requestedPhoneOverride) {
-        const normOverride = normalizePhone(requestedPhoneOverride);
-        const matched = allEmployees.find(
-          (e: any) => normalizePhone(e.phone) === normOverride,
-        );
-        if (matched) effectiveEmp = matched;
-      }
+      const effectiveEmp = currentEmployee;
 
       if (isPersonalMode && effectiveEmp) {
         const selfPhone = normalizePhone(effectiveEmp.phone);
@@ -66,11 +65,6 @@ export class EmployeesService {
             emp.id === effectiveEmp.id ||
             normalizePhone(emp.phone) === selfPhone,
         );
-      }
-
-      // If no current employee or admin without override, return all
-      if (!effectiveEmp || effectiveEmp.role === 'admin') {
-        return allEmployees;
       }
 
       // If Sales Manager: return self + salespersons assigned under this manager

@@ -85,6 +85,7 @@ export class ZohoService implements OnModuleInit {
   private cachedLayout: { id: string; name: string; pipeline: string } | null =
     null;
   private rateLimitCooldownUntil = 0;
+  private isSyncRunning = false;
   private readonly accountCache = new Map<string, string>();
   private readonly contactCache = new Map<string, string>();
   private readonly failedDealAttempts = new Map<string, number>();
@@ -98,10 +99,18 @@ export class ZohoService implements OnModuleInit {
   }
 
   public isSyncPaused(): boolean {
+    return process.env.ZOHO_SYNC_PAUSED === 'true';
+  }
+
+  public isAutoSyncEnabled(): boolean {
     return (
-      process.env.ZOHO_SYNC_PAUSED === 'true' ||
-      process.env.ZOHO_AUTO_SYNC_ENABLED === 'false'
+      process.env.ZOHO_SYNC_PAUSED !== 'true' &&
+      process.env.ZOHO_AUTO_SYNC_ENABLED !== 'false'
     );
+  }
+
+  public isReadOnlyMode(): boolean {
+    return process.env.ZOHO_READ_ONLY_MODE === 'true';
   }
 
   private isRateLimited(): boolean {
@@ -173,9 +182,9 @@ export class ZohoService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    if (this.isSyncPaused()) {
+    if (!this.isAutoSyncEnabled()) {
       this.logger.log(
-        'Zoho Bigin Auto-Sync is PAUSED by configuration (ZOHO_SYNC_PAUSED=true).',
+        'Zoho Bigin Auto-Sync is PAUSED by configuration (ZOHO_SYNC_PAUSED=true or ZOHO_AUTO_SYNC_ENABLED=false).',
       );
       return;
     }
@@ -186,7 +195,7 @@ export class ZohoService implements OnModuleInit {
       return;
     }
     this.logger.log(
-      'Initializing Zoho Bigin Auto-Sync Engine (Interval: 5 minutes)...',
+      'Initializing Zoho Bigin Auto-Sync Engine (Interval: 2 hours)...',
     );
     this.syncInterval = setInterval(
       () => {
@@ -194,8 +203,15 @@ export class ZohoService implements OnModuleInit {
           this.logger.warn(`Auto-sync notice: ${err?.message}`);
         });
       },
-      5 * 60 * 1000,
+      2 * 60 * 60 * 1000,
     );
+
+    // Initial startup auto-sync (runs 15 seconds after bootstrap)
+    setTimeout(() => {
+      this.autoSyncRoutine().catch((err) => {
+        this.logger.warn(`Startup auto-sync notice: ${err?.message}`);
+      });
+    }, 15000);
   }
 
   private get supabase() {
@@ -266,76 +282,497 @@ export class ZohoService implements OnModuleInit {
     };
   }
 
-  // ── Phase 1: Full Initial Pull & Mapping Engine ───────────────────────────
-  async pullInitialSyncFromBigin(): Promise<{
+  private normalizePersonName(value?: string): string {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  private async loadActiveSalespersonLookup(): Promise<{
+    byEmail: Map<string, string>;
+    byZohoId: Map<string, string>;
+    byName: Map<string, string>;
+  }> {
+    const byEmail = new Map<string, string>();
+    const byZohoId = new Map<string, string>();
+    const byName = new Map<string, string>();
+    const { data, error } = await this.supabase
+      .from('employees')
+      .select('name, phone, email, role, is_active');
+    if (error) throw new Error(error.message);
+    for (const emp of data || []) {
+      if (emp.is_active === false) continue;
+      const role = String(emp.role || '').toLowerCase();
+      if (role === 'admin') continue; // Admins are not field sales reps
+      const phone = String(emp.phone || '').trim();
+      if (!cleanPhone(phone)) continue;
+      if (phone.replace(/\D/g, '').endsWith('9975003940')) continue; // Skip Dhananjay Goel
+      if (emp.email) byEmail.set(String(emp.email).toLowerCase().trim(), phone);
+      const name = this.normalizePersonName(emp.name);
+      if (name) byName.set(name, phone);
+    }
+    return { byEmail, byZohoId, byName };
+  }
+
+  private resolveBiginOwnerPhone(
+    owner: any,
+    lookup: {
+      byEmail: Map<string, string>;
+      byZohoId: Map<string, string>;
+      byName: Map<string, string>;
+    },
+  ): string | null {
+    const email = String(owner?.email || '')
+      .toLowerCase()
+      .trim();
+    const zohoId = owner?.id ? String(owner.id) : '';
+    const name = this.normalizePersonName(owner?.name);
+    if (email && lookup.byEmail.has(email))
+      return lookup.byEmail.get(email) || null;
+    if (zohoId && lookup.byZohoId.has(zohoId))
+      return lookup.byZohoId.get(zohoId) || null;
+    if (name && lookup.byName.has(name)) return lookup.byName.get(name) || null;
+    return null;
+  }
+
+  private async readLastCustomerSyncTimestamp(): Promise<string | null> {
+    const { data, error } = await this.supabase
+      .from('activity_logs')
+      .select('change_detail')
+      .eq('source', 'zoho_sync')
+      .eq('module', 'customers')
+      .eq('action_type', 'sync')
+      .order('timestamp', { ascending: false })
+      .limit(1);
+    if (error) throw new Error(error.message);
+    const detail = data?.[0]?.change_detail;
+    const parsed = typeof detail === 'string' ? JSON.parse(detail) : detail;
+    const stamp = parsed?.last_successful_sync_timestamp;
+    return typeof stamp === 'string' && stamp ? stamp : null;
+  }
+
+  private async hasCompletedOwnershipRestore(): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('activity_logs')
+      .select('id')
+      .eq('source', 'zoho_sync')
+      .eq('module', 'customers')
+      .eq('action_type', 'ownership_restore')
+      .limit(1);
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  private async writeCustomerSyncLog(entry: {
+    actionType: 'sync' | 'sync_failed' | 'ownership_restore';
+    description: string;
+    actorName: string;
+    actorRole: string;
+    changeDetail: Record<string, any>;
+  }): Promise<void> {
+    const { error } = await this.supabase.from('activity_logs').insert({
+      timestamp: new Date().toISOString(),
+      source: 'zoho_sync',
+      module: 'customers',
+      action_type: entry.actionType,
+      actor_name: entry.actorName,
+      actor_role: entry.actorRole,
+      description: entry.description,
+      change_detail: entry.changeDetail,
+    });
+    if (error) {
+      this.logger.warn(
+        `[ZohoSync] Could not write customer sync log: ${error.message}`,
+      );
+    }
+  }
+
+  // ── Customers-only incremental pull from Zoho Bigin Accounts ───────────────
+  async pullInitialSyncFromBigin(options?: {
+    manual?: boolean;
+    actorName?: string;
+    forceFull?: boolean;
+  }): Promise<{
     success: boolean;
     usersImported: number;
     companiesImported: number;
     contactsImported: number;
     dealsImported: number;
+    recordsCreated: number;
+    recordsUpdated: number;
+    recordsSkipped: number;
     errors: string[];
   }> {
-    if (this.isSyncPaused()) {
-      this.logger.log(
-        '[ZohoSync] Pull sync skipped because Zoho sync is paused.',
-      );
-      return {
-        success: true,
-        usersImported: 0,
-        companiesImported: 0,
-        contactsImported: 0,
-        dealsImported: 0,
-        errors: ['Zoho sync is currently paused by configuration.'],
-      };
-    }
-    const baseUrl = 'https://www.zohoapis.in/bigin/v1';
-    const headers = await this.getAuthHeaders();
+    const actorName = options?.manual
+      ? options.actorName || 'Admin'
+      : 'Bigin Auto-Sync';
+    const actorRole = options?.manual ? 'admin' : 'system';
     const results = {
       success: true,
       usersImported: 0,
       companiesImported: 0,
       contactsImported: 0,
       dealsImported: 0,
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      recordsSkipped: 0,
       errors: [] as string[],
     };
 
-    this.logger.log('[ZohoSync] Starting Phase 1 Full Pull from Zoho Bigin...');
+    if (this.isSyncPaused()) {
+      this.logger.log(
+        '[ZohoSync] Customer sync skipped because Zoho sync is paused.',
+      );
+      results.errors.push('Zoho sync is currently paused by configuration.');
+      return results;
+    }
 
-    // ── 1. Pull Users (Salespersons & Managers) ─────────────────────────────
-    const empNameToPhoneMap = new Map<string, string>();
+    const skippedAccounts: string[] = [];
+    const runStartedAt = new Date().toISOString();
+
     try {
-      const userRes = await firstValueFrom(
-        this.httpService.get(`${baseUrl}/users?type=AllUsers`, { headers }),
-      ).catch(() => ({ data: { users: [] } }));
-      const biginUsers = userRes.data?.users || [];
+      const since = await this.readLastCustomerSyncTimestamp();
+      const cleanSince = options?.forceFull
+        ? null
+        : since
+          ? since.replace(/\.\d{3}/, '')
+          : null;
+      const restoreOverwritten = !(await this.hasCompletedOwnershipRestore());
+      const lookup = await this.loadActiveSalespersonLookup();
+      const baseUrl = 'https://www.zohoapis.in/bigin/v1';
+      const headers: Record<string, string> = await this.getAuthHeaders();
+      if (cleanSince) headers['If-Modified-Since'] = cleanSince;
 
-      for (const u of biginUsers) {
-        try {
-          const fullName = (
-            u.full_name || `${u.first_name || ''} ${u.last_name || ''}`
+      this.logger.log(
+        `[ZohoSync] Customer sync starting${cleanSince ? ` since ${cleanSince}` : ' (full accounts pull)'}.`,
+      );
+
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const query = [`page=${page}`, 'per_page=100'];
+        if (cleanSince)
+          query.push(`modified_since=${encodeURIComponent(cleanSince)}`);
+        const accRes = await firstValueFrom(
+          this.httpService.get(`${baseUrl}/Accounts?${query.join('&')}`, {
+            headers,
+            validateStatus: (status) =>
+              (status >= 200 && status < 300) || status === 304,
+          }),
+        );
+        if (accRes.status === 304) {
+          this.logger.log(
+            '[ZohoSync] Bigin accounts not modified since last sync.',
+          );
+          break;
+        }
+        const accounts = accRes.data?.data || [];
+        if (accounts.length === 0) break;
+
+        for (const acc of accounts) {
+          try {
+            const companyName = String(acc.Account_Name || '').trim();
+            if (!companyName) continue;
+            const phone = acc.Phone || '';
+            const address = acc.Billing_City || acc.Billing_Street || '';
+            const gst = String(acc.Description || '').match(
+              /\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b/i,
+            )?.[0];
+            const ownerName = String(acc.Owner?.name || '').trim() || 'Unknown';
+            const mappedPhone = this.resolveBiginOwnerPhone(acc.Owner, lookup);
+            const { data: existingCust, error: findErr } = await this.supabase
+              .from('recurring_customers')
+              .select('id, assigned_salesperson_phone, notes')
+              .ilike('customer_name', companyName)
+              .limit(1);
+            if (findErr) throw new Error(findErr.message);
+
+            const currentPhone = existingCust?.[0]?.assigned_salesperson_phone;
+            const noteContent = `Zoho Bigin Account Owner: ${ownerName}${acc.id ? ` | Zoho Account ID: ${acc.id}` : ''}`;
+            if (!existingCust || existingCust.length === 0) {
+              const { error: insertErr } = await this.supabase
+                .from('recurring_customers')
+                .insert({
+                  customer_name: companyName,
+                  customer_phone: phone || null,
+                  customer_address: address || null,
+                  customer_gst: gst || null,
+                  assigned_salesperson_phone: mappedPhone || 'unassigned',
+                  is_active: true,
+                  avg_order_frequency_days: 30,
+                  notes: noteContent,
+                });
+              if (insertErr) throw new Error(insertErr.message);
+              results.recordsCreated++;
+              if (!mappedPhone) {
+                results.recordsSkipped++;
+                skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
+              }
+            } else {
+              const updateData: Record<string, any> = {
+                updated_at: new Date().toISOString(),
+              };
+              if (phone) updateData.customer_phone = phone;
+              if (address) updateData.customer_address = address;
+              if (gst) updateData.customer_gst = gst;
+              if (!existingCust[0]?.notes && acc.id) {
+                updateData.notes = noteContent;
+              }
+
+              const isUnassigned =
+                !currentPhone ||
+                currentPhone === 'unassigned' ||
+                currentPhone === 'null';
+
+              if (mappedPhone && mappedPhone !== currentPhone) {
+                updateData.assigned_salesperson_phone = mappedPhone;
+              } else if (isUnassigned && !mappedPhone) {
+                updateData.assigned_salesperson_phone = 'unassigned';
+                results.recordsSkipped++;
+                skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
+              }
+
+              const { error: updateErr } = await this.supabase
+                .from('recurring_customers')
+                .update(updateData)
+                .eq('id', existingCust[0].id);
+              if (updateErr) throw new Error(updateErr.message);
+              results.recordsUpdated++;
+            }
+          } catch (accErr: any) {
+            results.errors.push(
+              `Company ${acc.Account_Name}: ${accErr.message}`,
+            );
+          }
+        }
+
+        hasMore = accRes.data?.info?.more_records === true;
+        page++;
+        if (hasMore) await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+
+      results.companiesImported =
+        results.recordsCreated + results.recordsUpdated;
+      const advanceTimestamp = results.errors.length === 0;
+      const finishedAt = new Date().toISOString().replace(/\.\d{3}/, '');
+      const description = `Zoho Bigin Customers Sync: Created: ${results.recordsCreated} | Updated: ${results.recordsUpdated} | Skipped (Unassigned): ${results.recordsSkipped} | Errors: ${results.errors.length}`;
+      await this.writeCustomerSyncLog({
+        actionType: advanceTimestamp ? 'sync' : 'sync_failed',
+        description,
+        actorName,
+        actorRole,
+        changeDetail: {
+          run_timestamp: runStartedAt,
+          last_successful_sync_timestamp: advanceTimestamp ? finishedAt : since,
+          records_created: results.recordsCreated,
+          records_updated: results.recordsUpdated,
+          records_skipped: results.recordsSkipped,
+          skipped_accounts: skippedAccounts.slice(0, 50),
+          errors: results.errors.slice(0, 20),
+        },
+      });
+      if (restoreOverwritten && advanceTimestamp) {
+        await this.writeCustomerSyncLog({
+          actionType: 'ownership_restore',
+          description:
+            'One-time restore of customer owners overwritten to 9975003940 completed.',
+          actorName,
+          actorRole,
+          changeDetail: { restored_during_run: finishedAt },
+        });
+      }
+      results.success = advanceTimestamp;
+      this.logger.log(`[ZohoSync] ${description}`);
+      return results;
+    } catch (err: any) {
+      const message = err?.message || 'Customer sync failed';
+      results.success = false;
+      results.errors.push(message);
+      await this.writeCustomerSyncLog({
+        actionType: 'sync_failed',
+        description: `Zoho Bigin Customers Sync failed: ${message}`,
+        actorName,
+        actorRole,
+        changeDetail: {
+          run_timestamp: runStartedAt,
+          errors: results.errors.slice(0, 20),
+        },
+      });
+      this.logger.error(`[ZohoSync] Customer sync failed: ${message}`);
+      return results;
+    }
+  }
+
+  // ── Phase 2: Real-time Webhook Event Processing ───────────────────────────
+  async processBiginWebhookEvent(payload: any): Promise<void> {
+    const rawData = payload?.data || payload;
+    const records = Array.isArray(rawData) ? rawData : [rawData];
+
+    for (const data of records) {
+      if (!data || typeof data !== 'object') continue;
+
+      const eventType =
+        payload?.event ||
+        payload?.event_type ||
+        payload?.operation ||
+        data?.operation ||
+        data?.event ||
+        'update';
+      const entityType =
+        payload?.module ||
+        payload?.entity_type ||
+        (data?.Account_Name
+          ? 'accounts'
+          : data?.Deal_Name
+            ? 'deals'
+            : data?.Full_Name || data?.Last_Name
+              ? 'contacts'
+              : 'unknown');
+      const entityId = data?.id || payload?.id;
+
+      const eventKey = `${eventType}_${entityType}_${entityId}_${data?.Modified_Time || Date.now()}`;
+      if (this.processedWebhookEvents.has(eventKey)) {
+        this.logger.log(
+          `[ZohoWebhook] Skipped duplicate event (Idempotency): ${eventKey}`,
+        );
+        continue;
+      }
+      this.processedWebhookEvents.add(eventKey);
+      if (this.processedWebhookEvents.size > 2000) {
+        this.processedWebhookEvents.clear();
+      }
+
+      this.logger.log(
+        `[ZohoWebhook] Processing ${eventType} on ${entityType} (${entityId})`,
+      );
+
+      try {
+        const isDelete = eventType.toLowerCase().includes('delete');
+
+        if (entityType.toLowerCase() === 'accounts') {
+          const companyName = (data.Account_Name || '').trim();
+          if (isDelete) {
+            await this.supabase
+              .from('recurring_customers')
+              .update({
+                is_active: false,
+                updated_at: new Date().toISOString(),
+              })
+              .or(
+                `zoho_account_id.eq.${entityId},customer_name.ilike.${companyName || 'none'}`,
+              );
+          } else if (companyName) {
+            const lookup = await this.loadActiveSalespersonLookup();
+            const mappedPhone = this.resolveBiginOwnerPhone(data.Owner, lookup);
+
+            const { data: existing } = await this.supabase
+              .from('recurring_customers')
+              .select('id, assigned_salesperson_phone')
+              .ilike('customer_name', companyName)
+              .limit(1);
+
+            if (!existing || existing.length === 0) {
+              await this.supabase.from('recurring_customers').insert({
+                customer_name: companyName,
+                customer_phone: data.Phone || null,
+                customer_address: data.Billing_City || null,
+                assigned_salesperson_phone: mappedPhone,
+                industry: data.Industry || 'Steel & Manufacturing',
+                is_active: true,
+                avg_order_frequency_days: 30,
+                zoho_account_id: String(entityId),
+              });
+            } else {
+              const updatePayload: Record<string, any> = {
+                customer_phone: data.Phone || undefined,
+                customer_address: data.Billing_City || undefined,
+                is_active: true,
+                zoho_account_id: String(entityId),
+                updated_at: new Date().toISOString(),
+              };
+              if (!existing[0].assigned_salesperson_phone && mappedPhone) {
+                updatePayload.assigned_salesperson_phone = mappedPhone;
+              }
+              await this.supabase
+                .from('recurring_customers')
+                .update(updatePayload)
+                .eq('id', existing[0].id);
+            }
+          }
+        } else if (entityType.toLowerCase() === 'contacts') {
+          const personMet = (
+            data.Full_Name || `${data.First_Name || ''} ${data.Last_Name || ''}`
           ).trim();
-          const phone = cleanPhone(u.phone || u.mobile);
-          const email = (u.email || '').toLowerCase().trim();
-          const roleRaw = (u.role?.name || u.profile?.name || '').toLowerCase();
+          const companyName = (
+            data.Account_Name?.name ||
+            data.Company_Name ||
+            ''
+          ).trim();
+
+          if (companyName && personMet) {
+            await this.supabase
+              .from('recurring_customers')
+              .update({ contact_person: isDelete ? null : personMet })
+              .ilike('customer_name', companyName);
+          }
+        } else if (entityType.toLowerCase() === 'deals') {
+          if (isDelete) {
+            await this.supabase
+              .from('deals')
+              .delete()
+              .eq('bigin_deal_id', String(entityId));
+          } else {
+            const dealName = data.Deal_Name || '';
+            const custName = (
+              data.Contact_Name?.name ||
+              data.Account_Name?.name ||
+              dealName.split('-')[0]
+            ).trim();
+            if (custName) {
+              const dbStage = REVERSE_STAGE_MAP[data.Stage] || 'new_inquiry';
+              const amount = Number(data.Amount) || 0;
+
+              await this.supabase
+                .from('deals')
+                .update({
+                  stage: dbStage,
+                  total_amount: amount,
+                })
+                .or(
+                  `bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`,
+                );
+            }
+          }
+        } else if (entityType.toLowerCase() === 'users') {
+          const fullName = (
+            data.full_name || `${data.first_name || ''} ${data.last_name || ''}`
+          ).trim();
+          const phone = cleanPhone(data.phone || data.mobile);
+          const email = (data.email || '').toLowerCase().trim();
+          const roleRaw = (
+            data.role?.name ||
+            data.profile?.name ||
+            ''
+          ).toLowerCase();
 
           let appRole = 'salesperson';
           if (roleRaw.includes('admin')) appRole = 'admin';
           else if (roleRaw.includes('manager') || roleRaw.includes('lead'))
             appRole = 'sales_manager';
 
-          if (fullName && phone) {
-            empNameToPhoneMap.set(fullName.toLowerCase(), phone);
-          }
-          if (fullName && u.id) {
-            empNameToPhoneMap.set(u.id, phone || fullName);
-          }
-
-          if (fullName) {
-            // Check existing employee
+          if (eventType === 'user_deactivated' || isDelete) {
+            await this.supabase
+              .from('employees')
+              .update({ is_active: false })
+              .or(`zoho_user_id.eq.${entityId},email.eq.${email || 'none'}`);
+          } else if (fullName) {
             const { data: existingEmp } = await this.supabase
               .from('employees')
-              .select('id, phone')
-              .or(`email.eq.${email || 'none'},name.ilike.${fullName}`)
+              .select('id')
+              .or(
+                `zoho_user_id.eq.${entityId},email.eq.${email || 'none'},name.ilike.${fullName}`,
+              )
               .limit(1);
 
             if (existingEmp && existingEmp.length > 0) {
@@ -344,18 +781,11 @@ export class ZohoService implements OnModuleInit {
                 .update({
                   name: fullName,
                   role: appRole,
-                  is_active: u.status === 'active',
-                  zoho_user_id: u.id,
+                  is_active: data.status === 'active',
+                  zoho_user_id: String(entityId),
                 })
                 .eq('id', existingEmp[0].id);
-              if (existingEmp[0].phone) {
-                empNameToPhoneMap.set(
-                  fullName.toLowerCase(),
-                  cleanPhone(existingEmp[0].phone),
-                );
-              }
             } else {
-              // Auto-create new salesperson / manager account from Zoho Bigin
               const newEmpId = `EMP${String(Math.floor(100 + Math.random() * 900))}`;
               const formattedPhone = phone
                 ? phone.length === 10
@@ -369,478 +799,28 @@ export class ZohoService implements OnModuleInit {
                 phone: formattedPhone,
                 email: email || null,
                 role: appRole,
-                is_active: u.status === 'active',
-                zoho_user_id: u.id,
-              });
-
-              if (phone) {
-                empNameToPhoneMap.set(
-                  fullName.toLowerCase(),
-                  cleanPhone(phone),
-                );
-              }
-            }
-            results.usersImported++;
-          }
-        } catch (uErr: any) {
-          results.errors.push(`User ${u.full_name}: ${uErr.message}`);
-        }
-      }
-    } catch (err: any) {
-      this.logger.warn(`Users pull notice: ${err.message}`);
-    }
-
-    // Default Salesperson Phone fallback
-    const defaultRepPhone =
-      empNameToPhoneMap.get('max') ||
-      empNameToPhoneMap.get('yash dalmia') ||
-      '918262937458';
-
-    // ── 2. Pull Accounts (Companies) with Company Owner Mapping (Image 1) ───
-    try {
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const accRes = await firstValueFrom(
-          this.httpService.get(
-            `${baseUrl}/Accounts?page=${page}&per_page=100`,
-            { headers },
-          ),
-        );
-        const accounts = accRes.data?.data || [];
-        if (accounts.length === 0) break;
-
-        for (const acc of accounts) {
-          try {
-            const companyName = (acc.Account_Name || '').trim();
-            if (!companyName) continue;
-
-            const phone = acc.Phone || '';
-            const address = acc.Billing_City || acc.Billing_Street || '';
-            const industry = acc.Industry || 'Steel & Manufacturing';
-            const gst = (acc.Description || '').match(
-              /\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b/i,
-            )?.[0];
-
-            // ── Company Owner Mapping (Core Requirement 1) ──
-            const ownerName = (acc.Owner?.name || '').toLowerCase().trim();
-            const ownerId = acc.Owner?.id || '';
-            const explicitOwnerPhone =
-              empNameToPhoneMap.get(ownerName) ||
-              empNameToPhoneMap.get(ownerId);
-            const assignedPhone = explicitOwnerPhone || defaultRepPhone;
-
-            // Check if customer already exists in DB
-            const { data: existingCust } = await this.supabase
-              .from('recurring_customers')
-              .select('id, customer_name, assigned_salesperson_phone')
-              .ilike('customer_name', companyName)
-              .limit(1);
-
-            if (!existingCust || existingCust.length === 0) {
-              await this.supabase.from('recurring_customers').insert({
-                customer_name: companyName,
-                customer_phone: phone || null,
-                customer_address: address || null,
-                customer_gst: gst || null,
-                assigned_salesperson_phone: assignedPhone,
-                industry: industry,
-                is_active: true,
-                avg_order_frequency_days: 30,
-              });
-              results.companiesImported++;
-            } else {
-              // Update details while protecting existing salesperson assignment
-              const updateData: Record<string, any> = {
-                updated_at: new Date().toISOString(),
-              };
-              if (phone) updateData.customer_phone = phone;
-              if (address) updateData.customer_address = address;
-              if (gst) updateData.customer_gst = gst;
-
-              // Only update assigned rep if customer is unassigned or has an explicit non-fallback owner
-              if (
-                !existingCust[0].assigned_salesperson_phone &&
-                assignedPhone
-              ) {
-                updateData.assigned_salesperson_phone = assignedPhone;
-              } else if (
-                explicitOwnerPhone &&
-                cleanPhone(existingCust[0].assigned_salesperson_phone) !==
-                  cleanPhone(explicitOwnerPhone)
-              ) {
-                updateData.assigned_salesperson_phone = explicitOwnerPhone;
-              }
-
-              await this.supabase
-                .from('recurring_customers')
-                .update(updateData)
-                .eq('id', existingCust[0].id);
-              results.companiesImported++;
-            }
-          } catch (accErr: any) {
-            results.errors.push(
-              `Company ${acc.Account_Name}: ${accErr.message}`,
-            );
-          }
-        }
-
-        hasMore = accRes.data?.info?.more_records === true;
-        page++;
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    } catch (err: any) {
-      this.logger.error(`Accounts pull error: ${err.message}`);
-      results.errors.push(`Accounts error: ${err.message}`);
-    }
-
-    // ── 3. Pull Contacts & Visits Mapping (Image 2) ─────────────────────────
-    try {
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const conRes = await firstValueFrom(
-          this.httpService.get(
-            `${baseUrl}/Contacts?page=${page}&per_page=100`,
-            { headers },
-          ),
-        );
-        const contacts = conRes.data?.data || [];
-        if (contacts.length === 0) break;
-
-        for (const c of contacts) {
-          try {
-            const personMet = (
-              c.Full_Name || `${c.First_Name || ''} ${c.Last_Name || ''}`
-            ).trim();
-            const companyName = (
-              c.Account_Name?.name ||
-              c.Company_Name ||
-              ''
-            ).trim();
-            const contactPhone = c.Mobile || c.Phone || '';
-            const ownerName = (c.Owner?.name || '').toLowerCase().trim();
-            const repPhone =
-              empNameToPhoneMap.get(ownerName) || defaultRepPhone;
-
-            if (companyName && personMet) {
-              // Update contact_person on customer
-              await this.supabase
-                .from('recurring_customers')
-                .update({ contact_person: personMet })
-                .ilike('customer_name', companyName);
-
-              // Record in customer_visits if valid met person
-              if (
-                personMet.toLowerCase() !== 'purchase head' &&
-                personMet.toLowerCase() !== 'contact person'
-              ) {
-                const { data: existingVisit } = await this.supabase
-                  .from('customer_visits')
-                  .select('id')
-                  .ilike('customer_name', companyName)
-                  .eq('person_met', personMet)
-                  .limit(1);
-
-                if (!existingVisit || existingVisit.length === 0) {
-                  await this.supabase.from('customer_visits').insert({
-                    customer_name: companyName,
-                    person_met: personMet,
-                    contact_no: contactPhone || null,
-                    salesperson_phone: repPhone,
-                    remarks: `Contact Synced from Zoho Bigin`,
-                    visited_at: new Date().toISOString(),
-                  });
-                }
-              }
-              results.contactsImported++;
-            }
-          } catch (cErr: any) {
-            results.errors.push(`Contact ${c.Last_Name}: ${cErr.message}`);
-          }
-        }
-
-        hasMore = conRes.data?.info?.more_records === true;
-        page++;
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    } catch (err: any) {
-      this.logger.error(`Contacts pull error: ${err.message}`);
-      results.errors.push(`Contacts error: ${err.message}`);
-    }
-
-    // ── 4. Pull Deals ───────────────────────────────────────────────────────
-    try {
-      const dealRes = await firstValueFrom(
-        this.httpService.get(`${baseUrl}/Deals?per_page=100`, { headers }),
-      ).catch(() => ({ data: { data: [] } }));
-      const biginDeals = dealRes.data?.data || [];
-
-      for (const d of biginDeals) {
-        try {
-          const dealId = d.id;
-          const dealName = d.Deal_Name || '';
-          const custName = (
-            d.Contact_Name?.name ||
-            d.Account_Name?.name ||
-            dealName.split('-')[0]
-          ).trim();
-          if (!custName) continue;
-
-          const dbStage = REVERSE_STAGE_MAP[d.Stage] || 'new_inquiry';
-          const amount = Number(d.Amount) || 0;
-          const ownerName = (d.Owner?.name || '').toLowerCase().trim();
-          const repPhone = empNameToPhoneMap.get(ownerName) || defaultRepPhone;
-
-          const { data: existingDeal } = await this.supabase
-            .from('deals')
-            .select('id')
-            .or(`bigin_deal_id.eq.${dealId},customer_name.ilike.${custName}`)
-            .limit(1);
-
-          if (!existingDeal || existingDeal.length === 0) {
-            await this.supabase.from('deals').insert({
-              customer_name: custName,
-              stage: dbStage,
-              total_amount: amount,
-              bigin_deal_id: dealId,
-              salesperson_phone: repPhone,
-              inquiry_type: 'inquiry',
-              status: 'needs_review',
-            });
-            results.dealsImported++;
-          } else {
-            await this.supabase
-              .from('deals')
-              .update({
-                stage: dbStage,
-                total_amount: amount,
-                bigin_deal_id: dealId,
-              })
-              .eq('id', existingDeal[0].id);
-            results.dealsImported++;
-          }
-        } catch (dErr: any) {
-          results.errors.push(`Deal ${d.Deal_Name}: ${dErr.message}`);
-        }
-      }
-    } catch (err: any) {
-      this.logger.error(`Deals pull error: ${err.message}`);
-      results.errors.push(`Deals error: ${err.message}`);
-    }
-
-    this.logger.log(
-      `[ZohoSync] Initial pull complete: ${results.companiesImported} companies, ${results.contactsImported} contacts, ${results.dealsImported} deals`,
-    );
-
-    return results;
-  }
-
-  // ── Phase 2: Real-time Webhook Event Processing ───────────────────────────
-  async processBiginWebhookEvent(payload: any): Promise<void> {
-    const eventType = payload?.event || payload?.event_type || 'unknown';
-    const entityType = payload?.module || payload?.entity_type || 'unknown';
-    const data = payload?.data || payload;
-    const entityId = data?.id || payload?.id;
-
-    const eventKey = `${eventType}_${entityType}_${entityId}_${data?.Modified_Time || Date.now()}`;
-    if (this.processedWebhookEvents.has(eventKey)) {
-      this.logger.log(
-        `[ZohoWebhook] Skipped duplicate event (Idempotency): ${eventKey}`,
-      );
-      return;
-    }
-    this.processedWebhookEvents.add(eventKey);
-    // Keep deduplication set bounded
-    if (this.processedWebhookEvents.size > 2000) {
-      this.processedWebhookEvents.clear();
-    }
-
-    this.logger.log(
-      `[ZohoWebhook] Processing ${eventType} on ${entityType} (${entityId})`,
-    );
-
-    try {
-      const isDelete = eventType.toLowerCase().includes('delete');
-
-      if (entityType.toLowerCase() === 'accounts') {
-        const companyName = (data.Account_Name || '').trim();
-        if (isDelete) {
-          await this.supabase
-            .from('recurring_customers')
-            .update({ is_active: false, updated_at: new Date().toISOString() })
-            .or(
-              `zoho_account_id.eq.${entityId},customer_name.ilike.${companyName || 'none'}`,
-            );
-        } else if (companyName) {
-          const ownerName = (data.Owner?.name || '').toLowerCase().trim();
-          let repPhone = '918262937458';
-
-          if (ownerName) {
-            const { data: emps } = await this.supabase
-              .from('employees')
-              .select('phone')
-              .ilike('name', `%${ownerName}%`)
-              .limit(1);
-            if (emps && emps[0]?.phone) repPhone = cleanPhone(emps[0].phone);
-          }
-
-          const { data: existing } = await this.supabase
-            .from('recurring_customers')
-            .select('id, assigned_salesperson_phone')
-            .ilike('customer_name', companyName)
-            .limit(1);
-
-          if (!existing || existing.length === 0) {
-            await this.supabase.from('recurring_customers').insert({
-              customer_name: companyName,
-              customer_phone: data.Phone || null,
-              customer_address: data.Billing_City || null,
-              assigned_salesperson_phone: repPhone,
-              industry: data.Industry || 'Steel & Manufacturing',
-              is_active: true,
-              avg_order_frequency_days: 30,
-              zoho_account_id: String(entityId),
-            });
-          } else {
-            const updatePayload: Record<string, any> = {
-              customer_phone: data.Phone || undefined,
-              customer_address: data.Billing_City || undefined,
-              is_active: true,
-              zoho_account_id: String(entityId),
-              updated_at: new Date().toISOString(),
-            };
-            if (!existing[0].assigned_salesperson_phone) {
-              updatePayload.assigned_salesperson_phone = repPhone;
-            }
-            await this.supabase
-              .from('recurring_customers')
-              .update(updatePayload)
-              .eq('id', existing[0].id);
-          }
-        }
-      } else if (entityType.toLowerCase() === 'contacts') {
-        const personMet = (
-          data.Full_Name || `${data.First_Name || ''} ${data.Last_Name || ''}`
-        ).trim();
-        const companyName = (
-          data.Account_Name?.name ||
-          data.Company_Name ||
-          ''
-        ).trim();
-
-        if (companyName && personMet) {
-          await this.supabase
-            .from('recurring_customers')
-            .update({ contact_person: isDelete ? null : personMet })
-            .ilike('customer_name', companyName);
-        }
-      } else if (entityType.toLowerCase() === 'deals') {
-        if (isDelete) {
-          await this.supabase
-            .from('deals')
-            .delete()
-            .eq('bigin_deal_id', String(entityId));
-        } else {
-          const dealName = data.Deal_Name || '';
-          const custName = (
-            data.Contact_Name?.name ||
-            data.Account_Name?.name ||
-            dealName.split('-')[0]
-          ).trim();
-          if (custName) {
-            const dbStage = REVERSE_STAGE_MAP[data.Stage] || 'new_inquiry';
-            const amount = Number(data.Amount) || 0;
-
-            await this.supabase
-              .from('deals')
-              .update({
-                stage: dbStage,
-                total_amount: amount,
-              })
-              .or(
-                `bigin_deal_id.eq.${entityId},customer_name.ilike.${custName}`,
-              );
-          }
-        }
-      } else if (entityType.toLowerCase() === 'users') {
-        const fullName = (
-          data.full_name || `${data.first_name || ''} ${data.last_name || ''}`
-        ).trim();
-        const phone = cleanPhone(data.phone || data.mobile);
-        const email = (data.email || '').toLowerCase().trim();
-        const roleRaw = (
-          data.role?.name ||
-          data.profile?.name ||
-          ''
-        ).toLowerCase();
-
-        let appRole = 'salesperson';
-        if (roleRaw.includes('admin')) appRole = 'admin';
-        else if (roleRaw.includes('manager') || roleRaw.includes('lead'))
-          appRole = 'sales_manager';
-
-        if (eventType === 'user_deactivated' || isDelete) {
-          await this.supabase
-            .from('employees')
-            .update({ is_active: false })
-            .or(`zoho_user_id.eq.${entityId},email.eq.${email || 'none'}`);
-        } else if (fullName) {
-          const { data: existingEmp } = await this.supabase
-            .from('employees')
-            .select('id')
-            .or(
-              `zoho_user_id.eq.${entityId},email.eq.${email || 'none'},name.ilike.${fullName}`,
-            )
-            .limit(1);
-
-          if (existingEmp && existingEmp.length > 0) {
-            await this.supabase
-              .from('employees')
-              .update({
-                name: fullName,
-                role: appRole,
                 is_active: data.status === 'active',
                 zoho_user_id: String(entityId),
-              })
-              .eq('id', existingEmp[0].id);
-          } else {
-            const newEmpId = `EMP${String(Math.floor(100 + Math.random() * 900))}`;
-            const formattedPhone = phone
-              ? phone.length === 10
-                ? `91${phone}`
-                : phone
-              : null;
-
-            await this.supabase.from('employees').insert({
-              employee_id: newEmpId,
-              name: fullName,
-              phone: formattedPhone,
-              email: email || null,
-              role: appRole,
-              is_active: data.status === 'active',
-              zoho_user_id: String(entityId),
-            });
+              });
+            }
           }
         }
-      }
 
-      // Log to activity_logs
-      await this.supabase.from('activity_logs').insert({
-        source: 'zoho_webhook',
-        module: 'crm_sync',
-        action_type: eventType,
-        entity_type: entityType,
-        entity_id: String(entityId),
-        description: `Zoho Bigin Webhook processed: ${eventType} for ${entityType}`,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (err: any) {
-      this.logger.error(
-        `[ZohoWebhook] Failed to process webhook event: ${err.message}`,
-      );
+        // Log to activity_logs
+        await this.supabase.from('activity_logs').insert({
+          source: 'zoho_webhook',
+          module: 'crm_sync',
+          action_type: eventType,
+          entity_type: entityType,
+          entity_id: String(entityId),
+          description: `Zoho Bigin Webhook processed: ${eventType} for ${entityType}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        this.logger.error(
+          `[ZohoWebhook] Failed to process webhook event: ${err.message}`,
+        );
+      }
     }
   }
 
@@ -854,6 +834,13 @@ export class ZohoService implements OnModuleInit {
     salesperson_phone?: string;
     visited_at?: string;
   }): Promise<string | null> {
+    if (this.isReadOnlyMode()) {
+      this.logger.log(
+        '[ZohoSync] Outbound syncVisitToBiginContact skipped: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      return null;
+    }
+
     try {
       const token = await this.refreshAccessToken();
       const headers = {
@@ -985,6 +972,13 @@ export class ZohoService implements OnModuleInit {
     success: boolean;
     deleted: Record<string, number>;
   }> {
+    if (this.isReadOnlyMode()) {
+      this.logger.warn(
+        '[ZohoSync] wipeAllBiginData blocked: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      return { success: false, deleted: {} };
+    }
+
     const token = await this.refreshAccessToken();
     const headers = { Authorization: `Zoho-oauthtoken ${token}` };
     const baseUrl = 'https://www.zohoapis.in/bigin/v1';
@@ -1047,6 +1041,22 @@ export class ZohoService implements OnModuleInit {
         errors: ['Zoho sync is currently paused by configuration.'],
       };
     }
+
+    if (this.isReadOnlyMode()) {
+      this.logger.warn(
+        '[ZohoSync] Outbound fullResyncAllData redirected to Inbound Pull: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      const pullRes = await this.pullInitialSyncFromBigin({ forceFull: true });
+      return {
+        success: pullRes.success,
+        companiesCreated: pullRes.recordsCreated,
+        contactsCreated: pullRes.contactsImported,
+        dealsSynced: pullRes.dealsImported,
+        notesAttached: 0,
+        errors: pullRes.errors,
+      };
+    }
+
     const token = await this.refreshAccessToken();
     const headers = {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -1239,12 +1249,19 @@ export class ZohoService implements OnModuleInit {
     };
   }
 
-  // ── Recurring Auto-Sync Engine (Runs every 5 minutes) ──────────────────────
+  // ── Recurring Auto-Sync Engine (Runs every 30 seconds) ─────────────────────
   async autoSyncRoutine(): Promise<void> {
+    if (this.isSyncRunning) {
+      this.logger.debug(
+        '[ZohoService] Previous sync cycle still active. Skipping tick.',
+      );
+      return;
+    }
+    this.isSyncRunning = true;
     try {
-      if (this.isSyncPaused()) {
+      if (!this.isAutoSyncEnabled()) {
         this.logger.log(
-          '[ZohoService] Auto-sync skipped (Zoho sync is paused).',
+          '[ZohoService] Auto-sync skipped (auto sync is disabled or paused).',
         );
         return;
       }
@@ -1253,7 +1270,16 @@ export class ZohoService implements OnModuleInit {
       }
 
       this.logger.log(
-        '[ZohoService] Running 5-minute recurring auto-sync to Zoho Bigin...',
+        '[ZohoService] Running 2-hour recurring customer sync from Zoho Bigin...',
+      );
+      await this.pullInitialSyncFromBigin();
+
+      if (process.env.ZOHO_READ_ONLY_MODE === 'true') {
+        return;
+      }
+
+      this.logger.log(
+        '[ZohoService] Running recurring auto-sync to Zoho Bigin...',
       );
       const { data: pendingDeals } = await this.supabase
         .from('deals')
@@ -1290,12 +1316,48 @@ export class ZohoService implements OnModuleInit {
         this.setRateLimited();
       }
       this.logger.warn(`Auto-sync routine notice: ${err?.message}`);
+    } finally {
+      this.isSyncRunning = false;
+    }
+  }
+
+  async pullInitialSyncForAdmin(actorName?: string): Promise<{
+    success: boolean;
+    usersImported: number;
+    companiesImported: number;
+    contactsImported: number;
+    dealsImported: number;
+    errors: string[];
+  }> {
+    if (this.isSyncRunning) {
+      return {
+        success: false,
+        usersImported: 0,
+        companiesImported: 0,
+        contactsImported: 0,
+        dealsImported: 0,
+        errors: ['A Bigin sync is already running.'],
+      };
+    }
+    this.isSyncRunning = true;
+    try {
+      return await this.pullInitialSyncFromBigin({
+        manual: true,
+        actorName,
+        forceFull: true,
+      });
+    } finally {
+      this.isSyncRunning = false;
     }
   }
 
   // Push single deal with Contact Name & Company Name properly mapped
   async syncDealToBigin(deal: any): Promise<string | null> {
-    if (!this.hasZohoCredentials() || this.isRateLimited()) {
+    if (
+      this.isReadOnlyMode() ||
+      !this.hasZohoCredentials() ||
+      this.isRateLimited()
+    ) {
       return null;
     }
 

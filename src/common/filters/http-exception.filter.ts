@@ -15,15 +15,29 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<FastifyReply>();
     const request = ctx.getRequest();
 
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    const isHttpException = exception instanceof HttpException;
+    const status = isHttpException
+      ? exception.getStatus()
+      : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    let errorMessage = 'Internal server error. Please try again later.';
+    if (isHttpException) {
+      const res: any = exception.getResponse();
+      if (typeof res === 'string') {
+        errorMessage = res;
+      } else if (res && typeof res === 'object') {
+        errorMessage = res.message || res.error || exception.message;
+      } else {
+        errorMessage = exception.message;
+      }
+    } else {
+      console.error('[UNHANDLED SERVER EXCEPTION]:', exception);
+    }
 
     const errorResponse: ApiResponse<null> = {
       success: false,
       data: null,
-      error: exception.message || 'Internal server error',
+      error: errorMessage,
       timestamp: new Date().toISOString(),
       path: request.url,
     };

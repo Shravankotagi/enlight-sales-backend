@@ -4,12 +4,54 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ZohoService } from '../zoho/zoho.service';
-import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
+import {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+  isValidSalespersonPhone,
+} from '../../utils/customerOwnerMap';
+import { convertLineItemToMt } from '../pricing/pricing.engine';
+
+function customerNameMatchesAssigned(
+  inputName: string,
+  assignedList: string[],
+): boolean {
+  const cleanInput = inputName.trim().toLowerCase();
+  if (!cleanInput) return false;
+  if (assignedList.some((c) => c.trim().toLowerCase() === cleanInput)) {
+    return true;
+  }
+
+  const stripSuffixes = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(
+        /\b(private\s+limited|pvt\s+ltd|pvt\s+limited|private\s+ltd|co\s+ltd|llp|limited|pvt|ltd|inc|corp)\b/gi,
+        '',
+      )
+      .replace(/[^a-z0-9]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const strippedInput = stripSuffixes(cleanInput);
+  if (!strippedInput) return false;
+
+  return assignedList.some((c) => {
+    const strippedC = stripSuffixes(c);
+    return (
+      !!strippedC &&
+      (strippedC === strippedInput ||
+        strippedInput.startsWith(strippedC) ||
+        strippedC.startsWith(strippedInput))
+    );
+  });
+}
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -32,6 +74,32 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+export function normalizeSourceProvenance(data: any) {
+  if (!data || typeof data !== 'object') return data;
+
+  const rawText =
+    typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+  const isGeneratedPlaceholder =
+    /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):/i.test(
+      rawText,
+    );
+
+  data.source_original_text =
+    rawText && !isGeneratedPlaceholder ? rawText : null;
+  data.source_extracted_text =
+    typeof data.source_extracted_text === 'string'
+      ? data.source_extracted_text
+      : null;
+  data.source_media_urls = Array.isArray(data.media_urls)
+    ? data.media_urls.filter(
+        (url: unknown) =>
+          typeof url === 'string' && url.trim() && url !== 'attached_document',
+      )
+    : [];
+
+  return data;
+}
+
 @Injectable()
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
@@ -44,6 +112,270 @@ export class DealsService {
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
+  }
+
+  private cleanPoValue(value: unknown): string | null {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const cleaned = String(value).trim();
+    return cleaned || null;
+  }
+
+  private async allocateSystemPo(
+    reservationToken: string,
+    dealId?: string | null,
+  ): Promise<string> {
+    const context = {
+      reservationToken: reservationToken
+        ? `${reservationToken.slice(0, 24)}${reservationToken.length > 24 ? '…' : ''}`
+        : null,
+      dealId: dealId || null,
+    };
+    this.logger.log(
+      `[SystemPO] allocate_system_po started ${JSON.stringify(context)}`,
+    );
+
+    const { data, error } = await this.supabase.rpc('allocate_system_po', {
+      p_reservation_token: reservationToken,
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || !/^EM\/PO\/\d+$/.test(String(data))) {
+      this.logger.error(
+        `[SystemPO] allocate_system_po failed ${JSON.stringify({
+          ...context,
+          error: error
+            ? {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                hint: error.hint,
+              }
+            : null,
+          returnedData: data ?? null,
+        })}`,
+      );
+      throw new BadRequestException(
+        'System PO generation is unavailable. Please try again.',
+      );
+    }
+
+    this.logger.log(
+      `[SystemPO] allocate_system_po succeeded ${JSON.stringify({
+        ...context,
+        poNumber: String(data),
+      })}`,
+    );
+    return String(data);
+  }
+
+  private async checkPoAvailability(
+    poNumber: string,
+    reservationToken?: string | null,
+    dealId?: string | null,
+  ): Promise<{ available: boolean; reason?: string; po_number?: string }> {
+    const { data, error } = await this.supabase.rpc('check_po_availability', {
+      p_po_number: poNumber,
+      p_reservation_token: reservationToken || null,
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || typeof data !== 'object') {
+      this.logger.error(
+        `PO availability check failed: ${error?.message || 'invalid response'}`,
+      );
+      throw new BadRequestException(
+        'PO availability could not be checked. Please try again.',
+      );
+    }
+
+    return data as { available: boolean; reason?: string; po_number?: string };
+  }
+
+  async claimPoNumber(
+    poNumber: string,
+    reservationToken?: string | null,
+    dealId?: string | null,
+  ): Promise<void> {
+    const { data, error } = await this.supabase.rpc('claim_po_number', {
+      p_po_number: poNumber,
+      p_reservation_token: reservationToken || null,
+      p_deal_id: dealId || null,
+    });
+
+    if (error) {
+      this.logger.error(`PO claim failed: ${error.message}`);
+      throw new BadRequestException(
+        'PO number could not be reserved. Please try again.',
+      );
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.claimed) {
+      throw new ConflictException(
+        result?.reason ||
+          `PO number "${poNumber}" is already allocated. Please choose another number.`,
+      );
+    }
+  }
+
+  async releasePoReservation(
+    reservationToken?: string | null,
+    poNumber?: string | null,
+    dealId?: string | null,
+  ): Promise<{ released: boolean; po_number?: string; reason?: string }> {
+    const token = this.cleanPoValue(reservationToken);
+    if (!token) {
+      return {
+        released: false,
+        reason: 'Reservation token is required',
+      };
+    }
+
+    const { data, error } = await this.supabase.rpc('release_po_reservation', {
+      p_reservation_token: token,
+      p_po_number: this.cleanPoValue(poNumber),
+      p_deal_id: dealId || null,
+    });
+
+    if (error || !data || typeof data !== 'object') {
+      this.logger.error(
+        `PO reservation release failed: ${error?.message || 'invalid response'}`,
+      );
+      throw new BadRequestException(
+        'PO reservation could not be released. Please try again.',
+      );
+    }
+
+    return data as {
+      released: boolean;
+      po_number?: string;
+      reason?: string;
+    };
+  }
+
+  async resolvePoNumbers(input: {
+    requestedPo?: unknown;
+    generatedPo?: unknown;
+    referencePo?: unknown;
+    reservationToken?: string | null;
+    existingDeal?: any;
+    dealId?: string | null;
+  }): Promise<{
+    poNumber: string;
+    generatedPoNumber: string;
+    referencePoNumber: string | null;
+    poSource: string;
+    reservationToken: string;
+    poGeneratedAt: string;
+  }> {
+    const reservationToken =
+      this.cleanPoValue(input.reservationToken) || `order:${randomUUID()}`;
+    const existingDealPo = this.cleanPoValue(input.existingDeal?.po_number);
+    const existingGeneratedCandidate = this.cleanPoValue(
+      input.existingDeal?.generated_po_number,
+    );
+    const existingGenerated =
+      (existingGeneratedCandidate &&
+      /^EM\/PO\/\d+$/i.test(existingGeneratedCandidate)
+        ? existingGeneratedCandidate
+        : null) ||
+      (existingDealPo && /^EM\/PO\/\d+$/i.test(existingDealPo)
+        ? existingDealPo
+        : null);
+    let generatedPoNumber = existingGenerated;
+
+    const requestedGenerated = this.cleanPoValue(input.generatedPo);
+    if (!generatedPoNumber && requestedGenerated) {
+      const generatedAvailability = await this.checkPoAvailability(
+        requestedGenerated,
+        reservationToken,
+        input.dealId || input.existingDeal?.id || null,
+      );
+      if (
+        generatedAvailability.available &&
+        /^EM\/PO\/\d+$/.test(requestedGenerated)
+      ) {
+        generatedPoNumber = requestedGenerated;
+      }
+    }
+
+    if (!generatedPoNumber) {
+      generatedPoNumber = await this.allocateSystemPo(
+        reservationToken,
+        input.dealId || input.existingDeal?.id || null,
+      );
+    }
+
+    await this.claimPoNumber(
+      generatedPoNumber,
+      reservationToken,
+      input.dealId || input.existingDeal?.id || null,
+    );
+
+    const requestedPoRaw = this.cleanPoValue(input.requestedPo);
+    const legacyPo =
+      !existingGenerated &&
+      existingDealPo &&
+      !/^EM\/PO\/\d+$/i.test(existingDealPo)
+        ? existingDealPo
+        : null;
+    const requestedPo =
+      requestedPoRaw &&
+      (!legacyPo || requestedPoRaw.toLowerCase() !== legacyPo.toLowerCase())
+        ? requestedPoRaw
+        : null;
+    const poNumber = requestedPo || generatedPoNumber;
+    const referencePoNumber =
+      this.cleanPoValue(input.referencePo) || legacyPo || null;
+
+    const availability = await this.checkPoAvailability(
+      poNumber,
+      reservationToken,
+      input.dealId || input.existingDeal?.id || null,
+    );
+    if (!availability.available) {
+      throw new ConflictException(
+        availability.reason ||
+          `PO number "${poNumber}" is already allocated. Please choose another number.`,
+      );
+    }
+
+    return {
+      poNumber,
+      generatedPoNumber,
+      referencePoNumber,
+      poSource:
+        poNumber.toLowerCase() === generatedPoNumber.toLowerCase()
+          ? 'generated'
+          : 'user_edit',
+      reservationToken,
+      poGeneratedAt:
+        this.cleanPoValue(input.existingDeal?.po_generated_at) ||
+        new Date().toISOString(),
+    };
+  }
+
+  async allocatePoNumber(reservationToken?: string, dealId?: string) {
+    const token =
+      this.cleanPoValue(reservationToken) || `draft:${randomUUID()}`;
+    const poNumber = await this.allocateSystemPo(token, dealId);
+    return {
+      po_number: poNumber,
+      generated_po_number: poNumber,
+      po_reservation_token: token,
+    };
+  }
+
+  async getPoAvailability(
+    poNumber: string,
+    reservationToken?: string,
+    dealId?: string,
+  ) {
+    return this.checkPoAvailability(
+      poNumber,
+      reservationToken || null,
+      dealId || null,
+    );
   }
 
   async findAll(filters?: {
@@ -64,9 +396,9 @@ export class DealsService {
         .from('deals')
         .select(
           `
-          id, inquiry_id, stage, po_number, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
+          id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
-          inquiries (source_channel, inquiry_type)
+          inquiries (source_channel, inquiry_type, raw_text, customer_phone)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -84,12 +416,8 @@ export class DealsService {
         }
       }
 
-      if (filters?.salesperson_phone) {
-        const orFilter = buildMultiFieldOrFilter(filters.salesperson_phone, [
-          'salesperson_phone',
-        ]);
-        if (orFilter) query = query.or(orFilter);
-      }
+      // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
+      // ensuring deals for assigned customers are never prematurely dropped at DB layer.
       if (filters?.from && filters?.to) {
         // Each date field is tested as a complete [from, to] pair - prevents
         // cross-column mismatches (e.g. created_at >= from AND won_at <= to).
@@ -136,25 +464,31 @@ export class DealsService {
         }
       }
 
-      const [dealsRes, customersRes] = await Promise.all([
+      const [dealsRes, customersRes, employeesRes] = await Promise.all([
         query,
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone')
-          .eq('is_active', true),
+          .select('customer_name, assigned_salesperson_phone, updated_at')
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false }),
+        this.supabase.from('employees').select('name, phone'),
       ]);
 
       if (dealsRes.error) throw dealsRes.error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customersRes.data?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
+      const empPhoneMap = new Map<string, string>();
+      employeesRes.data?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
         }
       });
+
+      const customerOwnerMap = buildCustomerOwnerMap(
+        customersRes.data || [],
+        empPhoneMap,
+      );
 
       const lightweightDeals = (dealsRes.data || []).map((d: any) => {
         let computedTotal = Number(d.total_amount) || 0;
@@ -180,13 +514,25 @@ export class DealsService {
           d.customer_name,
           customerOwnerMap,
         );
+        const validDirectPhone =
+          d.salesperson_phone && isValidSalespersonPhone(d.salesperson_phone)
+            ? d.salesperson_phone
+            : null;
         const effectiveSalespersonPhone =
-          assignedOwnerPhone || d.salesperson_phone || '';
+          validDirectPhone || assignedOwnerPhone || d.salesperson_phone || '';
+
+        const inqRawText = d.inquiries?.raw_text || d.raw_text || null;
+        const resolvedPhone =
+          d.customer_phone || d.inquiries?.customer_phone || null;
 
         return {
           ...d,
           salesperson_phone: effectiveSalespersonPhone,
+          raw_salesperson_phone: d.salesperson_phone || null,
+          assigned_owner_phone: assignedOwnerPhone || null,
           total_amount: computedTotal > 0 ? computedTotal : null,
+          raw_text: inqRawText,
+          customer_phone: resolvedPhone,
           has_media: hasMedia,
           media_urls: hasMedia ? ['attached_document'] : [],
         };
@@ -202,10 +548,20 @@ export class DealsService {
             .filter(Boolean),
         );
         return lightweightDeals.filter((d: any) => {
-          const pClean = (d.salesperson_phone || '')
+          const directClean = (d.salesperson_phone || '')
             .replace(/\D/g, '')
             .slice(-10);
-          return allowedPhoneSet.has(pClean);
+          const rawDirectClean = (d.raw_salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const assignedClean = (d.assigned_owner_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          return (
+            allowedPhoneSet.has(directClean) ||
+            allowedPhoneSet.has(rawDirectClean) ||
+            allowedPhoneSet.has(assignedClean)
+          );
         });
       }
 
@@ -243,12 +599,17 @@ export class DealsService {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
             .from('inquiries')
-            .select('media_urls')
+            .select('media_urls, raw_text')
             .eq('id', data.inquiry_id)
             .limit(1)
-            .single();
-          if (inq && inq.media_urls) {
-            data.media_urls = inq.media_urls;
+            .maybeSingle();
+          if (inq) {
+            if (Array.isArray(inq.media_urls) && inq.media_urls.length > 0) {
+              data.media_urls = inq.media_urls;
+            }
+            if (inq.raw_text && !data.raw_text) {
+              data.raw_text = inq.raw_text;
+            }
           }
         }
 
@@ -262,62 +623,42 @@ export class DealsService {
           );
 
         if (!hasValidMedia) {
-          const { data: allMediaInqs } = await this.supabase
-            .from('inquiries')
-            .select('id, sender_name, raw_text, created_at')
-            .not('media_urls', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(50);
-
+          // If no media on linked inquiry, only match an inquiry that explicitly shares the same PO number and customer
+          const dPo = (data.po_number || '').trim();
           const dName = (data.customer_name || '').toLowerCase().trim();
-          const dPo = (data.po_number || '').toLowerCase().trim();
-          const dClean = dName.replace(/[^a-z0-9]/g, ' ');
-          const dWords = dClean
-            .split(/\s+/)
-            .filter(
-              (w) =>
-                w.length >= 3 &&
-                ![
-                  'pvt',
-                  'ltd',
-                  'private',
-                  'limited',
-                  'enterprises',
-                  'steels',
-                  'steel',
-                ].includes(w),
-            );
-
-          const matched = (allMediaInqs || []).find((mi: any) => {
-            const sName = (mi.sender_name || '').toLowerCase().trim();
-            const rawTxt = (mi.raw_text || '').toLowerCase();
-
-            if (dPo && rawTxt && rawTxt.includes(dPo)) return true;
-            if (sName && (sName.includes(dName) || dName.includes(sName)))
-              return true;
-            if (dWords.length > 0 && dWords.some((w) => rawTxt.includes(w)))
-              return true;
-
-            return false;
-          });
-
-          if (matched && matched.id) {
-            const { data: matchedInq } = await this.supabase
+          if (
+            dPo &&
+            dPo.length >= 4 &&
+            !['none', 'null', 'auto', 'pending'].includes(dPo.toLowerCase())
+          ) {
+            const { data: poInqs } = await this.supabase
               .from('inquiries')
-              .select('media_urls')
-              .eq('id', matched.id)
-              .single();
-            if (matchedInq && matchedInq.media_urls) {
-              data.media_urls = matchedInq.media_urls;
-            }
-            if (!data.inquiry_id) {
-              data.inquiry_id = matched.id;
-              // Persist link back to deals table asynchronously
-              this.supabase
-                .from('deals')
-                .update({ inquiry_id: matched.id })
-                .eq('id', id)
-                .then(() => {});
+              .select(
+                'id, sender_name, customer_name, raw_text, media_urls, po_number',
+              )
+              .not('media_urls', 'is', null)
+              .ilike('po_number', dPo)
+              .limit(5);
+
+            const matched = (poInqs || []).find((mi: any) => {
+              const miCust = (mi.customer_name || mi.sender_name || '')
+                .toLowerCase()
+                .trim();
+              if (dName && miCust) {
+                return dName.includes(miCust) || miCust.includes(dName);
+              }
+              return false;
+            });
+
+            if (
+              matched &&
+              Array.isArray(matched.media_urls) &&
+              matched.media_urls.length > 0
+            ) {
+              data.media_urls = matched.media_urls;
+              if (matched.raw_text && !data.raw_text) {
+                data.raw_text = matched.raw_text;
+              }
             }
           }
         }
@@ -339,7 +680,7 @@ export class DealsService {
         }
       }
 
-      return data;
+      return normalizeSourceProvenance(data);
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
@@ -353,11 +694,16 @@ export class DealsService {
     accessiblePhones?: string[] | null,
     poNumber?: string,
     poDate?: string,
+    referencePoNumber?: string,
+    generatedPoNumber?: string,
+    poReservationToken?: string,
   ) {
     try {
       const { data: existingDeal, error: fetchErr } = await this.supabase
         .from('deals')
-        .select('id, salesperson_phone, stage, po_number')
+        .select(
+          'id, salesperson_phone, stage, po_number, reference_po_number, generated_po_number, po_generated_at, po_date',
+        )
         .eq('id', id)
         .single();
       if (fetchErr || !existingDeal) {
@@ -375,39 +721,40 @@ export class DealsService {
         }
       }
 
-      const currentStage = (existingDeal.stage || 'new_inquiry')
-        .toLowerCase()
-        .trim();
       const targetStage = (stage || '').toLowerCase().trim();
-      const effectivePoNumber = (
-        poNumber ||
-        existingDeal.po_number ||
-        ''
-      ).trim();
+      let poResolution: Awaited<
+        ReturnType<DealsService['resolvePoNumbers']>
+      > | null = null;
 
-      // Rule: Gated stage transitions:
-      // A deal in 'new_inquiry' / 'review' cannot be marked directly as 'won' without a PO.
-      if (
-        (currentStage === 'new_inquiry' ||
-          currentStage === 'review' ||
-          !existingDeal.stage) &&
-        targetStage === 'won' &&
-        !effectivePoNumber
-      ) {
-        throw new BadRequestException(
-          `Cannot mark deal as WON from '${currentStage}' stage without a Purchase Order (PO). The deal must first be Quoted or have PO details.`,
+      if (targetStage === 'won') {
+        poResolution = await this.resolvePoNumbers({
+          requestedPo: poNumber,
+          generatedPo: generatedPoNumber,
+          referencePo: referencePoNumber || existingDeal.reference_po_number,
+          reservationToken: poReservationToken,
+          existingDeal,
+          dealId: id,
+        });
+        await this.claimPoNumber(
+          poResolution.poNumber,
+          poResolution.reservationToken,
+          id,
         );
       }
 
-      const updateData: any = { stage };
-      if (stage === 'lost' && lostReason) {
+      const updateData: any = { stage: targetStage };
+      if (targetStage === 'lost' && lostReason) {
         updateData.lost_reason = lostReason;
       }
-      if (stage === 'won') {
+      if (targetStage === 'won' && poResolution) {
         updateData.won_at = new Date().toISOString();
-        if (poNumber && poNumber.trim()) {
-          updateData.po_number = poNumber.trim();
-        }
+        updateData.po_number = poResolution.poNumber;
+        updateData.reference_po_number = poResolution.referencePoNumber;
+        updateData.generated_po_number = poResolution.generatedPoNumber;
+        updateData.po_source = poResolution.poSource;
+        updateData.po_status = 'confirmed';
+        updateData.po_generated_at = poResolution.poGeneratedAt;
+        updateData.po_confirmed_at = updateData.won_at;
         if (poDate && poDate.trim()) {
           updateData.po_date = poDate.trim();
         }
@@ -424,7 +771,7 @@ export class DealsService {
 
       // Sync linked inquiry status in 1-to-1 manner
       if (data && data.inquiry_id) {
-        if (stage === 'lost') {
+        if (targetStage === 'lost') {
           await this.supabase
             .from('inquiries')
             .update({
@@ -433,32 +780,38 @@ export class DealsService {
               lost_reason: lostReason || null,
             })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'won') {
+        } else if (targetStage === 'won' && poResolution) {
           await this.supabase
             .from('inquiries')
             .update({
               status: 'confirmed',
               stage: 'won',
-              po_number: poNumber || data.po_number || null,
-              po_date: poDate || data.po_date || null,
+              po_number: poResolution.poNumber,
+              reference_po_number: poResolution.referencePoNumber,
+              generated_po_number: poResolution.generatedPoNumber,
+              po_source: poResolution.poSource,
+              po_status: 'confirmed',
+              po_generated_at: poResolution.poGeneratedAt,
+              po_confirmed_at: updateData.won_at,
+              po_date: poDate || existingDeal.po_date || null,
             })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'quoted') {
+        } else if (targetStage === 'quoted') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'quoted', stage: 'quoted' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'negotiation') {
+        } else if (targetStage === 'negotiation') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'negotiation', stage: 'negotiation' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'on_hold') {
+        } else if (targetStage === 'on_hold') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'on_hold', stage: 'on_hold' })
             .eq('id', data.inquiry_id);
-        } else if (stage === 'qualified') {
+        } else if (targetStage === 'qualified') {
           await this.supabase
             .from('inquiries')
             .update({ status: 'confirmed', stage: 'qualified' })
@@ -468,7 +821,7 @@ export class DealsService {
 
       // When deal is marked WON, ensure total_amount holds the exact Grand Total (Subtotal + 18% GST)
       let effectiveTotal = Number(data?.total_amount) || 0;
-      if (stage === 'won') {
+      if (targetStage === 'won') {
         if (effectiveTotal <= 0) {
           const { data: items } = await this.supabase
             .from('deal_items')
@@ -495,7 +848,7 @@ export class DealsService {
       }
 
       // Automatically create or update payment tracking record when a deal is marked WON
-      if (stage === 'won' && data) {
+      if (targetStage === 'won' && data) {
         const wonDate = data.won_at ? new Date(data.won_at) : new Date();
         const dueDate = new Date(wonDate.getTime() + 30 * 24 * 60 * 60 * 1000);
         const dueDateStr = dueDate.toISOString().split('T')[0];
@@ -591,7 +944,7 @@ export class DealsService {
         this.activityLogsService.logActivity({
           salesperson_name: 'Sales Team',
           salesperson_phone: data?.salesperson_phone || null,
-          description: `Order for ${custName} updated to ${stage}`,
+          description: `Order for ${custName} updated to ${targetStage}`,
           module: 'Orders',
           customer_name: custName,
         });
@@ -655,16 +1008,77 @@ export class DealsService {
     }
   }
 
+  async assertAssignedCustomer(
+    customerName: string | undefined,
+    phones: string[] | null,
+  ) {
+    const name = String(customerName || '').trim();
+    if (!name || !phones || phones.length === 0) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const orFilter = buildMultiFieldOrFilter(phones, [
+      'assigned_salesperson_phone',
+    ]);
+    if (!orFilter) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const { data, error } = await this.supabase
+      .from('recurring_customers')
+      .select('customer_name')
+      .eq('is_active', true)
+      .or(orFilter);
+
+    if (error) {
+      this.logger.warn(`Assigned customer check failed: ${error.message}`);
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+
+    const assignedNames = (data || [])
+      .map((row: any) => String(row.customer_name || '').trim())
+      .filter(Boolean);
+
+    if (!customerNameMatchesAssigned(name, assignedNames)) {
+      throw new ForbiddenException(
+        'You can only create orders for your assigned customers.',
+      );
+    }
+  }
+
   async createOrder(data: any, salespersonPhone?: string) {
     try {
       const wonAt = data.won_at || new Date().toISOString();
+      const totalAmount = Math.max(0, Number(data.total_amount || 0));
+      const poResolution = await this.resolvePoNumbers({
+        requestedPo: data.po_number,
+        generatedPo: data.generated_po_number,
+        referencePo: data.reference_po_number || data.customer_po_number,
+        reservationToken: data.po_reservation_token || data.po_draft_token,
+      });
+      await this.claimPoNumber(
+        poResolution.poNumber,
+        poResolution.reservationToken,
+      );
       const insertPayload: any = {
         customer_name: data.customer_name,
         stage: 'won',
         inquiry_type: 'purchase_order',
-        po_number: data.po_number || null,
+        po_number: poResolution.poNumber,
+        reference_po_number: poResolution.referencePoNumber,
+        generated_po_number: poResolution.generatedPoNumber,
+        po_source: poResolution.poSource,
+        po_status: 'confirmed',
+        po_generated_at: poResolution.poGeneratedAt,
+        po_confirmed_at: wonAt,
         po_date: data.po_date || null,
-        total_amount: Number(data.total_amount || 0),
+        total_amount: totalAmount,
         won_at: wonAt,
         delivery_location: data.delivery_location || null,
         delivery_date: data.delivery_date || null,
@@ -686,17 +1100,57 @@ export class DealsService {
 
       if (dealError) throw dealError;
 
+      await this.claimPoNumber(
+        poResolution.poNumber,
+        poResolution.reservationToken,
+        deal.id,
+      );
+
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        const itemRows = data.items.map((item: any) => ({
-          deal_id: deal.id,
-          sku_text: item.sku_text,
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity || 0),
-          unit: item.unit || 'MT',
-          rate: Number(item.rate || 0),
-          amount: Number(item.amount || item.quantity * item.rate || 0),
-          created_at: new Date().toISOString(),
-        }));
+        const itemRows = data.items
+          .map((item: any) => {
+            const quantity = Math.max(0, Number(item.quantity || 0));
+            const rate = Math.max(0, Number(item.rate || 0));
+            const amount = Math.max(
+              0,
+              Number(
+                item.amount !== undefined && item.amount !== null
+                  ? item.amount
+                  : quantity * rate,
+              ),
+            );
+            const converted = convertLineItemToMt(item);
+            const weightMt =
+              item.weight_mt !== undefined &&
+              item.weight_mt !== null &&
+              !isNaN(Number(item.weight_mt))
+                ? Number(item.weight_mt)
+                : converted.canConvert && converted.mt !== null
+                  ? converted.mt
+                  : null;
+            const unitWeightKg =
+              item.unit_weight_kg !== undefined &&
+              item.unit_weight_kg !== null &&
+              !isNaN(Number(item.unit_weight_kg))
+                ? Number(item.unit_weight_kg)
+                : quantity > 0 && weightMt !== null
+                  ? Math.round(((weightMt * 1000) / quantity) * 100) / 100
+                  : null;
+
+            return {
+              deal_id: deal.id,
+              sku_text: item.sku_text,
+              dimensions: item.dimensions || null,
+              quantity,
+              unit: item.unit || 'MT',
+              rate,
+              amount,
+              weight_mt: weightMt,
+              unit_weight_kg: unitWeightKg,
+              created_at: new Date().toISOString(),
+            };
+          })
+          .filter((row: any) => row.sku_text && row.quantity > 0);
 
         const { error: itemsError } = await this.supabase
           .from('deal_items')
@@ -794,10 +1248,15 @@ export class DealsService {
     try {
       const now = new Date();
       const nowIso = now.toISOString();
-      const todayStr = nowIso.slice(0, 10).replace(/-/g, '');
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      const poNumber = data.po_number?.trim() || `PO-${todayStr}-${randomNum}`;
       const poDate = data.po_date || nowIso.split('T')[0];
+      let poNumber = '';
+      let generatedPoNumber = '';
+      let referencePoNumber: string | null = null;
+      let poSource = 'generated';
+      let poGeneratedAt = nowIso;
+      const poReservationToken =
+        this.cleanPoValue(data.po_reservation_token || data.po_draft_token) ||
+        `order:${randomUUID()}`;
 
       const customerName = data.customer_name?.trim() || null;
       const customerPhone = data.customer_phone || null;
@@ -1007,6 +1466,23 @@ export class DealsService {
       if (!inquiryId && existingDeal?.inquiry_id) {
         inquiryId = existingDeal.inquiry_id;
       }
+
+      const poResolution = await this.resolvePoNumbers({
+        requestedPo: data.po_number,
+        generatedPo: data.generated_po_number,
+        referencePo: data.reference_po_number || data.customer_po_number,
+        reservationToken: poReservationToken,
+        existingDeal,
+        dealId,
+      });
+      poNumber = poResolution.poNumber;
+      generatedPoNumber = poResolution.generatedPoNumber;
+      referencePoNumber = poResolution.referencePoNumber;
+      poSource = poResolution.poSource;
+      poGeneratedAt = poResolution.poGeneratedAt;
+
+      await this.claimPoNumber(poNumber, poReservationToken, dealId);
+
       const targetSourceChannel = data.source_channel || 'web_dashboard';
 
       if (inquiryId) {
@@ -1015,6 +1491,12 @@ export class DealsService {
           stage: 'won',
           won_at: nowIso,
           po_number: poNumber,
+          reference_po_number: referencePoNumber,
+          generated_po_number: generatedPoNumber,
+          po_source: poSource,
+          po_status: 'confirmed',
+          po_generated_at: poGeneratedAt,
+          po_confirmed_at: nowIso,
           po_date: poDate,
           total_amount: totalAmount,
         };
@@ -1031,13 +1513,23 @@ export class DealsService {
             .from('inquiries')
             .insert({
               source_channel: targetSourceChannel,
-              raw_text: `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
+              raw_text:
+                this.cleanPoValue(data.source_original_text) ||
+                `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
               media_urls: data.media_urls,
               sender_name: customerName,
               sender_phone: customerPhone,
               salesperson_phone: phone,
               status: 'confirmed',
               inquiry_type: 'inquiry',
+              po_number: poNumber,
+              reference_po_number: referencePoNumber,
+              generated_po_number: generatedPoNumber,
+              po_source: poSource,
+              po_status: 'confirmed',
+              po_generated_at: poGeneratedAt,
+              po_confirmed_at: nowIso,
+              po_date: poDate,
               created_at: nowIso,
             })
             .select()
@@ -1064,6 +1556,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
             delivery_location:
@@ -1090,6 +1588,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
             delivery_location: deliveryLocation,
@@ -1107,26 +1611,51 @@ export class DealsService {
         dealId = savedDeal.id;
       }
 
+      await this.claimPoNumber(poNumber, poReservationToken, dealId);
+
       // 2. Replace / Update line items with exact PO values
       if (Array.isArray(lineItems) && lineItems.length > 0) {
         await this.supabase.from('deal_items').delete().eq('deal_id', dealId);
 
-        const dealItemsToInsert = lineItems.map((item: any) => ({
-          deal_id: dealId,
-          sku_text:
-            item.sku_text || item.product_name || item.description || null,
-          dimensions: item.dimensions || null,
-          quantity: Number(item.quantity) || null,
-          unit: item.unit || 'MT',
-          rate: Number(item.rate) || null,
-          amount:
-            Number(item.amount) ||
-            (Number(item.quantity) && Number(item.rate)
-              ? Number(item.quantity) * Number(item.rate)
-              : null),
-          confidence: Number(item.confidence) || 0.98,
-          created_at: nowIso,
-        }));
+        const dealItemsToInsert = lineItems.map((item: any) => {
+          const qty = Number(item.quantity) || null;
+          const converted = convertLineItemToMt(item);
+          const weightMt =
+            item.weight_mt !== undefined &&
+            item.weight_mt !== null &&
+            !isNaN(Number(item.weight_mt))
+              ? Number(item.weight_mt)
+              : converted.canConvert && converted.mt !== null
+                ? converted.mt
+                : null;
+          const unitWeightKg =
+            item.unit_weight_kg !== undefined &&
+            item.unit_weight_kg !== null &&
+            !isNaN(Number(item.unit_weight_kg))
+              ? Number(item.unit_weight_kg)
+              : qty && weightMt !== null
+                ? Math.round(((weightMt * 1000) / qty) * 100) / 100
+                : null;
+
+          return {
+            deal_id: dealId,
+            sku_text:
+              item.sku_text || item.product_name || item.description || null,
+            dimensions: item.dimensions || null,
+            quantity: qty,
+            unit: item.unit || 'MT',
+            rate: Number(item.rate) || null,
+            amount:
+              Number(item.amount) ||
+              (Number(item.quantity) && Number(item.rate)
+                ? Number(item.quantity) * Number(item.rate)
+                : null),
+            weight_mt: weightMt,
+            unit_weight_kg: unitWeightKg,
+            confidence: Number(item.confidence) || 0.98,
+            created_at: nowIso,
+          };
+        });
 
         await this.supabase.from('deal_items').insert(dealItemsToInsert);
       }
@@ -1140,6 +1669,12 @@ export class DealsService {
             stage: 'won',
             won_at: nowIso,
             po_number: poNumber,
+            reference_po_number: referencePoNumber,
+            generated_po_number: generatedPoNumber,
+            po_source: poSource,
+            po_status: 'confirmed',
+            po_generated_at: poGeneratedAt,
+            po_confirmed_at: nowIso,
             po_date: poDate,
             total_amount: totalAmount,
           })

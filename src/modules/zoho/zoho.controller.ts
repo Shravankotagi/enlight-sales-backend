@@ -6,14 +6,25 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ZohoService } from './zoho.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('zoho')
 @UseGuards(JwtAuthGuard)
 export class ZohoController {
   constructor(private readonly zohoService: ZohoService) {}
+
+  private assertAdmin(employee: any) {
+    const role = String(employee?.role || '').toLowerCase();
+    if (!role.includes('admin')) {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can run this Zoho operation.',
+      );
+    }
+  }
 
   // GET /zoho/status - sync status
   @Get('status')
@@ -24,8 +35,41 @@ export class ZohoController {
   // POST /zoho/pull-initial-sync - Trigger full inbound sync from Zoho Bigin
   @Post('pull-initial-sync')
   @HttpCode(HttpStatus.OK)
-  async pullInitialSync() {
-    return this.zohoService.pullInitialSyncFromBigin();
+  async pullInitialSync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // GET /zoho/pull-initial-sync - Browser/GET trigger
+  @Get('pull-initial-sync')
+  @HttpCode(HttpStatus.OK)
+  async pullInitialSyncGet(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // POST /zoho/sync - trigger manual auto-sync (Read-Only pull)
+  @Post('sync')
+  @HttpCode(HttpStatus.OK)
+  async triggerSync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // GET /zoho/sync - GET trigger
+  @Get('sync')
+  @HttpCode(HttpStatus.OK)
+  async triggerSyncGet(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+  }
+
+  // Aliases for /bigin-sync and /bigin-import within /zoho
+  @Get('bigin-sync')
+  @Post('bigin-sync')
+  @HttpCode(HttpStatus.OK)
+  async biginSyncAlias(@CurrentEmployee() employee: any) {
+    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
   }
 
   // POST /zoho/sync-visit - Push visit to Bigin Contacts module (Image 2)
@@ -47,25 +91,19 @@ export class ZohoController {
     return { success: !!contactId, contact_id: contactId };
   }
 
-  // POST /zoho/sync - trigger manual auto-sync
-  @Post('sync')
-  @HttpCode(HttpStatus.OK)
-  async triggerSync() {
-    await this.zohoService.autoSyncRoutine();
-    return { success: true, message: 'Auto-sync triggered' };
-  }
-
   // POST /zoho/wipe - wipe all Bigin data
   @Post('wipe')
   @HttpCode(HttpStatus.OK)
-  async wipeBigin() {
+  async wipeBigin(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
     return this.zohoService.wipeAllBiginData();
   }
 
   // POST /zoho/resync - full clean re-sync of all data
   @Post('resync')
   @HttpCode(HttpStatus.OK)
-  async fullResync() {
+  async fullResync(@CurrentEmployee() employee: any) {
+    this.assertAdmin(employee);
     return this.zohoService.fullResyncAllData();
   }
 

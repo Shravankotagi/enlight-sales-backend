@@ -21,8 +21,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const targetArg = process.argv.find((a) => a.startsWith('--target='));
 const TARGET_DB_URL =
   (targetArg ? targetArg.replace('--target=', '') : '') ||
-  process.env.TARGET_DATABASE_URL ||
-  'postgresql://postgres:8dYGwkYmAd9ipshI6gCa@187.127.120.202:5432/postgres';
+  process.env.TARGET_DATABASE_URL;
+
+if (!TARGET_DB_URL) {
+  console.error(
+    '❌ Missing TARGET_DATABASE_URL in environment variables or --target argument',
+  );
+  process.exit(1);
+}
 
 const DDL_STATEMENTS = [
   // Extensions

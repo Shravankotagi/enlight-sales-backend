@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { PricingController } from './pricing.controller';
 import { PricingService } from './pricing.service';
+import { UnitConverterService } from './unit-converter.service';
 import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -15,7 +16,7 @@ import { JwtModule } from '@nestjs/jwt';
     }),
   ],
   controllers: [PricingController],
-  providers: [PricingService],
-  exports: [PricingService],
+  providers: [PricingService, UnitConverterService],
+  exports: [PricingService, UnitConverterService],
 })
 export class PricingModule {}
