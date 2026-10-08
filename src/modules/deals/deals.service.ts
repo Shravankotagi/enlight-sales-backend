@@ -77,15 +77,24 @@ function buildMultiFieldOrFilter(
 export function normalizeSourceProvenance(data: any) {
   if (!data || typeof data !== 'object') return data;
 
-  const rawText =
-    typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+  const rawText = typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+
   const isGeneratedPlaceholder =
     /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):/i.test(
       rawText,
-    );
+    ) &&
+    (!rawText.includes('\n') ||
+      / - Original PO Document$/i.test(rawText.trim()));
+
+  const strippedContent = rawText
+    .replace(
+      /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):[^\n]*\](?:\s*-\s*[^\n]*)?\n*/i,
+      '',
+    )
+    .trim();
 
   data.source_original_text =
-    rawText && !isGeneratedPlaceholder ? rawText : null;
+    rawText && !isGeneratedPlaceholder ? strippedContent || rawText : null;
   data.source_extracted_text =
     typeof data.source_extracted_text === 'string'
       ? data.source_extracted_text
@@ -93,7 +102,12 @@ export function normalizeSourceProvenance(data: any) {
   data.source_media_urls = Array.isArray(data.media_urls)
     ? data.media_urls.filter(
         (url: unknown) =>
-          typeof url === 'string' && url.trim() && url !== 'attached_document',
+          typeof url === 'string' &&
+          url.trim() &&
+          url !== 'attached_document' &&
+          (url.startsWith('data:') ||
+            url.startsWith('http://') ||
+            url.startsWith('https://')),
       )
     : [];
 
@@ -607,7 +621,7 @@ export class DealsService {
             if (Array.isArray(inq.media_urls) && inq.media_urls.length > 0) {
               data.media_urls = inq.media_urls;
             }
-            if (inq.raw_text && !data.raw_text) {
+            if (inq.raw_text) {
               data.raw_text = inq.raw_text;
             }
           }
@@ -656,7 +670,7 @@ export class DealsService {
               matched.media_urls.length > 0
             ) {
               data.media_urls = matched.media_urls;
-              if (matched.raw_text && !data.raw_text) {
+              if (matched.raw_text) {
                 data.raw_text = matched.raw_text;
               }
             }
