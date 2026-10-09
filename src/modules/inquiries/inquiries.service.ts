@@ -2821,6 +2821,113 @@ Thank you once again for considering us.`;
     }
   }
 
+  private normalizeParsedDocument(parsed: any) {
+    const customer =
+      parsed?.customer && typeof parsed.customer === 'object'
+        ? parsed.customer
+        : {};
+    const text = (...values: any[]) => {
+      for (const value of values) {
+        const cleaned = String(value ?? '').trim();
+        if (
+          cleaned &&
+          cleaned.toLowerCase() !== 'null' &&
+          cleaned.toLowerCase() !== 'none'
+        ) {
+          return cleaned;
+        }
+      }
+      return '';
+    };
+    const company = text(
+      parsed?.customer_name,
+      parsed?.customerName,
+      parsed?.company_name,
+      customer.name,
+      customer.customer_name,
+    );
+    const phone = text(
+      parsed?.customer_phone,
+      parsed?.contact_phone,
+      customer.phone,
+      customer.customer_phone,
+    );
+    const gst = text(
+      parsed?.customer_gst,
+      parsed?.gstin,
+      parsed?.gst,
+      customer.gst,
+      customer.gstin,
+    );
+    const address = text(
+      parsed?.customer_address,
+      parsed?.address,
+      customer.address,
+      customer.customer_address,
+    );
+    const delivery = text(
+      parsed?.delivery_location,
+      parsed?.deliveryLocation,
+      customer.delivery_location,
+      address,
+    );
+    const payment = text(parsed?.payment_terms, parsed?.paymentTerms);
+    const contact = text(
+      parsed?.contact_person,
+      parsed?.contact_name,
+      customer.contact_person,
+      customer.contact_name,
+    );
+    const rawItems = Array.isArray(parsed?.line_items)
+      ? parsed.line_items
+      : Array.isArray(parsed?.lineItems)
+        ? parsed.lineItems
+        : [];
+    const lineItems = rawItems
+      .map((item: any) => ({
+        ...item,
+        sku_text: text(
+          item?.sku_text,
+          item?.description,
+          item?.product,
+          item?.material,
+          item?.sku,
+        ),
+        dimensions: text(
+          item?.dimensions,
+          [item?.thickness, item?.width, item?.length]
+            .filter(Boolean)
+            .join(' x '),
+        ),
+        hsn_code: text(item?.hsn_code, item?.hsn),
+        quantity: Number(item?.quantity ?? item?.qty) || 0,
+        unit: text(item?.unit) || 'MT',
+        rate: Number(item?.rate ?? item?.unit_price ?? item?.price_per_mt) || 0,
+        amount: Number(item?.amount) || 0,
+      }))
+      .filter((item: any) => item.sku_text || item.quantity > 0);
+
+    return {
+      ...parsed,
+      customer_name: company || null,
+      customer_phone: phone || null,
+      customer_gst: gst || null,
+      customer_address: address || null,
+      delivery_location: delivery || null,
+      payment_terms: payment || null,
+      contact_person: contact || null,
+      line_items: lineItems,
+      customer: {
+        ...customer,
+        name: company || null,
+        phone: phone || null,
+        gst: gst || null,
+        address: address || null,
+        contact_person: contact || null,
+      },
+    };
+  }
+
   async parseDocumentWithGemini(fileBase64: string, mimeType: string) {
     const apiKeys = [
       process.env.GEMINI_PAID_API_KEY,
@@ -2954,8 +3061,13 @@ Return ONLY the JSON.`;
                   ],
                 },
               ],
+              generationConfig: {
+                temperature: 0.05,
+                responseMimeType: 'application/json',
+                maxOutputTokens: 65536,
+              },
             },
-            { timeout: 50000 },
+            { timeout: 90000 },
           );
 
           const text =
@@ -2976,6 +3088,18 @@ Return ONLY the JSON.`;
           }
 
           if (parsed) {
+            const normalized = this.normalizeParsedDocument(parsed);
+            if (
+              !normalized.customer_name &&
+              (!Array.isArray(normalized.line_items) ||
+                normalized.line_items.length === 0)
+            ) {
+              lastError = new Error(
+                'Document parsed without a company name or line items',
+              );
+              continue;
+            }
+            parsed = normalized;
             // Post-process line items & units
             if (Array.isArray(parsed.line_items)) {
               parsed.line_items = parsed.line_items.map((item: any) => {
