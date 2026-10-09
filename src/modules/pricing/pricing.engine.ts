@@ -52,7 +52,7 @@ export interface PricingSummary {
  * Normalizes unit string to standard casing and symbol.
  */
 export function normalizeUnit(rawUnit?: string): string {
-  if (!rawUnit || typeof rawUnit !== 'string') return 'MT';
+  if (!rawUnit || typeof rawUnit !== 'string') return 'KG';
   const u = rawUnit.trim().toUpperCase();
   if (u === 'KG' || u === 'KGS' || u === 'KILOGRAM' || u === 'KILOGRAMS')
     return 'KG';
@@ -97,8 +97,23 @@ export function convertLineItemToMt(item: LineItemInput): {
     return { mt: 0, canConvert: true, originalQty: 0, originalUnit: rawUnit };
   }
 
+  const sizeText = [
+    item.dimensions,
+    item.spec,
+    item.specification,
+    item.sku_text,
+    item.description,
+    item.product,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const hasExplicitSize = /\d/.test(sizeText);
+  const canUseStoredWeight =
+    normUnit === 'MT' || normUnit === 'KG' || hasExplicitSize;
+
   // Priority 0: Stored normalized weight from database or Gemini unit converter
   if (
+    canUseStoredWeight &&
     item.weight_mt !== undefined &&
     item.weight_mt !== null &&
     !isNaN(Number(item.weight_mt)) &&
@@ -574,16 +589,7 @@ export function convertLineItemToMt(item: LineItemInput): {
     normUnit === 'Sheets' ||
     normUnit === 'Plates';
 
-  if (isSheetOrPlate) {
-    if (!thickness) {
-      const isPlate = combinedText.includes('plate') || normUnit === 'Plates';
-      thickness = isPlate ? 10 : 1.6; // 10mm nominal for plates, 1.6mm (16G) for sheets
-    }
-    if (!widthM || !lengthM) {
-      widthM = 1.25;
-      lengthM = 2.5;
-    }
-
+  if (isSheetOrPlate && thickness && widthM && lengthM) {
     const isChequered =
       combinedText.includes('chequered') || combinedText.includes('checker');
     const wtPerPieceKg = isChequered
@@ -775,10 +781,14 @@ export function calculateLineItem(item: LineItemInput): CalculatedLineItem {
   ) {
     amount = Number(item.amount);
   } else if (quantity > 0 && rate > 0) {
-    if (conv.canConvert && conv.mt !== null && conv.mt > 0) {
+    if (unit === 'KG') {
+      if (rate > 1000 && conv.canConvert && conv.mt !== null && conv.mt > 0) {
+        amount = Math.round(conv.mt * rate * 100) / 100;
+      } else {
+        amount = Math.round(quantity * rate * 100) / 100;
+      }
+    } else if (conv.canConvert && conv.mt !== null && conv.mt > 0) {
       amount = Math.round(conv.mt * rate * 100) / 100;
-    } else if (unit === 'KG') {
-      amount = Math.round((quantity / 1000) * rate * 100) / 100;
     } else {
       amount = Math.round(quantity * rate * 100) / 100;
     }
