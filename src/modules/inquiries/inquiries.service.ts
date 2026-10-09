@@ -2884,28 +2884,64 @@ Thank you once again for considering us.`;
         ? parsed.lineItems
         : [];
     const lineItems = rawItems
-      .map((item: any) => ({
-        ...item,
-        sku_text: text(
-          item?.sku_text,
-          item?.description,
-          item?.product,
-          item?.material,
-          item?.sku,
-        ),
-        dimensions: text(
-          item?.dimensions,
-          [item?.thickness, item?.width, item?.length]
-            .filter(Boolean)
-            .join(' x '),
-        ),
-        hsn_code: text(item?.hsn_code, item?.hsn),
-        quantity: Number(item?.quantity ?? item?.qty) || 0,
-        unit: text(item?.unit) || 'MT',
-        rate: Number(item?.rate ?? item?.unit_price ?? item?.price_per_mt) || 0,
-        amount: Number(item?.amount) || 0,
-      }))
+      .map((item: any) => {
+        const totalWt = Number(
+          item?.total_weight_kg ?? item?.total_weight ?? item?.weight_kg,
+        );
+        let rawQty = Number(item?.quantity ?? item?.qty) || 0;
+        let rawUnit = text(item?.unit) || 'KG';
+        let pieces = Number(item?.pieces ?? item?.pcs) || null;
+
+        // When a cutting/weight list provides total weight in KG, commercial quantity is the total weight in KG
+        if (
+          totalWt &&
+          totalWt > 0 &&
+          (rawUnit.toUpperCase() === 'NOS' ||
+            rawUnit.toUpperCase() === 'PCS' ||
+            (rawQty > 0 && rawQty < totalWt && !pieces))
+        ) {
+          pieces = rawQty;
+          rawQty = totalWt;
+          rawUnit = 'KG';
+        } else if (!item?.unit) {
+          rawUnit = 'KG';
+        }
+
+        return {
+          ...item,
+          sku_text: text(
+            item?.sku_text,
+            item?.description,
+            item?.product,
+            item?.material,
+            item?.sku,
+          ),
+          dimensions: text(
+            item?.dimensions,
+            [item?.thickness, item?.width, item?.length]
+              .filter(Boolean)
+              .join(' x '),
+          ),
+          hsn_code: text(item?.hsn_code, item?.hsn),
+          quantity: rawQty,
+          unit: rawUnit,
+          pieces: pieces,
+          grade: text(item?.grade) || null,
+          rate:
+            Number(item?.rate ?? item?.unit_price ?? item?.price_per_mt) || 0,
+          amount: Number(item?.amount) || 0,
+          unit_weight_kg:
+            Number(item?.unit_weight_kg ?? item?.unit_weight) || null,
+          total_weight_kg: totalWt || null,
+        };
+      })
       .filter((item: any) => item.sku_text || item.quantity > 0);
+
+    const preferredMake = text(
+      parsed?.preferred_make,
+      parsed?.make,
+      parsed?.brand,
+    );
 
     return {
       ...parsed,
@@ -2916,6 +2952,7 @@ Thank you once again for considering us.`;
       delivery_location: delivery || null,
       payment_terms: payment || null,
       contact_person: contact || null,
+      preferred_make: preferredMake || null,
       line_items: lineItems,
       customer: {
         ...customer,
@@ -2977,32 +3014,34 @@ Thank you once again for considering us.`;
     }
 
     const promptText = `You are an expert OCR & document parser for Enlight Metals Private Limited, a premier Indian B2B metal & steel distributor.
-Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or Material Requirement formatted in Tally ERP, Busy, SAP, etc.) and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or Material Requirement formatted in Tally ERP, Busy, SAP, cutting lists, or custom steel ERP formats) and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": "The legal company name of the buyer / client issuing this PO (under 'Invoice To:', 'Bill To:', 'Buyer:', 'Customer:', 'M/s:'). NEVER return Enlight Metals as customer_name.",
+  "customer_name": "The legal company name of the buyer / client issuing this PO or inquiry (under 'Invoice To:', 'Bill To:', 'Buyer:', 'Customer:', 'M/s:', 'Company name -'). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
-  "customer_phone": "Phone number under Invoice To else null",
-  "customer_email": "Email under Invoice To else null",
+  "customer_phone": "Phone number under Invoice To or notes else null",
+  "customer_email": "Email under Invoice To or notes else null",
   "customer_gst": "15-character GSTIN number of the customer if present else null",
   "customer_pan": "PAN number of customer if present else null",
-  "customer_address": "Complete factory/office billing address of customer under Invoice To",
-  "delivery_location": "Destination site / ship-to address from 'Consignee (Ship to)', 'Delivery Address', or 'Destination'. NEVER include Enlight Metals' supplier address.",
-  "payment_terms": "Payment terms from 'Mode/Terms of Payment' e.g. Pmt immediate after delivery, 30 Days Credit, 100% Advance",
+  "customer_address": "Complete factory/office billing address of customer",
+  "delivery_location": "Destination site / ship-to address from 'Consignee (Ship to)', 'Delivery Address', 'Destination', or 'Delivery at X'. NEVER include Enlight Metals' supplier address.",
+  "payment_terms": "Payment terms e.g. '30 Days', 'Immediate', '100% Advance'",
   "delivery_terms": "Terms of delivery from 'Terms of Delivery' or 'Remarks'",
-  "preferred_make": "Preferred brand/make e.g. SAIL / JSW / TATA if stated else null",
+  "preferred_make": "Preferred brand/make e.g. 'E350 (Tata/Jsw/Sail)', 'SAIL', 'JSW', 'TATA' if stated else null",
   "additional_notes": "Non-product contextual remarks, TC/E-way bill requirements. NEVER put product line items here.",
-  "po_number": "Explicit PO/Voucher Number e.g. 'PO/26-27/63', 'PO-26-27-00718' from 'Voucher No.', 'PO No', 'Purchase Order No'. Set null if only inquiry/RFQ.",
+  "po_number": "Explicit PO/Voucher Number e.g. 'PO/26-27/63', 'PO-26-27-00718' from 'Voucher No.', 'PO No', 'Purchase Order No'. Set null if only inquiry/RFQ/cutting list.",
   "po_date": "PO Date converted to YYYY-MM-DD (Year 2026 e.g. '2026-09-12')",
   "line_items": [
     {
-      "sku_text": "Material / product category name e.g. HR PLATE, CR SHEET, MS ANGLE, GI PIPE",
-      "dimensions": "Specs / dimensions e.g. 05X1500X6300MM, 50X50X6, 12MM",
-      "grade": "Steel grade if present e.g. IS2062 E250BR, FE550D else null",
+      "sku_text": "Material / product category name e.g. HR PLATE, CR SHEET, MS ANGLE, GI PIPE, PLATE",
+      "dimensions": "Specs / dimensions e.g. 05X1500X6300MM, 5X1250X7600, 50X50X6, 12MM",
+      "grade": "Steel grade if present e.g. IS2062 E250BR, FE550D, E350 else null",
       "hsn_code": "HSN/SAC code if stated e.g. 72083840 else null",
       "quantity": numeric_quantity,
       "unit": "Exact unit of measure: 'MT', 'KG', 'Nos', 'PCS', 'Sheets'",
-      "rate": numeric_pre_gst_rate_per_unit,
-      "amount": numeric_pre_gst_line_amount,
+      "unit_weight_kg": numeric_unit_weight_in_kg_if_present_else_null,
+      "total_weight_kg": numeric_total_weight_in_kg_if_present_else_null,
+      "rate": numeric_pre_gst_rate_per_unit_or_0,
+      "amount": numeric_pre_gst_line_amount_or_0,
       "due_on": "Delivery due date in YYYY-MM-DD if stated else null"
     }
   ],
@@ -3015,34 +3054,48 @@ Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or M
 CRITICAL EXTRACTION RULES:
 1. SUPPLIER vs BUYER IDENTIFICATION (STRICT):
 - Enlight Metals Private Limited (Shop No 606 Sn 272, Clover Hills Plaza, NIBM Undri Road, Pune - 411048, GST: 27AAICE5263E1ZN) is the SUPPLIER. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
-- The 'customer_name' is the legal corporate name under 'Invoice To:' / 'Bill To:' (e.g. 'Suraj SIM Techno Works Pvt Ltd', 'SB Scafform Technovert Pvt. Ltd.'). NEVER put building/street address in customer_name.
+- The 'customer_name' is the legal corporate name under 'Invoice To:' / 'Bill To:' / 'Company name –' (e.g. 'KDT Infrastructure Pvt Ltd', 'Suraj SIM Techno Works Pvt Ltd'). NEVER put building/street address in customer_name.
 
 2. STEEL LINE ITEM & UOM RULES (STRICT):
-- Columns typically appear as: [Sl No.] | [Description of Goods] | [Due on] | [Quantity] | [Rate] | [per / UOM] | [Amount]
-- Description: Separate product title (sku_text: 'HR PLATE') and size/spec (dimensions: '05X1500X6300MM').
-- Quantity & UOM: Extract quantity from 'Quantity' column. Extract unit strictly from the 'per' or 'UOM' column ('M.T' / 'MT' → 'MT', 'KG' → 'KG', 'Nos' → 'Nos').
+- Description: Separate product title (sku_text: 'PLATE', 'HR PLATE') and size/spec (dimensions: '5X1250X7600').
+- Quantity & UOM: Extract quantity from 'Quantity' / 'QTY' column.
+- DEFAULT UNIT RULE: In Indian metal trading, the standard default unit is 'KG'. If no unit is explicitly specified on a row or table, set unit to 'KG'. Only set unit to 'MT' or 'Nos' if explicitly written ('MT' / 'M.T' → 'MT', 'Nos' / 'PCS' → 'Nos').
 - ⚠️ CRITICAL NEGATIVE RULE: Words in the description like 'HR PLATE', 'CR SHEET', 'MS ANGLE', 'COIL', 'BEAM', 'PIPE' are PRODUCT NAMES, NEVER UNITS! If the table says '60.000 M.T' with per 'M.T', the unit is STRICTLY 'MT', NEVER 'Plates'!
 
 3. COMMERCIAL TERMS & TOTALS:
-- Extract 'Mode/Terms of Payment' into 'payment_terms'.
-- Extract 'Consignee (Ship to)' into 'delivery_location'.
+- Extract 'Mode/Terms of Payment' or 'Payment Terms – X' into 'payment_terms'.
+- Extract 'Consignee (Ship to)' or 'Delivery at X' into 'delivery_location'.
+- Extract 'Make - X' into 'preferred_make'.
 - basic_amount is the pre-tax total of all line items. total_amount is the grand total.
+
+4. CUTTING / WEIGHT LISTS (MULTI-PAGE & UP TO 100+ ROWS):
+- A sheet with DESCRIPTION, THK, WIDTH, LENGTH, QTY, UNIT WT, TOTAL WT is a valid inquiry even when it has no Rate or Amount column.
+- Extract EVERY SINGLE product row without omission, even if there are 40, 50, 80, or 100+ rows across multiple pages.
+- For each row: sku_text is the description (e.g. PLATE). dimensions is THK x WIDTH x LENGTH (e.g. 5x1250x7600).
+- COMMERCIAL QUANTITY & TOTAL WT: When a cutting list has BOTH a piece count (QTY) and a TOTAL WT column, the commercial 'quantity' MUST be the TOTAL WEIGHT from the TOTAL WT column, and the 'unit' MUST be 'KG' (e.g. for row 1: quantity: 39897.63, unit: 'KG'). Put the piece count into 'pieces' (e.g. 107).
+- UNIT WT and TOTAL WT: extract as unit_weight_kg and total_weight_kg. Leave rate and amount as 0 when no price is printed. Do NOT skip or drop any rows!
+- Skip bare subtotal rows that have no description or item specs.
+- Read notes wherever they appear (at the top, between rows, in the margins, or on page 2 / final footer):
+  * "Company name – X" or "M/s X" is customer_name
+  * "Make - X" is preferred_make (e.g. "E350 (Tata/Jsw/Sail)")
+  * "Payment Terms – X" is payment_terms (e.g. "30 Days")
+  * "Delivery at X" is delivery_location (e.g. "Chakan, Pune")
 
 Return ONLY the JSON.`;
 
     const candidateModels = [
+      process.env.GEMINI_PRIMARY_MODEL || 'gemini-3.5-flash',
       'gemini-3.8-flash',
-      'gemini-3.7-flash',
+      process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.7-flash',
       'gemini-2.5-flash',
     ];
 
     let lastError: any = null;
-    let stopCascade = false;
-    for (const key of apiKeys) {
-      if (stopCascade) break;
+
+    keyLoop: for (const ocrKey of apiKeys) {
       for (const model of candidateModels) {
         try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ocrKey}`;
           const response = await axios.post(
             url,
             {
@@ -3063,11 +3116,11 @@ Return ONLY the JSON.`;
               ],
               generationConfig: {
                 temperature: 0.05,
-                responseMimeType: 'application/json',
+                response_mime_type: 'application/json',
                 maxOutputTokens: 65536,
               },
             },
-            { timeout: 90000 },
+            { timeout: 60000 },
           );
 
           const text =
@@ -3083,7 +3136,11 @@ Return ONLY the JSON.`;
             const firstOpen = text.indexOf('{');
             const lastClose = text.lastIndexOf('}');
             if (firstOpen !== -1 && lastClose > firstOpen) {
-              parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+              try {
+                parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+              } catch {
+                parsed = null;
+              }
             }
           }
 
@@ -3110,7 +3167,7 @@ Return ONLY the JSON.`;
                   'Material'
                 ).trim();
                 const dims = (item.dimensions || '').trim();
-                let rawUnit = String(item.unit || 'MT').trim();
+                let rawUnit = String(item.unit || 'KG').trim();
                 const uUpper = rawUnit.toUpperCase();
 
                 if (
@@ -3140,7 +3197,22 @@ Return ONLY the JSON.`;
                 }
 
                 const rate = Number(item.rate || 0);
-                const qty = Number(item.quantity || 0);
+                let qty = Number(item.quantity || 0);
+                const totalWeightKg = Number(item.total_weight_kg || 0);
+                if (
+                  totalWeightKg > 0 &&
+                  (rawUnit === 'KG' ||
+                    !item.quantity ||
+                    ['Nos', 'Pcs'].includes(rawUnit) ||
+                    (qty > 0 && qty < totalWeightKg / 10))
+                ) {
+                  if (qty > 0 && qty < totalWeightKg && !item.pieces) {
+                    item.pieces = qty;
+                  }
+                  qty = totalWeightKg;
+                  rawUnit = 'KG';
+                }
+
                 const amt = Number(item.amount || 0) || Math.round(qty * rate);
 
                 if (
@@ -3180,11 +3252,28 @@ Return ONLY the JSON.`;
                 parsed.line_items = parsed.line_items.map(
                   (it: any, i: number) => ({
                     ...it,
-                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
-                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                    weight_mt:
+                      batchConv.items[i]?.weight_mt ??
+                      (it.total_weight_kg
+                        ? Number(it.total_weight_kg) / 1000
+                        : it.unit === 'KG' && it.quantity
+                          ? Number(it.quantity) / 1000
+                          : null),
+                    unit_weight_kg:
+                      batchConv.items[i]?.unit_weight_kg ??
+                      it.unit_weight_kg ??
+                      null,
                   }),
                 );
-                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+                parsed.total_tonnage_mt =
+                  batchConv.total_tonnage_mt ||
+                  Math.round(
+                    parsed.line_items.reduce(
+                      (acc: number, curr: any) =>
+                        acc + (Number(curr.weight_mt) || 0),
+                      0,
+                    ) * 1000,
+                  ) / 1000;
               } catch (e: any) {
                 this.logger.warn(
                   `Document unit conversion fallback: ${e.message}`,
@@ -3204,11 +3293,6 @@ Return ONLY the JSON.`;
               err?.response?.data?.error?.message || err.message
             }`,
           );
-          const timedOut = err?.code === 'ECONNABORTED';
-          if (timedOut) {
-            stopCascade = true;
-            break;
-          }
         }
       }
     }
@@ -3217,10 +3301,11 @@ Return ONLY the JSON.`;
       'All Gemini OCR model attempts failed:',
       lastError?.response?.data || lastError?.message,
     );
-    return {
-      success: false,
-      error: lastError?.message || 'Failed to extract PO details from document',
-    };
+    const geminiMessage =
+      lastError?.response?.data?.error?.message || lastError?.message;
+    throw new BadRequestException(
+      geminiMessage || 'Failed to extract document details',
+    );
   }
 
   async parseTextWithGemini(rawText: string) {

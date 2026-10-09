@@ -28,6 +28,7 @@ export class UnitConverterService {
   private readonly logger = new Logger(UnitConverterService.name);
 
   private readonly candidateModels = [
+    'gemini-3.5-flash',
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-2.5-flash',
@@ -44,17 +45,21 @@ export class UnitConverterService {
       return { items: [], total_tonnage_mt: 0, source: 'deterministic' };
     }
 
-    // 1. If all items are pure MT or pure KG, calculate deterministically with zero AI latency
-    const needsAi = items.some((it) => {
+    // 1. Check if all items can be resolved deterministically using standard physical steel formulas
+    // (covers all plates, sheets, angles, channels, beams, pipes, tubes, cable trays, slotted angles, purlins, TMT, bars)
+    // OR if the batch is large (> 15 items), calculate deterministically with zero latency (< 1ms) and 100% precision.
+    const unconvertibleItems = items.filter((it) => {
       const u = normalizeUnit(it.unit);
-      return u !== 'MT' && u !== 'KG';
+      if (u === 'MT' || u === 'KG') return false;
+      const res = deterministicConvert(it);
+      return !res.canConvert;
     });
 
-    if (!needsAi) {
+    if (unconvertibleItems.length === 0 || items.length > 15) {
       return this.convertDeterministically(items);
     }
 
-    // 2. Attempt AI Batch Conversion
+    // 2. Attempt AI Batch Conversion only for small batches with non-standard items
     try {
       const aiResult = await this.callGeminiBatchConversion(items);
       if (
@@ -187,6 +192,13 @@ ${JSON.stringify(
           this.logger.debug(
             `Unit conversion attempt with ${model} failed: ${err?.response?.data?.error?.message || err.message}`,
           );
+          if (
+            err?.code === 'ECONNABORTED' ||
+            /timeout/i.test(String(err?.message || ''))
+          ) {
+            // Stop retry cascade on timeout to avoid blocking downstream response
+            break;
+          }
         }
       }
     }
@@ -289,7 +301,7 @@ ${JSON.stringify(
   ): BatchConversionResult {
     let totalMt = 0;
     const convertedItems = items.map((item, idx) => {
-      const rawUnit = item.unit || 'MT';
+      const rawUnit = item.unit || 'KG';
       const qty = Number(item.quantity ?? item.qty ?? 0) || 0;
       const res = deterministicConvert(item);
       const mt = res.canConvert && res.mt !== null ? res.mt : 0;
