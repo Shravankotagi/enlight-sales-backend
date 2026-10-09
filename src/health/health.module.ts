@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TerminusModule } from '@nestjs/terminus';
 import { HttpModule } from '@nestjs/axios';
-import { PrismaHealthIndicator } from './indicators/prisma.health';
+import { SupabaseHealthIndicator } from './indicators/prisma.health';
 import { HealthController } from './health.controller';
-import { PrismaModule } from 'src/infrastructure/prisma/prisma.module';
+import { SupabaseModule } from 'src/infrastructure/supabase/supabase.module';
 
 @Module({
-  imports: [TerminusModule, HttpModule, PrismaModule],
+  imports: [TerminusModule, HttpModule, SupabaseModule],
   controllers: [HealthController],
-  providers: [PrismaHealthIndicator],
+  providers: [SupabaseHealthIndicator],
 })
 export class HealthModule {}
