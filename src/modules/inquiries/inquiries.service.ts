@@ -70,39 +70,14 @@ import {
   calculateTotalTonnageMt,
   formatIndianCurrency,
 } from '../pricing/pricing.engine';
+import { UnitConverterService } from '../pricing/unit-converter.service';
 import { detectHsnCode } from '../../utils/hsnDetector';
 export { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
-import { getAssignedPhoneFromCustomerMap } from '../../utils/customerOwnerMap';
-
-function buildInquiryPhoneOrFilter(salespersonPhones?: any): string | null {
-  if (!salespersonPhones) return null;
-  let list: any[] = [];
-  if (typeof salespersonPhones === 'string') {
-    list = [salespersonPhones];
-  } else if (Array.isArray(salespersonPhones)) {
-    list = salespersonPhones;
-  } else if (typeof salespersonPhones === 'object') {
-    if (salespersonPhones.salespersonPhones) {
-      list = Array.isArray(salespersonPhones.salespersonPhones)
-        ? salespersonPhones.salespersonPhones
-        : [salespersonPhones.salespersonPhones];
-    } else if (salespersonPhones.salespersonPhone) {
-      list = [salespersonPhones.salespersonPhone];
-    }
-  }
-
-  if (list.length === 0) return null;
-  const parts: string[] = [];
-  for (const phone of list) {
-    if (!phone || typeof phone !== 'string') continue;
-    const clean = phone.replace(/\D/g, '');
-    const p10 = clean.slice(-10);
-    if (!p10) continue;
-    const p12 = '91' + p10;
-    parts.push(`salesperson_phone.eq.${p10}`, `salesperson_phone.eq.${p12}`);
-  }
-  return parts.length > 0 ? parts.join(',') : null;
-}
+import {
+  getAssignedPhoneFromCustomerMap,
+  buildCustomerOwnerMap,
+  isValidSalespersonPhone,
+} from '../../utils/customerOwnerMap';
 
 const PRODUCT_KEYWORDS = [
   'hr coil',
@@ -507,6 +482,9 @@ function resolveInquiryEntities(
   salesperson_name: string;
   assigned_salesperson_name: string;
   salesperson_phone: string;
+  raw_salesperson_phone?: string | null;
+  raw_sender_phone?: string | null;
+  customer_owner_phone?: string | null;
   delivery_location: string;
   deliveryLocation: string;
   payment_terms: string;
@@ -584,13 +562,39 @@ function resolveInquiryEntities(
     ? String(rawCustomerPhone).trim()
     : '';
 
-  // 3. Resolve Salesperson Name & Phone (with CRM Customer Owner priority)
+  // 3. Resolve Salesperson Name & Phone (with direct rep priority and CRM customer owner fallback)
   const assignedFromCust = getAssignedPhoneFromCustomerMap(
     extractedCustomerName,
     customerOwnerMap,
   );
+  const validDirectSpPhone =
+    item.salesperson_phone && isValidSalespersonPhone(item.salesperson_phone)
+      ? item.salesperson_phone
+      : null;
+  const validCustOwnerPhone =
+    assignedFromCust && isValidSalespersonPhone(assignedFromCust)
+      ? assignedFromCust
+      : null;
+  const validSenderSpPhone =
+    item.sender_phone && isValidSalespersonPhone(item.sender_phone)
+      ? item.sender_phone
+      : null;
+
   const effectiveSpPhone =
-    assignedFromCust || item.salesperson_phone || item.sender_phone || '';
+    validDirectSpPhone ||
+    validCustOwnerPhone ||
+    validSenderSpPhone ||
+    (item.salesperson_phone &&
+    item.salesperson_phone !== 'unassigned' &&
+    item.salesperson_phone !== 'null'
+      ? item.salesperson_phone
+      : '') ||
+    (item.sender_phone &&
+    item.sender_phone !== 'unassigned' &&
+    item.sender_phone !== 'null'
+      ? item.sender_phone
+      : '') ||
+    '';
   const phone = effectiveSpPhone.replace(/\D/g, '');
   const p10 = phone.slice(-10);
   const resolvedSalesperson =
@@ -621,6 +625,9 @@ function resolveInquiryEntities(
     salesperson_name: resolvedSalesperson,
     assigned_salesperson_name: resolvedSalesperson,
     salesperson_phone: effectiveSpPhone,
+    raw_salesperson_phone: item.salesperson_phone || null,
+    raw_sender_phone: item.sender_phone || null,
+    customer_owner_phone: validCustOwnerPhone || null,
     delivery_location:
       item.delivery_location || extractedDeliveryLocation || '',
     deliveryLocation: item.delivery_location || extractedDeliveryLocation || '',
@@ -648,6 +655,7 @@ export class InquiriesService implements OnModuleInit {
     private dealsService: DealsService,
     private activityLogsService: ActivityLogsService,
     private zohoService: ZohoService,
+    private unitConverterService?: UnitConverterService,
   ) {}
 
   private get supabase() {
@@ -760,12 +768,8 @@ export class InquiriesService implements OnModuleInit {
         query = query.lte('created_at', toDate);
       }
 
-      const orFilter = buildInquiryPhoneOrFilter(
-        filters?.salespersonPhones || filters?.salespersonPhone,
-      );
-      if (orFilter) {
-        query = query.or(orFilter);
-      }
+      // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
+      // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
       const { data, error } = await query;
       if (error) throw error;
@@ -778,13 +782,17 @@ export class InquiriesService implements OnModuleInit {
         inquiryIds.length > 0
           ? this.supabase
               .from('deals')
-              .select('inquiry_id, customer_name, customer_phone')
+              .select(
+                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+              )
               .in('inquiry_id', inquiryIds)
           : Promise.resolve({ data: [] }),
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
+          .select(
+            'customer_name, assigned_salesperson_phone, is_active, updated_at',
+          ),
       ]);
 
       const deals = dealsRes.data || [];
@@ -793,6 +801,7 @@ export class InquiriesService implements OnModuleInit {
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
+      const dealSpByInqId = new Map<string, string>();
       deals?.forEach((d: any) => {
         if (d.inquiry_id && d.customer_phone) {
           dealByInqId.set(d.inquiry_id, d.customer_phone);
@@ -802,6 +811,9 @@ export class InquiriesService implements OnModuleInit {
             d.customer_name.trim().toLowerCase(),
             d.customer_phone,
           );
+        }
+        if (d.inquiry_id && d.salesperson_phone) {
+          dealSpByInqId.set(d.inquiry_id, d.salesperson_phone);
         }
       });
 
@@ -814,15 +826,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       // Filter out spurious non-inquiry records (chatbot queries, visit logs, greetings)
       const genuineData = (data || []).filter(isGenuineInquiry);
@@ -880,10 +884,29 @@ export class InquiriesService implements OnModuleInit {
             .filter(Boolean),
         );
         scopedData = lightweightData.filter((item: any) => {
-          const itemPhoneClean = (item.salesperson_phone || '')
+          const spPhoneClean = (item.salesperson_phone || '')
             .replace(/\D/g, '')
             .slice(-10);
-          return allowedPhoneSet.has(itemPhoneClean);
+          const rawSpClean = (item.raw_salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const senderClean = (item.sender_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const custOwnerClean = (item.customer_owner_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const dealSpClean = (dealSpByInqId.get(item.id) || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+
+          return (
+            allowedPhoneSet.has(spPhoneClean) ||
+            allowedPhoneSet.has(rawSpClean) ||
+            allowedPhoneSet.has(senderClean) ||
+            allowedPhoneSet.has(custOwnerClean) ||
+            allowedPhoneSet.has(dealSpClean)
+          );
         });
       }
 
@@ -914,8 +937,10 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        const inqPhone = data.salesperson_phone || data.sender_phone;
-        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+        const hasAccess =
+          phoneInList(data.salesperson_phone, accessiblePhones) ||
+          phoneInList(data.sender_phone, accessiblePhones);
+        if (!hasAccess) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to view this inquiry.',
           );
@@ -1003,8 +1028,10 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        const inqPhone = inquiry.salesperson_phone || inquiry.sender_phone;
-        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+        const hasAccess =
+          phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
+          phoneInList(inquiry.sender_phone, accessiblePhones);
+        if (!hasAccess) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to delete this inquiry.',
           );
@@ -1062,22 +1089,28 @@ export class InquiriesService implements OnModuleInit {
         query = query.lte('created_at', toDate);
       }
 
-      if (salespersonPhones) {
-        const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
-        if (orFilter) query = query.or(orFilter);
-      }
+      // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
+      // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
       const { data, error } = await query;
       if (error) throw error;
 
+      const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
       const [dealsRes, employeesRes, customersRes] = await Promise.all([
-        this.supabase
-          .from('deals')
-          .select('inquiry_id, customer_name, customer_phone'),
+        inquiryIds.length > 0
+          ? this.supabase
+              .from('deals')
+              .select(
+                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+              )
+              .in('inquiry_id', inquiryIds)
+          : Promise.resolve({ data: [] }),
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
+          .select(
+            'customer_name, assigned_salesperson_phone, is_active, updated_at',
+          ),
       ]);
 
       const deals = dealsRes.data || [];
@@ -1086,6 +1119,7 @@ export class InquiriesService implements OnModuleInit {
 
       const dealByInqId = new Map<string, string>();
       const dealByName = new Map<string, string>();
+      const dealSpByInqId = new Map<string, string>();
       deals?.forEach((d: any) => {
         if (d.inquiry_id && d.customer_phone) {
           dealByInqId.set(d.inquiry_id, d.customer_phone);
@@ -1095,6 +1129,9 @@ export class InquiriesService implements OnModuleInit {
             d.customer_name.trim().toLowerCase(),
             d.customer_phone,
           );
+        }
+        if (d.inquiry_id && d.salesperson_phone) {
+          dealSpByInqId.set(d.inquiry_id, d.salesperson_phone);
         }
       });
 
@@ -1107,15 +1144,7 @@ export class InquiriesService implements OnModuleInit {
         }
       });
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
-        }
-      });
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       const reviewList = (data || []).map((row: any) => {
         const entities = resolveInquiryEntities(
@@ -1156,10 +1185,29 @@ export class InquiriesService implements OnModuleInit {
             .filter(Boolean),
         );
         scopedReviewList = reviewList.filter((item: any) => {
-          const itemPhoneClean = (item.salesperson_phone || '')
+          const spPhoneClean = (item.salesperson_phone || '')
             .replace(/\D/g, '')
             .slice(-10);
-          return allowedPhoneSet.has(itemPhoneClean);
+          const rawSpClean = (item.raw_salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const senderClean = (item.sender_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const custOwnerClean = (item.customer_owner_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const dealSpClean = (dealSpByInqId.get(item.id) || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+
+          return (
+            allowedPhoneSet.has(spPhoneClean) ||
+            allowedPhoneSet.has(rawSpClean) ||
+            allowedPhoneSet.has(senderClean) ||
+            allowedPhoneSet.has(custOwnerClean) ||
+            allowedPhoneSet.has(dealSpClean)
+          );
         });
       }
 
@@ -1195,9 +1243,10 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        const inqPhone =
-          existingInq.salesperson_phone || existingInq.sender_phone;
-        if (!inqPhone || !phoneInList(inqPhone, accessiblePhones)) {
+        const hasAccess =
+          phoneInList(existingInq.salesperson_phone, accessiblePhones) ||
+          phoneInList(existingInq.sender_phone, accessiblePhones);
+        if (!hasAccess) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to update this inquiry.',
           );
@@ -1230,16 +1279,15 @@ export class InquiriesService implements OnModuleInit {
               `Cannot save inquiry: Quantity must be greater than 0 for Item #${i + 1}.`,
             );
           }
+          // Rate is permitted to be 0 or blank/empty when saving an inquiry (excluded later from quotation PDF)
           if (
-            item.rate === null ||
-            item.rate === undefined ||
-            item.rate === '' ||
-            item.rate === 0 ||
-            Number(item.rate) <= 0 ||
-            isNaN(Number(item.rate))
+            item.rate !== null &&
+            item.rate !== undefined &&
+            item.rate !== '' &&
+            (isNaN(Number(item.rate)) || Number(item.rate) < 0)
           ) {
             throw new BadRequestException(
-              `Cannot save inquiry: Rate (₹) is required and must be greater than 0 for Item #${i + 1}.`,
+              `Cannot save inquiry: Rate (₹) cannot be negative for Item #${i + 1}.`,
             );
           }
         }
@@ -1371,28 +1419,31 @@ export class InquiriesService implements OnModuleInit {
         query = query.lte('created_at', toDate);
       }
 
-      const orFilter = buildInquiryPhoneOrFilter(salespersonPhones);
-      if (orFilter) {
-        query = query.or(orFilter);
-      }
+      // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
+      // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
-      const [{ data, error }, { data: customers }] = await Promise.all([
-        query,
-        this.supabase
-          .from('recurring_customers')
-          .select('customer_name, assigned_salesperson_phone, is_active'),
-      ]);
+      const [{ data, error }, { data: customers }, { data: employees }] =
+        await Promise.all([
+          query,
+          this.supabase
+            .from('recurring_customers')
+            .select(
+              'customer_name, assigned_salesperson_phone, is_active, updated_at',
+            ),
+          this.supabase.from('employees').select('name, phone'),
+        ]);
       if (error) throw error;
 
-      const customerOwnerMap = new Map<string, string>();
-      customers?.forEach((c: any) => {
-        if (c.customer_name && c.assigned_salesperson_phone) {
-          customerOwnerMap.set(
-            c.customer_name.trim().toLowerCase(),
-            c.assigned_salesperson_phone,
-          );
+      const empPhoneMap = new Map<string, string>();
+      employees?.forEach((e: any) => {
+        if (e.name && e.phone) {
+          const clean = String(e.phone).replace(/\D/g, '');
+          empPhoneMap.set(clean, e.name);
+          empPhoneMap.set(clean.slice(-10), e.name);
         }
       });
+
+      const customerOwnerMap = buildCustomerOwnerMap(customers, empPhoneMap);
 
       const genuineData = (data || []).filter(isGenuineInquiry);
 
@@ -1411,13 +1462,28 @@ export class InquiriesService implements OnModuleInit {
             item,
             undefined,
             undefined,
-            undefined,
+            empPhoneMap,
             customerOwnerMap,
           );
-          const itemPhoneClean = (entities.salesperson_phone || '')
+          const spPhoneClean = (entities.salesperson_phone || '')
             .replace(/\D/g, '')
             .slice(-10);
-          return allowedPhoneSet.has(itemPhoneClean);
+          const rawSpClean = (item.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const senderClean = (item.sender_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const custOwnerClean = (entities.customer_owner_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+
+          return (
+            allowedPhoneSet.has(spPhoneClean) ||
+            allowedPhoneSet.has(rawSpClean) ||
+            allowedPhoneSet.has(senderClean) ||
+            allowedPhoneSet.has(custOwnerClean)
+          );
         });
       }
 
@@ -2279,8 +2345,10 @@ Thank you once again for considering us.`;
     if (!record)
       throw new NotFoundException('Inquiry or Order record not found');
     if (accessiblePhones && accessiblePhones.length > 0) {
-      const recordPhone = record.salesperson_phone || record.sender_phone;
-      if (recordPhone && !phoneInList(recordPhone, accessiblePhones)) {
+      const hasAccess =
+        phoneInList(record.salesperson_phone, accessiblePhones) ||
+        phoneInList(record.sender_phone, accessiblePhones);
+      if (!hasAccess) {
         throw new ForbiddenException(
           'Access Denied: You do not have permission to send quotations for this record.',
         );
@@ -2350,8 +2418,10 @@ Thank you once again for considering us.`;
       }
 
       if (accessiblePhones && accessiblePhones.length > 0) {
-        const inqPhone = inquiry.salesperson_phone || inquiry.sender_phone;
-        if (inqPhone && !phoneInList(inqPhone, accessiblePhones)) {
+        const hasAccess =
+          phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
+          phoneInList(inquiry.sender_phone, accessiblePhones);
+        if (!hasAccess) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to send quotations for this record.',
           );
@@ -2417,10 +2487,33 @@ Thank you once again for considering us.`;
             inquiry.delivery_location ||
             '';
 
-          // totalAmount from frontend = pre-GST base amount
-          const baseAmt = Number(
-            details.totalAmount || aiJson.totalAmount || 0,
-          );
+          const rawLineItemsList =
+            Array.isArray(details.lineItems) && details.lineItems.length > 0
+              ? details.lineItems
+              : aiJson.line_items || [];
+
+          // Exclude any products with 0 or blank rates from quotation PDF & email summary
+          const pricedLineItems = Array.isArray(rawLineItemsList)
+            ? rawLineItemsList.filter(
+                (item: any) => Number(item.rate || item.unitPrice || 0) > 0,
+              )
+            : [];
+          const lineItemsList =
+            pricedLineItems.length > 0 ? pricedLineItems : rawLineItemsList;
+
+          // Recompute pre-GST baseAmt from priced line items if available
+          const baseAmt =
+            pricedLineItems.length > 0
+              ? pricedLineItems.reduce(
+                  (s: number, i: any) =>
+                    s +
+                    (Number(i.amount) ||
+                      Math.round(
+                        (Number(i.quantity) || 0) * (Number(i.rate) || 0),
+                      )),
+                  0,
+                )
+              : Number(details.totalAmount || aiJson.totalAmount || 0);
           const gstAmt = Math.round(baseAmt * 0.18);
           const grandTotal = baseAmt + gstAmt;
 
@@ -2435,11 +2528,6 @@ Thank you once again for considering us.`;
               .filter(Boolean)
               .join(' ')
               .trim() || 'Steel Material';
-
-          const lineItemsList =
-            Array.isArray(details.lineItems) && details.lineItems.length > 0
-              ? details.lineItems
-              : aiJson.line_items || [];
 
           let itemsSummary = '';
           if (Array.isArray(lineItemsList) && lineItemsList.length > 0) {
@@ -2495,6 +2583,7 @@ Thank you once again for considering us.`;
             details.salespersonName ||
             details.salesperson_name ||
             details.salesperson ||
+            senderName ||
             (inquiry as any).salesperson_name ||
             (inquiry as any).assigned_salesperson_name ||
             (aiJson as any).salespersonName ||
@@ -2841,7 +2930,9 @@ Return ONLY the JSON.`;
     ];
 
     let lastError: any = null;
+    let stopCascade = false;
     for (const key of apiKeys) {
+      if (stopCascade) break;
       for (const model of candidateModels) {
         try {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
@@ -2864,7 +2955,7 @@ Return ONLY the JSON.`;
                 },
               ],
             },
-            { timeout: 35000 },
+            { timeout: 50000 },
           );
 
           const text =
@@ -2952,6 +3043,31 @@ Return ONLY the JSON.`;
               });
             }
 
+            if (
+              Array.isArray(parsed.line_items) &&
+              parsed.line_items.length > 0 &&
+              this.unitConverterService
+            ) {
+              try {
+                const batchConv =
+                  await this.unitConverterService.convertLineItems(
+                    parsed.line_items,
+                  );
+                parsed.line_items = parsed.line_items.map(
+                  (it: any, i: number) => ({
+                    ...it,
+                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
+                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                  }),
+                );
+                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+              } catch (e: any) {
+                this.logger.warn(
+                  `Document unit conversion fallback: ${e.message}`,
+                );
+              }
+            }
+
             return {
               success: true,
               data: parsed,
@@ -2964,6 +3080,11 @@ Return ONLY the JSON.`;
               err?.response?.data?.error?.message || err.message
             }`,
           );
+          const timedOut = err?.code === 'ECONNABORTED';
+          if (timedOut) {
+            stopCascade = true;
+            break;
+          }
         }
       }
     }
@@ -3071,6 +3192,29 @@ ${rawText}`;
           }
 
           if (parsed) {
+            if (
+              Array.isArray(parsed.line_items) &&
+              parsed.line_items.length > 0 &&
+              this.unitConverterService
+            ) {
+              try {
+                const batchConv =
+                  await this.unitConverterService.convertLineItems(
+                    parsed.line_items,
+                  );
+                parsed.line_items = parsed.line_items.map(
+                  (it: any, i: number) => ({
+                    ...it,
+                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
+                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                  }),
+                );
+                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+              } catch (e: any) {
+                this.logger.warn(`Text unit conversion fallback: ${e.message}`);
+              }
+            }
+
             return {
               success: true,
               data: parsed,
@@ -3479,7 +3623,13 @@ ${rawText}`;
                   },
                 ];
 
-        const lineItems = lineItemsSrc.map((item: any) => ({
+        const validPricedSrc = lineItemsSrc.filter(
+          (item: any) => Number(item.rate || item.unitPrice || 0) > 0,
+        );
+        const effectiveSrc =
+          validPricedSrc.length > 0 ? validPricedSrc : lineItemsSrc;
+
+        const lineItems = effectiveSrc.map((item: any) => ({
           sku_text: (
             item.sku_text ||
             item.description ||
@@ -3512,17 +3662,43 @@ ${rawText}`;
           ) || Number(details.totalAmount || 0);
         const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
 
-        const tableY = currY + 14;
-        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
-        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
-        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
-        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
-        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
-        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
-        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
-        doc.text('Amount', 479, tableY + 7.5, { width: 76.28, align: 'right' });
+        const drawItemHeader = (headerY: number) => {
+          doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
+          doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
+          doc.text('#', leftX, headerY + 7.5, {
+            width: 26,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Item & Description', 70, headerY + 7.5, {
+            width: 205,
+            lineBreak: false,
+          });
+          doc.text('HSN/SAC', 278, headerY + 7.5, {
+            width: 62,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Qty', 342, headerY + 7.5, {
+            width: 68,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Rate', 412, headerY + 7.5, {
+            width: 65,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Amount', 479, headerY + 7.5, {
+            width: 76.28,
+            align: 'right',
+            lineBreak: false,
+          });
+          return headerY + 24;
+        };
 
-        let rowY = tableY + 24;
+        const tableY = currY + 14;
+        let rowY = drawItemHeader(tableY);
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8.5);
           const skuH = doc.heightOfString(item.sku_text, { width: 205 });
@@ -3533,6 +3709,11 @@ ${rawText}`;
                 .heightOfString(item.dimensions, { width: 205 }) + 3
             : 0;
           const rowH = Math.max(34, skuH + dimH + 18);
+          const pageBottom = doc.page.maxY();
+          if (rowY + rowH > pageBottom && rowY > doc.page.margins.top + 24) {
+            doc.addPage();
+            rowY = drawItemHeader(doc.page.margins.top);
+          }
 
           doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
 
@@ -3544,6 +3725,7 @@ ${rawText}`;
             .text(String(idx + 1), leftX, rowY + 9, {
               width: 26,
               align: 'center',
+              lineBreak: false,
             });
 
           // SKU title
@@ -3574,6 +3756,7 @@ ${rawText}`;
               {
                 width: 62,
                 align: 'center',
+                lineBreak: false,
               },
             );
 
@@ -3586,7 +3769,7 @@ ${rawText}`;
               `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
               342,
               rowY + 9,
-              { width: 68, align: 'right' },
+              { width: 68, align: 'right', lineBreak: false },
             );
 
           // Rate
@@ -3597,6 +3780,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
               width: 65,
               align: 'right',
+              lineBreak: false,
             });
 
           // Amount
@@ -3607,6 +3791,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
               width: 76.28,
               align: 'right',
+              lineBreak: false,
             });
 
           // Bottom divider line
@@ -3621,6 +3806,10 @@ ${rawText}`;
         });
 
         // 4. Financial Totals & Summary Block
+        if (rowY + 110 > doc.page.maxY()) {
+          doc.addPage();
+          rowY = doc.page.margins.top;
+        }
         const summaryY = rowY + 22;
         doc
           .moveTo(leftX, rowY + 10)
@@ -3811,7 +4000,31 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Authorized Signature', leftX, 310);
+          .text('Authorized Signature', leftX, 310, { lineBreak: false });
+
+        const signatureName = String(
+          details?.senderName ||
+            details?.salespersonName ||
+            details?.salesperson_name ||
+            '',
+        ).trim();
+        if (
+          signatureName &&
+          signatureName !== 'Sales Operations Team' &&
+          signatureName !== 'Sales Team'
+        ) {
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(10)
+            .text(signatureName, leftX, 328, { lineBreak: false });
+          doc
+            .moveTo(leftX, 372)
+            .lineTo(leftX + 160, 372)
+            .strokeColor('#0F172A')
+            .lineWidth(0.8)
+            .stroke();
+        }
 
         doc.end();
       } catch (err) {

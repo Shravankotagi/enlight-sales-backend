@@ -99,10 +99,18 @@ export class ZohoService implements OnModuleInit {
   }
 
   public isSyncPaused(): boolean {
+    return process.env.ZOHO_SYNC_PAUSED === 'true';
+  }
+
+  public isAutoSyncEnabled(): boolean {
     return (
-      process.env.ZOHO_SYNC_PAUSED === 'true' ||
-      process.env.ZOHO_AUTO_SYNC_ENABLED === 'false'
+      process.env.ZOHO_SYNC_PAUSED !== 'true' &&
+      process.env.ZOHO_AUTO_SYNC_ENABLED !== 'false'
     );
+  }
+
+  public isReadOnlyMode(): boolean {
+    return process.env.ZOHO_READ_ONLY_MODE === 'true';
   }
 
   private isRateLimited(): boolean {
@@ -174,9 +182,9 @@ export class ZohoService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    if (this.isSyncPaused()) {
+    if (!this.isAutoSyncEnabled()) {
       this.logger.log(
-        'Zoho Bigin Auto-Sync is PAUSED by configuration (ZOHO_SYNC_PAUSED=true).',
+        'Zoho Bigin Auto-Sync is PAUSED by configuration (ZOHO_SYNC_PAUSED=true or ZOHO_AUTO_SYNC_ENABLED=false).',
       );
       return;
     }
@@ -197,6 +205,13 @@ export class ZohoService implements OnModuleInit {
       },
       2 * 60 * 60 * 1000,
     );
+
+    // Initial startup auto-sync (runs 15 seconds after bootstrap)
+    setTimeout(() => {
+      this.autoSyncRoutine().catch((err) => {
+        this.logger.warn(`Startup auto-sync notice: ${err?.message}`);
+      });
+    }, 15000);
   }
 
   private get supabase() {
@@ -377,6 +392,8 @@ export class ZohoService implements OnModuleInit {
   async pullInitialSyncFromBigin(options?: {
     manual?: boolean;
     actorName?: string;
+    actorRole?: string;
+    forceFull?: boolean;
   }): Promise<{
     success: boolean;
     usersImported: number;
@@ -389,9 +406,10 @@ export class ZohoService implements OnModuleInit {
     errors: string[];
   }> {
     const actorName = options?.manual
-      ? options.actorName || 'Admin'
+      ? options.actorName || 'User'
       : 'Bigin Auto-Sync';
-    const actorRole = options?.manual ? 'admin' : 'system';
+    const actorRole =
+      options?.actorRole || (options?.manual ? 'admin' : 'system');
     const results = {
       success: true,
       usersImported: 0,
@@ -417,7 +435,11 @@ export class ZohoService implements OnModuleInit {
 
     try {
       const since = await this.readLastCustomerSyncTimestamp();
-      const cleanSince = since ? since.replace(/\.\d{3}/, '') : null;
+      const cleanSince = options?.forceFull
+        ? null
+        : since
+          ? since.replace(/\.\d{3}/, '')
+          : null;
       const restoreOverwritten = !(await this.hasCompletedOwnershipRestore());
       const lookup = await this.loadActiveSalespersonLookup();
       const baseUrl = 'https://www.zohoapis.in/bigin/v1';
@@ -463,18 +485,13 @@ export class ZohoService implements OnModuleInit {
             const mappedPhone = this.resolveBiginOwnerPhone(acc.Owner, lookup);
             const { data: existingCust, error: findErr } = await this.supabase
               .from('recurring_customers')
-              .select('id, assigned_salesperson_phone')
+              .select('id, assigned_salesperson_phone, notes')
               .ilike('customer_name', companyName)
               .limit(1);
             if (findErr) throw new Error(findErr.message);
 
             const currentPhone = existingCust?.[0]?.assigned_salesperson_phone;
-            const isOverwrittenOwner =
-              restoreOverwritten &&
-              String(currentPhone || '')
-                .replace(/\D/g, '')
-                .endsWith('9975003940');
-
+            const noteContent = `Zoho Bigin Account Owner: ${ownerName}${acc.id ? ` | Zoho Account ID: ${acc.id}` : ''}`;
             if (!existingCust || existingCust.length === 0) {
               const { error: insertErr } = await this.supabase
                 .from('recurring_customers')
@@ -486,6 +503,7 @@ export class ZohoService implements OnModuleInit {
                   assigned_salesperson_phone: mappedPhone || 'unassigned',
                   is_active: true,
                   avg_order_frequency_days: 30,
+                  notes: noteContent,
                 });
               if (insertErr) throw new Error(insertErr.message);
               results.recordsCreated++;
@@ -500,20 +518,17 @@ export class ZohoService implements OnModuleInit {
               if (phone) updateData.customer_phone = phone;
               if (address) updateData.customer_address = address;
               if (gst) updateData.customer_gst = gst;
+              if (!existingCust[0]?.notes && acc.id) {
+                updateData.notes = noteContent;
+              }
 
               const isUnassigned =
                 !currentPhone ||
                 currentPhone === 'unassigned' ||
                 currentPhone === 'null';
 
-              if (isUnassigned && mappedPhone) {
+              if (mappedPhone && mappedPhone !== currentPhone) {
                 updateData.assigned_salesperson_phone = mappedPhone;
-              } else if (isOverwrittenOwner && mappedPhone) {
-                updateData.assigned_salesperson_phone = mappedPhone;
-              } else if (isOverwrittenOwner && !mappedPhone) {
-                updateData.assigned_salesperson_phone = 'unassigned';
-                results.recordsSkipped++;
-                skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
               } else if (isUnassigned && !mappedPhone) {
                 updateData.assigned_salesperson_phone = 'unassigned';
                 results.recordsSkipped++;
@@ -821,6 +836,13 @@ export class ZohoService implements OnModuleInit {
     salesperson_phone?: string;
     visited_at?: string;
   }): Promise<string | null> {
+    if (this.isReadOnlyMode()) {
+      this.logger.log(
+        '[ZohoSync] Outbound syncVisitToBiginContact skipped: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      return null;
+    }
+
     try {
       const token = await this.refreshAccessToken();
       const headers = {
@@ -952,6 +974,13 @@ export class ZohoService implements OnModuleInit {
     success: boolean;
     deleted: Record<string, number>;
   }> {
+    if (this.isReadOnlyMode()) {
+      this.logger.warn(
+        '[ZohoSync] wipeAllBiginData blocked: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      return { success: false, deleted: {} };
+    }
+
     const token = await this.refreshAccessToken();
     const headers = { Authorization: `Zoho-oauthtoken ${token}` };
     const baseUrl = 'https://www.zohoapis.in/bigin/v1';
@@ -1014,6 +1043,22 @@ export class ZohoService implements OnModuleInit {
         errors: ['Zoho sync is currently paused by configuration.'],
       };
     }
+
+    if (this.isReadOnlyMode()) {
+      this.logger.warn(
+        '[ZohoSync] Outbound fullResyncAllData redirected to Inbound Pull: ZOHO_READ_ONLY_MODE is enabled.',
+      );
+      const pullRes = await this.pullInitialSyncFromBigin({ forceFull: true });
+      return {
+        success: pullRes.success,
+        companiesCreated: pullRes.recordsCreated,
+        contactsCreated: pullRes.contactsImported,
+        dealsSynced: pullRes.dealsImported,
+        notesAttached: 0,
+        errors: pullRes.errors,
+      };
+    }
+
     const token = await this.refreshAccessToken();
     const headers = {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -1216,9 +1261,9 @@ export class ZohoService implements OnModuleInit {
     }
     this.isSyncRunning = true;
     try {
-      if (this.isSyncPaused()) {
+      if (!this.isAutoSyncEnabled()) {
         this.logger.log(
-          '[ZohoService] Auto-sync skipped (Zoho sync is paused).',
+          '[ZohoService] Auto-sync skipped (auto sync is disabled or paused).',
         );
         return;
       }
@@ -1278,7 +1323,10 @@ export class ZohoService implements OnModuleInit {
     }
   }
 
-  async pullInitialSyncForAdmin(actorName?: string): Promise<{
+  async pullInitialSyncForAdmin(
+    actorName?: string,
+    actorRole?: string,
+  ): Promise<{
     success: boolean;
     usersImported: number;
     companiesImported: number;
@@ -1301,6 +1349,8 @@ export class ZohoService implements OnModuleInit {
       return await this.pullInitialSyncFromBigin({
         manual: true,
         actorName,
+        actorRole,
+        forceFull: true,
       });
     } finally {
       this.isSyncRunning = false;
@@ -1309,7 +1359,11 @@ export class ZohoService implements OnModuleInit {
 
   // Push single deal with Contact Name & Company Name properly mapped
   async syncDealToBigin(deal: any): Promise<string | null> {
-    if (!this.hasZohoCredentials() || this.isRateLimited()) {
+    if (
+      this.isReadOnlyMode() ||
+      !this.hasZohoCredentials() ||
+      this.isRateLimited()
+    ) {
       return null;
     }
 

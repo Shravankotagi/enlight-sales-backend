@@ -300,6 +300,7 @@ export class KraService {
 
         const inqOr = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (inqOr) inquiriesQuery = inquiriesQuery.or(inqOr);
 
@@ -718,6 +719,7 @@ export class KraService {
       if (!isAdmin && salespersonPhone) {
         const orFilter = buildMultiFieldOrFilter(salespersonPhone, [
           'salesperson_phone',
+          'sender_phone',
         ]);
         if (orFilter) inquiryQuery = inquiryQuery.or(orFilter);
       }
@@ -2774,7 +2776,9 @@ export class KraService {
     const [{ data: visits }, { data: customers }, { data: employees }] =
       await Promise.all([
         query,
-        this.supabase.from('recurring_customers').select('*'),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, customer_address'),
         this.supabase.from('employees').select('name, phone, role'),
       ]);
 

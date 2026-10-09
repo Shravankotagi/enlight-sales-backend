@@ -330,26 +330,40 @@ export class ReportsService {
         );
 
         deals = deals.filter((d: any) => {
-          const owner =
+          const directPhone = (d.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const owner = (
             getAssignedPhoneFromCustomerMap(
               d.customer_name,
               customerOwnerMap,
-            ) ||
-            d.salesperson_phone ||
-            '';
-          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+            ) || ''
+          )
+            .replace(/\D/g, '')
+            .slice(-10);
+          return allowedSet.has(directPhone) || allowedSet.has(owner);
         });
 
         inquiries = inquiries.filter((inq: any) => {
-          const owner =
+          const directPhone = (inq.salesperson_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const senderPhone = (inq.sender_phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const owner = (
             getAssignedPhoneFromCustomerMap(
               inq.customer_name,
               customerOwnerMap,
-            ) ||
-            inq.salesperson_phone ||
-            inq.sender_phone ||
-            '';
-          return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
+            ) || ''
+          )
+            .replace(/\D/g, '')
+            .slice(-10);
+          return (
+            allowedSet.has(directPhone) ||
+            allowedSet.has(senderPhone) ||
+            allowedSet.has(owner)
+          );
         });
       }
 

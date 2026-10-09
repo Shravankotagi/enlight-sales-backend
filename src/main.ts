@@ -1,3 +1,8 @@
+import * as dns from 'dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import WebSocket from 'ws';
 if (typeof (globalThis as any).WebSocket === 'undefined') {
   (globalThis as any).WebSocket = WebSocket;
@@ -101,5 +106,10 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
   console.log(`[Express Server] Running on port ${port}`);
+
+  if (typeof module !== 'undefined' && (module as any).hot) {
+    (module as any).hot.accept();
+    (module as any).hot.dispose(() => app.close());
+  }
 }
 bootstrap();
