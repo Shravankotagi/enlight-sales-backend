@@ -2776,7 +2776,9 @@ export class KraService {
     const [{ data: visits }, { data: customers }, { data: employees }] =
       await Promise.all([
         query,
-        this.supabase.from('recurring_customers').select('*'),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, customer_address'),
         this.supabase.from('employees').select('name, phone, role'),
       ]);
 

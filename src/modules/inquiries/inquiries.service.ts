@@ -1095,12 +1095,16 @@ export class InquiriesService implements OnModuleInit {
       const { data, error } = await query;
       if (error) throw error;
 
+      const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
       const [dealsRes, employeesRes, customersRes] = await Promise.all([
-        this.supabase
-          .from('deals')
-          .select(
-            'inquiry_id, customer_name, customer_phone, salesperson_phone',
-          ),
+        inquiryIds.length > 0
+          ? this.supabase
+              .from('deals')
+              .select(
+                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+              )
+              .in('inquiry_id', inquiryIds)
+          : Promise.resolve({ data: [] }),
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
@@ -3076,9 +3080,7 @@ Return ONLY the JSON.`;
               err?.response?.data?.error?.message || err.message
             }`,
           );
-          const timedOut =
-            err?.code === 'ECONNABORTED' ||
-            /timeout/i.test(String(err?.message || ''));
+          const timedOut = err?.code === 'ECONNABORTED';
           if (timedOut) {
             stopCascade = true;
             break;
@@ -3660,17 +3662,43 @@ ${rawText}`;
           ) || Number(details.totalAmount || 0);
         const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
 
-        const tableY = currY + 14;
-        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
-        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
-        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
-        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
-        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
-        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
-        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
-        doc.text('Amount', 479, tableY + 7.5, { width: 76.28, align: 'right' });
+        const drawItemHeader = (headerY: number) => {
+          doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
+          doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
+          doc.text('#', leftX, headerY + 7.5, {
+            width: 26,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Item & Description', 70, headerY + 7.5, {
+            width: 205,
+            lineBreak: false,
+          });
+          doc.text('HSN/SAC', 278, headerY + 7.5, {
+            width: 62,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Qty', 342, headerY + 7.5, {
+            width: 68,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Rate', 412, headerY + 7.5, {
+            width: 65,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Amount', 479, headerY + 7.5, {
+            width: 76.28,
+            align: 'right',
+            lineBreak: false,
+          });
+          return headerY + 24;
+        };
 
-        let rowY = tableY + 24;
+        const tableY = currY + 14;
+        let rowY = drawItemHeader(tableY);
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8.5);
           const skuH = doc.heightOfString(item.sku_text, { width: 205 });
@@ -3681,6 +3709,11 @@ ${rawText}`;
                 .heightOfString(item.dimensions, { width: 205 }) + 3
             : 0;
           const rowH = Math.max(34, skuH + dimH + 18);
+          const pageBottom = doc.page.maxY();
+          if (rowY + rowH > pageBottom && rowY > doc.page.margins.top + 24) {
+            doc.addPage();
+            rowY = drawItemHeader(doc.page.margins.top);
+          }
 
           doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
 
@@ -3692,6 +3725,7 @@ ${rawText}`;
             .text(String(idx + 1), leftX, rowY + 9, {
               width: 26,
               align: 'center',
+              lineBreak: false,
             });
 
           // SKU title
@@ -3722,6 +3756,7 @@ ${rawText}`;
               {
                 width: 62,
                 align: 'center',
+                lineBreak: false,
               },
             );
 
@@ -3734,7 +3769,7 @@ ${rawText}`;
               `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
               342,
               rowY + 9,
-              { width: 68, align: 'right' },
+              { width: 68, align: 'right', lineBreak: false },
             );
 
           // Rate
@@ -3745,6 +3780,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
               width: 65,
               align: 'right',
+              lineBreak: false,
             });
 
           // Amount
@@ -3755,6 +3791,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
               width: 76.28,
               align: 'right',
+              lineBreak: false,
             });
 
           // Bottom divider line
@@ -3769,6 +3806,10 @@ ${rawText}`;
         });
 
         // 4. Financial Totals & Summary Block
+        if (rowY + 110 > doc.page.maxY()) {
+          doc.addPage();
+          rowY = doc.page.margins.top;
+        }
         const summaryY = rowY + 22;
         doc
           .moveTo(leftX, rowY + 10)
@@ -3959,7 +4000,31 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Authorized Signature', leftX, 310);
+          .text('Authorized Signature', leftX, 310, { lineBreak: false });
+
+        const signatureName = String(
+          details?.senderName ||
+            details?.salespersonName ||
+            details?.salesperson_name ||
+            '',
+        ).trim();
+        if (
+          signatureName &&
+          signatureName !== 'Sales Operations Team' &&
+          signatureName !== 'Sales Team'
+        ) {
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(10)
+            .text(signatureName, leftX, 328, { lineBreak: false });
+          doc
+            .moveTo(leftX, 372)
+            .lineTo(leftX + 160, 372)
+            .strokeColor('#0F172A')
+            .lineWidth(0.8)
+            .stroke();
+        }
 
         doc.end();
       } catch (err) {
