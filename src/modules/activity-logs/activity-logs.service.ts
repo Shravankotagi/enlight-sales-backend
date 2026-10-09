@@ -6,12 +6,7 @@ export interface ActivityLogInput {
   salesperson_phone?: string;
   description: string;
   module:
-    | 'Inquiries'
-    | 'Orders'
-    | 'Visits'
-    | 'Complaints'
-    | 'Customers'
-    | string;
+    'Inquiries' | 'Orders' | 'Visits' | 'Complaints' | 'Customers' | string;
   customer_name?: string;
   timestamp?: string;
   source?: string;
