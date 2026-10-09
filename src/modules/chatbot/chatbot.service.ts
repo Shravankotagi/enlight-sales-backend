@@ -377,7 +377,9 @@ export class ChatbotService {
     const userMeta =
       image || gps
         ? {
-            image: image ? { mimeType: image.mimeType, base64: image.base64 } : null,
+            image: image
+              ? { mimeType: image.mimeType, base64: image.base64 }
+              : null,
             gps: gps || null,
           }
         : null;
