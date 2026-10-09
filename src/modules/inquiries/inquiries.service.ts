@@ -2926,7 +2926,9 @@ Return ONLY the JSON.`;
     ];
 
     let lastError: any = null;
+    let stopCascade = false;
     for (const key of apiKeys) {
+      if (stopCascade) break;
       for (const model of candidateModels) {
         try {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
@@ -2949,7 +2951,7 @@ Return ONLY the JSON.`;
                 },
               ],
             },
-            { timeout: 35000 },
+            { timeout: 50000 },
           );
 
           const text =
@@ -3074,6 +3076,13 @@ Return ONLY the JSON.`;
               err?.response?.data?.error?.message || err.message
             }`,
           );
+          const timedOut =
+            err?.code === 'ECONNABORTED' ||
+            /timeout/i.test(String(err?.message || ''));
+          if (timedOut) {
+            stopCascade = true;
+            break;
+          }
         }
       }
     }
