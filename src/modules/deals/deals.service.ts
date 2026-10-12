@@ -412,7 +412,7 @@ export class DealsService {
           `
           id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
-          inquiries (source_channel, inquiry_type, raw_text, customer_phone, ai_extraction_json)
+          inquiries (source_channel, inquiry_type, raw_text, customer_phone, ai_extraction_json, media_urls)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -523,7 +523,22 @@ export class DealsService {
           }
         }
 
-        const hasMedia = Boolean(d.inquiry_id);
+        const actualMediaUrls = (
+          Array.isArray(d.inquiries?.media_urls) &&
+          d.inquiries.media_urls.length > 0
+            ? d.inquiries.media_urls
+            : Array.isArray(d.media_urls) && d.media_urls.length > 0
+              ? d.media_urls
+              : []
+        ).filter(
+          (u: any) =>
+            typeof u === 'string' &&
+            u !== 'attached_document' &&
+            (u.startsWith('data:') ||
+              u.startsWith('http://') ||
+              u.startsWith('https://')),
+        );
+        const hasMedia = actualMediaUrls.length > 0 || Boolean(d.inquiry_id);
         const assignedOwnerPhone = getAssignedPhoneFromCustomerMap(
           d.customer_name,
           customerOwnerMap,
@@ -539,6 +554,15 @@ export class DealsService {
         const resolvedPhone =
           d.customer_phone || d.inquiries?.customer_phone || null;
 
+        const effectiveSourceChannel =
+          d.source_channel ||
+          (d.po_source === 'upload' ||
+          d.po_source === 'manual' ||
+          d.po_source === 'dashboard'
+            ? 'web_dashboard'
+            : d.inquiries?.source_channel) ||
+          (d.inquiry_type === 'purchase_order' ? 'web_dashboard' : null);
+
         return {
           ...d,
           salesperson_phone: effectiveSalespersonPhone,
@@ -547,8 +571,15 @@ export class DealsService {
           total_amount: computedTotal > 0 ? computedTotal : null,
           raw_text: inqRawText,
           customer_phone: resolvedPhone,
+          source_channel: effectiveSourceChannel,
           has_media: hasMedia,
-          media_urls: hasMedia ? ['attached_document'] : [],
+          source_media_urls: actualMediaUrls,
+          media_urls:
+            actualMediaUrls.length > 0
+              ? actualMediaUrls
+              : hasMedia
+                ? ['attached_document']
+                : [],
         };
       });
 
@@ -613,7 +644,7 @@ export class DealsService {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
             .from('inquiries')
-            .select('media_urls, raw_text, ai_extraction_json')
+            .select('media_urls, raw_text, ai_extraction_json, source_channel')
             .eq('id', data.inquiry_id)
             .limit(1)
             .maybeSingle();
@@ -627,6 +658,20 @@ export class DealsService {
             if (inq.ai_extraction_json) {
               data.ai_extraction_json = inq.ai_extraction_json;
             }
+            if (inq.source_channel && !data.source_channel) {
+              data.source_channel = inq.source_channel;
+            }
+          }
+        }
+
+        if (!data.source_channel) {
+          if (
+            data.po_source === 'upload' ||
+            data.po_source === 'manual' ||
+            data.po_source === 'dashboard' ||
+            data.inquiry_type === 'purchase_order'
+          ) {
+            data.source_channel = 'web_dashboard';
           }
         }
 
@@ -1582,10 +1627,10 @@ export class DealsService {
           .eq('id', inquiryId)
           .maybeSingle();
         const existingInqRaw = (existingInqRow?.raw_text || '').trim();
-        const isExistingPlaceholder =
-          !existingInqRaw || / - Original PO Document$/i.test(existingInqRaw);
 
         const inqUpdates: any = {
+          source_channel: targetSourceChannel,
+          inquiry_type: 'purchase_order',
           status: 'confirmed',
           stage: 'won',
           won_at: nowIso,
@@ -1598,12 +1643,8 @@ export class DealsService {
           po_confirmed_at: nowIso,
           po_date: poDate,
           total_amount: totalAmount,
+          raw_text: formattedPoRawText || existingInqRaw,
         };
-        if (isExistingPlaceholder) {
-          inqUpdates.raw_text = formattedPoRawText;
-        } else if (!/\bPO\s*Number\s*:/i.test(existingInqRaw)) {
-          inqUpdates.raw_text = `${existingInqRaw}\nPO Number: ${poNumber}`;
-        }
         if (notesText) {
           inqUpdates.ai_extraction_json = {
             ...((existingInqRow?.ai_extraction_json as any) || {}),
