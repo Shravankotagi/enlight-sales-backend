@@ -2,7 +2,25 @@ import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { CustomerInsightsService } from './customer-insights.service';
 import { phoneInList } from '../employees/employees.service';
-import { convertLineItemToMt } from '../pricing/pricing.engine';
+import {
+  convertLineItemToMt,
+  resolveCustomerState,
+} from '../pricing/pricing.engine';
+
+function extractCustomerState(customer: any): string | null {
+  if (!customer) return null;
+  let explicitFromNotes: string | null = null;
+  if (typeof customer.notes === 'string') {
+    const m = customer.notes.match(/\[State:\s*([^\]]+)\]/i);
+    if (m && m[1]) explicitFromNotes = m[1].trim();
+  }
+  const resolved = resolveCustomerState({
+    customerState: customer.customer_state || explicitFromNotes,
+    customerGstin: customer.customer_gst,
+    customerAddress: customer.customer_address || customer.address,
+  });
+  return resolved ? resolved.label : explicitFromNotes;
+}
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -184,7 +202,10 @@ export class CustomersService {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+      return (data || []).map((c: any) => ({
+        ...c,
+        customer_state: extractCustomerState(c),
+      }));
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -760,6 +781,7 @@ export class CustomersService {
 
       return {
         ...customer,
+        customer_state: extractCustomerState(customer),
         assigned_salesperson_name: assignedSalespersonName,
         last_order_date: effectiveLastOrderDate,
         days_since_order: daysSinceOrder,
@@ -1076,6 +1098,7 @@ export class CustomersService {
 
         results.push({
           ...customer,
+          customer_state: extractCustomerState(customer),
           assigned_salesperson_name: repName,
           last_order_date: effectiveLastOrderStr,
           days_since_order: daysSinceOrder,
@@ -1199,6 +1222,21 @@ export class CustomersService {
             ? String(data.assigned_salesperson_phone).trim()
             : null;
       if (data.notes !== undefined) updatePayload.notes = data.notes;
+      if (data.customer_state !== undefined || data.state !== undefined) {
+        const stateVal = String(data.customer_state ?? data.state ?? '').trim();
+        const baseNotes = String(
+          updatePayload.notes !== undefined
+            ? updatePayload.notes
+            : customerRecord?.notes || '',
+        )
+          .replace(/\[State:\s*[^\]]+\]\s*/gi, '')
+          .trim();
+        updatePayload.notes = stateVal
+          ? baseNotes
+            ? `${baseNotes} [State: ${stateVal}]`
+            : `[State: ${stateVal}]`
+          : baseNotes || null;
+      }
       if (data.is_active !== undefined)
         updatePayload.is_active = Boolean(data.is_active);
 
@@ -1236,7 +1274,10 @@ export class CustomersService {
           );
           throw error;
         }
-        return created;
+        return {
+          ...created,
+          customer_state: extractCustomerState(created),
+        };
       }
 
       const targetDbId = customerRecord ? customerRecord.id : decodedId;
@@ -1251,7 +1292,10 @@ export class CustomersService {
         this.logger.error(`Error updating customer ${targetDbId}:`, error);
         throw error;
       }
-      return updated;
+      return {
+        ...updated,
+        customer_state: extractCustomerState(updated),
+      };
     } catch (error) {
       this.logger.error(`Error updating customer ${id}:`, error);
       throw error;

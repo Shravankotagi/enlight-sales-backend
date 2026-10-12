@@ -69,6 +69,7 @@ import {
   calculateQuotationBreakdown,
   calculateTotalTonnageMt,
   formatIndianCurrency,
+  resolvePlaceOfSupply,
 } from '../pricing/pricing.engine';
 import { UnitConverterService } from '../pricing/unit-converter.service';
 import { detectHsnCode } from '../../utils/hsnDetector';
@@ -2265,8 +2266,23 @@ ${itemsSummary}
 - Subtotal (Base Amount): Rs. ${
           baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'
         }
-- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
-- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+${
+  resolvePlaceOfSupply({
+    deliveryLocation: deliveryLoc,
+    customerState:
+      details.placeOfSupply ||
+      details.place_of_supply ||
+      aiJson.place_of_supply ||
+      aiJson.customer_state,
+    customerGstin:
+      details.gstin ||
+      details.customerGstin ||
+      aiJson.gstin ||
+      aiJson.customer_gst,
+  }).isInterState
+    ? `- IGST (18%): Rs. ${Math.round(baseAmt * 0.18).toLocaleString('en-IN')}`
+    : `- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}\n- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}`
+}
 - Grand Total (incl. GST): Rs. ${
           grandTotal > 0
             ? grandTotal.toLocaleString('en-IN')
@@ -2541,6 +2557,18 @@ Thank you once again for considering us.`;
             itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
           }
 
+          const orderPlaceOfSupply = resolvePlaceOfSupply({
+            deliveryLocation: deliveryLoc,
+            customerState:
+              details.state || aiJson.state || inquiry.customer_state,
+            gstin: details.gstin || aiJson.gstin || inquiry.customer_gstin,
+            address:
+              details.address || aiJson.address || inquiry.customer_address,
+          });
+          const orderTaxLines = orderPlaceOfSupply.isInterState
+            ? `- IGST (18%): Rs. ${Math.round(baseAmt * 0.18).toLocaleString('en-IN')}`
+            : `- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}\n- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}`;
+
           const orderTextContent = `Dear ${customerName},
 
 Thank you for partnering with Enlight Metals Private Limited.
@@ -2553,8 +2581,7 @@ PO Order
 - Items & Specifications:
 ${itemsSummary}
 - Subtotal (Base Amount): Rs. ${baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'}
-- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
-- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+${orderTaxLines}
 - Grand Total (incl. GST): Rs. ${grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 'To be confirmed'}
 ${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}${deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''}
 The attached PDF document contains our official pricing structure and complete commercial terms.
@@ -3450,71 +3477,18 @@ ${rawText}`;
     };
   }
 
-  private resolvePlaceOfSupply(address?: string): string {
-    if (!address) return 'Maharashtra (27)';
-    const lower = address.toLowerCase();
-    if (
-      lower.includes('maharashtra') ||
-      lower.includes('mumbai') ||
-      lower.includes('pune') ||
-      lower.includes('khopoli') ||
-      lower.includes('raigad') ||
-      lower.includes('thane') ||
-      lower.includes('nagpur') ||
-      lower.includes('nashik') ||
-      lower.includes('chakan') ||
-      lower.includes('taloja')
-    ) {
-      return 'Maharashtra (27)';
-    }
-    if (
-      lower.includes('gujarat') ||
-      lower.includes('ahmedabad') ||
-      lower.includes('surat') ||
-      lower.includes('vadodara')
-    ) {
-      return 'Gujarat (24)';
-    }
-    if (
-      lower.includes('karnataka') ||
-      lower.includes('bangalore') ||
-      lower.includes('bengaluru')
-    ) {
-      return 'Karnataka (29)';
-    }
-    if (lower.includes('tamil nadu') || lower.includes('chennai')) {
-      return 'Tamil Nadu (33)';
-    }
-    if (lower.includes('delhi')) {
-      return 'Delhi (07)';
-    }
-    if (
-      lower.includes('haryana') ||
-      lower.includes('gurgaon') ||
-      lower.includes('faridabad')
-    ) {
-      return 'Haryana (06)';
-    }
-    if (
-      lower.includes('uttar pradesh') ||
-      lower.includes('noida') ||
-      lower.includes('kanpur')
-    ) {
-      return 'Uttar Pradesh (09)';
-    }
-    if (lower.includes('rajasthan') || lower.includes('jaipur')) {
-      return 'Rajasthan (08)';
-    }
-    if (lower.includes('madhya pradesh') || lower.includes('indore')) {
-      return 'Madhya Pradesh (23)';
-    }
-    if (lower.includes('west bengal') || lower.includes('kolkata')) {
-      return 'West Bengal (19)';
-    }
-    if (lower.includes('telangana') || lower.includes('hyderabad')) {
-      return 'Telangana (36)';
-    }
-    return 'Maharashtra (27)';
+  private resolvePlaceOfSupply(address?: string, details?: any): string {
+    return resolvePlaceOfSupply({
+      deliveryLocation: address,
+      customerState:
+        details?.placeOfSupply ||
+        details?.place_of_supply ||
+        details?.customerState ||
+        details?.customer_state,
+      customerGstin:
+        details?.customerGstin || details?.gstin || details?.customer_gst,
+      customerAddress: details?.customerAddress || details?.address,
+    }).label;
   }
 
   async generateQuotationPdfBuffer(body: any): Promise<Buffer> {
@@ -3644,7 +3618,18 @@ ${rawText}`;
         const billToLines = cleanAddressLines(billToAddress, compName);
         const shipToLines = cleanAddressLines(shipToAddress, compName);
         const customerGstin = details?.customerGstin || details?.gstin || '';
-        const placeOfSupply = this.resolvePlaceOfSupply(rawAddress);
+        const posInfo = resolvePlaceOfSupply({
+          deliveryLocation: rawAddress,
+          customerState:
+            details?.placeOfSupply ||
+            details?.place_of_supply ||
+            details?.customerState ||
+            details?.customer_state,
+          customerGstin,
+          customerAddress: billToAddress,
+        });
+        const placeOfSupply = posInfo.label;
+        const isInterState = posInfo.isInterState;
 
         const paymentTerms = details?.paymentTerms
           ? details.paymentTerms.trim()
@@ -3869,7 +3854,11 @@ ${rawText}`;
             (s: number, i: any) => s + (Number(i.amount) || 0),
             0,
           ) || Number(details.totalAmount || 0);
-        const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
+        const qBreakdown = calculateQuotationBreakdown(
+          computedSubtotal,
+          lineItems,
+          { isInterState },
+        );
 
         const drawItemHeader = (headerY: number) => {
           doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
@@ -4067,47 +4056,67 @@ ${rawText}`;
             align: 'right',
           });
 
-        // CGST9 (9%)
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text('CGST9 (9%)', sumX, summaryY + 14);
-        doc
-          .fillColor('#0F172A')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text(qBreakdown.formattedCGST, sumX, summaryY + 14, {
-            width: sumW,
-            align: 'right',
-          });
+        let taxNextY = summaryY + 14;
+        if (isInterState) {
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('IGST18 (18%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedIGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
+        } else {
+          // CGST9 (9%)
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('CGST9 (9%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedCGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
 
-        // SGST9 (9%)
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text('SGST9 (9%)', sumX, summaryY + 28);
-        doc
-          .fillColor('#0F172A')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text(qBreakdown.formattedSGST, sumX, summaryY + 28, {
-            width: sumW,
-            align: 'right',
-          });
+          // SGST9 (9%)
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('SGST9 (9%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedSGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
+        }
 
         // Rounding
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Rounding', sumX, summaryY + 42);
+          .text('Rounding', sumX, taxNextY);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(qBreakdown.formattedRounding, sumX, summaryY + 42, {
+          .text(qBreakdown.formattedRounding, sumX, taxNextY, {
             width: sumW,
             align: 'right',
           });
@@ -4117,7 +4126,7 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Total', sumX, summaryY + 58);
+          .text('Total', sumX, taxNextY + 16);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
@@ -4125,7 +4134,7 @@ ${rawText}`;
           .text(
             `Rs. ${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
             sumX,
-            summaryY + 58,
+            taxNextY + 16,
             {
               width: sumW,
               align: 'right',
