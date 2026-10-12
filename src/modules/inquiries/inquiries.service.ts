@@ -2307,16 +2307,37 @@ Thank you once again for considering us.`;
   private buildQuotationCc(
     senderEmail: string,
     customerEmail: string,
+    requestedCc?: unknown,
   ): string[] {
     const normalizedCustomerEmail = customerEmail.trim().toLowerCase();
+    const recipients =
+      requestedCc === undefined
+        ? [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
+        : requestedCc;
+
+    if (
+      !Array.isArray(recipients) ||
+      recipients.some((email) => typeof email !== 'string')
+    ) {
+      throw new BadRequestException(
+        'CC recipients must be an array of email addresses.',
+      );
+    }
+
+    const normalizedRecipients = recipients.map((email) =>
+      email.trim().toLowerCase(),
+    );
+    if (normalizedRecipients.some((email) => !this.isValidEmail(email))) {
+      throw new BadRequestException(
+        'CC recipients must contain valid email addresses.',
+      );
+    }
+
     return Array.from(
       new Set(
-        [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
-          .map((email) => email.trim().toLowerCase())
-          .filter(
-            (email) =>
-              this.isValidEmail(email) && email !== normalizedCustomerEmail,
-          ),
+        normalizedRecipients.filter(
+          (email) => email !== normalizedCustomerEmail,
+        ),
       ),
     );
   }
@@ -2715,7 +2736,11 @@ Thank you once again for considering us.`;
             body: JSON.stringify({
               from: fromAddress,
               to: [customerEmail],
-              cc: this.buildQuotationCc(employeeEmail, customerEmail),
+              cc: this.buildQuotationCc(
+                employeeEmail,
+                customerEmail,
+                payload.cc,
+              ),
               subject: docSubject,
               text: textContent,
               attachments,
