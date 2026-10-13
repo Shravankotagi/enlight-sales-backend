@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -98,5 +99,17 @@ export class EmployeesController {
       );
     }
     return this.employeesService.deactivate(id);
+  }
+
+  // DELETE /employees/:id - completely delete employee and associated records (admin only)
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async delete(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    if (!employee || employee.role !== 'admin') {
+      throw new ForbiddenException(
+        'Access Denied: Only administrators can delete staff accounts.',
+      );
+    }
+    return this.employeesService.delete(id, employee);
   }
 }

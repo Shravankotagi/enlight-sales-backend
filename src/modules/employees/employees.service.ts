@@ -3,6 +3,8 @@ import {
   Logger,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
@@ -302,7 +304,9 @@ export class EmployeesService {
       // Check duplicate phone
       const existing = await this.findByPhone(dto.phone);
       if (existing) {
-        throw new ConflictException(`Phone ${dto.phone} already registered`);
+        throw new ConflictException(
+          `Phone number ${dto.phone} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their phone number first.`,
+        );
       }
 
       // Check duplicate employee_id
@@ -373,6 +377,15 @@ export class EmployeesService {
     }>,
   ) {
     try {
+      if (dto.phone) {
+        const existing = await this.findByPhone(dto.phone);
+        if (existing && existing.id !== id) {
+          throw new ConflictException(
+            `Phone number ${dto.phone} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their phone number first.`,
+          );
+        }
+      }
+
       const updatePayload: any = { ...dto };
 
       if (dto.role === 'sales_manager' || dto.role === 'admin') {
@@ -412,6 +425,17 @@ export class EmployeesService {
       if (error) throw error;
       return data;
     } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      if ((error as any)?.code === '23505') {
+        const detail = String(
+          (error as any)?.details || (error as any)?.message || '',
+        );
+        if (detail.includes('phone')) {
+          throw new ConflictException(
+            `This phone number is already registered to another employee. Please change or unassign their phone number first.`,
+          );
+        }
+      }
       this.logger.error(`Error in update for employee ${id}:`, error);
       throw error;
     }
@@ -429,6 +453,116 @@ export class EmployeesService {
       return data;
     } catch (error) {
       this.logger.error(`Error in deactivate for employee ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async delete(id: string, caller?: any) {
+    try {
+      if (caller?.id === id) {
+        throw new BadRequestException('You cannot delete your own account.');
+      }
+
+      // 1. Fetch target employee
+      const { data: targetEmp, error: fetchErr } = await this.supabase
+        .from('employees')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (fetchErr || !targetEmp) {
+        throw new NotFoundException('Employee not found');
+      }
+
+      const phone = targetEmp.phone;
+      const empName = targetEmp.name;
+
+      // 2. Fetch associated deals to clean up deal_items, payment_tracking & followup_tasks
+      let dealIds: string[] = [];
+      const dealOrConditions: string[] = [`employee_id.eq.${id}`];
+      if (phone) {
+        dealOrConditions.push(`salesperson_phone.eq.${phone}`);
+      }
+      const { data: dealsData } = await this.supabase
+        .from('deals')
+        .select('id')
+        .or(dealOrConditions.join(','));
+
+      if (dealsData && dealsData.length > 0) {
+        dealIds = dealsData.map((d: any) => d.id).filter(Boolean);
+      }
+
+      if (dealIds.length > 0) {
+        await this.supabase.from('deal_items').delete().in('deal_id', dealIds);
+        await this.supabase
+          .from('payment_tracking')
+          .delete()
+          .in('deal_id', dealIds);
+        await this.supabase
+          .from('followup_tasks')
+          .delete()
+          .in('deal_id', dealIds);
+        await this.supabase.from('deals').delete().in('id', dealIds);
+      }
+
+      // 3. Delete inquiries
+      const inqOr: string[] = [`employee_id.eq.${id}`];
+      if (phone) inqOr.push(`salesperson_phone.eq.${phone}`);
+      await this.supabase.from('inquiries').delete().or(inqOr.join(','));
+
+      // 4. Delete customer_visits
+      const visitOr: string[] = [`employee_id.eq.${id}`];
+      if (phone) visitOr.push(`salesperson_phone.eq.${phone}`);
+      await this.supabase
+        .from('customer_visits')
+        .delete()
+        .or(visitOr.join(','));
+
+      // 5. Delete kra_logs
+      const kraOr: string[] = [`employee_id.eq.${id}`];
+      if (phone) kraOr.push(`salesperson_phone.eq.${phone}`);
+      await this.supabase.from('kra_logs').delete().or(kraOr.join(','));
+
+      // 6. Delete complaints
+      const compOr: string[] = [`employee_id.eq.${id}`];
+      if (empName) compOr.push(`reported_by.ilike.%${empName}%`);
+      await this.supabase.from('complaints').delete().or(compOr.join(','));
+
+      // 7. Unassign customers assigned to this salesperson
+      if (phone) {
+        await this.supabase
+          .from('recurring_customers')
+          .update({ assigned_salesperson_phone: 'unassigned' })
+          .eq('assigned_salesperson_phone', phone);
+      }
+
+      // 8. Unlink any subordinates reporting to this employee as manager
+      await this.supabase
+        .from('employees')
+        .update({
+          manager_id: null,
+          manager_phone: null,
+          reports_to_employee_id: null,
+        })
+        .eq('manager_id', id);
+
+      // 9. Finally delete the employee record
+      const { error: deleteErr } = await this.supabase
+        .from('employees')
+        .delete()
+        .eq('id', id);
+
+      if (deleteErr) throw deleteErr;
+
+      this.logger.log(
+        `Employee ${targetEmp.employee_id} (${empName}) and all associated records deleted successfully.`,
+      );
+      return {
+        success: true,
+        message: `Employee ${empName} (${targetEmp.employee_id}) and all associated records deleted successfully.`,
+      };
+    } catch (error) {
+      this.logger.error(`Error deleting employee ${id}:`, error);
       throw error;
     }
   }
