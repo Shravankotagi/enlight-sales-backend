@@ -141,16 +141,13 @@ describe('DealsService system PO resolution', () => {
   });
 
   it('reuses a released allocation through the backend service', async () => {
-    const allocations = new Map<
-      string,
-      { po: string; claimed: boolean }
-    >();
+    const allocations = new Map<string, { po: string; claimed: boolean }>();
     const rpc = jest.fn(async (name: string, args: any) => {
       if (name === 'allocate_system_po') {
         let number = 1;
         while (
           [...allocations.values()].some(
-            allocation => allocation.po === `EM/PO/${number}`,
+            (allocation) => allocation.po === `EM/PO/${number}`,
           )
         ) {
           number += 1;
@@ -218,11 +215,25 @@ describe('source provenance normalization', () => {
 
   it('does not expose generated document placeholders as original text', () => {
     const deal = normalizeSourceProvenance({
-      raw_text: '[PO Document Attached: EM/PO/26] Customer - Original PO Document',
+      raw_text:
+        '[PO Document Attached: EM/PO/26] Customer - Original PO Document',
       media_urls: ['attached_document'],
     });
 
     expect(deal.source_original_text).toBeNull();
     expect(deal.source_media_urls).toEqual([]);
+  });
+
+  it('preserves substantive text that follows an attachment header', () => {
+    const deal = normalizeSourceProvenance({
+      raw_text:
+        '[Inquiry Attachment: Purchase Order_PO.pdf]\nMaterial:\n1. HR PLATE - 50 MT',
+      media_urls: ['data:application/pdf;base64,document'],
+    });
+
+    expect(deal.source_original_text).toBe('Material:\n1. HR PLATE - 50 MT');
+    expect(deal.source_media_urls).toEqual([
+      'data:application/pdf;base64,document',
+    ]);
   });
 });

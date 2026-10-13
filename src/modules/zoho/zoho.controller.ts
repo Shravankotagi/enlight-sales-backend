@@ -26,6 +26,20 @@ export class ZohoController {
     }
   }
 
+  private assertCanSync(employee: any) {
+    const role = String(employee?.role || '').toLowerCase();
+    const isAllowed =
+      role.includes('admin') ||
+      role.includes('manager') ||
+      role.includes('salesperson') ||
+      role.includes('sales');
+    if (!isAllowed) {
+      throw new ForbiddenException(
+        'Access Denied: You do not have permission to run this Zoho sync operation.',
+      );
+    }
+  }
+
   // GET /zoho/status - sync status
   @Get('status')
   async getStatus() {
@@ -36,32 +50,44 @@ export class ZohoController {
   @Post('pull-initial-sync')
   @HttpCode(HttpStatus.OK)
   async pullInitialSync(@CurrentEmployee() employee: any) {
-    this.assertAdmin(employee);
-    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+    this.assertCanSync(employee);
+    return this.zohoService.pullInitialSyncForAdmin(
+      employee?.name,
+      employee?.role,
+    );
   }
 
   // GET /zoho/pull-initial-sync - Browser/GET trigger
   @Get('pull-initial-sync')
   @HttpCode(HttpStatus.OK)
   async pullInitialSyncGet(@CurrentEmployee() employee: any) {
-    this.assertAdmin(employee);
-    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+    this.assertCanSync(employee);
+    return this.zohoService.pullInitialSyncForAdmin(
+      employee?.name,
+      employee?.role,
+    );
   }
 
   // POST /zoho/sync - trigger manual auto-sync (Read-Only pull)
   @Post('sync')
   @HttpCode(HttpStatus.OK)
   async triggerSync(@CurrentEmployee() employee: any) {
-    this.assertAdmin(employee);
-    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+    this.assertCanSync(employee);
+    return this.zohoService.pullInitialSyncForAdmin(
+      employee?.name,
+      employee?.role,
+    );
   }
 
   // GET /zoho/sync - GET trigger
   @Get('sync')
   @HttpCode(HttpStatus.OK)
   async triggerSyncGet(@CurrentEmployee() employee: any) {
-    this.assertAdmin(employee);
-    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+    this.assertCanSync(employee);
+    return this.zohoService.pullInitialSyncForAdmin(
+      employee?.name,
+      employee?.role,
+    );
   }
 
   // Aliases for /bigin-sync and /bigin-import within /zoho
@@ -69,7 +95,11 @@ export class ZohoController {
   @Post('bigin-sync')
   @HttpCode(HttpStatus.OK)
   async biginSyncAlias(@CurrentEmployee() employee: any) {
-    return this.zohoService.pullInitialSyncForAdmin(employee?.name);
+    this.assertCanSync(employee);
+    return this.zohoService.pullInitialSyncForAdmin(
+      employee?.name,
+      employee?.role,
+    );
   }
 
   // POST /zoho/sync-visit - Push visit to Bigin Contacts module (Image 2)

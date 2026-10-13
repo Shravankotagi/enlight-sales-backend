@@ -35,7 +35,9 @@
     "compodoc:serve": "npx @compodoc/compodoc -c compodoc.json -s -w",
     "compodoc:generate": "npx @compodoc/compodoc -c compodoc.json",
     "prepare": "husky install",
-    "lint-staged": "lint-staged"
+    "lint-staged": "lint-staged",
+    "test:ci": "jest --ci --coverage --passWithNoTests=false",
+    "test:regression": "jest --ci __regression__"
   },
   "dependencies": {
     "@fastify/swagger": "^8.14.0",
@@ -127,18 +129,25 @@
       "ts"
     ],
     "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
+    "testRegex": ".*\\.(spec|test)\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!test-utils/**",
+      "!scripts/**",
+      "!**/__regression__/**",
+      "!main.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^src/(.*)$": "<rootDir>/$1"
-    }
+    },
+    "setupFiles": [
+      "<rootDir>/test-utils/setup.ts"
+    ]
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

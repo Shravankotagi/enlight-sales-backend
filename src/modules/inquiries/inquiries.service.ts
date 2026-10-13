@@ -68,7 +68,9 @@ import {
   calculateLineItem,
   calculateQuotationBreakdown,
   calculateTotalTonnageMt,
+  convertLineItemToMt,
   formatIndianCurrency,
+  resolvePlaceOfSupply,
 } from '../pricing/pricing.engine';
 import { UnitConverterService } from '../pricing/unit-converter.service';
 import { detectHsnCode } from '../../utils/hsnDetector';
@@ -1095,12 +1097,16 @@ export class InquiriesService implements OnModuleInit {
       const { data, error } = await query;
       if (error) throw error;
 
+      const inquiryIds = (data || []).map((inq: any) => inq.id).filter(Boolean);
       const [dealsRes, employeesRes, customersRes] = await Promise.all([
-        this.supabase
-          .from('deals')
-          .select(
-            'inquiry_id, customer_name, customer_phone, salesperson_phone',
-          ),
+        inquiryIds.length > 0
+          ? this.supabase
+              .from('deals')
+              .select(
+                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+              )
+              .in('inquiry_id', inquiryIds)
+          : Promise.resolve({ data: [] }),
         this.supabase.from('employees').select('name, phone'),
         this.supabase
           .from('recurring_customers')
@@ -2261,8 +2267,23 @@ ${itemsSummary}
 - Subtotal (Base Amount): Rs. ${
           baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'
         }
-- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
-- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+${
+  resolvePlaceOfSupply({
+    deliveryLocation: deliveryLoc,
+    customerState:
+      details.placeOfSupply ||
+      details.place_of_supply ||
+      aiJson.place_of_supply ||
+      aiJson.customer_state,
+    customerGstin:
+      details.gstin ||
+      details.customerGstin ||
+      aiJson.gstin ||
+      aiJson.customer_gst,
+  }).isInterState
+    ? `- IGST (18%): Rs. ${Math.round(baseAmt * 0.18).toLocaleString('en-IN')}`
+    : `- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}\n- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}`
+}
 - Grand Total (incl. GST): Rs. ${
           grandTotal > 0
             ? grandTotal.toLocaleString('en-IN')
@@ -2303,16 +2324,37 @@ Thank you once again for considering us.`;
   private buildQuotationCc(
     senderEmail: string,
     customerEmail: string,
+    requestedCc?: unknown,
   ): string[] {
     const normalizedCustomerEmail = customerEmail.trim().toLowerCase();
+    const recipients =
+      requestedCc === undefined
+        ? [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
+        : requestedCc;
+
+    if (
+      !Array.isArray(recipients) ||
+      recipients.some((email) => typeof email !== 'string')
+    ) {
+      throw new BadRequestException(
+        'CC recipients must be an array of email addresses.',
+      );
+    }
+
+    const normalizedRecipients = recipients.map((email) =>
+      email.trim().toLowerCase(),
+    );
+    if (normalizedRecipients.some((email) => !this.isValidEmail(email))) {
+      throw new BadRequestException(
+        'CC recipients must contain valid email addresses.',
+      );
+    }
+
     return Array.from(
       new Set(
-        [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
-          .map((email) => email.trim().toLowerCase())
-          .filter(
-            (email) =>
-              this.isValidEmail(email) && email !== normalizedCustomerEmail,
-          ),
+        normalizedRecipients.filter(
+          (email) => email !== normalizedCustomerEmail,
+        ),
       ),
     );
   }
@@ -2537,6 +2579,18 @@ Thank you once again for considering us.`;
             itemsSummary = `  - Specification: ${specText}\n${quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''}`;
           }
 
+          const orderPlaceOfSupply = resolvePlaceOfSupply({
+            deliveryLocation: deliveryLoc,
+            customerState:
+              details.state || aiJson.state || inquiry.customer_state,
+            gstin: details.gstin || aiJson.gstin || inquiry.customer_gstin,
+            address:
+              details.address || aiJson.address || inquiry.customer_address,
+          });
+          const orderTaxLines = orderPlaceOfSupply.isInterState
+            ? `- IGST (18%): Rs. ${Math.round(baseAmt * 0.18).toLocaleString('en-IN')}`
+            : `- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}\n- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}`;
+
           const orderTextContent = `Dear ${customerName},
 
 Thank you for partnering with Enlight Metals Private Limited.
@@ -2549,8 +2603,7 @@ PO Order
 - Items & Specifications:
 ${itemsSummary}
 - Subtotal (Base Amount): Rs. ${baseAmt > 0 ? baseAmt.toLocaleString('en-IN') : 'As detailed'}
-- CGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
-- SGST (9%): Rs. ${Math.round(baseAmt * 0.09).toLocaleString('en-IN')}
+${orderTaxLines}
 - Grand Total (incl. GST): Rs. ${grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 'To be confirmed'}
 ${paymentTerms ? `- Payment Terms: ${paymentTerms}\n` : ''}${deliveryLoc ? `- Delivery Location: ${deliveryLoc}\n` : ''}
 The attached PDF document contains our official pricing structure and complete commercial terms.
@@ -2711,7 +2764,11 @@ Thank you once again for considering us.`;
             body: JSON.stringify({
               from: fromAddress,
               to: [customerEmail],
-              cc: this.buildQuotationCc(employeeEmail, customerEmail),
+              cc: this.buildQuotationCc(
+                employeeEmail,
+                customerEmail,
+                payload.cc,
+              ),
               subject: docSubject,
               text: textContent,
               attachments,
@@ -2817,6 +2874,150 @@ Thank you once again for considering us.`;
     }
   }
 
+  private normalizeParsedDocument(parsed: any) {
+    const customer =
+      parsed?.customer && typeof parsed.customer === 'object'
+        ? parsed.customer
+        : {};
+    const text = (...values: any[]) => {
+      for (const value of values) {
+        const cleaned = String(value ?? '').trim();
+        if (
+          cleaned &&
+          cleaned.toLowerCase() !== 'null' &&
+          cleaned.toLowerCase() !== 'none'
+        ) {
+          return cleaned;
+        }
+      }
+      return '';
+    };
+    const company = text(
+      parsed?.customer_name,
+      parsed?.customerName,
+      parsed?.company_name,
+      customer.name,
+      customer.customer_name,
+    );
+    const phone = text(
+      parsed?.customer_phone,
+      parsed?.contact_phone,
+      customer.phone,
+      customer.customer_phone,
+    );
+    const gst = text(
+      parsed?.customer_gst,
+      parsed?.gstin,
+      parsed?.gst,
+      customer.gst,
+      customer.gstin,
+    );
+    const address = text(
+      parsed?.customer_address,
+      parsed?.address,
+      customer.address,
+      customer.customer_address,
+    );
+    const delivery = text(
+      parsed?.delivery_location,
+      parsed?.deliveryLocation,
+      customer.delivery_location,
+      address,
+    );
+    const payment = text(parsed?.payment_terms, parsed?.paymentTerms);
+    const contact = text(
+      parsed?.contact_person,
+      parsed?.contact_name,
+      customer.contact_person,
+      customer.contact_name,
+    );
+    const rawItems = Array.isArray(parsed?.line_items)
+      ? parsed.line_items
+      : Array.isArray(parsed?.lineItems)
+        ? parsed.lineItems
+        : [];
+    const lineItems = rawItems
+      .map((item: any) => {
+        const totalWt = Number(
+          item?.total_weight_kg ?? item?.total_weight ?? item?.weight_kg,
+        );
+        let rawQty = Number(item?.quantity ?? item?.qty) || 0;
+        let rawUnit = text(item?.unit) || 'KG';
+        let pieces = Number(item?.pieces ?? item?.pcs) || null;
+
+        // When a cutting/weight list provides total weight in KG, commercial quantity is the total weight in KG
+        if (
+          totalWt &&
+          totalWt > 0 &&
+          (rawUnit.toUpperCase() === 'NOS' ||
+            rawUnit.toUpperCase() === 'PCS' ||
+            (rawQty > 0 && rawQty < totalWt && !pieces))
+        ) {
+          pieces = rawQty;
+          rawQty = totalWt;
+          rawUnit = 'KG';
+        } else if (!item?.unit) {
+          rawUnit = 'KG';
+        }
+
+        return {
+          ...item,
+          sku_text: text(
+            item?.sku_text,
+            item?.description,
+            item?.product,
+            item?.material,
+            item?.sku,
+          ),
+          dimensions: text(
+            item?.dimensions,
+            [item?.thickness, item?.width, item?.length]
+              .filter(Boolean)
+              .join(' x '),
+          ),
+          hsn_code: text(item?.hsn_code, item?.hsn),
+          quantity: rawQty,
+          unit: rawUnit,
+          pieces: pieces,
+          grade: text(item?.grade) || null,
+          rate:
+            Number(item?.rate ?? item?.unit_price ?? item?.price_per_mt) || 0,
+          amount: Number(item?.amount) || 0,
+          unit_weight_kg:
+            Number(item?.unit_weight_kg ?? item?.unit_weight) || null,
+          total_weight_kg: totalWt || null,
+        };
+      })
+      .filter((item: any) => item.sku_text || item.quantity > 0);
+
+    const preferredMake = text(
+      parsed?.preferred_make,
+      parsed?.make,
+      parsed?.brand,
+    );
+
+    return {
+      ...parsed,
+      customer_name: company || null,
+      customer_phone: phone || null,
+      customer_gst: gst || null,
+      customer_address: address || null,
+      delivery_location: delivery || null,
+      payment_terms: payment || null,
+      contact_person: contact || null,
+      preferred_make: preferredMake || null,
+      line_items: lineItems,
+      customer: {
+        ...customer,
+        name: company || null,
+        phone: phone || null,
+        gst: gst || null,
+        address: address || null,
+        contact_person: contact || null,
+      },
+    };
+  }
+
   async parseDocumentWithGemini(fileBase64: string, mimeType: string) {
     const apiKeys = [
       process.env.GEMINI_PAID_API_KEY,
@@ -2866,32 +3067,34 @@ Thank you once again for considering us.`;
     }
 
     const promptText = `You are an expert OCR & document parser for Enlight Metals Private Limited, a premier Indian B2B metal & steel distributor.
-Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or Material Requirement formatted in Tally ERP, Busy, SAP, etc.) and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
+Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or Material Requirement formatted in Tally ERP, Busy, SAP, cutting lists, or custom steel ERP formats) and return ONLY a valid JSON object with NO markdown, NO codeblocks, NO explanation:
 {
-  "customer_name": "The legal company name of the buyer / client issuing this PO (under 'Invoice To:', 'Bill To:', 'Buyer:', 'Customer:', 'M/s:'). NEVER return Enlight Metals as customer_name.",
+  "customer_name": "The legal company name of the buyer / client issuing this PO or inquiry (under 'Invoice To:', 'Bill To:', 'Buyer:', 'Customer:', 'M/s:', 'Company name -'). NEVER return Enlight Metals as customer_name.",
   "contact_person": "Contact person name if mentioned e.g. Rajesh Kumar else null",
-  "customer_phone": "Phone number under Invoice To else null",
-  "customer_email": "Email under Invoice To else null",
+  "customer_phone": "Phone number under Invoice To or notes else null",
+  "customer_email": "Email under Invoice To or notes else null",
   "customer_gst": "15-character GSTIN number of the customer if present else null",
   "customer_pan": "PAN number of customer if present else null",
-  "customer_address": "Complete factory/office billing address of customer under Invoice To",
-  "delivery_location": "Destination site / ship-to address from 'Consignee (Ship to)', 'Delivery Address', or 'Destination'. NEVER include Enlight Metals' supplier address.",
-  "payment_terms": "Payment terms from 'Mode/Terms of Payment' e.g. Pmt immediate after delivery, 30 Days Credit, 100% Advance",
+  "customer_address": "Complete factory/office billing address of customer",
+  "delivery_location": "Destination site / ship-to address from 'Consignee (Ship to)', 'Delivery Address', 'Destination', or 'Delivery at X'. NEVER include Enlight Metals' supplier address.",
+  "payment_terms": "Payment terms e.g. '30 Days', 'Immediate', '100% Advance'",
   "delivery_terms": "Terms of delivery from 'Terms of Delivery' or 'Remarks'",
-  "preferred_make": "Preferred brand/make e.g. SAIL / JSW / TATA if stated else null",
+  "preferred_make": "Preferred brand/make e.g. 'E350 (Tata/Jsw/Sail)', 'SAIL', 'JSW', 'TATA' if stated else null",
   "additional_notes": "Non-product contextual remarks, TC/E-way bill requirements. NEVER put product line items here.",
-  "po_number": "Explicit PO/Voucher Number e.g. 'PO/26-27/63', 'PO-26-27-00718' from 'Voucher No.', 'PO No', 'Purchase Order No'. Set null if only inquiry/RFQ.",
+  "po_number": "Explicit PO/Voucher Number e.g. 'PO/26-27/63', 'PO-26-27-00718' from 'Voucher No.', 'PO No', 'Purchase Order No'. Set null if only inquiry/RFQ/cutting list.",
   "po_date": "PO Date converted to YYYY-MM-DD (Year 2026 e.g. '2026-09-12')",
   "line_items": [
     {
-      "sku_text": "Material / product category name e.g. HR PLATE, CR SHEET, MS ANGLE, GI PIPE",
-      "dimensions": "Specs / dimensions e.g. 05X1500X6300MM, 50X50X6, 12MM",
-      "grade": "Steel grade if present e.g. IS2062 E250BR, FE550D else null",
+      "sku_text": "Material / product category name e.g. HR PLATE, CR SHEET, MS ANGLE, GI PIPE, PLATE",
+      "dimensions": "Specs / dimensions e.g. 05X1500X6300MM, 5X1250X7600, 50X50X6, 12MM",
+      "grade": "Steel grade if present e.g. IS2062 E250BR, FE550D, E350 else null",
       "hsn_code": "HSN/SAC code if stated e.g. 72083840 else null",
       "quantity": numeric_quantity,
       "unit": "Exact unit of measure: 'MT', 'KG', 'Nos', 'PCS', 'Sheets'",
-      "rate": numeric_pre_gst_rate_per_unit,
-      "amount": numeric_pre_gst_line_amount,
+      "unit_weight_kg": numeric_unit_weight_in_kg_if_present_else_null,
+      "total_weight_kg": numeric_total_weight_in_kg_if_present_else_null,
+      "rate": numeric_pre_gst_rate_per_unit_or_0,
+      "amount": numeric_pre_gst_line_amount_or_0,
       "due_on": "Delivery due date in YYYY-MM-DD if stated else null"
     }
   ],
@@ -2904,32 +3107,48 @@ Extract ALL data from this business document (Purchase Order, RFQ, Inquiry, or M
 CRITICAL EXTRACTION RULES:
 1. SUPPLIER vs BUYER IDENTIFICATION (STRICT):
 - Enlight Metals Private Limited (Shop No 606 Sn 272, Clover Hills Plaza, NIBM Undri Road, Pune - 411048, GST: 27AAICE5263E1ZN) is the SUPPLIER. NEVER EXTRACT 'Enlight Metals' AS THE CUSTOMER NAME.
-- The 'customer_name' is the legal corporate name under 'Invoice To:' / 'Bill To:' (e.g. 'Suraj SIM Techno Works Pvt Ltd', 'SB Scafform Technovert Pvt. Ltd.'). NEVER put building/street address in customer_name.
+- The 'customer_name' is the legal corporate name under 'Invoice To:' / 'Bill To:' / 'Company name –' (e.g. 'KDT Infrastructure Pvt Ltd', 'Suraj SIM Techno Works Pvt Ltd'). NEVER put building/street address in customer_name.
 
 2. STEEL LINE ITEM & UOM RULES (STRICT):
-- Columns typically appear as: [Sl No.] | [Description of Goods] | [Due on] | [Quantity] | [Rate] | [per / UOM] | [Amount]
-- Description: Separate product title (sku_text: 'HR PLATE') and size/spec (dimensions: '05X1500X6300MM').
-- Quantity & UOM: Extract quantity from 'Quantity' column. Extract unit strictly from the 'per' or 'UOM' column ('M.T' / 'MT' → 'MT', 'KG' → 'KG', 'Nos' → 'Nos').
+- Description: Separate product title (sku_text: 'PLATE', 'HR PLATE') and size/spec (dimensions: '5X1250X7600').
+- Quantity & UOM: Extract quantity from 'Quantity' / 'QTY' column.
+- DEFAULT UNIT RULE: In Indian metal trading, the standard default unit is 'KG'. If no unit is explicitly specified on a row or table, set unit to 'KG'. Only set unit to 'MT' or 'Nos' if explicitly written ('MT' / 'M.T' → 'MT', 'Nos' / 'PCS' → 'Nos').
 - ⚠️ CRITICAL NEGATIVE RULE: Words in the description like 'HR PLATE', 'CR SHEET', 'MS ANGLE', 'COIL', 'BEAM', 'PIPE' are PRODUCT NAMES, NEVER UNITS! If the table says '60.000 M.T' with per 'M.T', the unit is STRICTLY 'MT', NEVER 'Plates'!
 
 3. COMMERCIAL TERMS & TOTALS:
-- Extract 'Mode/Terms of Payment' into 'payment_terms'.
-- Extract 'Consignee (Ship to)' into 'delivery_location'.
+- Extract 'Mode/Terms of Payment' or 'Payment Terms – X' into 'payment_terms'.
+- Extract 'Consignee (Ship to)' or 'Delivery at X' into 'delivery_location'.
+- Extract 'Make - X' into 'preferred_make'.
 - basic_amount is the pre-tax total of all line items. total_amount is the grand total.
+
+4. CUTTING / WEIGHT LISTS (MULTI-PAGE & UP TO 100+ ROWS):
+- A sheet with DESCRIPTION, THK, WIDTH, LENGTH, QTY, UNIT WT, TOTAL WT is a valid inquiry even when it has no Rate or Amount column.
+- Extract EVERY SINGLE product row without omission, even if there are 40, 50, 80, or 100+ rows across multiple pages.
+- For each row: sku_text is the description (e.g. PLATE). dimensions is THK x WIDTH x LENGTH (e.g. 5x1250x7600).
+- COMMERCIAL QUANTITY & TOTAL WT: When a cutting list has BOTH a piece count (QTY) and a TOTAL WT column, the commercial 'quantity' MUST be the TOTAL WEIGHT from the TOTAL WT column, and the 'unit' MUST be 'KG' (e.g. for row 1: quantity: 39897.63, unit: 'KG'). Put the piece count into 'pieces' (e.g. 107).
+- UNIT WT and TOTAL WT: extract as unit_weight_kg and total_weight_kg. Leave rate and amount as 0 when no price is printed. Do NOT skip or drop any rows!
+- Skip bare subtotal rows that have no description or item specs.
+- Read notes wherever they appear (at the top, between rows, in the margins, or on page 2 / final footer):
+  * "Company name – X" or "M/s X" is customer_name
+  * "Make - X" is preferred_make (e.g. "E350 (Tata/Jsw/Sail)")
+  * "Payment Terms – X" is payment_terms (e.g. "30 Days")
+  * "Delivery at X" is delivery_location (e.g. "Chakan, Pune")
 
 Return ONLY the JSON.`;
 
     const candidateModels = [
+      process.env.GEMINI_PRIMARY_MODEL || 'gemini-3.5-flash',
       'gemini-3.8-flash',
-      'gemini-3.7-flash',
+      process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.7-flash',
       'gemini-2.5-flash',
     ];
 
     let lastError: any = null;
-    for (const key of apiKeys) {
+
+    keyLoop: for (const ocrKey of apiKeys) {
       for (const model of candidateModels) {
         try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ocrKey}`;
           const response = await axios.post(
             url,
             {
@@ -2948,8 +3167,13 @@ Return ONLY the JSON.`;
                   ],
                 },
               ],
+              generationConfig: {
+                temperature: 0.05,
+                response_mime_type: 'application/json',
+                maxOutputTokens: 65536,
+              },
             },
-            { timeout: 35000 },
+            { timeout: 60000 },
           );
 
           const text =
@@ -2965,11 +3189,27 @@ Return ONLY the JSON.`;
             const firstOpen = text.indexOf('{');
             const lastClose = text.lastIndexOf('}');
             if (firstOpen !== -1 && lastClose > firstOpen) {
-              parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+              try {
+                parsed = JSON.parse(text.slice(firstOpen, lastClose + 1));
+              } catch {
+                parsed = null;
+              }
             }
           }
 
           if (parsed) {
+            const normalized = this.normalizeParsedDocument(parsed);
+            if (
+              !normalized.customer_name &&
+              (!Array.isArray(normalized.line_items) ||
+                normalized.line_items.length === 0)
+            ) {
+              lastError = new Error(
+                'Document parsed without a company name or line items',
+              );
+              continue;
+            }
+            parsed = normalized;
             // Post-process line items & units
             if (Array.isArray(parsed.line_items)) {
               parsed.line_items = parsed.line_items.map((item: any) => {
@@ -2980,7 +3220,7 @@ Return ONLY the JSON.`;
                   'Material'
                 ).trim();
                 const dims = (item.dimensions || '').trim();
-                let rawUnit = String(item.unit || 'MT').trim();
+                let rawUnit = String(item.unit || 'KG').trim();
                 const uUpper = rawUnit.toUpperCase();
 
                 if (
@@ -3010,7 +3250,22 @@ Return ONLY the JSON.`;
                 }
 
                 const rate = Number(item.rate || 0);
-                const qty = Number(item.quantity || 0);
+                let qty = Number(item.quantity || 0);
+                const totalWeightKg = Number(item.total_weight_kg || 0);
+                if (
+                  totalWeightKg > 0 &&
+                  (rawUnit === 'KG' ||
+                    !item.quantity ||
+                    ['Nos', 'Pcs'].includes(rawUnit) ||
+                    (qty > 0 && qty < totalWeightKg / 10))
+                ) {
+                  if (qty > 0 && qty < totalWeightKg && !item.pieces) {
+                    item.pieces = qty;
+                  }
+                  qty = totalWeightKg;
+                  rawUnit = 'KG';
+                }
+
                 const amt = Number(item.amount || 0) || Math.round(qty * rate);
 
                 if (
@@ -3050,11 +3305,28 @@ Return ONLY the JSON.`;
                 parsed.line_items = parsed.line_items.map(
                   (it: any, i: number) => ({
                     ...it,
-                    weight_mt: batchConv.items[i]?.weight_mt ?? null,
-                    unit_weight_kg: batchConv.items[i]?.unit_weight_kg ?? null,
+                    weight_mt:
+                      batchConv.items[i]?.weight_mt ??
+                      (it.total_weight_kg
+                        ? Number(it.total_weight_kg) / 1000
+                        : it.unit === 'KG' && it.quantity
+                          ? Number(it.quantity) / 1000
+                          : null),
+                    unit_weight_kg:
+                      batchConv.items[i]?.unit_weight_kg ??
+                      it.unit_weight_kg ??
+                      null,
                   }),
                 );
-                parsed.total_tonnage_mt = batchConv.total_tonnage_mt;
+                parsed.total_tonnage_mt =
+                  batchConv.total_tonnage_mt ||
+                  Math.round(
+                    parsed.line_items.reduce(
+                      (acc: number, curr: any) =>
+                        acc + (Number(curr.weight_mt) || 0),
+                      0,
+                    ) * 1000,
+                  ) / 1000;
               } catch (e: any) {
                 this.logger.warn(
                   `Document unit conversion fallback: ${e.message}`,
@@ -3082,10 +3354,11 @@ Return ONLY the JSON.`;
       'All Gemini OCR model attempts failed:',
       lastError?.response?.data || lastError?.message,
     );
-    return {
-      success: false,
-      error: lastError?.message || 'Failed to extract PO details from document',
-    };
+    const geminiMessage =
+      lastError?.response?.data?.error?.message || lastError?.message;
+    throw new BadRequestException(
+      geminiMessage || 'Failed to extract document details',
+    );
   }
 
   async parseTextWithGemini(rawText: string) {
@@ -3230,71 +3503,18 @@ ${rawText}`;
     };
   }
 
-  private resolvePlaceOfSupply(address?: string): string {
-    if (!address) return 'Maharashtra (27)';
-    const lower = address.toLowerCase();
-    if (
-      lower.includes('maharashtra') ||
-      lower.includes('mumbai') ||
-      lower.includes('pune') ||
-      lower.includes('khopoli') ||
-      lower.includes('raigad') ||
-      lower.includes('thane') ||
-      lower.includes('nagpur') ||
-      lower.includes('nashik') ||
-      lower.includes('chakan') ||
-      lower.includes('taloja')
-    ) {
-      return 'Maharashtra (27)';
-    }
-    if (
-      lower.includes('gujarat') ||
-      lower.includes('ahmedabad') ||
-      lower.includes('surat') ||
-      lower.includes('vadodara')
-    ) {
-      return 'Gujarat (24)';
-    }
-    if (
-      lower.includes('karnataka') ||
-      lower.includes('bangalore') ||
-      lower.includes('bengaluru')
-    ) {
-      return 'Karnataka (29)';
-    }
-    if (lower.includes('tamil nadu') || lower.includes('chennai')) {
-      return 'Tamil Nadu (33)';
-    }
-    if (lower.includes('delhi')) {
-      return 'Delhi (07)';
-    }
-    if (
-      lower.includes('haryana') ||
-      lower.includes('gurgaon') ||
-      lower.includes('faridabad')
-    ) {
-      return 'Haryana (06)';
-    }
-    if (
-      lower.includes('uttar pradesh') ||
-      lower.includes('noida') ||
-      lower.includes('kanpur')
-    ) {
-      return 'Uttar Pradesh (09)';
-    }
-    if (lower.includes('rajasthan') || lower.includes('jaipur')) {
-      return 'Rajasthan (08)';
-    }
-    if (lower.includes('madhya pradesh') || lower.includes('indore')) {
-      return 'Madhya Pradesh (23)';
-    }
-    if (lower.includes('west bengal') || lower.includes('kolkata')) {
-      return 'West Bengal (19)';
-    }
-    if (lower.includes('telangana') || lower.includes('hyderabad')) {
-      return 'Telangana (36)';
-    }
-    return 'Maharashtra (27)';
+  private resolvePlaceOfSupply(address?: string, details?: any): string {
+    return resolvePlaceOfSupply({
+      deliveryLocation: address,
+      customerState:
+        details?.placeOfSupply ||
+        details?.place_of_supply ||
+        details?.customerState ||
+        details?.customer_state,
+      customerGstin:
+        details?.customerGstin || details?.gstin || details?.customer_gst,
+      customerAddress: details?.customerAddress || details?.address,
+    }).label;
   }
 
   async generateQuotationPdfBuffer(body: any): Promise<Buffer> {
@@ -3311,6 +3531,21 @@ ${rawText}`;
       customerEmail,
       body,
     );
+  }
+
+  // Qty on every quotation PDF is the MT weight, never the commercial unit.
+  private quotationQtyMtLabel(item: any): string {
+    const res = convertLineItemToMt(item);
+    if (!res.canConvert || res.mt === null || isNaN(res.mt)) return '- MT';
+    const rounded = Math.round(res.mt * 1000) / 1000;
+    const formatted =
+      rounded < 0.01
+        ? rounded.toFixed(3)
+        : rounded.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 3,
+          });
+    return `${formatted} MT`;
   }
 
   async generatePdfKitBuffer(
@@ -3424,7 +3659,18 @@ ${rawText}`;
         const billToLines = cleanAddressLines(billToAddress, compName);
         const shipToLines = cleanAddressLines(shipToAddress, compName);
         const customerGstin = details?.customerGstin || details?.gstin || '';
-        const placeOfSupply = this.resolvePlaceOfSupply(rawAddress);
+        const posInfo = resolvePlaceOfSupply({
+          deliveryLocation: rawAddress,
+          customerState:
+            details?.placeOfSupply ||
+            details?.place_of_supply ||
+            details?.customerState ||
+            details?.customer_state,
+          customerGstin,
+          customerAddress: billToAddress,
+        });
+        const placeOfSupply = posInfo.label;
+        const isInterState = posInfo.isInterState;
 
         const paymentTerms = details?.paymentTerms
           ? details.paymentTerms.trim()
@@ -3635,6 +3881,9 @@ ${rawText}`;
             ),
           quantity: Number(item.quantity || 0),
           unit: item.unit || 'MT',
+          converted_mt: item.converted_mt,
+          weight_mt: item.weight_mt,
+          qty_mt_label: this.quotationQtyMtLabel(item),
           rate: Number(item.rate || item.unitPrice || 0),
           amount: Number(
             item.amount ||
@@ -3649,19 +3898,49 @@ ${rawText}`;
             (s: number, i: any) => s + (Number(i.amount) || 0),
             0,
           ) || Number(details.totalAmount || 0);
-        const qBreakdown = calculateQuotationBreakdown(computedSubtotal);
+        const qBreakdown = calculateQuotationBreakdown(
+          computedSubtotal,
+          lineItems,
+          { isInterState },
+        );
+
+        const drawItemHeader = (headerY: number) => {
+          doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
+          doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
+          doc.text('#', leftX, headerY + 7.5, {
+            width: 26,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Item & Description', 70, headerY + 7.5, {
+            width: 205,
+            lineBreak: false,
+          });
+          doc.text('HSN/SAC', 278, headerY + 7.5, {
+            width: 62,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Qty', 342, headerY + 7.5, {
+            width: 68,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Rate', 412, headerY + 7.5, {
+            width: 65,
+            align: 'right',
+            lineBreak: false,
+          });
+          doc.text('Amount', 479, headerY + 7.5, {
+            width: 76.28,
+            align: 'right',
+            lineBreak: false,
+          });
+          return headerY + 24;
+        };
 
         const tableY = currY + 14;
-        doc.rect(leftX, tableY, contentWidth, 24).fill('#525E6F');
-        doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
-        doc.text('#', leftX, tableY + 7.5, { width: 26, align: 'center' });
-        doc.text('Item & Description', 70, tableY + 7.5, { width: 205 });
-        doc.text('HSN/SAC', 278, tableY + 7.5, { width: 62, align: 'center' });
-        doc.text('Qty', 342, tableY + 7.5, { width: 68, align: 'right' });
-        doc.text('Rate', 412, tableY + 7.5, { width: 65, align: 'right' });
-        doc.text('Amount', 479, tableY + 7.5, { width: 76.28, align: 'right' });
-
-        let rowY = tableY + 24;
+        let rowY = drawItemHeader(tableY);
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8.5);
           const skuH = doc.heightOfString(item.sku_text, { width: 205 });
@@ -3672,6 +3951,11 @@ ${rawText}`;
                 .heightOfString(item.dimensions, { width: 205 }) + 3
             : 0;
           const rowH = Math.max(34, skuH + dimH + 18);
+          const pageBottom = doc.page.maxY();
+          if (rowY + rowH > pageBottom && rowY > doc.page.margins.top + 24) {
+            doc.addPage();
+            rowY = drawItemHeader(doc.page.margins.top);
+          }
 
           doc.rect(leftX, rowY, contentWidth, rowH).fill('#FFFFFF');
 
@@ -3683,6 +3967,7 @@ ${rawText}`;
             .text(String(idx + 1), leftX, rowY + 9, {
               width: 26,
               align: 'center',
+              lineBreak: false,
             });
 
           // SKU title
@@ -3713,6 +3998,7 @@ ${rawText}`;
               {
                 width: 62,
                 align: 'center',
+                lineBreak: false,
               },
             );
 
@@ -3721,12 +4007,11 @@ ${rawText}`;
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(
-              `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
-              342,
-              rowY + 9,
-              { width: 68, align: 'right' },
-            );
+            .text(item.qty_mt_label, 342, rowY + 9, {
+              width: 68,
+              align: 'right',
+              lineBreak: false,
+            });
 
           // Rate
           doc
@@ -3736,6 +4021,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
               width: 65,
               align: 'right',
+              lineBreak: false,
             });
 
           // Amount
@@ -3746,6 +4032,7 @@ ${rawText}`;
             .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
               width: 76.28,
               align: 'right',
+              lineBreak: false,
             });
 
           // Bottom divider line
@@ -3760,6 +4047,10 @@ ${rawText}`;
         });
 
         // 4. Financial Totals & Summary Block
+        if (rowY + 110 > doc.page.maxY()) {
+          doc.addPage();
+          rowY = doc.page.margins.top;
+        }
         const summaryY = rowY + 22;
         doc
           .moveTo(leftX, rowY + 10)
@@ -3808,47 +4099,67 @@ ${rawText}`;
             align: 'right',
           });
 
-        // CGST9 (9%)
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text('CGST9 (9%)', sumX, summaryY + 14);
-        doc
-          .fillColor('#0F172A')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text(qBreakdown.formattedCGST, sumX, summaryY + 14, {
-            width: sumW,
-            align: 'right',
-          });
+        let taxNextY = summaryY + 14;
+        if (isInterState) {
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('IGST18 (18%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedIGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
+        } else {
+          // CGST9 (9%)
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('CGST9 (9%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedCGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
 
-        // SGST9 (9%)
-        doc
-          .fillColor('#475569')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text('SGST9 (9%)', sumX, summaryY + 28);
-        doc
-          .fillColor('#0F172A')
-          .font(fontRegular)
-          .fontSize(8.5)
-          .text(qBreakdown.formattedSGST, sumX, summaryY + 28, {
-            width: sumW,
-            align: 'right',
-          });
+          // SGST9 (9%)
+          doc
+            .fillColor('#475569')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text('SGST9 (9%)', sumX, taxNextY);
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(8.5)
+            .text(qBreakdown.formattedSGST, sumX, taxNextY, {
+              width: sumW,
+              align: 'right',
+            });
+          taxNextY += 14;
+        }
 
         // Rounding
         doc
           .fillColor('#475569')
           .font(fontRegular)
           .fontSize(8.5)
-          .text('Rounding', sumX, summaryY + 42);
+          .text('Rounding', sumX, taxNextY);
         doc
           .fillColor('#0F172A')
           .font(fontRegular)
           .fontSize(8.5)
-          .text(qBreakdown.formattedRounding, sumX, summaryY + 42, {
+          .text(qBreakdown.formattedRounding, sumX, taxNextY, {
             width: sumW,
             align: 'right',
           });
@@ -3858,7 +4169,7 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Total', sumX, summaryY + 58);
+          .text('Total', sumX, taxNextY + 16);
         doc
           .fillColor('#0F172A')
           .font(fontBold)
@@ -3866,7 +4177,7 @@ ${rawText}`;
           .text(
             `Rs. ${formatIndianCurrency(qBreakdown.grandTotal, true)}`,
             sumX,
-            summaryY + 58,
+            taxNextY + 16,
             {
               width: sumW,
               align: 'right',
@@ -3950,7 +4261,31 @@ ${rawText}`;
           .fillColor('#0F172A')
           .font(fontBold)
           .fontSize(10)
-          .text('Authorized Signature', leftX, 310);
+          .text('Authorized Signature', leftX, 310, { lineBreak: false });
+
+        const signatureName = String(
+          details?.senderName ||
+            details?.salespersonName ||
+            details?.salesperson_name ||
+            '',
+        ).trim();
+        if (
+          signatureName &&
+          signatureName !== 'Sales Operations Team' &&
+          signatureName !== 'Sales Team'
+        ) {
+          doc
+            .fillColor('#0F172A')
+            .font(fontRegular)
+            .fontSize(10)
+            .text(signatureName, leftX, 328, { lineBreak: false });
+          doc
+            .moveTo(leftX, 372)
+            .lineTo(leftX + 160, 372)
+            .strokeColor('#0F172A')
+            .lineWidth(0.8)
+            .stroke();
+        }
 
         doc.end();
       } catch (err) {

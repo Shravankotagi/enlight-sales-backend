@@ -392,6 +392,7 @@ export class ZohoService implements OnModuleInit {
   async pullInitialSyncFromBigin(options?: {
     manual?: boolean;
     actorName?: string;
+    actorRole?: string;
     forceFull?: boolean;
   }): Promise<{
     success: boolean;
@@ -405,9 +406,10 @@ export class ZohoService implements OnModuleInit {
     errors: string[];
   }> {
     const actorName = options?.manual
-      ? options.actorName || 'Admin'
+      ? options.actorName || 'User'
       : 'Bigin Auto-Sync';
-    const actorRole = options?.manual ? 'admin' : 'system';
+    const actorRole =
+      options?.actorRole || (options?.manual ? 'admin' : 'system');
     const results = {
       success: true,
       usersImported: 0,
@@ -1321,7 +1323,10 @@ export class ZohoService implements OnModuleInit {
     }
   }
 
-  async pullInitialSyncForAdmin(actorName?: string): Promise<{
+  async pullInitialSyncForAdmin(
+    actorName?: string,
+    actorRole?: string,
+  ): Promise<{
     success: boolean;
     usersImported: number;
     companiesImported: number;
@@ -1344,6 +1349,7 @@ export class ZohoService implements OnModuleInit {
       return await this.pullInitialSyncFromBigin({
         manual: true,
         actorName,
+        actorRole,
         forceFull: true,
       });
     } finally {

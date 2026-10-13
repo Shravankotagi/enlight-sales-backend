@@ -27,6 +27,12 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
+export function normalizeReportPhone(phone?: string | null): string {
+  return String(phone || '')
+    .replace(/\D/g, '')
+    .slice(-10);
+}
+
 export const CANONICAL_FUNNEL_STAGES = [
   { key: 'new_inquiry', label: 'New Inquiry' },
   { key: 'quoted', label: 'Price Quote' },
@@ -544,15 +550,18 @@ export class ReportsService {
       // Fetch all employees from database
       const { data: employees } = await this.supabase
         .from('employees')
-        .select('name, phone, role');
+        .select('name, phone, employee_id, role');
 
       const allEmployees = employees || [];
       const employeeMap = allEmployees.reduce(
         (acc: any, emp: any) => {
-          acc[emp.phone] = emp.name;
+          const phone = normalizeReportPhone(emp.phone);
+          if (phone) {
+            acc[phone] = emp;
+          }
           return acc;
         },
-        {} as Record<string, string>,
+        {} as Record<string, any>,
       );
 
       // Get all salesperson phones from employees table (role === 'salesperson')
@@ -568,6 +577,11 @@ export class ReportsService {
           ...deals.map((d) => d.salesperson_phone),
         ].filter(Boolean),
       );
+      phones = new Set(
+        Array.from(phones)
+          .map((phone) => normalizeReportPhone(phone))
+          .filter(Boolean),
+      );
 
       // If allowedPhones is specified (e.g. for Sales Manager), scope strictly
       if (allowedPhones) {
@@ -580,7 +594,7 @@ export class ReportsService {
       const customerOwnerMap = buildCustomerOwnerMap(recurring);
 
       const salespersonReports = Array.from(phones).map((phone) => {
-        const currentClean = String(phone).replace(/\D/g, '').slice(-10);
+        const currentClean = normalizeReportPhone(phone);
         const spDeals = deals.filter((d) => {
           const owner =
             getAssignedPhoneFromCustomerMap(
@@ -589,15 +603,21 @@ export class ReportsService {
             ) ||
             d.salesperson_phone ||
             '';
-          return owner.replace(/\D/g, '').slice(-10) === currentClean;
+          return normalizeReportPhone(owner) === currentClean;
         });
-        const spVisits = visits.filter((v) => v.salesperson_phone === phone);
-        const spKraLogs = kraLogs.filter((k) => k.salesperson_phone === phone);
+        const spVisits = visits.filter(
+          (v) => normalizeReportPhone(v.salesperson_phone) === currentClean,
+        );
+        const spKraLogs = kraLogs.filter(
+          (k) => normalizeReportPhone(k.salesperson_phone) === currentClean,
+        );
         const spPayments = payments.filter(
-          (p) => p.salesperson_phone === phone,
+          (p) => normalizeReportPhone(p.salesperson_phone) === currentClean,
         );
 
-        const spComplaints = complaints.filter((c) => c.reported_by === phone);
+        const spComplaints = complaints.filter(
+          (c) => normalizeReportPhone(c.reported_by) === currentClean,
+        );
 
         const wonDeals = spDeals.filter((d) => d.stage === 'won');
         const totalValue = wonDeals.reduce(
@@ -606,10 +626,8 @@ export class ReportsService {
         );
         const spRecurringNew = recurring.filter((c: any) => {
           if (!c.created_at) return false;
-          const repPhone = String(c.assigned_salesperson_phone || '')
-            .replace(/\D/g, '')
-            .slice(-10);
-          const currentPhone = String(phone).replace(/\D/g, '').slice(-10);
+          const repPhone = normalizeReportPhone(c.assigned_salesperson_phone);
+          const currentPhone = currentClean;
           if (repPhone !== currentPhone) return false;
           if (isAllTime) return true;
           return c.created_at >= start && c.created_at <= end;
@@ -669,9 +687,12 @@ export class ReportsService {
           ),
         );
 
+        const employee = employeeMap[currentClean];
+
         return {
           salesperson_phone: phone,
-          name: employeeMap[phone] || 'Unknown',
+          name: employee?.name || employee?.employee_id || phone,
+          employee_id: employee?.employee_id || null,
           deals: {
             total: spDeals.length,
             won: wonDeals.length,

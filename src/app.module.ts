@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CommonModule } from './common/common.module';
-import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { SupabaseModule } from './infrastructure/supabase/supabase.module';
 import { UsersModule } from './modules/users/users.module';
 import { AdminsModule } from './modules/admins/admins.module';
@@ -31,7 +30,6 @@ import { ProductsModule } from './modules/products/products.module';
   imports: [
     ConfigModule,
     CommonModule,
-    PrismaModule,
     SupabaseModule,
     AuthModule,
     UsersModule,

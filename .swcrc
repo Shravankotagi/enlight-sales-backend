@@ -1,5 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/swcrc",
+  "exclude": [
+    ".*\\.spec\\.ts$",
+    ".*\\.test\\.ts$",
+    ".*/test-utils/.*",
+    ".*/__regression__/.*"
+  ],
   "sourceMaps": true,
   "jsc": {
     "parser": {

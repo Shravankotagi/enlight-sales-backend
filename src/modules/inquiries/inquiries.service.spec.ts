@@ -57,6 +57,30 @@ describe('InquiriesService quotation email', () => {
     ).resolves.toBe('employee@example.com');
   });
 
+  it('uses the user-approved CC list, normalizes it, and excludes the customer', () => {
+    const { service } = createService();
+
+    expect(
+      (service as any).buildQuotationCc(
+        'sender@example.com',
+        'customer@example.com',
+        ['Team@Example.com', 'team@example.com', 'CUSTOMER@example.com'],
+      ),
+    ).toEqual(['team@example.com']);
+  });
+
+  it('rejects malformed custom CC recipients', () => {
+    const { service } = createService();
+
+    expect(() =>
+      (service as any).buildQuotationCc(
+        'sender@example.com',
+        'customer@example.com',
+        ['valid@example.com', 'not-an-email'],
+      ),
+    ).toThrow('CC recipients must contain valid email addresses.');
+  });
+
   it('blocks quotation sending when employee email is not configured', async () => {
     const { service } = createService();
     await expect(

@@ -77,15 +77,24 @@ function buildMultiFieldOrFilter(
 export function normalizeSourceProvenance(data: any) {
   if (!data || typeof data !== 'object') return data;
 
-  const rawText =
-    typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+  const rawText = typeof data.raw_text === 'string' ? data.raw_text.trim() : '';
+
   const isGeneratedPlaceholder =
     /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):/i.test(
       rawText,
-    );
+    ) &&
+    (!rawText.includes('\n') ||
+      / - Original PO Document$/i.test(rawText.trim()));
+
+  const strippedContent = rawText
+    .replace(
+      /^\[(?:Inquiry Attachment|PO Document Attached|PO Document):[^\n]*\](?:\s*-\s*[^\n]*)?\n*/i,
+      '',
+    )
+    .trim();
 
   data.source_original_text =
-    rawText && !isGeneratedPlaceholder ? rawText : null;
+    rawText && !isGeneratedPlaceholder ? strippedContent || rawText : null;
   data.source_extracted_text =
     typeof data.source_extracted_text === 'string'
       ? data.source_extracted_text
@@ -93,7 +102,12 @@ export function normalizeSourceProvenance(data: any) {
   data.source_media_urls = Array.isArray(data.media_urls)
     ? data.media_urls.filter(
         (url: unknown) =>
-          typeof url === 'string' && url.trim() && url !== 'attached_document',
+          typeof url === 'string' &&
+          url.trim() &&
+          url !== 'attached_document' &&
+          (url.startsWith('data:') ||
+            url.startsWith('http://') ||
+            url.startsWith('https://')),
       )
     : [];
 
@@ -398,7 +412,7 @@ export class DealsService {
           `
           id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
-          inquiries (source_channel, inquiry_type, raw_text, customer_phone)
+          inquiries (source_channel, inquiry_type, raw_text, customer_phone, ai_extraction_json)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -509,7 +523,18 @@ export class DealsService {
           }
         }
 
-        const hasMedia = Boolean(d.inquiry_id);
+        let cleanAiJson = d.inquiries?.ai_extraction_json;
+        if (cleanAiJson && typeof cleanAiJson === 'object') {
+          cleanAiJson = { ...cleanAiJson };
+          if (cleanAiJson.media_urls) delete cleanAiJson.media_urls;
+          if (cleanAiJson.image_base64) delete cleanAiJson.image_base64;
+          if (cleanAiJson.file_base64) delete cleanAiJson.file_base64;
+        }
+
+        const hasMedia =
+          Boolean(d.inquiry_id) ||
+          d.po_source === 'upload' ||
+          d.inquiry_type === 'purchase_order';
         const assignedOwnerPhone = getAssignedPhoneFromCustomerMap(
           d.customer_name,
           customerOwnerMap,
@@ -525,6 +550,15 @@ export class DealsService {
         const resolvedPhone =
           d.customer_phone || d.inquiries?.customer_phone || null;
 
+        const effectiveSourceChannel =
+          d.source_channel ||
+          (d.po_source === 'upload' ||
+          d.po_source === 'manual' ||
+          d.po_source === 'dashboard'
+            ? 'web_dashboard'
+            : d.inquiries?.source_channel) ||
+          (d.inquiry_type === 'purchase_order' ? 'web_dashboard' : null);
+
         return {
           ...d,
           salesperson_phone: effectiveSalespersonPhone,
@@ -533,8 +567,17 @@ export class DealsService {
           total_amount: computedTotal > 0 ? computedTotal : null,
           raw_text: inqRawText,
           customer_phone: resolvedPhone,
+          source_channel: effectiveSourceChannel,
           has_media: hasMedia,
+          source_media_urls: [],
           media_urls: hasMedia ? ['attached_document'] : [],
+          inquiries: d.inquiries
+            ? {
+                ...d.inquiries,
+                ai_extraction_json: cleanAiJson,
+                media_urls: hasMedia ? ['attached_document'] : [],
+              }
+            : undefined,
         };
       });
 
@@ -599,17 +642,36 @@ export class DealsService {
         if (data.inquiry_id) {
           const { data: inq } = await this.supabase
             .from('inquiries')
-            .select('media_urls, raw_text')
+            .select('media_urls, raw_text, ai_extraction_json, source_channel')
             .eq('id', data.inquiry_id)
             .limit(1)
             .maybeSingle();
           if (inq) {
             if (Array.isArray(inq.media_urls) && inq.media_urls.length > 0) {
               data.media_urls = inq.media_urls;
+              data.source_media_urls = inq.media_urls;
+              data.has_media = true;
             }
-            if (inq.raw_text && !data.raw_text) {
+            if (inq.raw_text) {
               data.raw_text = inq.raw_text;
             }
+            if (inq.ai_extraction_json) {
+              data.ai_extraction_json = inq.ai_extraction_json;
+            }
+            if (inq.source_channel && !data.source_channel) {
+              data.source_channel = inq.source_channel;
+            }
+          }
+        }
+
+        if (!data.source_channel) {
+          if (
+            data.po_source === 'upload' ||
+            data.po_source === 'manual' ||
+            data.po_source === 'dashboard' ||
+            data.inquiry_type === 'purchase_order'
+          ) {
+            data.source_channel = 'web_dashboard';
           }
         }
 
@@ -656,7 +718,9 @@ export class DealsService {
               matched.media_urls.length > 0
             ) {
               data.media_urls = matched.media_urls;
-              if (matched.raw_text && !data.raw_text) {
+              data.source_media_urls = matched.media_urls;
+              data.has_media = true;
+              if (matched.raw_text) {
                 data.raw_text = matched.raw_text;
               }
             }
@@ -781,6 +845,18 @@ export class DealsService {
             })
             .eq('id', data.inquiry_id);
         } else if (targetStage === 'won' && poResolution) {
+          const { data: linkedInq } = await this.supabase
+            .from('inquiries')
+            .select('raw_text')
+            .eq('id', data.inquiry_id)
+            .maybeSingle();
+          const existingRaw = (linkedInq?.raw_text || '').trim();
+          const updatedRaw =
+            existingRaw &&
+            /Material:/i.test(existingRaw) &&
+            !/\bPO\s*Number\s*:/i.test(existingRaw)
+              ? `${existingRaw}\nPO Number: ${poResolution.poNumber}`
+              : undefined;
           await this.supabase
             .from('inquiries')
             .update({
@@ -794,6 +870,7 @@ export class DealsService {
               po_generated_at: poResolution.poGeneratedAt,
               po_confirmed_at: updateData.won_at,
               po_date: poDate || existingDeal.po_date || null,
+              ...(updatedRaw ? { raw_text: updatedRaw } : {}),
             })
             .eq('id', data.inquiry_id);
         } else if (targetStage === 'quoted') {
@@ -1402,8 +1479,18 @@ export class DealsService {
           candidateInquiries.length > 0
         ) {
           for (const inq of candidateInquiries) {
-            let inqScore = 0;
+            const inqStage = (inq.stage || '').toLowerCase().trim();
             const inqStatus = (inq.status || '').toLowerCase().trim();
+            if (
+              inqStage === 'won' ||
+              inqStage === 'lost' ||
+              inqStatus === 'won' ||
+              inqStatus === 'lost' ||
+              Boolean(this.cleanPoValue(inq.po_number))
+            ) {
+              continue;
+            }
+            let inqScore = 0;
             if (inqStatus === 'negotiation') inqScore += 20;
             else if (inqStatus === 'quoted' || inqStatus === 'confirmed')
               inqScore += 15;
@@ -1485,8 +1572,67 @@ export class DealsService {
 
       const targetSourceChannel = data.source_channel || 'web_dashboard';
 
+      const notesText =
+        this.cleanPoValue(data.additional_notes) ||
+        this.cleanPoValue(data.notes) ||
+        this.cleanPoValue(data.remarks) ||
+        '';
+      const itemStrs = (Array.isArray(lineItems) ? lineItems : [])
+        .map((item: any, idx: number) => {
+          const sku = String(
+            item?.sku_text || item?.product_name || item?.description || 'Item',
+          ).trim();
+          const dims = item?.dimensions
+            ? ` (${String(item.dimensions).trim()})`
+            : '';
+          const qty =
+            Number(item?.quantity) > 0
+              ? ` - ${item.quantity} ${item.unit || 'MT'}`
+              : '';
+          const rate = Number(item?.rate) > 0 ? ` @ ₹${Number(item.rate)}` : '';
+          return `${idx + 1}. ${sku}${dims}${qty}${rate}`.trim();
+        })
+        .filter(Boolean);
+      const cleanDeliveryForSource = String(deliveryLocation || '')
+        .trim()
+        .replace(
+          /^[^,\n]*?\b(?:pvt\.?\s*ltd\.?|private\s+limited|limited|llp)\s*,\s*/i,
+          '',
+        )
+        .trim();
+      const structuredPoBody = [
+        itemStrs.length > 0 ? `Material:\n${itemStrs.join('\n')}` : '',
+        cleanDeliveryForSource ? `Delivery: ${cleanDeliveryForSource}` : '',
+        paymentTerms ? `Payment Terms: ${String(paymentTerms).trim()}` : '',
+        notesText ? `Notes: ${notesText}` : '',
+        poNumber ? `PO Number: ${poNumber}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const providedSourceText = this.cleanPoValue(data.source_original_text);
+      const formattedPoRawText = providedSourceText
+        ? /\bPO\s*Number\s*:/i.test(providedSourceText)
+          ? providedSourceText.replace(
+              /(\bPO\s*Number\s*:\s*)([^\n\r]+)/i,
+              `$1${poNumber}`,
+            )
+          : `${providedSourceText}\nPO Number: ${poNumber}`
+        : structuredPoBody
+          ? `[PO Document Attached: ${poNumber}]\n${structuredPoBody}`
+          : `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`;
+
       if (inquiryId) {
+        const { data: existingInqRow } = await this.supabase
+          .from('inquiries')
+          .select('raw_text, ai_extraction_json')
+          .eq('id', inquiryId)
+          .maybeSingle();
+        const existingInqRaw = (existingInqRow?.raw_text || '').trim();
+
         const inqUpdates: any = {
+          source_channel: targetSourceChannel,
+          inquiry_type: 'purchase_order',
           status: 'confirmed',
           stage: 'won',
           won_at: nowIso,
@@ -1499,7 +1645,15 @@ export class DealsService {
           po_confirmed_at: nowIso,
           po_date: poDate,
           total_amount: totalAmount,
+          raw_text: formattedPoRawText || existingInqRaw,
         };
+        if (notesText) {
+          inqUpdates.ai_extraction_json = {
+            ...((existingInqRow?.ai_extraction_json as any) || {}),
+            additional_notes: notesText,
+            notes: notesText,
+          };
+        }
         if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
           inqUpdates.media_urls = data.media_urls;
         }
@@ -1507,21 +1661,25 @@ export class DealsService {
           .from('inquiries')
           .update(inqUpdates)
           .eq('id', inquiryId);
-      } else if (Array.isArray(data.media_urls) && data.media_urls.length > 0) {
+      } else if (
+        (Array.isArray(data.media_urls) && data.media_urls.length > 0) ||
+        Boolean(structuredPoBody)
+      ) {
         try {
           const { data: newInq } = await this.supabase
             .from('inquiries')
             .insert({
               source_channel: targetSourceChannel,
-              raw_text:
-                this.cleanPoValue(data.source_original_text) ||
-                `[PO Document Attached: ${poNumber}] ${customerName || 'Customer'} - Original PO Document`,
-              media_urls: data.media_urls,
+              raw_text: formattedPoRawText,
+              media_urls: Array.isArray(data.media_urls) ? data.media_urls : [],
               sender_name: customerName,
+              customer_name: customerName,
               sender_phone: customerPhone,
               salesperson_phone: phone,
               status: 'confirmed',
-              inquiry_type: 'inquiry',
+              stage: 'won',
+              won_at: nowIso,
+              inquiry_type: 'purchase_order',
               po_number: poNumber,
               reference_po_number: referencePoNumber,
               generated_po_number: generatedPoNumber,
@@ -1530,6 +1688,17 @@ export class DealsService {
               po_generated_at: poGeneratedAt,
               po_confirmed_at: nowIso,
               po_date: poDate,
+              total_amount: totalAmount,
+              delivery_location: deliveryLocation || null,
+              payment_terms: paymentTerms || null,
+              ...(notesText
+                ? {
+                    ai_extraction_json: {
+                      additional_notes: notesText,
+                      notes: notesText,
+                    },
+                  }
+                : {}),
               created_at: nowIso,
             })
             .select()

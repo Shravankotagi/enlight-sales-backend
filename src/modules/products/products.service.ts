@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
 export interface ProductCatalogItem {
@@ -19,7 +19,7 @@ export class ProductsService {
 
   async getAll(): Promise<ProductCatalogItem[]> {
     try {
-      const client = this.supabaseService.getClient();
+      const client = this.supabaseService.getAdminClient();
       const { data, error } = await client
         .from('products')
         .select('*')
@@ -36,6 +36,72 @@ export class ProductsService {
       this.logger.error(`Failed to fetch products: ${err.message}`);
       return [];
     }
+  }
+
+  async create(body: {
+    product_name?: string;
+    dimensions?: string;
+    hsn_code?: string;
+    category?: string;
+  }): Promise<ProductCatalogItem> {
+    const productName = String(body?.product_name || '').trim();
+    const dimensions = String(body?.dimensions || '').trim();
+    const hsnCode = String(body?.hsn_code || '').trim();
+    if (!productName || !dimensions || !hsnCode) {
+      throw new BadRequestException(
+        'Product Name, Specs/Dimensions, and HSN/SAC Code are all required',
+      );
+    }
+    const category = String(body?.category || 'Custom').trim() || 'Custom';
+
+    const client = this.supabaseService.getAdminClient();
+    const existingList = await this.getAll();
+    const pLower = productName.toLowerCase();
+    const dLower = dimensions.toLowerCase();
+
+    const existing = existingList.find(
+      (p) =>
+        (p.product_name || '').trim().toLowerCase() === pLower &&
+        (p.dimensions || '').trim().toLowerCase() === dLower,
+    );
+
+    if (existing) {
+      if (hsnCode && existing.hsn_code !== hsnCode) {
+        const { data: updated, error: updateErr } = await client
+          .from('products')
+          .update({
+            hsn_code: hsnCode,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+          .select('*')
+          .single();
+        if (!updateErr && updated) {
+          return updated;
+        }
+      }
+      return existing;
+    }
+
+    const { data, error } = await client
+      .from('products')
+      .insert({
+        category,
+        product_name: productName,
+        dimensions,
+        hsn_code: hsnCode,
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      this.logger.error(`Failed to create product: ${error.message}`);
+      throw new BadRequestException(
+        error.message || 'Could not add product to catalog',
+      );
+    }
+
+    return data;
   }
 
   async findByProductAndDimension(
