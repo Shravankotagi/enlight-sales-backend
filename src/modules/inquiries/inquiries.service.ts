@@ -68,6 +68,7 @@ import {
   calculateLineItem,
   calculateQuotationBreakdown,
   calculateTotalTonnageMt,
+  convertLineItemToMt,
   formatIndianCurrency,
   resolvePlaceOfSupply,
 } from '../pricing/pricing.engine';
@@ -3532,6 +3533,21 @@ ${rawText}`;
     );
   }
 
+  // Qty on every quotation PDF is the MT weight, never the commercial unit.
+  private quotationQtyMtLabel(item: any): string {
+    const res = convertLineItemToMt(item);
+    if (!res.canConvert || res.mt === null || isNaN(res.mt)) return '- MT';
+    const rounded = Math.round(res.mt * 1000) / 1000;
+    const formatted =
+      rounded < 0.01
+        ? rounded.toFixed(3)
+        : rounded.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 3,
+          });
+    return `${formatted} MT`;
+  }
+
   async generatePdfKitBuffer(
     qRefNum: string,
     customerName: string,
@@ -3865,6 +3881,9 @@ ${rawText}`;
             ),
           quantity: Number(item.quantity || 0),
           unit: item.unit || 'MT',
+          converted_mt: item.converted_mt,
+          weight_mt: item.weight_mt,
+          qty_mt_label: this.quotationQtyMtLabel(item),
           rate: Number(item.rate || item.unitPrice || 0),
           amount: Number(
             item.amount ||
@@ -3988,12 +4007,11 @@ ${rawText}`;
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(
-              `${formatIndianCurrency(item.quantity, true)} ${item.unit || 'MT'}`,
-              342,
-              rowY + 9,
-              { width: 68, align: 'right', lineBreak: false },
-            );
+            .text(item.qty_mt_label, 342, rowY + 9, {
+              width: 68,
+              align: 'right',
+              lineBreak: false,
+            });
 
           // Rate
           doc
