@@ -1317,12 +1317,12 @@ export class CustomersService {
 
       if (error) throw error;
       this.logger.log(
-        `Customer deactivated in Enlight Sales OS (Preserved in Zoho Bigin): ${decodedId}`,
+        `Customer deactivated in Enlight Sigma (Preserved in Zoho Bigin): ${decodedId}`,
       );
       return {
         success: true,
         message:
-          'Customer deactivated successfully in Enlight Sales OS (Preserved in Zoho Bigin CRM).',
+          'Customer deactivated successfully in Enlight Sigma (Preserved in Zoho Bigin CRM).',
         data,
       };
     } catch (error) {
