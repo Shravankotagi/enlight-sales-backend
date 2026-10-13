@@ -412,7 +412,7 @@ export class DealsService {
           `
           id, inquiry_id, stage, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, customer_name, customer_phone, customer_gst, customer_address, delivery_location, delivery_date, payment_terms, total_amount, inquiry_type, overall_confidence, status, created_at, bigin_deal_id, lost_reason, salesperson_phone, employee_id, won_at,
           deal_items (*),
-          inquiries (source_channel, inquiry_type, raw_text, customer_phone, ai_extraction_json, media_urls)
+          inquiries (source_channel, inquiry_type, raw_text, customer_phone, ai_extraction_json)
         `,
         )
         .order(filters?.stage === 'won' ? 'won_at' : 'created_at', {
@@ -523,22 +523,18 @@ export class DealsService {
           }
         }
 
-        const actualMediaUrls = (
-          Array.isArray(d.inquiries?.media_urls) &&
-          d.inquiries.media_urls.length > 0
-            ? d.inquiries.media_urls
-            : Array.isArray(d.media_urls) && d.media_urls.length > 0
-              ? d.media_urls
-              : []
-        ).filter(
-          (u: any) =>
-            typeof u === 'string' &&
-            u !== 'attached_document' &&
-            (u.startsWith('data:') ||
-              u.startsWith('http://') ||
-              u.startsWith('https://')),
-        );
-        const hasMedia = actualMediaUrls.length > 0 || Boolean(d.inquiry_id);
+        let cleanAiJson = d.inquiries?.ai_extraction_json;
+        if (cleanAiJson && typeof cleanAiJson === 'object') {
+          cleanAiJson = { ...cleanAiJson };
+          if (cleanAiJson.media_urls) delete cleanAiJson.media_urls;
+          if (cleanAiJson.image_base64) delete cleanAiJson.image_base64;
+          if (cleanAiJson.file_base64) delete cleanAiJson.file_base64;
+        }
+
+        const hasMedia =
+          Boolean(d.inquiry_id) ||
+          d.po_source === 'upload' ||
+          d.inquiry_type === 'purchase_order';
         const assignedOwnerPhone = getAssignedPhoneFromCustomerMap(
           d.customer_name,
           customerOwnerMap,
@@ -573,13 +569,15 @@ export class DealsService {
           customer_phone: resolvedPhone,
           source_channel: effectiveSourceChannel,
           has_media: hasMedia,
-          source_media_urls: actualMediaUrls,
-          media_urls:
-            actualMediaUrls.length > 0
-              ? actualMediaUrls
-              : hasMedia
-                ? ['attached_document']
-                : [],
+          source_media_urls: [],
+          media_urls: hasMedia ? ['attached_document'] : [],
+          inquiries: d.inquiries
+            ? {
+                ...d.inquiries,
+                ai_extraction_json: cleanAiJson,
+                media_urls: hasMedia ? ['attached_document'] : [],
+              }
+            : undefined,
         };
       });
 
@@ -651,6 +649,8 @@ export class DealsService {
           if (inq) {
             if (Array.isArray(inq.media_urls) && inq.media_urls.length > 0) {
               data.media_urls = inq.media_urls;
+              data.source_media_urls = inq.media_urls;
+              data.has_media = true;
             }
             if (inq.raw_text) {
               data.raw_text = inq.raw_text;
@@ -718,6 +718,8 @@ export class DealsService {
               matched.media_urls.length > 0
             ) {
               data.media_urls = matched.media_urls;
+              data.source_media_urls = matched.media_urls;
+              data.has_media = true;
               if (matched.raw_text) {
                 data.raw_text = matched.raw_text;
               }
