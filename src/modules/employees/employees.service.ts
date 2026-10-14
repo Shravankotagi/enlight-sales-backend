@@ -377,6 +377,20 @@ export class EmployeesService {
     }>,
   ) {
     try {
+      // 1. Fetch current employee state to detect phone changes
+      const { data: currentEmp, error: fetchErr } = await this.supabase
+        .from('employees')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (fetchErr || !currentEmp) {
+        throw new NotFoundException('Employee not found');
+      }
+
+      const oldPhone = currentEmp.phone;
+
+      // 2. Validate duplicate phone conflict
       if (dto.phone) {
         const existing = await this.findByPhone(dto.phone);
         if (existing && existing.id !== id) {
@@ -416,6 +430,7 @@ export class EmployeesService {
         updatePayload.reports_to_employee_id = null;
       }
 
+      // 3. Update employee record
       const { data, error } = await this.supabase
         .from('employees')
         .update(updatePayload)
@@ -423,9 +438,29 @@ export class EmployeesService {
         .select()
         .single();
       if (error) throw error;
+
+      // 4. If phone changed, cascade to all related transactional records
+      if (dto.phone) {
+        const cleanOld = normalizePhone(oldPhone);
+        const cleanNew = normalizePhone(dto.phone);
+        if (cleanNew && cleanNew !== cleanOld) {
+          await this.cascadePhoneUpdate(
+            id,
+            oldPhone,
+            dto.phone,
+            currentEmp.name,
+          );
+        }
+      }
+
       return data;
     } catch (error) {
-      if (error instanceof ConflictException) throw error;
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
       if ((error as any)?.code === '23505') {
         const detail = String(
           (error as any)?.details || (error as any)?.message || '',
@@ -438,6 +473,177 @@ export class EmployeesService {
       }
       this.logger.error(`Error in update for employee ${id}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Automatically cascades a phone number change across all related business tables:
+   * deals, inquiries, customer_visits, kra_logs, recurring_customers,
+   * followup_tasks, payment_tracking, complaints, conversation_sessions,
+   * activity_logs, subordinate employees (manager_phone), and otp_sessions.
+   */
+  private async cascadePhoneUpdate(
+    employeeId: string,
+    oldPhone: string,
+    newPhone: string,
+    empName?: string,
+  ): Promise<void> {
+    try {
+      const cleanOld10 = normalizePhone(oldPhone);
+      const cleanNew10 = normalizePhone(newPhone);
+
+      if (!cleanOld10 || !cleanNew10 || cleanOld10 === cleanNew10) {
+        return;
+      }
+
+      const canonicalNew = `91${cleanNew10}`;
+      const oldVariants = Array.from(
+        new Set(
+          [
+            cleanOld10,
+            `91${cleanOld10}`,
+            `+91${cleanOld10}`,
+            oldPhone,
+            String(oldPhone || '').replace(/\D/g, ''),
+          ].filter(Boolean),
+        ),
+      );
+
+      this.logger.log(
+        `[CascadePhoneUpdate] Initiating cascade for employee ${employeeId} (${empName || ''}) from [${oldVariants.join(', ')}] to ${canonicalNew}`,
+      );
+
+      // 1. Deals: update salesperson_phone and stamp employee_id
+      await this.supabase
+        .from('deals')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('deals')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 2. Inquiries: update salesperson_phone, sender_phone, and stamp employee_id
+      await this.supabase
+        .from('inquiries')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('inquiries')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      await this.supabase
+        .from('inquiries')
+        .update({ sender_phone: canonicalNew })
+        .in('sender_phone', oldVariants);
+
+      // 3. Customer Visits: update salesperson_phone and stamp employee_id
+      await this.supabase
+        .from('customer_visits')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('customer_visits')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 4. KRA Logs: update salesperson_phone and stamp employee_id
+      await this.supabase
+        .from('kra_logs')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('kra_logs')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 5. Recurring Customers: update assigned_salesperson_phone
+      await this.supabase
+        .from('recurring_customers')
+        .update({ assigned_salesperson_phone: canonicalNew })
+        .in('assigned_salesperson_phone', oldVariants);
+
+      // 6. Followup Tasks: update salesperson_phone and stamp employee_id
+      await this.supabase
+        .from('followup_tasks')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('followup_tasks')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 7. Payment Tracking: update salesperson_phone and stamp employee_id
+      await this.supabase
+        .from('payment_tracking')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('payment_tracking')
+        .update({ salesperson_phone: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 8. Complaints: update reported_by and stamp employee_id
+      await this.supabase
+        .from('complaints')
+        .update({ reported_by: canonicalNew, employee_id: employeeId })
+        .in('reported_by', oldVariants);
+
+      await this.supabase
+        .from('complaints')
+        .update({ reported_by: canonicalNew, employee_id: employeeId })
+        .eq('employee_id', employeeId);
+
+      // 9. Conversation Sessions (WhatsApp Bot rolling buffer)
+      await this.supabase
+        .from('conversation_sessions')
+        .update({ salesperson_phone: canonicalNew })
+        .in('salesperson_phone', oldVariants);
+
+      // 10. Activity Logs: update salesperson_phone and actor_phone
+      await this.supabase
+        .from('activity_logs')
+        .update({ salesperson_phone: canonicalNew })
+        .in('salesperson_phone', oldVariants);
+
+      await this.supabase
+        .from('activity_logs')
+        .update({ actor_phone: canonicalNew })
+        .in('actor_phone', oldVariants);
+
+      // 11. Subordinates: update manager_phone if this employee is a manager
+      await this.supabase
+        .from('employees')
+        .update({ manager_phone: canonicalNew })
+        .eq('manager_id', employeeId);
+
+      await this.supabase
+        .from('employees')
+        .update({ manager_phone: canonicalNew })
+        .in('manager_phone', oldVariants);
+
+      // 12. Invalidate obsolete unverified OTP sessions for old phone
+      await this.supabase
+        .from('otp_sessions')
+        .delete()
+        .in('phone', oldVariants)
+        .eq('verified', false);
+
+      this.logger.log(
+        `[CascadePhoneUpdate] Successfully completed cascade for employee ${employeeId} (${empName || ''}) to ${canonicalNew}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[CascadePhoneUpdate] Error during phone cascade for employee ${employeeId}: ${err?.message || err}`,
+        err?.stack,
+      );
     }
   }
 
