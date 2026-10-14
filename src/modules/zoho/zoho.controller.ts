@@ -11,6 +11,7 @@ import {
 import { ZohoService } from './zoho.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { isProcurementRole } from '../../common/utils/roles';
 
 @Controller('zoho')
 @UseGuards(JwtAuthGuard)
@@ -28,6 +29,11 @@ export class ZohoController {
 
   private assertCanSync(employee: any) {
     const role = String(employee?.role || '').toLowerCase();
+    if (isProcurementRole(role)) {
+      throw new ForbiddenException(
+        'Access Denied: Procurement roles cannot run Zoho sync.',
+      );
+    }
     const isAllowed =
       role.includes('admin') ||
       role.includes('manager') ||

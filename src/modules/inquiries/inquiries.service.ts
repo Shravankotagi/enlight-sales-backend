@@ -13,6 +13,7 @@ import axios from 'axios';
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { phoneInList } from '../employees/employees.service';
+import { isProcurementRole } from '../../common/utils/roles';
 import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 
@@ -648,6 +649,44 @@ function resolveInquiryEntities(
   };
 }
 
+export const PROCUREMENT_OPEN_STATUSES = ['new', 'pending', 'review', 'draft'];
+
+/** Statuses that create or move a deal. Procurement cannot set these. */
+export const PROCUREMENT_BLOCKED_STATUSES = [
+  'confirmed',
+  'won',
+  'lost',
+  'saved',
+  'processed',
+];
+
+export type ProcurementScope = {
+  ids: string[];
+  includeUnassignedPool: boolean;
+  unrestricted?: boolean;
+};
+
+/** In-memory scope. Empty ids match nothing and never throw. */
+export function matchesProcurementScope(
+  item: { procurement_employee_id?: string | null; status?: string | null },
+  scope?: ProcurementScope | null,
+): boolean {
+  if (!scope) return false;
+  const ids = scope.ids || [];
+  if (
+    item?.procurement_employee_id &&
+    ids.includes(item.procurement_employee_id)
+  ) {
+    return true;
+  }
+  const status = String(item?.status || '').toLowerCase();
+  return Boolean(
+    scope.includeUnassignedPool &&
+    !item?.procurement_employee_id &&
+    PROCUREMENT_OPEN_STATUSES.includes(status),
+  );
+}
+
 @Injectable()
 export class InquiriesService implements OnModuleInit {
   private readonly logger = new Logger(InquiriesService.name);
@@ -740,6 +779,7 @@ export class InquiriesService implements OnModuleInit {
     to?: string;
     salespersonPhone?: string;
     salespersonPhones?: string[] | string;
+    procurementScope?: ProcurementScope;
   }) {
     try {
       if (
@@ -753,7 +793,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason',
+          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason, procurement_employee_id, procurement_assigned_at',
         )
         .order('created_at', { ascending: false });
 
@@ -878,7 +918,12 @@ export class InquiriesService implements OnModuleInit {
       // Strict RBAC scope enforcement for Salesperson and Sales Manager personas
       const reqPhones = filters?.salespersonPhones || filters?.salespersonPhone;
       let scopedData = lightweightData;
-      if (reqPhones) {
+      if (filters?.procurementScope) {
+        const scope = filters.procurementScope;
+        scopedData = lightweightData.filter((item: any) =>
+          matchesProcurementScope(item, scope),
+        );
+      } else if (reqPhones) {
         const phoneList = Array.isArray(reqPhones) ? reqPhones : [reqPhones];
         const allowedPhoneSet = new Set(
           phoneList
@@ -927,7 +972,11 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
-  async findOne(id: string, accessiblePhones?: string[] | null) {
+  async findOne(
+    id: string,
+    accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
+  ) {
     try {
       const { data, error } = await this.supabase
         .from('inquiries')
@@ -938,7 +987,13 @@ export class InquiriesService implements OnModuleInit {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        if (!matchesProcurementScope(data, procurementScope)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this inquiry.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(data.salesperson_phone, accessiblePhones) ||
           phoneInList(data.sender_phone, accessiblePhones);
@@ -1015,13 +1070,19 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
-  async deleteInquiry(id: string, accessiblePhones?: string[] | null) {
+  async deleteInquiry(
+    id: string,
+    accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
+  ) {
     try {
       this.logger.log(`Deleting inquiry ${id} and associated records...`);
 
       const { data: inquiry, error: fetchErr } = await this.supabase
         .from('inquiries')
-        .select('id, sender_phone, salesperson_phone')
+        .select(
+          'id, sender_phone, salesperson_phone, procurement_employee_id, status',
+        )
         .eq('id', id)
         .single();
 
@@ -1029,7 +1090,14 @@ export class InquiriesService implements OnModuleInit {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        // Pool rows are shared with sales. Delete only rows already assigned to this team.
+        if (!procurementScope.ids.includes(inquiry.procurement_employee_id)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to delete this inquiry.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
           phoneInList(inquiry.sender_phone, accessiblePhones);
@@ -1070,9 +1138,14 @@ export class InquiriesService implements OnModuleInit {
     salespersonPhones?: string[] | string,
     from?: string,
     to?: string,
+    procurementScope?: ProcurementScope | null,
   ) {
     try {
-      if (Array.isArray(salespersonPhones) && salespersonPhones.length === 0) {
+      if (
+        !procurementScope &&
+        Array.isArray(salespersonPhones) &&
+        salespersonPhones.length === 0
+      ) {
         return [];
       }
 
@@ -1177,7 +1250,11 @@ export class InquiriesService implements OnModuleInit {
       });
 
       let scopedReviewList = reviewList;
-      if (salespersonPhones) {
+      if (procurementScope) {
+        scopedReviewList = reviewList.filter((item: any) =>
+          matchesProcurementScope(item, procurementScope),
+        );
+      } else if (salespersonPhones) {
         const phoneList = Array.isArray(salespersonPhones)
           ? salespersonPhones
           : [salespersonPhones];
@@ -1233,18 +1310,36 @@ export class InquiriesService implements OnModuleInit {
     status: string,
     details?: any,
     accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
   ) {
     try {
       const { data: existingInq, error: fetchErr } = await this.supabase
         .from('inquiries')
-        .select('id, salesperson_phone, sender_phone, ai_extraction_json')
+        .select(
+          'id, salesperson_phone, sender_phone, ai_extraction_json, procurement_employee_id, status, procurement_assigned_at',
+        )
         .eq('id', id)
         .single();
       if (fetchErr || !existingInq) {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        if (!matchesProcurementScope(existingInq, procurementScope)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this inquiry.',
+          );
+        }
+        if (
+          PROCUREMENT_BLOCKED_STATUSES.includes(
+            String(status || '').toLowerCase(),
+          )
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: Procurement roles cannot move an inquiry to confirmed, won, or lost.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(existingInq.salesperson_phone, accessiblePhones) ||
           phoneInList(existingInq.sender_phone, accessiblePhones);
@@ -1330,31 +1425,37 @@ export class InquiriesService implements OnModuleInit {
         .single();
       if (error) throw error;
 
-      // Automatically sync to pipeline / deals with strict status-to-stage mapping
-      if (status === 'quoted' || status === 'quotation_sent') {
-        await this.syncInquiryToDeal(id, 'quoted', details);
-      } else if (
-        status === 'confirmed' ||
-        status === 'saved' ||
-        status === 'processed'
-      ) {
-        await this.syncInquiryToDeal(id, 'qualified', details);
-      } else if (
-        status === 'review' ||
-        status === 'needs_review' ||
-        status === 'pending'
-      ) {
-        await this.syncInquiryToDeal(id, 'new_inquiry', details);
-      } else if (status === 'lost') {
-        await this.syncInquiryToDeal(id, 'lost', details);
-      } else if (status === 'won') {
-        await this.syncInquiryToDeal(id, 'won', details);
-      } else if (status === 'negotiation') {
-        await this.syncInquiryToDeal(id, 'negotiation', details);
-      } else if (status === 'on_hold' || status === 'hold') {
-        await this.syncInquiryToDeal(id, 'on_hold', details);
-      } else {
-        await this.syncInquiryToDeal(id, details?.stage || undefined, details);
+      // Procurement edits stay on the inquiry. They must not create or move a deal.
+      if (!procurementScope) {
+        if (status === 'quoted' || status === 'quotation_sent') {
+          await this.syncInquiryToDeal(id, 'quoted', details);
+        } else if (
+          status === 'confirmed' ||
+          status === 'saved' ||
+          status === 'processed'
+        ) {
+          await this.syncInquiryToDeal(id, 'qualified', details);
+        } else if (
+          status === 'review' ||
+          status === 'needs_review' ||
+          status === 'pending'
+        ) {
+          await this.syncInquiryToDeal(id, 'new_inquiry', details);
+        } else if (status === 'lost') {
+          await this.syncInquiryToDeal(id, 'lost', details);
+        } else if (status === 'won') {
+          await this.syncInquiryToDeal(id, 'won', details);
+        } else if (status === 'negotiation') {
+          await this.syncInquiryToDeal(id, 'negotiation', details);
+        } else if (status === 'on_hold' || status === 'hold') {
+          await this.syncInquiryToDeal(id, 'on_hold', details);
+        } else {
+          await this.syncInquiryToDeal(
+            id,
+            details?.stage || undefined,
+            details,
+          );
+        }
       }
 
       // Non-blocking activity log
@@ -1384,13 +1485,85 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  async assignProcurement(
+    id: string,
+    assigneeId: string | null,
+    scope: ProcurementScope,
+  ) {
+    const { data: inquiry, error } = await this.supabase
+      .from('inquiries')
+      .select('id, procurement_employee_id, status')
+      .eq('id', id)
+      .single();
+    if (error || !inquiry) {
+      throw new NotFoundException('Inquiry not found');
+    }
+
+    if (!scope.unrestricted) {
+      const assignedToTeam = scope.ids.includes(
+        inquiry.procurement_employee_id,
+      );
+      const inPool =
+        matchesProcurementScope(inquiry, scope) &&
+        !inquiry.procurement_employee_id;
+      if (!assigneeId) {
+        if (!assignedToTeam) {
+          throw new ForbiddenException(
+            'Access Denied: You can only unassign inquiries owned by your team.',
+          );
+        }
+      } else if (!assignedToTeam && !inPool) {
+        throw new ForbiddenException(
+          'Access Denied: This inquiry is outside your procurement scope.',
+        );
+      }
+      if (assigneeId && !scope.ids.includes(assigneeId)) {
+        throw new ForbiddenException(
+          'Access Denied: You can only assign inquiries to yourself or your team.',
+        );
+      }
+    }
+
+    if (assigneeId) {
+      const { data: emp, error: empErr } = await this.supabase
+        .from('employees')
+        .select('id, role, is_active')
+        .eq('id', assigneeId)
+        .single();
+      if (
+        empErr ||
+        !emp ||
+        emp.is_active === false ||
+        !isProcurementRole(emp.role)
+      ) {
+        throw new BadRequestException(
+          'Assignee must be an active procurement person or procurement manager.',
+        );
+      }
+    }
+
+    const { data, error: updErr } = await this.supabase
+      .from('inquiries')
+      .update({
+        procurement_employee_id: assigneeId,
+        procurement_assigned_at: assigneeId ? new Date().toISOString() : null,
+      })
+      .eq('id', id)
+      .select('id, procurement_employee_id, procurement_assigned_at')
+      .single();
+    if (updErr) throw updErr;
+    return data;
+  }
+
   async getStats(
     salespersonPhones?: string[] | string,
     from?: string,
     to?: string,
+    procurementScope?: ProcurementScope | null,
   ) {
     try {
       if (
+        !procurementScope &&
         salespersonPhones &&
         Array.isArray(salespersonPhones) &&
         salespersonPhones.length === 0
@@ -1409,7 +1582,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json',
+          'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json, procurement_employee_id, procurement_assigned_at',
         );
 
       if (from) {
@@ -1450,7 +1623,11 @@ export class InquiriesService implements OnModuleInit {
       const genuineData = (data || []).filter(isGenuineInquiry);
 
       let scopedGenuine = genuineData;
-      if (salespersonPhones) {
+      if (procurementScope) {
+        scopedGenuine = genuineData.filter((item: any) =>
+          matchesProcurementScope(item, procurementScope),
+        );
+      } else if (salespersonPhones) {
         const phoneList = Array.isArray(salespersonPhones)
           ? salespersonPhones
           : [salespersonPhones];

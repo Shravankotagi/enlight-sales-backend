@@ -11,11 +11,16 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InquiriesService } from './inquiries.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import {
+  isProcurementManager,
+  isProcurementRole,
+} from '../../common/utils/roles';
 
 @Controller('inquiries')
 @UseGuards(JwtAuthGuard)
@@ -24,6 +29,12 @@ export class InquiriesController {
     private readonly inquiriesService: InquiriesService,
     private readonly employeesService: EmployeesService,
   ) {}
+
+  private denyProcurement(action: string): never {
+    throw new ForbiddenException(
+      `Access Denied: Procurement roles cannot ${action}.`,
+    );
+  }
 
   @Get()
   async findAll(
@@ -34,6 +45,17 @@ export class InquiriesController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (isProcurementRole(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.findAll({
+        status,
+        from,
+        to,
+        procurementScope,
+      });
+    }
+
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -61,6 +83,17 @@ export class InquiriesController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (isProcurementRole(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.findReviewQueue(
+        undefined,
+        from,
+        to,
+        procurementScope,
+      );
+    }
+
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -83,6 +116,17 @@ export class InquiriesController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (isProcurementRole(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.getStats(
+        undefined,
+        from,
+        to,
+        procurementScope,
+      );
+    }
+
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -107,9 +151,36 @@ export class InquiriesController {
 
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    if (isProcurementRole(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.findOne(id, null, procurementScope);
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.findOne(id, phones);
+  }
+
+  @Patch(':id/procurement-assignee')
+  async assignProcurementOwner(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: { procurement_employee_id?: string | null },
+  ) {
+    const assigneeId = body?.procurement_employee_id || null;
+    if (employee?.role === 'admin') {
+      return this.inquiriesService.assignProcurement(id, assigneeId, {
+        ids: [],
+        includeUnassignedPool: true,
+        unrestricted: true,
+      });
+    }
+    if (!isProcurementManager(employee?.role)) {
+      this.denyProcurement('assign a procurement owner');
+    }
+    const scope =
+      await this.employeesService.getAccessibleProcurementIds(employee);
+    return this.inquiriesService.assignProcurement(id, assigneeId, scope);
   }
 
   @Patch(':id/status')
@@ -119,6 +190,17 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: { status: string; details?: any },
   ) {
+    if (isProcurementRole(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.updateStatus(
+        id,
+        body.status,
+        body.details,
+        null,
+        procurementScope,
+      );
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.updateStatus(
@@ -131,6 +213,9 @@ export class InquiriesController {
 
   @Post()
   async createInquiry(@CurrentEmployee() employee: any, @Body() body: any) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('create inquiries');
+    }
     return this.inquiriesService.createInquiry(body, employee.phone);
   }
 
@@ -140,6 +225,9 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('send quotations');
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.sendQuotation(id, body, phones, employee);
@@ -151,6 +239,9 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('preview quotations');
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.previewQuotation(id, body, employee, phones);
@@ -189,6 +280,20 @@ export class InquiriesController {
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
   ) {
+    if (
+      isProcurementRole(employee?.role) &&
+      !isProcurementManager(employee?.role)
+    ) {
+      this.denyProcurement('delete inquiries');
+    }
+    if (isProcurementManager(employee?.role)) {
+      const procurementScope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      return this.inquiriesService.deleteInquiry(id, null, {
+        ...procurementScope,
+        includeUnassignedPool: false,
+      });
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.deleteInquiry(id, phones);

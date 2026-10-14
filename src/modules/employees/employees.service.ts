@@ -7,6 +7,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import {
+  isProcurementManager,
+  isProcurementRole,
+} from '../../common/utils/roles';
 
 export function normalizePhone(phone?: string): string {
   if (!phone) return '';
@@ -94,6 +98,26 @@ export class EmployeesService {
         });
       }
 
+      // Procurement manager: self plus the people who report to them (assignee dropdown).
+      // Checked before the salesperson fallback. Not a sales manager.
+      if (isProcurementManager(effectiveEmp.role)) {
+        const myId = effectiveEmp.id;
+        const myPhone = normalizePhone(effectiveEmp.phone);
+        return allEmployees.filter((emp: any) => {
+          if (emp.id === myId || normalizePhone(emp.phone) === myPhone) {
+            return true;
+          }
+          if (emp.manager_id && emp.manager_id === myId) return true;
+          if (
+            emp.manager_phone &&
+            normalizePhone(emp.manager_phone) === myPhone
+          ) {
+            return true;
+          }
+          return false;
+        });
+      }
+
       // If Salesperson: return only self
       const selfPhone = normalizePhone(effectiveEmp.phone);
       return allEmployees.filter(
@@ -164,6 +188,8 @@ export class EmployeesService {
 
       const normPhone = normalizePhone(managerPhone);
       return data.filter((emp: any) => {
+        // Before any manager-substring logic: procurement staff are not a sales team.
+        if (isProcurementRole(emp.role)) return false;
         if (
           emp.role === 'admin' ||
           emp.role === 'sales_manager' ||
@@ -291,6 +317,70 @@ export class EmployeesService {
     return { phones: [employee.phone] };
   }
 
+  /**
+   * Inquiry ids a procurement user may see.
+   * Person: own employee id. Manager: own id plus people who report to them,
+   * and the caller also sees the open unassigned intake pool.
+   */
+  async getAccessibleProcurementIds(employee: any): Promise<{
+    ids: string[];
+    includeUnassignedPool: boolean;
+  }> {
+    const ownId = employee?.id ? [employee.id] : [];
+    if (!employee || !isProcurementManager(employee.role)) {
+      return { ids: ownId, includeUnassignedPool: false };
+    }
+
+    const { data } = await this.supabase
+      .from('employees')
+      .select('id, role, manager_id, manager_phone')
+      .eq('is_active', true);
+
+    const myPhone = normalizePhone(employee.phone);
+    const teamIds = (data || [])
+      .filter((emp: any) => {
+        if (!emp?.id || emp.id === employee.id) return false;
+        const role = String(emp.role || '').toLowerCase();
+        if (
+          role === 'admin' ||
+          role === 'sales_manager' ||
+          role === 'manager' ||
+          isProcurementManager(role)
+        ) {
+          return false;
+        }
+        if (emp.manager_id && emp.manager_id === employee.id) return true;
+        if (myPhone && normalizePhone(emp.manager_phone) === myPhone) {
+          return true;
+        }
+        return false;
+      })
+      .map((emp: any) => emp.id);
+
+    return {
+      ids: Array.from(new Set([...ownId, ...teamIds])),
+      includeUnassignedPool: true,
+    };
+  }
+
+  private assertManagerFitsRole(role: string, mgr: any) {
+    const mgrRole = String(mgr?.role || '').toLowerCase();
+    if (
+      role === 'salesperson' &&
+      mgrRole !== 'sales_manager' &&
+      mgrRole !== 'manager'
+    ) {
+      throw new BadRequestException(
+        'A salesperson must be assigned to a sales manager.',
+      );
+    }
+    if (role === 'procurement_person' && !isProcurementManager(mgrRole)) {
+      throw new BadRequestException(
+        'A procurement person must be assigned to a procurement manager.',
+      );
+    }
+  }
+
   async create(dto: {
     employee_id: string;
     name: string;
@@ -299,6 +389,7 @@ export class EmployeesService {
     role?: string;
     manager_id?: string | null;
     manager_phone?: string | null;
+    permissions?: Record<string, boolean> | null;
   }) {
     try {
       // Check duplicate phone
@@ -328,7 +419,14 @@ export class EmployeesService {
         created_at: new Date().toISOString(),
       };
 
-      if (role === 'salesperson' && (dto.manager_id || dto.manager_phone)) {
+      if (dto.permissions) {
+        insertPayload.permissions = dto.permissions;
+      }
+
+      if (
+        (role === 'salesperson' || role === 'procurement_person') &&
+        (dto.manager_id || dto.manager_phone)
+      ) {
         let mgr: any = null;
         if (dto.manager_id) {
           const { data } = await this.supabase
@@ -342,6 +440,7 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          this.assertManagerFitsRole(role, mgr);
           insertPayload.manager_id = mgr.id;
           insertPayload.manager_phone = mgr.phone;
           insertPayload.reports_to_employee_id = mgr.id;
@@ -374,6 +473,7 @@ export class EmployeesService {
       manager_id: string | null;
       manager_phone: string | null;
       reports_to_employee_id: string | null;
+      permissions?: Record<string, boolean> | null;
     }>,
   ) {
     try {
@@ -402,7 +502,15 @@ export class EmployeesService {
 
       const updatePayload: any = { ...dto };
 
-      if (dto.role === 'sales_manager' || dto.role === 'admin') {
+      const nextRole = dto.role || currentEmp.role;
+      // Only when the saved role is one of these. A partial update such as
+      // { is_active: true } must not clear an existing manager link.
+      if (
+        dto.role === 'sales_manager' ||
+        dto.role === 'admin' ||
+        dto.role === 'manager' ||
+        isProcurementManager(dto.role)
+      ) {
         updatePayload.manager_id = null;
         updatePayload.manager_phone = null;
         updatePayload.reports_to_employee_id = null;
@@ -420,6 +528,7 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          this.assertManagerFitsRole(nextRole, mgr);
           updatePayload.manager_id = mgr.id;
           updatePayload.manager_phone = mgr.phone;
           updatePayload.reports_to_employee_id = mgr.id;

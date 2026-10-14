@@ -1,10 +1,30 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { isProcurementRole } from '../utils/roles';
+
+/** Procurement tokens may only hit these routes. Segment match, so /inquiries-x is denied. */
+export function isProcurementRequestAllowed(
+  method?: string,
+  rawPath?: string,
+): boolean {
+  const cleanPath =
+    String(rawPath || '')
+      .split('?')[0]
+      .replace(/^\/api(\/v\d+)?/, '') || '/';
+  const verb = String(method || 'GET').toUpperCase();
+  const under = (prefix: string) =>
+    cleanPath === prefix || cleanPath.startsWith(`${prefix}/`);
+
+  if (under('/inquiries')) return true;
+  if (verb !== 'GET') return false;
+  return under('/products') || under('/pricing') || cleanPath === '/employees';
+}
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -46,8 +66,20 @@ export class JwtAuthGuard implements CanActivate {
         secret: process.env.JWT_SECRET || 'enlight-sales-jwt-secret-2026',
       });
       request.employee = payload;
+      if (
+        isProcurementRole(payload?.role) &&
+        !isProcurementRequestAllowed(
+          request.method,
+          request.path || request.url,
+        )
+      ) {
+        throw new ForbiddenException(
+          'Access Denied: Procurement roles can only use Inquiries.',
+        );
+      }
       return true;
-    } catch {
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
       throw new UnauthorizedException('Invalid or expired token');
     }
   }
