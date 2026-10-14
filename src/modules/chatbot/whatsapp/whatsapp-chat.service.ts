@@ -231,7 +231,7 @@ export class WhatsAppChatService {
         success: false,
         requiresVerification: true,
         reply:
-          ' *Enlight Sales OS Assistant*\n\nYour phone number is not registered in our system. Please contact your system administrator to register your phone number for Enlight Metals Sales OS.',
+          ' *Enlight Sigma Assistant*\n\nYour phone number is not registered in our system. Please contact your system administrator to register your phone number for Enlight Sigma.',
       };
     }
 

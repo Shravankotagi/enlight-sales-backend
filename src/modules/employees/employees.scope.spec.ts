@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import {
   EmployeesService,
   normalizePhone,
@@ -37,6 +37,26 @@ const employees = [
     phone: '9300000003',
     role: 'salesperson',
     manager_id: 'other-mgr',
+    is_active: true,
+  },
+  {
+    id: 'pm-1',
+    phone: '9400000000',
+    role: 'procurement_manager',
+    is_active: true,
+  },
+  {
+    id: 'pp-1',
+    phone: '9400000001',
+    role: 'procurement_person',
+    manager_id: 'pm-1',
+    is_active: true,
+  },
+  {
+    id: 'pp-sales',
+    phone: '9400000002',
+    role: 'procurement_person',
+    manager_id: 'mgr-1',
     is_active: true,
   },
 ];
@@ -109,5 +129,60 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
     );
     expect(managerView.isManagerView).toBe(true);
     expect(managerView.phones).toContain('9200000001');
+    expect(managerView.phones).not.toContain('9400000002');
+  });
+});
+
+describe('EmployeesService procurement scope', () => {
+  it('gives a procurement manager their team ids and the unassigned pool', async () => {
+    const service = createService();
+    const scope = await service.getAccessibleProcurementIds(employees[5]);
+
+    expect(scope.includeUnassignedPool).toBe(true);
+    expect(scope.ids.sort()).toEqual(['pm-1', 'pp-1'].sort());
+  });
+
+  it('limits a procurement person to their own id', async () => {
+    const service = createService();
+    await expect(
+      service.getAccessibleProcurementIds(employees[6]),
+    ).resolves.toEqual({ ids: ['pp-1'], includeUnassignedPool: false });
+  });
+
+  it('rejects a salesperson assigned to a procurement manager', async () => {
+    const service = createService();
+    await expect(
+      service.create({
+        employee_id: 'EMP-NEW',
+        name: 'New Rep',
+        phone: '9500000001',
+        role: 'salesperson',
+        manager_id: 'pm-1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('leaves an existing manager link alone when only the active flag changes', async () => {
+    employees[1].manager_id = 'keep-me';
+    try {
+      const service = createService();
+      const updated = await service.update('mgr-1', { is_active: true });
+      expect(updated.manager_id).toBe('keep-me');
+    } finally {
+      delete employees[1].manager_id;
+    }
+  });
+
+  it('rejects a procurement person assigned to a sales manager', async () => {
+    const service = createService();
+    await expect(
+      service.create({
+        employee_id: 'EMP-PP',
+        name: 'New Buyer',
+        phone: '9500000002',
+        role: 'procurement_person',
+        manager_id: 'mgr-1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

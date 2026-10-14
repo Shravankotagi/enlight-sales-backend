@@ -13,6 +13,7 @@ import {
 import { KraService } from './kra.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
+import { isProcurementRole } from '../../common/utils/roles';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
 @Controller('kra')
@@ -215,6 +216,11 @@ export class KraController {
     @Body() body: any,
   ) {
     const role = (employee?.role || '').toLowerCase();
+    if (isProcurementRole(role)) {
+      throw new ForbiddenException(
+        'Access Denied: Procurement roles cannot update field visits.',
+      );
+    }
     const isAuthorized = role.includes('admin') || role.includes('manager');
     if (!isAuthorized) {
       throw new ForbiddenException(
@@ -234,6 +240,11 @@ export class KraController {
   @Delete('visits/:id')
   async deleteVisit(@CurrentEmployee() employee: any, @Param('id') id: string) {
     const role = (employee?.role || '').toLowerCase();
+    if (isProcurementRole(role)) {
+      throw new ForbiddenException(
+        'Access Denied: Procurement roles cannot delete field visits.',
+      );
+    }
     const isAuthorized = role.includes('admin') || role.includes('manager');
     if (!isAuthorized) {
       throw new ForbiddenException(
