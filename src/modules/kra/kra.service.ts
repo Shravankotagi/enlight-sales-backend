@@ -9,6 +9,20 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { phoneInList } from '../employees/employees.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { compressBase64Image } from '../../utils/imageCompressor';
+import {
+  OTP_MAX_ATTEMPTS,
+  OTP_RESEND_MS,
+  OTP_TTL_MS,
+  TOKEN_TTL_MS,
+  assertNewVisit,
+  cityFromNominatim,
+  describeVisitWhatsAppFailure,
+  generateVisitOtp,
+  generateVisitToken,
+  hashVisitSecret,
+  normalizeVisitPhone,
+  sendVisitOtpWhatsApp,
+} from './visit-verification';
 
 const POST_LOG_COMPLAINT_EDITABLE_FIELDS = new Set([
   'raised_by',
@@ -2942,7 +2956,202 @@ export class KraService {
     return enriched;
   }
 
+  private async listVisitVerifications(phone: string) {
+    const { data, error } = await this.supabase
+      .from('visit_phone_verifications')
+      .select('*')
+      .eq('phone', phone);
+    if (error) {
+      throw new BadRequestException('Unable to verify the phone right now.');
+    }
+    return Array.isArray(data) ? data : [];
+  }
+
+  private async insertVisitVerification(row: Record<string, unknown>) {
+    const { error } = await this.supabase
+      .from('visit_phone_verifications')
+      .insert(row);
+    if (error) {
+      throw new BadRequestException('Unable to send a visit code right now.');
+    }
+  }
+
+  private async patchVisitVerification(
+    id: string,
+    patch: Record<string, unknown>,
+  ) {
+    const { error } = await this.supabase
+      .from('visit_phone_verifications')
+      .update(patch)
+      .eq('id', id);
+    if (error) {
+      throw new BadRequestException('Unable to verify the phone right now.');
+    }
+  }
+
+  async requestVisitOtp(rawPhone: string) {
+    const phone = normalizeVisitPhone(rawPhone);
+    const rows = await this.listVisitVerifications(phone);
+    const newest = [...rows].sort(
+      (a, b) => +new Date(b.created_at) - +new Date(a.created_at),
+    )[0];
+    if (
+      newest &&
+      Date.now() - new Date(newest.created_at).getTime() < OTP_RESEND_MS
+    ) {
+      throw new BadRequestException(
+        'Wait 60 seconds before requesting another code.',
+      );
+    }
+
+    const now = new Date();
+    for (const row of rows) {
+      if (!row.consumed_at) {
+        await this.patchVisitVerification(row.id, {
+          consumed_at: now.toISOString(),
+        });
+      }
+    }
+
+    const otp = generateVisitOtp();
+    await this.insertVisitVerification({
+      phone,
+      otp_hash: hashVisitSecret(otp),
+      expires_at: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+      attempts: 0,
+      locked: false,
+      created_at: now.toISOString(),
+    });
+
+    try {
+      await sendVisitOtpWhatsApp(`91${phone}`, otp);
+    } catch (err: any) {
+      const sent = [...(await this.listVisitVerifications(phone))].sort(
+        (a, b) => +new Date(b.created_at) - +new Date(a.created_at),
+      )[0];
+      if (sent?.id) {
+        await this.patchVisitVerification(sent.id, {
+          consumed_at: now.toISOString(),
+          created_at: new Date(Date.now() - OTP_RESEND_MS - 1000).toISOString(),
+        });
+      }
+      if (err instanceof BadRequestException) {
+        this.logger.warn(
+          `Visit code WhatsApp send failed for ****${phone.slice(-4)}`,
+        );
+        throw err;
+      }
+      const failure = describeVisitWhatsAppFailure(err);
+      this.logger.warn(
+        `Visit code WhatsApp send failed for ****${phone.slice(-4)}: code=${failure.code} subcode=${failure.subcode} message=${failure.metaMessage}`,
+      );
+      throw new BadRequestException(failure.userMessage);
+    }
+
+    this.logger.log(`Visit code sent to ****${phone.slice(-4)}`);
+    return {
+      message: 'Code sent to the customer WhatsApp number.',
+      resend_after_seconds: 60,
+    };
+  }
+
+  async verifyVisitOtp(rawPhone: string, rawOtp: string) {
+    const phone = normalizeVisitPhone(rawPhone);
+    const otp = String(rawOtp || '').trim();
+    const rows = await this.listVisitVerifications(phone);
+    const open = rows
+      .filter((row) => !row.consumed_at)
+      .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))[0];
+    if (!open) {
+      throw new BadRequestException(
+        'Request a visit code before entering it.',
+      );
+    }
+    if (open.locked || Number(open.attempts || 0) >= OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException(
+        'This code is locked. Request a new one.',
+      );
+    }
+    if (new Date(open.expires_at).getTime() <= Date.now()) {
+      throw new BadRequestException(
+        'This code has expired. Request a new one.',
+      );
+    }
+    if (open.otp_hash !== hashVisitSecret(otp)) {
+      const attempts = Number(open.attempts || 0) + 1;
+      const locked = attempts >= OTP_MAX_ATTEMPTS;
+      await this.patchVisitVerification(open.id, { attempts, locked });
+      throw new BadRequestException(
+        locked
+          ? 'This code is locked. Request a new one.'
+          : 'That code is incorrect.',
+      );
+    }
+
+    const token = generateVisitToken();
+    const verifiedAt = new Date();
+    await this.patchVisitVerification(open.id, {
+      verified_at: verifiedAt.toISOString(),
+      verification_token_hash: hashVisitSecret(token),
+      token_expires_at: new Date(
+        verifiedAt.getTime() + TOKEN_TTL_MS,
+      ).toISOString(),
+    });
+    return { verification_token: token, message: 'Phone verified.' };
+  }
+
+  async reverseGeocodeVisit(latRaw: unknown, lngRaw: unknown) {
+    const latitude = Number(latRaw);
+    const longitude = Number(lngRaw);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new BadRequestException('Location coordinates are required.');
+    }
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`,
+        {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'EnlightMetalsOS/1.0 (customer-visit)',
+          },
+        },
+      );
+      if (!response.ok) return { city: null, latitude, longitude };
+      const body = await response.json();
+      return { city: cityFromNominatim(body), latitude, longitude };
+    } catch {
+      this.logger.warn('Visit reverse geocode failed');
+      return { city: null, latitude, longitude };
+    }
+  }
+
+  private async consumeVisitVerification(data: any) {
+    const normalized = assertNewVisit(data);
+    const token = String(data?.verification_token || '').trim();
+    const rows = await this.listVisitVerifications(normalized.phone);
+    const tokenHash = hashVisitSecret(token);
+    const match = rows.find(
+      (row) =>
+        row.verification_token_hash === tokenHash &&
+        !row.consumed_at &&
+        row.verified_at &&
+        String(row.phone) === normalized.phone &&
+        (!row.token_expires_at ||
+          new Date(row.token_expires_at).getTime() > Date.now()),
+    );
+    if (!match) {
+      throw new BadRequestException(
+        'Verify the customer phone before saving the visit.',
+      );
+    }
+    await this.patchVisitVerification(match.id, {
+      consumed_at: new Date().toISOString(),
+    });
+    return { ...normalized, verificationId: match.id as string };
+  }
+
   async createVisit(data: any, salespersonPhone?: string) {
+    const verified = await this.consumeVisitVerification(data);
     const visited_at = data.visited_at || new Date().toISOString();
     const follow_up_action = data.follow_up_action || data.followup || null;
     const follow_up_date = data.follow_up_date || data.followup_date || null;
@@ -3001,8 +3210,14 @@ export class KraService {
       current_requirement: data.current_requirement || null,
       next_purchase_expected: data.next_purchase_expected || null,
       delivery_location: data.delivery_location || null,
-      preferred_make: data.preferred_make || null,
+      preferred_make: verified.preferredMake,
+      preferred_make_other: verified.preferredMakeOther,
       payment_terms: data.payment_terms || null,
+      phone_verified: true,
+      phone_verified_at: new Date().toISOString(),
+      location_source: verified.locationSource,
+      visit_latitude: verified.visitLatitude,
+      visit_longitude: verified.visitLongitude,
       gps_photo_url: data.gps_photo_url || null,
       gps_latitude: data.gps_latitude || null,
       gps_longitude: data.gps_longitude || null,
@@ -3018,27 +3233,15 @@ export class KraService {
       .single();
 
     if (error) {
-      this.logger.warn(
-        `Direct customer_visits insert failed: ${error.message}. Retrying with base columns fallback.`,
+      await this.patchVisitVerification(verified.verificationId, {
+        consumed_at: null,
+      });
+      this.logger.warn(`customer_visits insert failed: ${error.message}`);
+      throw new BadRequestException(
+        /column|schema cache/i.test(error.message || '')
+          ? 'Visit verification columns are not applied yet. Ask an admin to apply the visit verification SQL.'
+          : 'The visit could not be saved.',
       );
-      const fallbackPayload: any = {
-        customer_name: payload.customer_name,
-        person_met: payload.person_met,
-        contact_no: payload.contact_no,
-        customer_address: payload.customer_address,
-        remarks: payload.remarks,
-        visited_at: payload.visited_at,
-        salesperson_phone: payload.salesperson_phone,
-      };
-      const { data: fallbackCreated, error: fallbackError } =
-        await this.supabase
-          .from('customer_visits')
-          .insert(fallbackPayload)
-          .select()
-          .single();
-
-      if (fallbackError) throw fallbackError;
-      created = fallbackCreated;
     } else {
       created = inserted;
     }
