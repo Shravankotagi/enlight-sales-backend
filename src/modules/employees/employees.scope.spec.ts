@@ -146,7 +146,12 @@ describe('EmployeesService procurement scope', () => {
     const service = createService();
     await expect(
       service.getAccessibleProcurementIds(employees[6]),
-    ).resolves.toEqual({ ids: ['pp-1'], includeUnassignedPool: false });
+    ).resolves.toEqual({
+      ids: ['pp-1'],
+      includeUnassignedPool: false,
+      salespersonPhones: [],
+      salespersonEmployeeIds: [],
+    });
   });
 
   it('rejects a salesperson assigned to a procurement manager', async () => {
