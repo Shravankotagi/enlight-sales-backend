@@ -20,6 +20,10 @@ export default [
       '**/.eslintrc.js',
       '**/eslint.config.mjs',
       '**/webpack-hmr.config.js',
+      'dist/**',
+      'node_modules/**',
+      'scratch/**',
+      '**/*.js',
     ],
   },
   ...compat.extends(
