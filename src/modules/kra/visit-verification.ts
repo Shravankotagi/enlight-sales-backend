@@ -81,8 +81,10 @@ export function cityFromNominatim(body: any): string | null {
   const city =
     address.city ||
     address.town ||
-    address.village ||
+    address.city_district ||
     address.municipality ||
+    address.suburb ||
+    address.village ||
     address.county ||
     '';
   const text = String(city).trim();

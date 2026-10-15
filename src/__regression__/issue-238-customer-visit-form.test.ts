@@ -110,6 +110,11 @@ describe('issue 238 customer visit form', () => {
     expect(
       cityFromNominatim({ address: { town: 'Chakan', state: 'Maharashtra' } }),
     ).toBe('Chakan');
+    expect(
+      cityFromNominatim({
+        address: { suburb: 'Kandivali East', city_district: 'Mumbai Suburban' },
+      }),
+    ).toBe('Mumbai Suburban');
   });
 
   it('sends one code and blocks a second request during the cooldown', async () => {
