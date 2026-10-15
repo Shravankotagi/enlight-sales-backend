@@ -323,8 +323,9 @@ export class EmployeesService {
 
   /**
    * Inquiry ids a procurement user may see.
-   * Person: own employee id. Manager: own id plus people who report to them,
-   * and the caller also sees the open unassigned intake pool.
+   * Person: own id plus salespeople routed to them.
+   * Manager: own id, people who report to them, the salespeople routed to
+   * those people, and the open unassigned intake pool.
    */
   async getAccessibleProcurementIds(employee: any): Promise<{
     ids: string[];
@@ -369,9 +370,12 @@ export class EmployeesService {
       })
       .map((emp: any) => emp.id);
 
+    const routed = await this.salespeopleRoutedTo(teamIds);
     return {
       ids: Array.from(new Set([...ownId, ...teamIds])),
       includeUnassignedPool: true,
+      salespersonPhones: routed.phones,
+      salespersonEmployeeIds: routed.ids,
     };
   }
 

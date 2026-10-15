@@ -59,6 +59,13 @@ const employees = [
     manager_id: 'mgr-1',
     is_active: true,
   },
+  {
+    id: 'sp-routed',
+    phone: '9500000005',
+    role: 'salesperson',
+    is_active: true,
+    assigned_procurement_employee_id: 'pp-1',
+  },
 ];
 
 const createService = () =>
@@ -140,6 +147,8 @@ describe('EmployeesService procurement scope', () => {
 
     expect(scope.includeUnassignedPool).toBe(true);
     expect(scope.ids.sort()).toEqual(['pm-1', 'pp-1'].sort());
+    expect(scope.salespersonPhones).toEqual(['9500000005']);
+    expect(scope.salespersonEmployeeIds).toEqual(['sp-routed']);
   });
 
   it('limits a procurement person to their own id', async () => {
@@ -149,8 +158,8 @@ describe('EmployeesService procurement scope', () => {
     ).resolves.toEqual({
       ids: ['pp-1'],
       includeUnassignedPool: false,
-      salespersonPhones: [],
-      salespersonEmployeeIds: [],
+      salespersonPhones: ['9500000005'],
+      salespersonEmployeeIds: ['sp-routed'],
     });
   });
 
