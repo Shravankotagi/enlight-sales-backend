@@ -303,8 +303,11 @@ function visitWhatsAppUserMessage(
   rawMessage: unknown,
   metaMessage: string,
 ): string {
-  const taggedCode = String(rawMessage ?? '').match(/\(#(131047|131026)\)/)?.[1];
-  const effectiveCode = code === '131047' || code === '131026' ? code : taggedCode;
+  const taggedCode = String(rawMessage ?? '').match(
+    /\(#(131047|131026)\)/,
+  )?.[1];
+  const effectiveCode =
+    code === '131047' || code === '131026' ? code : taggedCode;
   if (effectiveCode === '131047') return VISIT_WHATSAPP_WINDOW_MESSAGE;
   if (effectiveCode === '131026') return VISIT_WHATSAPP_UNREACHABLE_MESSAGE;
   return `The visit code could not be sent on WhatsApp (code ${code}): ${metaMessage}.`;
@@ -316,15 +319,18 @@ export function describeVisitWhatsAppFailure(err: unknown): {
   metaMessage: string;
   userMessage: string;
 } {
-  const meta = (err as { response?: { data?: { error?: Record<string, unknown> } } })
-    ?.response?.data?.error;
+  const meta = (
+    err as { response?: { data?: { error?: Record<string, unknown> } } }
+  )?.response?.data?.error;
   const codeNumber = Number(meta?.code);
   const subcodeNumber =
     meta?.error_subcode == null || meta.error_subcode === ''
       ? Number.NaN
       : Number(meta.error_subcode);
   const code = Number.isFinite(codeNumber) ? String(codeNumber) : 'unknown';
-  const subcode = Number.isFinite(subcodeNumber) ? String(subcodeNumber) : 'none';
+  const subcode = Number.isFinite(subcodeNumber)
+    ? String(subcodeNumber)
+    : 'none';
   const metaMessage = sanitizeMetaLogText(meta?.message);
   return {
     code,

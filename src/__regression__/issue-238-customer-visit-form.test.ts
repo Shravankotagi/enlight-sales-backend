@@ -136,9 +136,9 @@ describe('issue 238 customer visit form', () => {
     tables.visit_phone_verifications[0].expires_at = new Date(
       Date.now() - 1000,
     ).toISOString();
-    await expect(service.verifyVisitOtp('9822012345', '123456')).rejects.toThrow(
-      'This code has expired. Request a new one.',
-    );
+    await expect(
+      service.verifyVisitOtp('9822012345', '123456'),
+    ).rejects.toThrow('This code has expired. Request a new one.');
   });
 
   it('locks the code after five wrong attempts', async () => {
@@ -149,12 +149,12 @@ describe('issue 238 customer visit form', () => {
         service.verifyVisitOtp('9822012345', '000000'),
       ).rejects.toThrow('That code is incorrect.');
     }
-    await expect(service.verifyVisitOtp('9822012345', '000000')).rejects.toThrow(
-      'This code is locked. Request a new one.',
-    );
-    await expect(service.verifyVisitOtp('9822012345', '123456')).rejects.toThrow(
-      'This code is locked. Request a new one.',
-    );
+    await expect(
+      service.verifyVisitOtp('9822012345', '000000'),
+    ).rejects.toThrow('This code is locked. Request a new one.');
+    await expect(
+      service.verifyVisitOtp('9822012345', '123456'),
+    ).rejects.toThrow('This code is locked. Request a new one.');
   });
 
   it('rejects a visit that has no verification token', async () => {

@@ -3063,14 +3063,10 @@ export class KraService {
       .filter((row) => !row.consumed_at)
       .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))[0];
     if (!open) {
-      throw new BadRequestException(
-        'Request a visit code before entering it.',
-      );
+      throw new BadRequestException('Request a visit code before entering it.');
     }
     if (open.locked || Number(open.attempts || 0) >= OTP_MAX_ATTEMPTS) {
-      throw new BadRequestException(
-        'This code is locked. Request a new one.',
-      );
+      throw new BadRequestException('This code is locked. Request a new one.');
     }
     if (new Date(open.expires_at).getTime() <= Date.now()) {
       throw new BadRequestException(
