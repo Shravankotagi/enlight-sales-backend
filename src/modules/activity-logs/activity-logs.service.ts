@@ -30,7 +30,7 @@ export class ActivityLogsService {
    * Log an activity in a non-blocking, fire-and-forget manner.
    * Failures are logged to warning and will never block caller operations.
    */
-  logActivity(data: ActivityLogInput): void {
+  logActivity(data: ActivityLogInput): Promise<void> {
     try {
       let normalizedModule = data.module || 'General';
       const lowerMod = String(normalizedModule).toLowerCase();
@@ -45,7 +45,7 @@ export class ActivityLogsService {
         ? String(data.salesperson_phone).replace(/\D/g, '')
         : null;
 
-      Promise.resolve()
+      return Promise.resolve()
         .then(async () => {
           try {
             let salespersonName = data.salesperson_name;
@@ -104,6 +104,7 @@ export class ActivityLogsService {
         });
     } catch (err: any) {
       this.logger.warn(`Non-blocking activity log exception: ${err?.message}`);
+      return Promise.resolve();
     }
   }
 
@@ -116,9 +117,11 @@ export class ActivityLogsService {
       to?: string;
       module?: string;
       search?: string;
+      action_type?: string;
       limit?: number;
     },
     accessiblePhones?: string[] | null,
+    options?: { includeAuth?: boolean },
   ) {
     try {
       let q = this.supabase
@@ -161,6 +164,20 @@ export class ActivityLogsService {
         q = q.ilike('module', query.module);
       }
 
+      if (!options?.includeAuth) {
+        q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+      }
+
+      if (
+        query.action_type === 'login' ||
+        query.action_type === 'logout' ||
+        query.action_type === 'employee_activated' ||
+        query.action_type === 'employee_deactivated' ||
+        query.action_type === 'employee_deleted'
+      ) {
+        q = q.eq('action_type', query.action_type);
+      }
+
       if (query.search && query.search.trim()) {
         const term = query.search.trim();
         q = q.or(
@@ -174,10 +191,61 @@ export class ActivityLogsService {
       const { data, error } = await q;
       if (error) throw error;
 
-      return data || [];
+      return this.attachLogout(data || []);
     } catch (err: any) {
       this.logger.error('Error fetching activity logs:', err);
       return [];
     }
+  }
+
+  private async attachLogout(rows: any[]) {
+    const sids = [
+      ...new Set(
+        rows
+          .filter((row) => row.action_type === 'login' && row.entity_id)
+          .map((row) => row.entity_id),
+      ),
+    ];
+    if (sids.length === 0) return rows;
+
+    const { data, error } = await this.supabase
+      .from('activity_logs')
+      .select('entity_id, timestamp, change_detail')
+      .in('entity_id', sids)
+      .eq('action_type', 'logout');
+    if (error) {
+      this.logger.warn(`Logout pairing skipped: ${error.message}`);
+      return rows;
+    }
+
+    const bySid = new Map<string, any>();
+    for (const row of data || []) bySid.set(row.entity_id, row);
+
+    return rows.map((row) => {
+      if (row.action_type !== 'login' || !row.entity_id) return row;
+      const logout = bySid.get(row.entity_id);
+      if (!logout) {
+        return {
+          ...row,
+          logout_at: null,
+          logout_status: 'No logout recorded',
+          duration_minutes: null,
+        };
+      }
+      const loginAt = new Date(row.timestamp).getTime();
+      const logoutAt = new Date(logout.timestamp).getTime();
+      const duration = Number.isFinite(logoutAt - loginAt)
+        ? Math.max(0, Math.round((logoutAt - loginAt) / 60000))
+        : null;
+      const reason = logout.change_detail?.reason;
+      return {
+        ...row,
+        logout_at: logout.timestamp,
+        logout_reason: reason || 'manual',
+        logout_status:
+          reason === 'session_expired' ? 'Session expired' : 'Logout',
+        duration_minutes: duration,
+      };
+    });
   }
 }

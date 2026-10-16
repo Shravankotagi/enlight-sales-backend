@@ -17,6 +17,44 @@ import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 
 const QUOTATION_FROM_EMAIL = 'quotes@enlightmetals.com';
+const QUOTATION_SUBJECT_PREFIX = 'Enlight Metals- ';
+
+function quotationEmailText(customerName: string): string {
+  const name = String(customerName || 'VALUED CUSTOMER')
+    .trim()
+    .toUpperCase();
+  return `Dear ${name},
+
+Greetings from the ENLIGHT METALS PVT LTD.
+
+Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
+
+Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
+
+We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
+
+Thank you once again for considering ENLIGHT METALS PVT LTD.
+
+Regards,
+ENLIGHT METALS PVT LTD.`;
+}
+
+function quotationEmailHtml(text: string): string {
+  const body = text
+    .split(/\n{2,}/)
+    .map(
+      (paragraph) =>
+        `<p style="margin:0 0 16px;line-height:1.55;">${paragraph
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>')}</p>`,
+    )
+    .join('');
+  const logo =
+    '<p style="margin:0 0 16px;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>';
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2128;">${logo}${body}${logo}</div>`;
+}
 
 function getCompanyLogoBuffer(): Buffer | null {
   const possiblePaths = [
@@ -2299,20 +2337,12 @@ Warm regards,
 Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`
-      : `Dear ${customerName},
-
-Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
-
-Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
-
-We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
-
-Thank you once again for considering us.`;
+      : quotationEmailText(customerName);
 
     return {
       subject: isOrderDoc
         ? `Purchase Order ${referenceNumber} - ${customerName} | Enlight Metals`
-        : `Official Commercial Quotation ${referenceNumber} - ${customerName}`,
+        : `${QUOTATION_SUBJECT_PREFIX}Quotation for ${customerName}`,
       text,
       referenceNumber,
       customerName,
@@ -2327,10 +2357,9 @@ Thank you once again for considering us.`;
     requestedCc?: unknown,
   ): string[] {
     const normalizedCustomerEmail = customerEmail.trim().toLowerCase();
+    const fixedCc = ['dj@enlightmetals.com', 'vedant@enlightmetals.com'];
     const recipients =
-      requestedCc === undefined
-        ? [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
-        : requestedCc;
+      requestedCc === undefined ? [senderEmail, ...fixedCc] : requestedCc;
 
     if (
       !Array.isArray(recipients) ||
@@ -2350,12 +2379,13 @@ Thank you once again for considering us.`;
       );
     }
 
+    const withFixed = [
+      ...normalizedRecipients,
+      ...fixedCc.filter((email) => !normalizedRecipients.includes(email)),
+    ];
+
     return Array.from(
-      new Set(
-        normalizedRecipients.filter(
-          (email) => email !== normalizedCustomerEmail,
-        ),
-      ),
+      new Set(withFixed.filter((email) => email !== normalizedCustomerEmail)),
     );
   }
 
@@ -2614,15 +2644,7 @@ Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`;
 
-          const quotationTextContent = `Dear ${customerName},
-
-Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
-
-Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
-
-We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
-
-Thank you once again for considering us.`;
+          const quotationTextContent = quotationEmailText(customerName);
 
           const textContent =
             String(payload.email_body || '').trim() ||
@@ -2656,7 +2678,11 @@ Thank you once again for considering us.`;
             lineItems: lineItemsList,
           };
 
-          const attachments: Array<{ filename: string; content: string }> = [];
+          const attachments: Array<{
+            filename: string;
+            content: string;
+            content_id?: string;
+          }> = [];
           const sanitizedRef = qRefNum.replace(/[/\\?%*:|"<>]/g, '_');
 
           if (isOrderDoc) {
@@ -2752,8 +2778,31 @@ Thank you once again for considering us.`;
 
           const fromAddress = `Enlight Metals <${fromEmail}>`;
 
-          const docSubject =
+          let docSubject =
             String(payload.email_subject || '').trim() || emailContent.subject;
+          if (!isOrderDoc && !docSubject.startsWith(QUOTATION_SUBJECT_PREFIX)) {
+            docSubject = `${QUOTATION_SUBJECT_PREFIX}${docSubject}`;
+          }
+
+          const emailPayload: Record<string, unknown> = {
+            from: fromAddress,
+            to: [customerEmail],
+            cc: this.buildQuotationCc(employeeEmail, customerEmail, payload.cc),
+            subject: docSubject,
+            text: textContent,
+            attachments,
+          };
+          if (!isOrderDoc) {
+            emailPayload.html = quotationEmailHtml(textContent);
+            const logo = getCompanyLogoBuffer();
+            if (logo) {
+              attachments.push({
+                filename: 'enlight-logo.png',
+                content: logo.toString('base64'),
+                content_id: 'enlight-logo',
+              });
+            }
+          }
 
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -2761,18 +2810,7 @@ Thank you once again for considering us.`;
               Authorization: `Bearer ${resendApiKey}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              from: fromAddress,
-              to: [customerEmail],
-              cc: this.buildQuotationCc(
-                employeeEmail,
-                customerEmail,
-                payload.cc,
-              ),
-              subject: docSubject,
-              text: textContent,
-              attachments,
-            }),
+            body: JSON.stringify(emailPayload),
           });
 
           const resendData = await resendRes.json();

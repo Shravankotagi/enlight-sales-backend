@@ -87,7 +87,7 @@ export class EmployeesController {
         'Access Denied: Only administrators can update staff accounts.',
       );
     }
-    return this.employeesService.update(id, body);
+    return this.employeesService.update(id, body, employee);
   }
 
   // PATCH /employees/:id/deactivate - deactivate employee (admin only)
@@ -98,7 +98,7 @@ export class EmployeesController {
         'Access Denied: Only administrators can deactivate staff accounts.',
       );
     }
-    return this.employeesService.deactivate(id);
+    return this.employeesService.deactivate(id, employee);
   }
 
   // DELETE /employees/:id - completely delete employee and associated records (admin only)

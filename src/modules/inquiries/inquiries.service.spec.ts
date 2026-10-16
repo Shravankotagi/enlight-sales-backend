@@ -36,8 +36,8 @@ describe('InquiriesService quotation email', () => {
     );
 
     expect(content.referenceNumber).toBe('QT-2026-42');
-    expect(content.subject).toContain('QT-2026-42');
-    expect(content.text).toContain('Dear Acme');
+    expect(content.subject).toBe('Enlight Metals- Quotation for Acme');
+    expect(content.text).toContain('Dear ACME');
     expect(
       (service as any).buildQuotationCc(
         'sender@example.com',
@@ -66,7 +66,11 @@ describe('InquiriesService quotation email', () => {
         'customer@example.com',
         ['Team@Example.com', 'team@example.com', 'CUSTOMER@example.com'],
       ),
-    ).toEqual(['team@example.com']);
+    ).toEqual([
+      'team@example.com',
+      'dj@enlightmetals.com',
+      'vedant@enlightmetals.com',
+    ]);
   });
 
   it('rejects malformed custom CC recipients', () => {

@@ -5,8 +5,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { EmployeesService } from '../employees/employees.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import axios from 'axios';
 
 @Injectable()
@@ -17,6 +19,7 @@ export class OtpService {
     private supabaseService: SupabaseService,
     private employeesService: EmployeesService,
     private jwtService: JwtService,
+    private activityLogsService: ActivityLogsService,
   ) {}
 
   private get supabase() {
@@ -196,16 +199,27 @@ export class OtpService {
         throw new UnauthorizedException('Employee not found');
       }
 
-      // Generate JWT
+      const sid = randomUUID();
       const payload = {
         phone: employee.phone,
         role: employee.role,
         employee_id: employee.employee_id,
         name: employee.name,
         id: employee.id,
+        sid,
       };
 
       const token = this.jwtService.sign(payload);
+      void this.activityLogsService.logActivity({
+        module: 'Auth',
+        action_type: 'login',
+        entity_type: 'session',
+        entity_id: sid,
+        salesperson_phone: employee.phone,
+        salesperson_name: employee.name,
+        description: 'Login',
+        change_detail: { employee_id: employee.employee_id || null },
+      });
 
       this.logger.log(`Login: ${employee.name} (${employee.role})`);
 
@@ -214,5 +228,56 @@ export class OtpService {
       this.logger.error(`Error in verifyOtp for phone ${phone}:`, error);
       throw error;
     }
+  }
+
+  // Fire-and-forget from the controller. Awaitable so tests can see the row.
+  recordLogout(
+    token: string | undefined,
+    reason: 'manual' | 'session_expired',
+  ): Promise<void> {
+    return this.writeLogout(token, reason).catch((err: any) => {
+      this.logger.warn(`Logout log skipped: ${err?.message}`);
+    });
+  }
+
+  private async writeLogout(
+    token: string | undefined,
+    reason: 'manual' | 'session_expired',
+  ) {
+    if (!token) return;
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(token, { ignoreExpiration: true });
+    } catch {
+      return;
+    }
+    const sid = payload?.sid;
+    if (!sid) return;
+
+    const { data, error } = await this.supabase
+      .from('activity_logs')
+      .select('id')
+      .eq('entity_id', sid)
+      .eq('action_type', 'logout')
+      .limit(1);
+    if (error) {
+      this.logger.warn(`Logout dedupe check failed: ${error.message}`);
+    } else if (data && data.length > 0) {
+      return;
+    }
+
+    await this.activityLogsService.logActivity({
+      module: 'Auth',
+      action_type: 'logout',
+      entity_type: 'session',
+      entity_id: sid,
+      salesperson_phone: payload.phone,
+      salesperson_name: payload.name,
+      description: reason === 'session_expired' ? 'Session expired' : 'Logout',
+      change_detail: {
+        reason,
+        employee_id: payload.employee_id || null,
+      },
+    });
   }
 }

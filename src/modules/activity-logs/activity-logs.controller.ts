@@ -19,6 +19,7 @@ export class ActivityLogsController {
     @Query('to') to?: string,
     @Query('module') module?: string,
     @Query('search') search?: string,
+    @Query('action_type') actionType?: string,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
     @Query('limit') limit?: number,
@@ -31,8 +32,9 @@ export class ActivityLogsController {
       );
 
     return this.activityLogsService.getActivityLogs(
-      { from, to, module, search, limit },
+      { from, to, module, search, action_type: actionType, limit },
       phones,
+      { includeAuth: employee?.role === 'admin' },
     );
   }
 }
