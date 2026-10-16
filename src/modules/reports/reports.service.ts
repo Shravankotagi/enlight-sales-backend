@@ -137,9 +137,80 @@ export function resolveInquiryPipelineStage(
   const directMatch = dealsList.find(
     (d: any) => d.inquiry_id && d.inquiry_id === inq.id,
   );
-  if (directMatch) return normalizeDealStage(directMatch.stage);
+  if (directMatch) {
+    const dealStage = (directMatch.stage || '').toLowerCase().trim();
+    if (
+      [
+        'won',
+        'closed_won',
+        'closed won',
+        'lost',
+        'closed_lost',
+        'closed lost',
+        'negotiation',
+        'negotiating',
+        'quoted',
+        'quotation_sent',
+        'on_hold',
+        'hold',
+        'qualified',
+      ].includes(dealStage)
+    ) {
+      return normalizeDealStage(dealStage);
+    }
+    // If direct deal is still at new_inquiry, check if inquiry itself has advanced
+    const directInqStage = inq?.stage
+      ? String(inq.stage).toLowerCase().trim()
+      : '';
+    if (
+      directInqStage &&
+      [
+        'won',
+        'closed_won',
+        'closed won',
+        'lost',
+        'closed_lost',
+        'closed lost',
+        'negotiation',
+        'negotiating',
+        'quoted',
+        'quotation_sent',
+        'on_hold',
+        'hold',
+        'qualified',
+      ].includes(directInqStage)
+    ) {
+      return normalizeDealStage(directInqStage);
+    }
+    return 'new_inquiry';
+  }
 
-  // 2. Match ONLY to an active open in-progress deal for this customer
+  // 2. Direct inquiry stage if explicitly set beyond new_inquiry
+  const directInqStage = inq?.stage
+    ? String(inq.stage).toLowerCase().trim()
+    : '';
+  if (
+    directInqStage &&
+    [
+      'won',
+      'closed_won',
+      'closed won',
+      'lost',
+      'closed_lost',
+      'closed lost',
+      'negotiation',
+      'negotiating',
+      'quoted',
+      'quotation_sent',
+      'on_hold',
+      'hold',
+      'qualified',
+    ].includes(directInqStage)
+  ) {
+    return normalizeDealStage(directInqStage);
+  }
+
+  // 3. Match ONLY to an active open in-progress deal for this customer
   const ai = inq.ai_extraction_json || {};
   const cName = (
     inq.customer_name ||
@@ -157,7 +228,22 @@ export function resolveInquiryPipelineStage(
     const openDeal = matchingDeals.find(
       (d: any) => !['won', 'lost'].includes((d.stage || '').toLowerCase()),
     );
-    if (openDeal) return normalizeDealStage(openDeal.stage);
+    if (openDeal) {
+      const openDealStage = (openDeal.stage || '').toLowerCase().trim();
+      if (
+        [
+          'negotiation',
+          'negotiating',
+          'quoted',
+          'quotation_sent',
+          'on_hold',
+          'hold',
+          'qualified',
+        ].includes(openDealStage)
+      ) {
+        return normalizeDealStage(openDealStage);
+      }
+    }
   }
 
   const st = (inq.status || '').toLowerCase().trim();

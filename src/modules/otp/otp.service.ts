@@ -43,6 +43,9 @@ export class OtpService {
       return;
     }
 
+    const clean = phone.replace(/\D/g, '');
+    const to = clean.length === 10 ? `91${clean}` : clean;
+
     const message = ` *Enlight Sigma*\n\nYour OTP is: *${otp}*\n\nValid for 10 minutes. Do not share with anyone.`;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -52,7 +55,7 @@ export class OtpService {
           {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
-            to: phone,
+            to,
             type: 'text',
             text: { body: message },
           },
@@ -66,16 +69,16 @@ export class OtpService {
         );
 
         this.logger.log(
-          `OTP successfully sent to ${phone} on WhatsApp (attempt ${attempt})`,
+          `OTP successfully sent to ${to} on WhatsApp (attempt ${attempt})`,
         );
         return;
       } catch (error: any) {
         const metaError = error.response?.data || error.message;
         this.logger.error(
-          `Failed to send OTP to ${phone} (attempt ${attempt}/3): ${JSON.stringify(metaError)}`,
+          `Failed to send OTP to ${to} (attempt ${attempt}/3): ${JSON.stringify(metaError)}`,
         );
         if (attempt === 3) {
-          this.logger.log(`[DEV / FALLBACK] OTP for ${phone}: ${otp}`);
+          this.logger.log(`[DEV / FALLBACK] OTP for ${to}: ${otp}`);
         } else {
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
