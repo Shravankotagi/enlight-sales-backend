@@ -134,6 +134,7 @@ describe('procurement pricing workflow', () => {
             base_price_per_mt: 62000,
             transport_per_mt: 1000,
             loading_per_mt: 500,
+            credit_per_mt: 200,
             margin_per_mt: 1500,
           },
           {
@@ -153,7 +154,8 @@ describe('procurement pricing workflow', () => {
     expect(saved.pricing_status).toBe('sales_priced');
     expect(available.procurement_base_price_per_mt).toBe(61000);
     expect(available.sales_base_price_per_mt).toBe(62000);
-    expect(available.rate_per_mt).toBe(65000);
+    expect(available.rate_per_mt).toBe(65200);
+    expect(available.credit_per_mt).toBe(200);
     expect(available.cgst_amount).toBeGreaterThan(0);
     expect(available.igst_amount).toBe(0);
     expect(blocked.line_status).toBe('cannot_price');

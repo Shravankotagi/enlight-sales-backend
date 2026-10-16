@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS inquiry_line_pricing (
   sales_base_price_per_mt numeric,
   transport_per_mt numeric,
   loading_per_mt numeric,
+  credit_per_mt numeric,
   margin_per_mt numeric,
   rate_per_mt numeric,
   taxable_amount numeric,
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS inquiry_line_pricing (
       AND (sales_base_price_per_mt IS NULL OR sales_base_price_per_mt >= 0)
       AND (transport_per_mt IS NULL OR transport_per_mt >= 0)
       AND (loading_per_mt IS NULL OR loading_per_mt >= 0)
+      AND (credit_per_mt IS NULL OR credit_per_mt >= 0)
       AND (margin_per_mt IS NULL OR margin_per_mt >= 0)
     )
 );

@@ -13,6 +13,7 @@ export interface PricingLineInput {
   line_note?: string | null;
   transport_per_mt?: number | null;
   loading_per_mt?: number | null;
+  credit_per_mt?: number | null;
   margin_per_mt?: number | null;
 }
 
@@ -94,6 +95,7 @@ export function calculateSalesLine(line: StoredPricingLine, deliveryAddress = ''
     base +
       nonNegative(line.transport_per_mt) +
       nonNegative(line.loading_per_mt) +
+      nonNegative(line.credit_per_mt) +
       nonNegative(line.margin_per_mt),
   );
   const taxable = money(rate * quantityToMt(Number(line.quantity) || 0, line.unit || 'MT'));
