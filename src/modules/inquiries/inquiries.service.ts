@@ -3961,7 +3961,7 @@ ${rawText}`;
           });
           doc.text('Qty', 342, headerY + 7.5, {
             width: 68,
-            align: 'right',
+            align: 'center',
             lineBreak: false,
           });
           doc.text('Rate', 412, headerY + 7.5, {
@@ -3970,7 +3970,7 @@ ${rawText}`;
             lineBreak: false,
           });
           doc.text('Amount', 479, headerY + 7.5, {
-            width: 76.28,
+            width: 68.28,
             align: 'right',
             lineBreak: false,
           });
@@ -4047,7 +4047,7 @@ ${rawText}`;
             .fontSize(8.5)
             .text(item.qty_mt_label, 342, rowY + 9, {
               width: 68,
-              align: 'right',
+              align: 'center',
               lineBreak: false,
             });
 
@@ -4068,7 +4068,7 @@ ${rawText}`;
             .font(fontRegular)
             .fontSize(8.5)
             .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
-              width: 76.28,
+              width: 68.28,
               align: 'right',
               lineBreak: false,
             });
