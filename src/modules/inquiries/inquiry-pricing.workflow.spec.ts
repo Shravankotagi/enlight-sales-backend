@@ -103,7 +103,7 @@ describe('procurement pricing workflow', () => {
   });
 
   it('lets sales override the working base and keeps procurement’s original price', async () => {
-    const { service } = pricingService({
+    const { service, db } = pricingService({
       inquiry_line_pricing: [
         {
           inquiry_id: 'inq-1',
@@ -152,6 +152,8 @@ describe('procurement pricing workflow', () => {
     const available = saved.lines.find((line) => line.line_key === '0:HR Coil');
     const blocked = saved.lines.find((line) => line.line_key === '1:GI Sheet');
     expect(saved.pricing_status).toBe('sales_priced');
+    expect(db.store.inquiries[0].status).toBe('quoted');
+    expect(db.store.inquiries[0].pricing_status).toBe('sales_priced');
     expect(available.procurement_base_price_per_mt).toBe(61000);
     expect(available.sales_base_price_per_mt).toBe(62000);
     expect(available.rate_per_mt).toBe(65200);
@@ -160,6 +162,31 @@ describe('procurement pricing workflow', () => {
     expect(available.igst_amount).toBe(0);
     expect(blocked.line_status).toBe('cannot_price');
     expect(blocked.rate_per_mt).toBeUndefined();
+  });
+
+  it('keeps a won inquiry stage when the sales price is saved', async () => {
+    const won = { ...inquiry, status: 'won' };
+    const { service, db } = pricingService();
+    db.store.inquiries[0].status = 'won';
+    const saved = await service.saveSales(
+      won,
+      {
+        lines: [
+          {
+            line_key: '0:HR Coil',
+            base_price_per_mt: 62000,
+            transport_per_mt: 1000,
+            loading_per_mt: 500,
+            credit_per_mt: 0,
+            margin_per_mt: 1500,
+          },
+        ],
+      },
+      { id: 'sales-1', phone: '9100000003' },
+    );
+    expect(saved.pricing_status).toBe('sales_priced');
+    expect(db.store.inquiries[0].pricing_status).toBe('sales_priced');
+    expect(db.store.inquiries[0].status).toBe('won');
   });
 
   it('allows a decline only when every line is unavailable', async () => {

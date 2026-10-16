@@ -95,10 +95,12 @@ export class InquiryPricingService {
       };
     });
     await this.upsert(inquiry.id, next, { sales_priced_by: employee?.id || null });
-    await this.supabase
-      .from('inquiries')
-      .update({ pricing_status: 'sales_priced' })
-      .eq('id', inquiry.id);
+    const stage = String(inquiry?.status || '').toLowerCase().trim();
+    const update: Record<string, string> = { pricing_status: 'sales_priced' };
+    if (!['negotiation', 'on_hold', 'hold', 'won', 'lost'].includes(stage)) {
+      update.status = 'quoted';
+    }
+    await this.supabase.from('inquiries').update(update).eq('id', inquiry.id);
     this.activityLogsService.logActivity({
       module: 'Inquiries',
       description: `Sales saved prices for inquiry ${inquiry.id}`,
