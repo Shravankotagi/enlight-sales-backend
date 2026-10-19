@@ -8,6 +8,7 @@ import {
   cityFromGoogleGeocode,
   cityFromNominatim,
   describeVisitWhatsAppFailure,
+  visitOtpTemplatePayload,
 } from '../modules/kra/visit-verification';
 
 function createHarness() {
@@ -226,6 +227,25 @@ describe('issue 238 customer visit form', () => {
         ],
       }),
     ).toBe('Mumbai, Maharashtra, India');
+  });
+
+  it('sends the visit code as an authentication template', () => {
+    const payload = visitOtpTemplatePayload(
+      '919822012345',
+      '123456',
+      'visit_verification_code',
+    );
+    expect(payload.type).toBe('template');
+    expect(payload.template.name).toBe('visit_verification_code');
+    expect(payload.template.language.code).toBe('en');
+    expect(payload.template.components[0].parameters[0].text).toBe('123456');
+    expect(payload.template.components[1]).toMatchObject({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+    });
+    expect(payload.template.components[1].parameters[0].text).toBe('123456');
+    expect(payload).not.toHaveProperty('text');
   });
 
   it('sends one code and blocks a second request during the cooldown', async () => {

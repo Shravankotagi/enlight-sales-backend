@@ -371,14 +371,33 @@ export function assertNewVisit(data: any): NormalizedVisit {
   };
 }
 
-export function visitOtpMessage(otp: string): string {
-  return [
-    'Enlight Metals – Customer Visits',
-    '',
-    `Your visit verification code is: *${otp}*`,
-    '',
-    'This code expires in 5 minutes. Do not share it with anyone.',
-  ].join('\n');
+export function visitOtpTemplatePayload(
+  phone: string,
+  otp: string,
+  templateName: string,
+) {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: phone,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: 'en' },
+      components: [
+        {
+          type: 'body',
+          parameters: [{ type: 'text', text: otp }],
+        },
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{ type: 'text', text: otp }],
+        },
+      ],
+    },
+  };
 }
 
 export async function sendVisitOtpWhatsApp(
@@ -387,7 +406,8 @@ export async function sendVisitOtpWhatsApp(
 ): Promise<void> {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  if (!token || !phoneNumberId) {
+  const templateName = String(process.env.WHATSAPP_VISIT_OTP_TEMPLATE || '').trim();
+  if (!token || !phoneNumberId || !templateName) {
     throw new BadRequestException(
       'WhatsApp is not configured for visit codes.',
     );
@@ -395,13 +415,7 @@ export async function sendVisitOtpWhatsApp(
 
   await axios.post(
     `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: phone,
-      type: 'text',
-      text: { body: visitOtpMessage(otp) },
-    },
+    visitOtpTemplatePayload(phone, otp, templateName),
     {
       headers: {
         Authorization: `Bearer ${token}`,
