@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { KraService } from '../modules/kra/kra.service';
 import * as visitOtp from '../modules/kra/visit-verification';
 import {
+  addressFromNominatim,
   cityFromNominatim,
   describeVisitWhatsAppFailure,
 } from '../modules/kra/visit-verification';
@@ -115,6 +116,28 @@ describe('issue 238 customer visit form', () => {
         address: { suburb: 'Kandivali East', city_district: 'Mumbai Suburban' },
       }),
     ).toBe('Mumbai Suburban');
+  });
+
+  it('reads a full address from a reverse-geocode response', () => {
+    expect(
+      addressFromNominatim({
+        display_name: '12, MG Road, Camp, Pune, Maharashtra, 411001, India',
+        address: { city: 'Pune' },
+      }),
+    ).toBe('12, MG Road, Camp, Pune, Maharashtra, 411001, India');
+    expect(
+      addressFromNominatim({
+        address: {
+          house_number: '12',
+          road: 'MG Road',
+          suburb: 'Camp',
+          city: 'Pune',
+          state: 'Maharashtra',
+          postcode: '411001',
+        },
+      }),
+    ).toBe('12, MG Road, Camp, Pune, Maharashtra, 411001');
+    expect(addressFromNominatim({ address: {} })).toBeNull();
   });
 
   it('sends one code and blocks a second request during the cooldown', async () => {

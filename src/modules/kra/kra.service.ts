@@ -14,6 +14,7 @@ import {
   OTP_RESEND_MS,
   OTP_TTL_MS,
   TOKEN_TTL_MS,
+  addressFromNominatim,
   assertNewVisit,
   cityFromNominatim,
   describeVisitWhatsAppFailure,
@@ -3112,12 +3113,19 @@ export class KraService {
           },
         },
       );
-      if (!response.ok) return { city: null, latitude, longitude };
+      if (!response.ok) {
+        return { address: null, city: null, latitude, longitude };
+      }
       const body = await response.json();
-      return { city: cityFromNominatim(body), latitude, longitude };
+      return {
+        address: addressFromNominatim(body),
+        city: cityFromNominatim(body),
+        latitude,
+        longitude,
+      };
     } catch {
       this.logger.warn('Visit reverse geocode failed');
-      return { city: null, latitude, longitude };
+      return { address: null, city: null, latitude, longitude };
     }
   }
 

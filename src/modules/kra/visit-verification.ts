@@ -91,6 +91,32 @@ export function cityFromNominatim(body: any): string | null {
   return text || null;
 }
 
+export function addressFromNominatim(body: any): string | null {
+  const display = String(body?.display_name ?? '').trim();
+  if (display) return display;
+  const address = body?.address || {};
+  const locality =
+    address.city ||
+    address.town ||
+    address.city_district ||
+    address.municipality ||
+    address.village ||
+    address.county ||
+    '';
+  const parts = [
+    address.house_number,
+    address.road,
+    address.suburb || address.neighbourhood,
+    locality,
+    address.state,
+    address.postcode,
+  ]
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean);
+  const unique = parts.filter((part, index) => parts.indexOf(part) === index);
+  return unique.join(', ') || null;
+}
+
 function text(value: unknown): string {
   return String(value ?? '').trim();
 }
