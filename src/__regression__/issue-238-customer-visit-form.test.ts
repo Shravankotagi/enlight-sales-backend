@@ -138,6 +138,26 @@ describe('issue 238 customer visit form', () => {
       }),
     ).toBe('12, MG Road, Camp, Pune, Maharashtra, 411001');
     expect(addressFromNominatim({ address: {} })).toBeNull();
+    expect(
+      addressFromNominatim({
+        display_name: 'Pune, Maharashtra, India',
+        name: 'Phoenix Marketcity',
+        address: {
+          building: 'Phoenix Marketcity',
+          road: 'Nagar Road',
+          city: 'Pune',
+          state: 'Maharashtra',
+        },
+      }),
+    ).toBe('Phoenix Marketcity, Nagar Road, Pune, Maharashtra');
+    expect(
+      addressFromNominatim({
+        address: {
+          pedestrian: 'Laxmi Road',
+          city: 'Pune',
+        },
+      }),
+    ).toBe('Laxmi Road, Pune');
   });
 
   it('sends one code and blocks a second request during the cooldown', async () => {
