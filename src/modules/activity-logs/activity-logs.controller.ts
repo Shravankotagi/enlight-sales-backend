@@ -3,6 +3,7 @@ import { ActivityLogsService } from './activity-logs.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 import { EmployeesService } from '../employees/employees.service';
+import { hasPermission } from '../../common/guards/permission.guard';
 
 @Controller('activity-logs')
 @UseGuards(JwtAuthGuard)
@@ -33,6 +34,7 @@ export class ActivityLogsController {
     return this.activityLogsService.getActivityLogs(
       { from, to, module, search, limit },
       phones,
+      { includeStaffModules: hasPermission(employee, 'staff.view') },
     );
   }
 }

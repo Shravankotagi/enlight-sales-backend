@@ -41,7 +41,10 @@ export class KbController {
     const caller = await this.chatbotService.resolveCallerContext(
       req.employee || req.user,
     );
-    if (caller.role !== 'admin') {
+    if (
+      caller.role !== 'admin' &&
+      caller.permissions?.['staff.manage_acl'] !== true
+    ) {
       throw new ForbiddenException(
         'Only system administrators can upload Knowledge Base documents.',
       );
@@ -92,7 +95,10 @@ export class KbController {
     const caller = await this.chatbotService.resolveCallerContext(
       req.employee || req.user,
     );
-    if (caller.role !== 'admin') {
+    if (
+      caller.role !== 'admin' &&
+      caller.permissions?.['staff.manage_acl'] !== true
+    ) {
       throw new ForbiddenException(
         'Only system administrators can delete Knowledge Base documents.',
       );
@@ -110,7 +116,11 @@ export class KbController {
     const caller = await this.chatbotService.resolveCallerContext(
       req.employee || req.user,
     );
-    if (caller.role !== 'admin' && caller.role !== 'manager') {
+    if (
+      caller.role !== 'admin' &&
+      caller.role !== 'manager' &&
+      caller.permissions?.['staff.manage_acl'] !== true
+    ) {
       throw new ForbiddenException(
         'You must have manager or admin privileges to extract and upload documents.',
       );

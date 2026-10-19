@@ -4,11 +4,14 @@ import {
   NotFoundException,
   UnauthorizedException,
   ForbiddenException,
+  Optional,
+  Inject,
 } from '@nestjs/common';
 import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { CallerContext } from './interfaces/caller-context.interface';
 import { GuardrailsService } from './guardrails/guardrails.service';
+import { PermissionsService } from '../roles/permissions.service';
 
 export interface ChatMessageResult {
   reply: string;
@@ -32,6 +35,10 @@ export interface ChatMessageResult {
 @Injectable()
 export class ChatbotService {
   private readonly logger = new Logger(ChatbotService.name);
+
+  @Optional()
+  @Inject(PermissionsService)
+  private readonly permissionsService?: PermissionsService;
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -95,13 +102,35 @@ export class ChatbotService {
         name = emp.name || name;
 
         const rawRole = (emp.role || '').toLowerCase();
-        if (rawRole.includes('admin')) {
-          role = 'admin';
-        } else if (rawRole.includes('manager')) {
-          role = 'manager';
-        } else {
-          role = 'salesperson';
+        let permissions: Record<string, boolean> | undefined;
+        let dataScope: 'own' | 'team' | 'all' | undefined;
+        if (this.permissionsService && emp.id) {
+          try {
+            const resolved = await this.permissionsService.resolve(emp.id);
+            if (resolved) {
+              permissions = resolved.permissions;
+              dataScope = resolved.dataScope;
+              role =
+                resolved.dataScope === 'all'
+                  ? 'admin'
+                  : resolved.dataScope === 'team'
+                    ? 'manager'
+                    : 'salesperson';
+            }
+          } catch (err: any) {
+            this.logger.warn(
+              `Assistant permission resolve failed: ${err?.message}`,
+            );
+          }
         }
+        if (!dataScope) {
+          if (rawRole === 'admin') role = 'admin';
+          else if (rawRole === 'sales_manager' || rawRole === 'manager')
+            role = 'manager';
+          else role = 'salesperson';
+        }
+        (emp as any).__permissions = permissions;
+        (emp as any).__dataScope = dataScope;
       } else if (user.role) {
         const rawUserRole = (user.role || '').toLowerCase();
         if (rawUserRole.includes('admin')) role = 'admin';
@@ -136,6 +165,8 @@ export class ChatbotService {
         reportsToId,
         name,
         allUserIds: allIds,
+        permissions: empRecord?.__permissions,
+        dataScope: empRecord?.__dataScope,
       };
     } catch (err: any) {
       this.logger.error(

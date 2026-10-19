@@ -2,11 +2,16 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  HttpException,
   Injectable,
+  Optional,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { isProcurementRole } from '../utils/roles';
+import { PermissionsService } from '../../modules/roles/permissions.service';
+import { JWT_SIGNING_SECRET } from '../auth/jwt-secret';
 
 /** Procurement tokens may only hit these routes. Segment match, so /inquiries-x is denied. */
 export function isProcurementRequestAllowed(
@@ -28,7 +33,10 @@ export function isProcurementRequestAllowed(
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private jwtService: JwtService) {}
+  constructor(
+    private jwtService: JwtService,
+    @Optional() private permissions?: PermissionsService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -48,6 +56,9 @@ export class JwtAuthGuard implements CanActivate {
         phone: request.body?.salesperson_phone || '910000000000',
         role: 'admin',
         name: 'WhatsApp Bot Internal',
+        dataScope: 'all',
+        isInternal: true,
+        permissions: {},
       };
       return true;
     }
@@ -63,11 +74,21 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = this.jwtService.verify(token, {
-        secret: process.env.JWT_SECRET || 'enlight-sales-jwt-secret-2026',
+        secret: JWT_SIGNING_SECRET,
       });
-      request.employee = payload;
+      if (this.permissions) {
+        const resolved = await this.permissions.resolveFromToken(payload);
+        if (resolved && !resolved.isActive) {
+          throw new UnauthorizedException('Invalid or expired token');
+        }
+        request.employee = resolved
+          ? { ...payload, ...resolved, role: resolved.role }
+          : payload;
+      } else {
+        request.employee = payload;
+      }
       if (
-        isProcurementRole(payload?.role) &&
+        isProcurementRole(request.employee?.role) &&
         !isProcurementRequestAllowed(
           request.method,
           request.path || request.url,
@@ -78,9 +99,18 @@ export class JwtAuthGuard implements CanActivate {
         );
       }
       return true;
-    } catch (err) {
-      if (err instanceof ForbiddenException) throw err;
-      throw new UnauthorizedException('Invalid or expired token');
+    } catch (err: any) {
+      console.error('[JwtAuthGuard Error]:', err?.name, err?.message);
+      if (err instanceof HttpException) throw err;
+      const name = (err as { name?: string })?.name;
+      if (
+        name === 'JsonWebTokenError' ||
+        name === 'TokenExpiredError' ||
+        name === 'NotBeforeError'
+      ) {
+        throw new UnauthorizedException('Invalid or expired token');
+      }
+      throw new ServiceUnavailableException('Could not resolve permissions');
     }
   }
 }

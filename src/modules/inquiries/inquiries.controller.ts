@@ -17,6 +17,7 @@ import { InquiriesService } from './inquiries.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { assertPermission } from '../../common/guards/permission.guard';
 import {
   isProcurementManager,
   isProcurementRole,
@@ -168,7 +169,11 @@ export class InquiriesController {
     @Body() body: { procurement_employee_id?: string | null },
   ) {
     const assigneeId = body?.procurement_employee_id || null;
-    if (employee?.role === 'admin') {
+    if (
+      employee?.dataScope === 'all' ||
+      employee?.isInternal ||
+      employee?.role === 'admin'
+    ) {
       return this.inquiriesService.assignProcurement(id, assigneeId, {
         ids: [],
         includeUnassignedPool: true,
@@ -213,6 +218,7 @@ export class InquiriesController {
 
   @Post()
   async createInquiry(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'inquiries.manage');
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('create inquiries');
     }
@@ -225,6 +231,7 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    assertPermission(employee, 'inquiries.send_quote');
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('send quotations');
     }
@@ -280,6 +287,7 @@ export class InquiriesController {
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
   ) {
+    assertPermission(employee, 'inquiries.delete');
     if (
       isProcurementRole(employee?.role) &&
       !isProcurementManager(employee?.role)

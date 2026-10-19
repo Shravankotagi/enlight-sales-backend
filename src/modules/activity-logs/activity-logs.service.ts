@@ -119,6 +119,7 @@ export class ActivityLogsService {
       limit?: number;
     },
     accessiblePhones?: string[] | null,
+    options?: { includeStaffModules?: boolean },
   ) {
     try {
       let q = this.supabase
@@ -174,7 +175,13 @@ export class ActivityLogsService {
       const { data, error } = await q;
       if (error) throw error;
 
-      return data || [];
+      const rows = data || [];
+      if (!options?.includeStaffModules) {
+        return rows.filter(
+          (row: any) => !['Roles', 'Auth', 'Employees'].includes(row.module),
+        );
+      }
+      return rows;
     } catch (err: any) {
       this.logger.error('Error fetching activity logs:', err);
       return [];

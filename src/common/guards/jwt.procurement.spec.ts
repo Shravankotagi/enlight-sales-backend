@@ -1,5 +1,11 @@
-import { ForbiddenException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard, isProcurementRequestAllowed } from './jwt.guard';
+import { JWT_SIGNING_SECRET } from '../auth/jwt-secret';
 
 describe('isProcurementRequestAllowed', () => {
   it('allows inquiries, including an /api prefix', () => {
@@ -55,5 +61,70 @@ describe('JwtAuthGuard procurement allowlist', () => {
 
     const salesperson = guardFor({ role: 'salesperson' });
     await expect(activate(salesperson, 'GET', '/deals')).resolves.toBe(true);
+  });
+});
+
+describe('JwtAuthGuard salesperson token', () => {
+  const salesperson = {
+    id: 'sp-1',
+    role: 'salesperson',
+    roleName: 'Salesperson',
+    phone: '919200000001',
+    employee_id: 'E2',
+    name: 'Sam',
+    dataScope: 'own' as const,
+    permissions: { 'customers.view': true },
+    isActive: true,
+  };
+
+  it('accepts a token signed with the OTP secret', async () => {
+    const jwt = new JwtService({ secret: JWT_SIGNING_SECRET });
+    const token = jwt.sign({
+      id: salesperson.id,
+      role: 'salesperson',
+      phone: salesperson.phone,
+      employee_id: salesperson.employee_id,
+      name: salesperson.name,
+    });
+    const request: any = {
+      headers: { authorization: `Bearer ${token}` },
+      method: 'GET',
+      path: '/kra/dashboard',
+    };
+    const guard = new JwtAuthGuard(jwt, {
+      resolveFromToken: async () => salesperson,
+    } as any);
+    await expect(
+      guard.canActivate({
+        switchToHttp: () => ({ getRequest: () => request }),
+      } as any),
+    ).resolves.toBe(true);
+    expect(request.employee.role).toBe('salesperson');
+  });
+
+  it('does not turn a resolve failure into 401', async () => {
+    const guard = new JwtAuthGuard(
+      { verify: () => ({ id: 'sp-1', role: 'salesperson' }) } as any,
+      {
+        resolveFromToken: async () => {
+          throw new ServiceUnavailableException('db down');
+        },
+      } as any,
+    );
+    const request: any = {
+      headers: { authorization: 'Bearer token' },
+      method: 'GET',
+      path: '/kra/dashboard',
+    };
+    await expect(
+      guard.canActivate({
+        switchToHttp: () => ({ getRequest: () => request }),
+      } as any),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(
+      guard.canActivate({
+        switchToHttp: () => ({ getRequest: () => request }),
+      } as any),
+    ).rejects.not.toBeInstanceOf(UnauthorizedException);
   });
 });
