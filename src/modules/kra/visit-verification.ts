@@ -91,6 +91,57 @@ export function cityFromNominatim(body: any): string | null {
   return text || null;
 }
 
+export function addressFromNominatim(body: any): string | null {
+  const address = body?.address || {};
+  const building = [
+    body?.namedetails?.name,
+    body?.name,
+    address.building,
+    address.house_name,
+    address.amenity,
+    address.shop,
+    address.office,
+    address.tourism,
+  ]
+    .map((part) => String(part ?? '').trim())
+    .find(Boolean) || '';
+  const street = [
+    address.road,
+    address.pedestrian,
+    address.footway,
+    address.street,
+    address.residential,
+  ]
+    .map((part) => String(part ?? '').trim())
+    .find(Boolean) || '';
+  const locality = [
+    address.city,
+    address.town,
+    address.city_district,
+    address.municipality,
+    address.village,
+    address.county,
+  ]
+    .map((part) => String(part ?? '').trim())
+    .find(Boolean) || '';
+  const parts = [
+    building,
+    address.house_number,
+    street,
+    address.suburb || address.neighbourhood,
+    locality,
+    address.state,
+    address.postcode,
+  ]
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean);
+  const unique = parts.filter((part, index) => parts.indexOf(part) === index);
+  const composed = unique.join(', ');
+  if (building || street) return composed || null;
+  const display = String(body?.display_name ?? '').trim();
+  return display || composed || null;
+}
+
 function text(value: unknown): string {
   return String(value ?? '').trim();
 }
