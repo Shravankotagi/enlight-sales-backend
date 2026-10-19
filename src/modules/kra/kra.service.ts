@@ -14,9 +14,9 @@ import {
   OTP_RESEND_MS,
   OTP_TTL_MS,
   TOKEN_TTL_MS,
-  addressFromNominatim,
+  addressFromGoogleGeocode,
   assertNewVisit,
-  cityFromNominatim,
+  cityFromGoogleGeocode,
   describeVisitWhatsAppFailure,
   generateVisitOtp,
   generateVisitToken,
@@ -3103,23 +3103,27 @@ export class KraService {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       throw new BadRequestException('Location coordinates are required.');
     }
+    const key = process.env.GOOGLE_MAPS_API_KEY;
+    if (!key) {
+      this.logger.warn('Visit reverse geocode is not configured');
+      return { address: null, city: null, latitude, longitude };
+    }
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&namedetails=1&zoom=18&lat=${latitude}&lon=${longitude}`,
-        {
-          headers: {
-            Accept: 'application/json',
-            'User-Agent': 'EnlightMetalsOS/1.0 (customer-visit)',
-          },
-        },
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(`${latitude},${longitude}`)}&key=${encodeURIComponent(key)}`,
+        { headers: { Accept: 'application/json' } },
       );
       if (!response.ok) {
         return { address: null, city: null, latitude, longitude };
       }
       const body = await response.json();
+      if (body?.status !== 'OK') {
+        this.logger.warn('Visit reverse geocode was not available');
+        return { address: null, city: null, latitude, longitude };
+      }
       return {
-        address: addressFromNominatim(body),
-        city: cityFromNominatim(body),
+        address: addressFromGoogleGeocode(body),
+        city: cityFromGoogleGeocode(body),
         latitude,
         longitude,
       };

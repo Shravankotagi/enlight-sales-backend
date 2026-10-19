@@ -142,6 +142,83 @@ export function addressFromNominatim(body: any): string | null {
   return display || composed || null;
 }
 
+function googleComponent(result: any, type: string): string {
+  const match = (result?.address_components || []).find((part: any) =>
+    Array.isArray(part?.types) && part.types.includes(type),
+  );
+  return String(match?.long_name ?? '').trim();
+}
+
+function googleResultRank(result: any): number {
+  const types = Array.isArray(result?.types) ? result.types : [];
+  const has = (type: string) => types.includes(type);
+  let rank = 0;
+  if (has('premise') || has('subpremise') || has('street_address')) rank = 3;
+  else if (has('establishment') || has('point_of_interest')) rank = 2;
+  else if (has('route')) rank = 1;
+  else if (googleComponent(result, 'premise') || googleComponent(result, 'subpremise')) rank = 3;
+  else if (googleComponent(result, 'route')) rank = 1;
+  if (result?.geometry?.location_type === 'ROOFTOP') rank += 0.5;
+  return rank;
+}
+
+export function selectGoogleGeocodeResult(body: any): any | null {
+  const results = Array.isArray(body?.results) ? body.results : [];
+  let best: any = null;
+  let bestRank = -1;
+  for (const result of results) {
+    const rank = googleResultRank(result);
+    if (rank > bestRank) {
+      best = result;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+export function addressFromGoogleGeocode(body: any): string | null {
+  const result = selectGoogleGeocodeResult(body);
+  if (!result) return null;
+  const types = Array.isArray(result.types) ? result.types : [];
+  const formatted = String(result.formatted_address ?? '').trim();
+  const premise = googleComponent(result, 'premise') || googleComponent(result, 'subpremise');
+  const streetNumber = googleComponent(result, 'street_number');
+  const route = googleComponent(result, 'route');
+  const firstSegment = formatted.split(',')[0]?.trim() || '';
+  const isPlace = types.includes('establishment') || types.includes('point_of_interest');
+  const building =
+    premise ||
+    (isPlace && firstSegment && firstSegment !== route && firstSegment !== streetNumber
+      ? firstSegment
+      : '');
+  const street = [streetNumber, route].filter(Boolean).join(' ');
+  if (!building && !street) return formatted || null;
+  const area =
+    googleComponent(result, 'sublocality_level_1') ||
+    googleComponent(result, 'sublocality') ||
+    googleComponent(result, 'neighborhood');
+  const parts = [
+    building,
+    street,
+    area,
+    googleComponent(result, 'locality'),
+    googleComponent(result, 'administrative_area_level_1'),
+    googleComponent(result, 'postal_code'),
+  ]
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean);
+  const unique = parts.filter(
+    (part, index) => parts.findIndex((item) => item.toLowerCase() === part.toLowerCase()) === index,
+  );
+  return unique.join(', ') || formatted || null;
+}
+
+export function cityFromGoogleGeocode(body: any): string | null {
+  const result = selectGoogleGeocodeResult(body);
+  if (!result) return null;
+  return googleComponent(result, 'locality') || null;
+}
+
 function text(value: unknown): string {
   return String(value ?? '').trim();
 }

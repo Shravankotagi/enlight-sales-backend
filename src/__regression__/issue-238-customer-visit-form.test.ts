@@ -3,7 +3,9 @@ import { BadRequestException } from '@nestjs/common';
 import { KraService } from '../modules/kra/kra.service';
 import * as visitOtp from '../modules/kra/visit-verification';
 import {
+  addressFromGoogleGeocode,
   addressFromNominatim,
+  cityFromGoogleGeocode,
   cityFromNominatim,
   describeVisitWhatsAppFailure,
 } from '../modules/kra/visit-verification';
@@ -158,6 +160,72 @@ describe('issue 238 customer visit form', () => {
         },
       }),
     ).toBe('Laxmi Road, Pune');
+  });
+
+  it('reads a building and street from a Google geocode response', () => {
+    const girgaon = {
+      results: [
+        {
+          formatted_address:
+            'Girgaon, D Ward, Mumbai Zone 1, Mumbai City District, Maharashtra, 400004, India',
+          types: ['neighborhood', 'political'],
+          address_components: [
+            { long_name: 'Girgaon', types: ['neighborhood', 'political'] },
+            { long_name: 'Mumbai', types: ['locality', 'political'] },
+          ],
+        },
+        {
+          formatted_address:
+            'Girgaon Court, 12, Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India',
+          types: ['premise', 'street_address'],
+          geometry: { location_type: 'ROOFTOP' },
+          address_components: [
+            { long_name: 'Girgaon Court', types: ['premise'] },
+            { long_name: '12', types: ['street_number'] },
+            { long_name: 'Girgaon Road', types: ['route'] },
+            { long_name: 'Girgaon', types: ['sublocality_level_1', 'sublocality'] },
+            { long_name: 'Mumbai', types: ['locality', 'political'] },
+            { long_name: 'Maharashtra', types: ['administrative_area_level_1', 'political'] },
+            { long_name: '400004', types: ['postal_code'] },
+          ],
+        },
+      ],
+    };
+    expect(addressFromGoogleGeocode(girgaon)).toBe(
+      'Girgaon Court, 12 Girgaon Road, Girgaon, Mumbai, Maharashtra, 400004',
+    );
+    expect(cityFromGoogleGeocode(girgaon)).toBe('Mumbai');
+    expect(
+      addressFromGoogleGeocode({
+        results: [
+          {
+            formatted_address: 'Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India',
+            types: ['route'],
+            address_components: [
+              { long_name: 'Girgaon Road', types: ['route'] },
+              { long_name: 'Girgaon', types: ['neighborhood'] },
+              { long_name: 'Mumbai', types: ['locality'] },
+              { long_name: 'Maharashtra', types: ['administrative_area_level_1'] },
+              { long_name: '400004', types: ['postal_code'] },
+            ],
+          },
+        ],
+      }),
+    ).toBe('Girgaon Road, Girgaon, Mumbai, Maharashtra, 400004');
+    expect(
+      addressFromGoogleGeocode({
+        results: [
+          {
+            formatted_address: 'Mumbai, Maharashtra, India',
+            types: ['locality', 'political'],
+            address_components: [
+              { long_name: 'Mumbai', types: ['locality'] },
+              { long_name: 'Maharashtra', types: ['administrative_area_level_1'] },
+            ],
+          },
+        ],
+      }),
+    ).toBe('Mumbai, Maharashtra, India');
   });
 
   it('sends one code and blocks a second request during the cooldown', async () => {
