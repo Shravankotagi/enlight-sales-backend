@@ -69,4 +69,43 @@ describe('employee lifecycle logs', () => {
       }),
     );
   });
+
+  it('logs the employee previous role, not the admin who saved it', async () => {
+    const db = createSupabaseMock({
+      tables: {
+        employees: [{ ...target }],
+        roles: [
+          { id: 'salesperson', name: 'Salesperson' },
+          { id: 'sales_manager', name: 'Sales Manager' },
+          { id: 'admin', name: 'Admin' },
+        ],
+      },
+    });
+    const logs = { logActivity: jest.fn() };
+    const service = new EmployeesService(
+      asSupabaseService(db.client),
+      logs as any,
+    );
+
+    await service.update(
+      'emp-1',
+      { role: 'sales_manager' },
+      { phone: '919800000001', name: 'Admin User' },
+    );
+
+    expect(logs.logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'Roles',
+        action_type: 'employee_role_changed',
+        salesperson_name: 'Ravi Kumar',
+        description: 'Role changed from Salesperson to Sales Manager',
+        change_detail: {
+          from_role: 'salesperson',
+          to_role: 'sales_manager',
+          from_name: 'Salesperson',
+          to_name: 'Sales Manager',
+        },
+      }),
+    );
+  });
 });

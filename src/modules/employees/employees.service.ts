@@ -437,6 +437,8 @@ export class EmployeesService {
         updatePayload.reports_to_employee_id = null;
       }
 
+      const previousRole = currentEmp.role;
+
       // 3. Update employee record
       const { data, error } = await this.supabase
         .from('employees')
@@ -452,6 +454,27 @@ export class EmployeesService {
           currentEmp,
           caller,
         );
+      }
+
+      if (dto.role && this.roleKey(dto.role) !== this.roleKey(previousRole)) {
+        const fromRole = String(previousRole || '');
+        const toRole = String(dto.role);
+        const fromName = await this.roleLabel(fromRole);
+        const toName = await this.roleLabel(toRole);
+        this.activityLogs?.logActivity({
+          module: 'Roles',
+          action_type: 'employee_role_changed',
+          entity_type: 'employee',
+          entity_id: currentEmp.id,
+          salesperson_name: currentEmp.name,
+          description: `Role changed from ${fromName} to ${toName}`,
+          change_detail: {
+            from_role: fromRole,
+            to_role: toRole,
+            from_name: fromName,
+            to_name: toName,
+          },
+        });
       }
 
       // 4. If phone changed, cascade to all related transactional records
@@ -827,6 +850,36 @@ export class EmployeesService {
         target_role: target?.role || null,
       },
     });
+  }
+
+  private roleKey(role: any): string {
+    return String(role || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private async roleLabel(role: string): Promise<string> {
+    const key = this.roleKey(role);
+    if (!key) return '';
+    try {
+      const { data } = await this.supabase
+        .from('roles')
+        .select('name')
+        .eq('key', key)
+        .maybeSingle();
+      if (data?.name) return data.name;
+    } catch {
+      // ignore
+    }
+    const builtins: Record<string, string> = {
+      admin: 'Admin',
+      sales_manager: 'Sales Manager',
+      manager: 'Sales Manager',
+      salesperson: 'Salesperson',
+      finance: 'Finance / Accounts',
+      operations: 'Operations / Logistics',
+    };
+    return builtins[key] || role;
   }
 
   // Generate next employee ID automatically

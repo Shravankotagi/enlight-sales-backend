@@ -53,7 +53,7 @@ function quotationEmailHtml(text: string): string {
     .join('');
   const logo =
     '<p style="margin:0 0 16px;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>';
-  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2128;">${logo}${body}${logo}</div>`;
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2128;">${body}${logo}</div>`;
 }
 
 function getCompanyLogoBuffer(): Buffer | null {

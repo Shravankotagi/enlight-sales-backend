@@ -2,13 +2,18 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private jwtService: JwtService) {}
+  constructor(
+    private jwtService: JwtService,
+    @Optional() private supabaseService?: SupabaseService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -46,8 +51,30 @@ export class JwtAuthGuard implements CanActivate {
         secret: process.env.JWT_SECRET || 'enlight-sales-jwt-secret-2026',
       });
       request.employee = payload;
+
+      if (this.supabaseService && payload?.id) {
+        const { data: emp, error } = await this.supabaseService
+          .getAdminClient()
+          .from('employees')
+          .select('is_active')
+          .eq('id', payload.id)
+          .maybeSingle();
+
+        if (error || !emp) {
+          throw new UnauthorizedException('Employee record not found');
+        }
+        if (emp.is_active === false) {
+          throw new UnauthorizedException(
+            'Your account has been deactivated. Please contact your admin.',
+          );
+        }
+      }
+
       return true;
-    } catch {
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        throw err;
+      }
       throw new UnauthorizedException('Invalid or expired token');
     }
   }
