@@ -37,4 +37,23 @@ export class ActivityLogsController {
       { includeAuth: employee?.role === 'admin' },
     );
   }
+
+  @Get('counts')
+  async getCounts(
+    @CurrentEmployee() employee: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('mode') mode?: string,
+  ) {
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+        mode,
+      );
+    return this.activityLogsService.countActivityLogs({ from, to }, phones, {
+      includeAuth: employee?.role === 'admin',
+    });
+  }
 }

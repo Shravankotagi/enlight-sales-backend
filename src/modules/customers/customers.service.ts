@@ -1522,15 +1522,184 @@ export class CustomersService {
         throw new Error('No client records provided for import');
       }
 
+      // Preload active employees for CSV salesperson matching
+      const { data: allEmployeesData, error: empFetchError } =
+        await this.supabase.from('employees').select('*');
+
+      if (empFetchError) {
+        this.logger.warn(
+          'Failed to fetch employees for CSV salesperson mapping:',
+          empFetchError.message,
+        );
+      }
+
+      const activeEmployees = (allEmployeesData || []).filter(
+        (e: any) => e.is_active !== false && Boolean(e.phone),
+      );
+
+      // Helper to resolve salesperson for each row using:
+      // Corporate Email ID -> Name -> Zoho User ID -> Phone Number (fallback) with maximum matched scoring
+      const resolveSalesperson = (c: any): string => {
+        let rawEmail = String(c.assigned_salesperson_email || '')
+          .trim()
+          .toLowerCase();
+        let rawName = String(c.assigned_salesperson_name || '').trim();
+        let rawZohoId = String(c.assigned_salesperson_zoho_id || '').trim();
+        let rawPhone = String(
+          c.assigned_salesperson_phone || c.salesperson_phone || '',
+        ).trim();
+        const rawGeneric = String(
+          c.assigned_salesperson || c.salesperson || '',
+        ).trim();
+
+        // If generic salesperson column was provided, inspect value type
+        if (rawGeneric) {
+          if (rawGeneric.includes('@') && !rawEmail) {
+            rawEmail = rawGeneric.toLowerCase();
+          } else if (
+            /^\d{15,}$/.test(rawGeneric.replace(/\D/g, '')) &&
+            !rawZohoId
+          ) {
+            rawZohoId = rawGeneric.trim();
+          } else if (
+            /^\d{10,14}$/.test(rawGeneric.replace(/\D/g, '')) &&
+            !rawPhone
+          ) {
+            rawPhone = rawGeneric.trim();
+          } else if (/[a-zA-Z]/.test(rawGeneric) && !rawName) {
+            rawName = rawGeneric.trim();
+          }
+        }
+
+        // If rawPhone accidentally contains an email or alphabetic name
+        if (rawPhone.includes('@') && !rawEmail) {
+          rawEmail = rawPhone.toLowerCase();
+          rawPhone = '';
+        } else if (/[a-zA-Z]/.test(rawPhone) && !rawName) {
+          rawName = rawPhone;
+          rawPhone = '';
+        }
+
+        const cleanRawPhone = cleanPhone(rawPhone);
+        const normRawName = rawName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+        // Score each candidate employee based on maximum matched
+        // Hierarchy & weights:
+        // Corporate Email ID: +10 pts
+        // Name: +5 pts (exact) / +3 pts (token containment)
+        // Zoho User ID / Employee ID: +4 pts
+        // Phone Number: +2 pts
+        let bestEmp: any = null;
+        let highestScore = 0;
+        let bestTieBreaker = 0; // email=1000, name=100, zoho=10, phone=1
+
+        for (const emp of activeEmployees) {
+          let score = 0;
+          let tieBreaker = 0;
+
+          // 1. Corporate Email Match
+          const empEmail = String(emp.email || '')
+            .trim()
+            .toLowerCase();
+          if (rawEmail && empEmail && rawEmail === empEmail) {
+            score += 10;
+            tieBreaker += 1000;
+          }
+
+          // 2. Name Match
+          const normEmpName = String(emp.name || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+          if (normRawName && normEmpName) {
+            if (normRawName === normEmpName) {
+              score += 5;
+              tieBreaker += 100;
+            } else {
+              const rawTokens = normRawName
+                .split(' ')
+                .filter((t) => t.length > 2);
+              const empTokens = normEmpName
+                .split(' ')
+                .filter((t) => t.length > 2);
+              if (
+                rawTokens.length > 0 &&
+                empTokens.length > 0 &&
+                (rawTokens.every((t) => empTokens.includes(t)) ||
+                  empTokens.every((t) => rawTokens.includes(t)))
+              ) {
+                score += 3;
+                tieBreaker += 100;
+              }
+            }
+          }
+
+          // 3. Zoho User ID / Employee ID Match
+          const empZohoId = String(emp.zoho_user_id || '').trim();
+          const empCode = String(emp.employee_id || '').trim();
+          if (rawZohoId) {
+            if (
+              empZohoId &&
+              rawZohoId.toLowerCase() === empZohoId.toLowerCase()
+            ) {
+              score += 4;
+              tieBreaker += 10;
+            } else if (
+              empCode &&
+              rawZohoId.toLowerCase() === empCode.toLowerCase()
+            ) {
+              score += 4;
+              tieBreaker += 10;
+            }
+          }
+
+          // 4. Phone Number Fallback Match
+          const empCleanPhone = cleanPhone(emp.phone);
+          if (
+            cleanRawPhone &&
+            empCleanPhone &&
+            cleanRawPhone === empCleanPhone
+          ) {
+            score += 2;
+            tieBreaker += 1;
+          }
+
+          if (
+            score > highestScore ||
+            (score === highestScore && score > 0 && tieBreaker > bestTieBreaker)
+          ) {
+            highestScore = score;
+            bestTieBreaker = tieBreaker;
+            bestEmp = emp;
+          }
+        }
+
+        if (bestEmp && highestScore > 0) {
+          return String(bestEmp.phone).trim();
+        }
+
+        // If phone was provided and has 10 digits
+        if (cleanRawPhone) {
+          return cleanRawPhone.length === 10
+            ? `91${cleanRawPhone}`
+            : cleanRawPhone;
+        }
+
+        if (defaultSalespersonPhone && cleanPhone(defaultSalespersonPhone)) {
+          return defaultSalespersonPhone.trim();
+        }
+
+        return 'unassigned';
+      };
+
       const formattedClients = clients
         .map((c) => {
-          const assignedPhone =
-            c.assigned_salesperson_phone ||
-            c.salesperson_phone ||
-            defaultSalespersonPhone ||
-            null;
+          const assignedPhone = resolveSalesperson(c);
 
-          const cleanPhone =
+          const cleanPhoneNum =
             c.customer_phone || c.phone
               ? String(c.customer_phone || c.phone).replace(/\D/g, '')
               : null;
@@ -1554,7 +1723,7 @@ export class CustomersService {
               c.name ||
               ''
             ).trim(),
-            customer_phone: cleanPhone,
+            customer_phone: cleanPhoneNum,
             customer_gst:
               (c.customer_gst || c.gstin || c.gst || '').trim() || null,
             customer_address:
