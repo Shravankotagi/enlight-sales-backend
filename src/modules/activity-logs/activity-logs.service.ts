@@ -211,6 +211,92 @@ export class ActivityLogsService {
     }
   }
 
+  async countActivityLogs(
+    query: { from?: string; to?: string },
+    accessiblePhones?: string[] | null,
+    options?: { includeAuth?: boolean },
+  ) {
+    const buckets: [string, string | null][] = [
+      ['All', null],
+      ['Inquiries', '%inquir%'],
+      ['Orders', '%order%'],
+      ['Visits', '%visit%'],
+      ['Complaints', '%complaint%'],
+      ['Auth', 'Auth'],
+      ['Employees', 'Employees'],
+    ];
+    const counts: Record<string, number> = {};
+    await Promise.all(
+      buckets.map(async ([name, pattern]) => {
+        let q = this.supabase
+          .from('activity_logs')
+          .select('*', { count: 'exact', head: true });
+        q = this.applyLogFilters(
+          q,
+          {
+            ...query,
+            module: name === 'Orders' ? undefined : pattern || undefined,
+          },
+          accessiblePhones,
+          options,
+        );
+        if (name === 'Orders') {
+          q = q.or('module.ilike.%order%,module.ilike.%deal%');
+        }
+        const { count, error } = await q;
+        if (error) throw error;
+        counts[name] = count || 0;
+      }),
+    );
+    return counts;
+  }
+
+  private applyLogFilters(
+    q: any,
+    query: { from?: string; to?: string; module?: string },
+    accessiblePhones?: string[] | null,
+    options?: { includeAuth?: boolean },
+  ) {
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      const parts: string[] = [];
+      for (const phone of accessiblePhones) {
+        if (!phone || typeof phone !== 'string') continue;
+        const clean = phone.replace(/\D/g, '');
+        const p10 = clean.slice(-10);
+        if (!p10) continue;
+        const p12 = '91' + p10;
+        parts.push(
+          `salesperson_phone.ilike.%${p10}%`,
+          `salesperson_phone.ilike.%${p12}%`,
+        );
+      }
+      if (parts.length > 0) {
+        q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
+      }
+    }
+
+    if (query.from) {
+      const fromIso = query.from.includes('T')
+        ? query.from
+        : `${query.from}T00:00:00.000Z`;
+      q = q.gte('timestamp', fromIso);
+    }
+    if (query.to) {
+      const toIso = query.to.includes('T')
+        ? query.to
+        : `${query.to}T23:59:59.999Z`;
+      q = q.lte('timestamp', toIso);
+    }
+
+    if (query.module && query.module !== 'All' && query.module !== 'all') {
+      q = q.ilike('module', query.module);
+    } else if (!options?.includeAuth) {
+      q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+    }
+
+    return q;
+  }
+
   private async attachLogout(rows: any[]) {
     const sids = [
       ...new Set(

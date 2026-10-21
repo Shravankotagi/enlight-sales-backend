@@ -37,7 +37,12 @@ export class CustomersController {
         address?: string;
         customer_gst?: string;
         industry?: string;
+        assigned_salesperson_email?: string;
+        assigned_salesperson_name?: string;
+        assigned_salesperson_zoho_id?: string;
         assigned_salesperson_phone?: string;
+        assigned_salesperson?: string;
+        salesperson_phone?: string;
       }>;
     },
   ) {
