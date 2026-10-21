@@ -57,6 +57,23 @@ function createHarness() {
   return { service, tables };
 }
 
+function isoDaysFromToday(days: number): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const day = Number(parts.find((part) => part.type === 'day')?.value);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function validVisit(token: string, overrides: Record<string, unknown> = {}) {
   return {
     customer_name: 'Acme',
@@ -80,7 +97,7 @@ function validVisit(token: string, overrides: Record<string, unknown> = {}) {
     next_purchase_expected: '2026-11-01',
     current_requirement: '10 MT',
     follow_up_action: 'Send quote',
-    follow_up_date: '2026-10-20',
+    follow_up_date: isoDaysFromToday(7),
     remarks: 'Discussed rates',
     visited_at: '2026-10-15T10:00:00.000Z',
     gps_photo_url: 'data:image/jpeg;base64,abc',
