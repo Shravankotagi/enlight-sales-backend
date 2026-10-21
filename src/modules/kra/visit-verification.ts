@@ -29,6 +29,7 @@ export const VISIT_CUSTOMER_TYPES = [
   'EPC',
   'Manufacturer',
   'Trader',
+  'Other',
 ] as const;
 
 export const VISIT_TYPES = [
@@ -243,6 +244,7 @@ export interface NormalizedVisit {
   phone: string;
   preferredMake: string;
   preferredMakeOther: string | null;
+  customerTypeOther: string | null;
   locationSource: 'gps' | 'manual';
   visitLatitude: number | null;
   visitLongitude: number | null;
@@ -274,8 +276,13 @@ export function assertNewVisit(data: any): NormalizedVisit {
 
   const phone = normalizeVisitPhone(data?.contact_phone || data?.contact_no);
 
-  if (!VISIT_CUSTOMER_TYPES.includes(text(data?.customer_type) as any)) {
+  const customerType = text(data?.customer_type);
+  if (!VISIT_CUSTOMER_TYPES.includes(customerType as any)) {
     throw new BadRequestException('Select a customer type.');
+  }
+  const customerTypeOther = text(data?.customer_type_other);
+  if (customerType === 'Other' && !customerTypeOther) {
+    throw new BadRequestException('Enter the other customer type.');
   }
   if (!VISIT_TYPES.includes(text(data?.visit_type) as any)) {
     throw new BadRequestException('Select a visit type.');
@@ -365,6 +372,7 @@ export function assertNewVisit(data: any): NormalizedVisit {
     phone,
     preferredMake: brands.join(', '),
     preferredMakeOther: brands.includes('Others') ? other : null,
+    customerTypeOther: customerType === 'Other' ? customerTypeOther : null,
     locationSource: locationSource === 'manual' ? 'manual' : 'gps',
     visitLatitude: locationSource === 'gps' ? visitLatitude : null,
     visitLongitude: locationSource === 'gps' ? visitLongitude : null,

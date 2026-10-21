@@ -3205,6 +3205,7 @@ export class KraService {
       email: data.email || null,
       designation: data.designation || null,
       customer_type: data.customer_type || null,
+      customer_type_other: verified.customerTypeOther,
       visit_type: data.visit_type || 'First Visit',
       outcome: data.outcome ? data.outcome.toLowerCase() : null,
       customer_probability:
@@ -3576,6 +3577,19 @@ export class KraService {
       payload.designation = data.designation || null;
     if (data.customer_type !== undefined)
       payload.customer_type = data.customer_type || null;
+    if (
+      data.customer_type !== undefined ||
+      data.customer_type_other !== undefined
+    ) {
+      const type =
+        data.customer_type !== undefined
+          ? data.customer_type
+          : payload.customer_type;
+      payload.customer_type_other =
+        type === 'Other'
+          ? String(data.customer_type_other || '').trim() || null
+          : null;
+    }
     if (data.visit_type !== undefined)
       payload.visit_type = data.visit_type || null;
     if (data.outcome !== undefined)
