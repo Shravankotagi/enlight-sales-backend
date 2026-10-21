@@ -5,8 +5,10 @@ import {
   ForbiddenException,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
   isProcurementManager,
   isProcurementRole,
@@ -34,7 +36,10 @@ export function phoneInList(phone?: string, list?: string[] | null): boolean {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    @Optional() private activityLogs?: ActivityLogsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -475,6 +480,7 @@ export class EmployeesService {
       reports_to_employee_id: string | null;
       permissions?: Record<string, boolean> | null;
     }>,
+    caller?: { phone?: string; name?: string },
   ) {
     try {
       // 1. Fetch current employee state to detect phone changes
@@ -489,6 +495,7 @@ export class EmployeesService {
       }
 
       const oldPhone = currentEmp.phone;
+      const wasActive = currentEmp.is_active;
 
       // 2. Validate duplicate phone conflict
       if (dto.phone) {
@@ -539,6 +546,8 @@ export class EmployeesService {
         updatePayload.reports_to_employee_id = null;
       }
 
+      const previousRole = currentEmp.role;
+
       // 3. Update employee record
       const { data, error } = await this.supabase
         .from('employees')
@@ -547,6 +556,35 @@ export class EmployeesService {
         .select()
         .single();
       if (error) throw error;
+
+      if (typeof dto.is_active === 'boolean' && dto.is_active !== wasActive) {
+        this.logLifecycle(
+          dto.is_active ? 'employee_activated' : 'employee_deactivated',
+          currentEmp,
+          caller,
+        );
+      }
+
+      if (dto.role && this.roleKey(dto.role) !== this.roleKey(previousRole)) {
+        const fromRole = String(previousRole || '');
+        const toRole = String(dto.role);
+        const fromName = await this.roleLabel(fromRole);
+        const toName = await this.roleLabel(toRole);
+        this.activityLogs?.logActivity({
+          module: 'Roles',
+          action_type: 'employee_role_changed',
+          entity_type: 'employee',
+          entity_id: currentEmp.id,
+          salesperson_name: currentEmp.name,
+          description: `Role changed from ${fromName} to ${toName}`,
+          change_detail: {
+            from_role: fromRole,
+            to_role: toRole,
+            from_name: fromName,
+            to_name: toName,
+          },
+        });
+      }
 
       // 4. If phone changed, cascade to all related transactional records
       if (dto.phone) {
@@ -756,7 +794,7 @@ export class EmployeesService {
     }
   }
 
-  async deactivate(id: string) {
+  async deactivate(id: string, caller?: { phone?: string; name?: string }) {
     try {
       const { data, error } = await this.supabase
         .from('employees')
@@ -765,6 +803,7 @@ export class EmployeesService {
         .select()
         .single();
       if (error) throw error;
+      this.logLifecycle('employee_deactivated', data, caller);
       return data;
     } catch (error) {
       this.logger.error(`Error in deactivate for employee ${id}:`, error);
@@ -872,6 +911,7 @@ export class EmployeesService {
       this.logger.log(
         `Employee ${targetEmp.employee_id} (${empName}) and all associated records deleted successfully.`,
       );
+      this.logLifecycle('employee_deleted', targetEmp, caller);
       return {
         success: true,
         message: `Employee ${empName} (${targetEmp.employee_id}) and all associated records deleted successfully.`,
@@ -880,6 +920,75 @@ export class EmployeesService {
       this.logger.error(`Error deleting employee ${id}:`, error);
       throw error;
     }
+  }
+
+  private logLifecycle(
+    action: 'employee_activated' | 'employee_deactivated' | 'employee_deleted',
+    target: {
+      id?: string;
+      employee_id?: string;
+      name?: string;
+      role?: string;
+    },
+    caller?: { phone?: string; name?: string },
+  ) {
+    const verb =
+      action === 'employee_activated'
+        ? 'Activated'
+        : action === 'employee_deactivated'
+          ? 'Deactivated'
+          : 'Deleted';
+    const who = [
+      target?.name,
+      target?.employee_id ? `(${target.employee_id})` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    this.activityLogs?.logActivity({
+      module: 'Employees',
+      action_type: action,
+      entity_type: 'employee',
+      entity_id: target?.id,
+      salesperson_phone: caller?.phone,
+      salesperson_name: caller?.name,
+      description: `${verb} ${who}`.trim(),
+      change_detail: {
+        target_id: target?.id || null,
+        target_employee_id: target?.employee_id || null,
+        target_name: target?.name || null,
+        target_role: target?.role || null,
+      },
+    });
+  }
+
+  private roleKey(role: any): string {
+    return String(role || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private async roleLabel(role: string): Promise<string> {
+    const key = this.roleKey(role);
+    if (!key) return '';
+    try {
+      const { data } = await this.supabase
+        .from('roles')
+        .select('name')
+        .eq('key', key)
+        .maybeSingle();
+      if (data?.name) return data.name;
+    } catch {
+      // ignore
+    }
+    const builtins: Record<string, string> = {
+      admin: 'Admin',
+      sales_manager: 'Sales Manager',
+      manager: 'Sales Manager',
+      salesperson: 'Salesperson',
+      finance: 'Finance / Accounts',
+      operations: 'Operations / Logistics',
+    };
+    return builtins[key] || role;
   }
 
   // Generate next employee ID automatically

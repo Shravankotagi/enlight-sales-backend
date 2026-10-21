@@ -204,6 +204,24 @@ export class KraController {
     );
   }
 
+  @Post('visits/otp/request')
+  async requestVisitOtp(@Body() body: { phone?: string }) {
+    return this.kraService.requestVisitOtp(body?.phone || '');
+  }
+
+  @Post('visits/otp/verify')
+  async verifyVisitOtp(@Body() body: { phone?: string; otp?: string }) {
+    return this.kraService.verifyVisitOtp(body?.phone || '', body?.otp || '');
+  }
+
+  @Get('visits/reverse-geocode')
+  async reverseGeocodeVisit(
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+  ) {
+    return this.kraService.reverseGeocodeVisit(lat, lng);
+  }
+
   @Post('visits')
   async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
     return this.kraService.createVisit(body, employee?.phone);

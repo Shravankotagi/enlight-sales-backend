@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { InquiriesService } from './inquiries.service';
+import { InquiriesService, inquiryStageLog } from './inquiries.service';
 
 describe('InquiriesService quotation email', () => {
   const createService = (employeeLookup: any = { data: null }) => {
@@ -36,8 +36,8 @@ describe('InquiriesService quotation email', () => {
     );
 
     expect(content.referenceNumber).toBe('QT-2026-42');
-    expect(content.subject).toContain('QT-2026-42');
-    expect(content.text).toContain('Dear Acme');
+    expect(content.subject).toBe('Enlight Metals- Quotation for Acme');
+    expect(content.text).toContain('Dear ACME');
     expect(
       (service as any).buildQuotationCc(
         'sender@example.com',
@@ -66,7 +66,11 @@ describe('InquiriesService quotation email', () => {
         'customer@example.com',
         ['Team@Example.com', 'team@example.com', 'CUSTOMER@example.com'],
       ),
-    ).toEqual(['team@example.com']);
+    ).toEqual([
+      'team@example.com',
+      'dj@enlightmetals.com',
+      'vedant@enlightmetals.com',
+    ]);
   });
 
   it('rejects malformed custom CC recipients', () => {
@@ -88,5 +92,55 @@ describe('InquiriesService quotation email', () => {
         employee_id: 'EMP-1',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('inquiry stage activity text', () => {
+  it('uses the pipeline name in one sentence', () => {
+    expect(
+      inquiryStageLog(
+        '175b9d00-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'qualified',
+      ),
+    ).toBe(
+      'Inquiry INQ-175B9D details updated for HERO Industries (Stage: Price Quote)',
+    );
+    expect(
+      inquiryStageLog(
+        '175b9d00-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'confirmed',
+      ),
+    ).toBe(
+      'Inquiry INQ-175B9D details updated for HERO Industries (Stage: Price Quote)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'won',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: Closed Won)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'lost',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: Closed Lost)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'new_inquiry',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: New Inquiry)',
+    );
   });
 });
