@@ -1257,6 +1257,11 @@ export class InquiriesService implements OnModuleInit {
         }
       }
 
+      await this.supabase
+        .from('inquiry_line_pricing')
+        .delete()
+        .eq('inquiry_id', id);
+
       const { error: delErr } = await this.supabase
         .from('inquiries')
         .delete()
