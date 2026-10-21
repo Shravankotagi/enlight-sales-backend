@@ -14,6 +14,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InquiriesService } from './inquiries.service';
+import { InquiryPricingService } from './inquiry-pricing.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
@@ -28,6 +29,7 @@ export class InquiriesController {
   constructor(
     private readonly inquiriesService: InquiriesService,
     private readonly employeesService: EmployeesService,
+    private readonly inquiryPricingService: InquiryPricingService,
   ) {}
 
   private denyProcurement(action: string): never {
@@ -209,6 +211,91 @@ export class InquiriesController {
       body.details,
       phones,
     );
+  }
+
+  @Get(':id/line-pricing')
+  async linePricing(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    await this.assertInquiryAccess(employee, id);
+    return { lines: await this.inquiryPricingService.linesFor(id) };
+  }
+
+  @Patch(':id/procurement-pricing')
+  async saveProcurementPricing(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    if (
+      !isProcurementRole(employee?.role) &&
+      employee?.role !== 'admin' &&
+      employee?.role !== 'super_admin'
+    ) {
+      throw new ForbiddenException(
+        'Access Denied: Only procurement can save base prices.',
+      );
+    }
+    const inquiry = await this.assertInquiryAccess(employee, id);
+    return this.inquiryPricingService.saveProcurement(inquiry, body, employee);
+  }
+
+  @Patch(':id/sales-pricing')
+  async saveSalesPricing(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('save sales prices');
+    }
+    const inquiry = await this.assertInquiryAccess(employee, id);
+    return this.inquiryPricingService.saveSales(inquiry, body, employee);
+  }
+
+  @Post(':id/decline-preview')
+  async declinePreview(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('send decline emails');
+    }
+    const inquiry = await this.assertInquiryAccess(employee, id);
+    const lines = await this.inquiryPricingService.linesFor(id);
+    return this.inquiryPricingService.declinePreview(inquiry, lines);
+  }
+
+  @Post(':id/decline-email')
+  async declineEmail(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    if (isProcurementRole(employee?.role)) {
+      this.denyProcurement('send decline emails');
+    }
+    const inquiry = await this.assertInquiryAccess(employee, id);
+    const lines = await this.inquiryPricingService.linesFor(id);
+    return this.inquiryPricingService.sendDecline(inquiry, lines, employee);
+  }
+
+  private async assertInquiryAccess(employee: any, id: string) {
+    if (isProcurementRole(employee?.role)) {
+      const scope =
+        await this.employeesService.getAccessibleProcurementIds(employee);
+      const inquiry = await this.inquiriesService.findOne(id, null, scope);
+      if (!inquiry) throw new ForbiddenException('Inquiry not found');
+      return inquiry;
+    }
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    const inquiry = await this.inquiriesService.findOne(
+      id,
+      phones && phones.length ? phones : null,
+    );
+    if (!inquiry) throw new ForbiddenException('Inquiry not found');
+    return inquiry;
   }
 
   @Post()

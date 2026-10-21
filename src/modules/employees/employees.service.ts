@@ -237,7 +237,11 @@ export class EmployeesService {
     const isPersonalMode =
       mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
-    if (!employee || employee.role === 'admin') {
+    if (
+      !employee ||
+      employee.role === 'admin' ||
+      employee.role === 'super_admin'
+    ) {
       if (requestedPhoneOverride) {
         const normOverride = normalizePhone(requestedPhoneOverride);
         const { data: allEmps } = await this.supabase
@@ -324,16 +328,25 @@ export class EmployeesService {
 
   /**
    * Inquiry ids a procurement user may see.
-   * Person: own employee id. Manager: own id plus people who report to them,
-   * and the caller also sees the open unassigned intake pool.
+   * Person: own id plus salespeople routed to them.
+   * Manager: own id, people who report to them, the salespeople routed to
+   * those people, and the open unassigned intake pool.
    */
   async getAccessibleProcurementIds(employee: any): Promise<{
     ids: string[];
     includeUnassignedPool: boolean;
+    salespersonPhones?: string[];
+    salespersonEmployeeIds?: string[];
   }> {
     const ownId = employee?.id ? [employee.id] : [];
     if (!employee || !isProcurementManager(employee.role)) {
-      return { ids: ownId, includeUnassignedPool: false };
+      const routed = await this.salespeopleRoutedTo(ownId);
+      return {
+        ids: ownId,
+        includeUnassignedPool: false,
+        salespersonPhones: routed.phones,
+        salespersonEmployeeIds: routed.ids,
+      };
     }
 
     const { data } = await this.supabase
@@ -362,9 +375,12 @@ export class EmployeesService {
       })
       .map((emp: any) => emp.id);
 
+    const routed = await this.salespeopleRoutedTo(teamIds);
     return {
       ids: Array.from(new Set([...ownId, ...teamIds])),
       includeUnassignedPool: true,
+      salespersonPhones: routed.phones,
+      salespersonEmployeeIds: routed.ids,
     };
   }
 
@@ -395,6 +411,7 @@ export class EmployeesService {
     manager_id?: string | null;
     manager_phone?: string | null;
     permissions?: Record<string, boolean> | null;
+    assigned_salesperson_ids?: string[];
   }) {
     try {
       // Check duplicate phone
@@ -460,6 +477,16 @@ export class EmployeesService {
 
       if (error) throw error;
       this.logger.log(`Employee created: ${dto.employee_id} - ${dto.name}`);
+      if (
+        data?.id &&
+        role === 'procurement_person' &&
+        Array.isArray(dto.assigned_salesperson_ids)
+      ) {
+        await this.syncProcurementSalespeople(
+          data.id,
+          dto.assigned_salesperson_ids,
+        );
+      }
       return data;
     } catch (error) {
       this.logger.error('Error in create employee:', error);
@@ -479,6 +506,7 @@ export class EmployeesService {
       manager_phone: string | null;
       reports_to_employee_id: string | null;
       permissions?: Record<string, boolean> | null;
+      assigned_salesperson_ids?: string[];
     }>,
     caller?: { phone?: string; name?: string },
   ) {
@@ -507,7 +535,9 @@ export class EmployeesService {
         }
       }
 
+      const assignedSalespersonIds = dto.assigned_salesperson_ids;
       const updatePayload: any = { ...dto };
+      delete updatePayload.assigned_salesperson_ids;
 
       const nextRole = dto.role || currentEmp.role;
       // Only when the saved role is one of these. A partial update such as
@@ -586,6 +616,13 @@ export class EmployeesService {
         });
       }
 
+      if (Array.isArray(assignedSalespersonIds)) {
+        await this.syncProcurementSalespeople(
+          id,
+          nextRole === 'procurement_person' ? assignedSalespersonIds : [],
+        );
+      }
+
       // 4. If phone changed, cascade to all related transactional records
       if (dto.phone) {
         const cleanOld = normalizePhone(oldPhone);
@@ -620,6 +657,112 @@ export class EmployeesService {
       }
       this.logger.error(`Error in update for employee ${id}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * One salesperson routes to one procurement person. Saving the control-panel
+   * selection writes that person onto each salesperson and moves their open,
+   * still-unassigned inquiries into that person's queue.
+   */
+  private async syncProcurementSalespeople(
+    personId: string,
+    salespersonIds: string[],
+  ) {
+    const uniqueIds = Array.from(new Set(salespersonIds.filter(Boolean)));
+    let selected: any[] = [];
+    if (uniqueIds.length) {
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, role, is_active, phone')
+        .in('id', uniqueIds);
+      if (error) throw error;
+      selected = data || [];
+      const valid =
+        selected.length === uniqueIds.length &&
+        selected.every(
+          (emp) => emp.role === 'salesperson' && emp.is_active !== false,
+        );
+      if (!valid) {
+        throw new BadRequestException(
+          'Each assigned salesperson must be an active salesperson.',
+        );
+      }
+    }
+
+    const { data: current, error: currentErr } = await this.supabase
+      .from('employees')
+      .select('id')
+      .eq('assigned_procurement_employee_id', personId);
+    if (currentErr) throw currentErr;
+    const removeIds = (current || [])
+      .map((emp: any) => emp.id)
+      .filter((empId: string) => !uniqueIds.includes(empId));
+    if (removeIds.length) {
+      const { error } = await this.supabase
+        .from('employees')
+        .update({ assigned_procurement_employee_id: null })
+        .in('id', removeIds);
+      if (error) throw error;
+    }
+    if (uniqueIds.length) {
+      const { error } = await this.supabase
+        .from('employees')
+        .update({ assigned_procurement_employee_id: personId })
+        .in('id', uniqueIds);
+      if (error) throw error;
+    }
+
+    const assignedAt = new Date().toISOString();
+    const phones = new Set(
+      selected
+        .map((salesperson) => normalizePhone(salesperson.phone))
+        .filter((phone) => phone.length === 10),
+    );
+    const employeeIds = new Set(selected.map((salesperson) => salesperson.id));
+    const { data: openRows, error: listErr } = await this.supabase
+      .from('inquiries')
+      .select('id, salesperson_phone, employee_id, procurement_employee_id')
+      .is('procurement_employee_id', null);
+    if (listErr) throw listErr;
+    const matchIds = (openRows || [])
+      .filter((row: any) => {
+        if (row.employee_id && employeeIds.has(row.employee_id)) return true;
+        const phone = normalizePhone(row.salesperson_phone);
+        return Boolean(phone && phones.has(phone));
+      })
+      .map((row: any) => row.id);
+    if (matchIds.length) {
+      const { error } = await this.supabase
+        .from('inquiries')
+        .update({
+          procurement_employee_id: personId,
+          procurement_assigned_at: assignedAt,
+        })
+        .in('id', matchIds);
+      if (error) throw error;
+    }
+  }
+
+  private async salespeopleRoutedTo(personIds: string[]) {
+    if (!personIds.length) return { phones: [] as string[], ids: [] as string[] };
+    try {
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, phone, role, is_active, assigned_procurement_employee_id')
+        .in('assigned_procurement_employee_id', personIds);
+      if (error) return { phones: [], ids: [] };
+      const assigned = (data || []).filter(
+        (emp: any) => emp.role === 'salesperson' && emp.is_active !== false,
+      );
+      return {
+        phones: assigned
+          .map((emp: any) => normalizePhone(emp.phone))
+          .filter((phone: string) => phone.length === 10),
+        ids: assigned.map((emp: any) => emp.id),
+      };
+    } catch {
+      return { phones: [], ids: [] };
     }
   }
 

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { mapChatRole } from './chat-role';
 import { CallerContext } from './interfaces/caller-context.interface';
 import { GuardrailsService } from './guardrails/guardrails.service';
 
@@ -77,7 +78,7 @@ export class ChatbotService {
         .eq('is_active', true)
         .limit(1);
 
-      let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
+      let role = 'salesperson';
       let employeeId: string | undefined = user.employee_id;
       let reportsToId: string | undefined;
       let phone: string | undefined =
@@ -94,22 +95,11 @@ export class ChatbotService {
         phone = emp.phone || phone;
         name = emp.name || name;
 
-        const rawRole = (emp.role || '').toLowerCase();
-        if (rawRole.includes('admin')) {
-          role = 'admin';
-        } else if (rawRole.includes('manager')) {
-          role = 'manager';
-        } else {
-          role = 'salesperson';
-        }
+        role = mapChatRole(emp.role);
       } else if (user.role) {
-        const rawUserRole = (user.role || '').toLowerCase();
-        if (rawUserRole.includes('admin')) role = 'admin';
-        else if (rawUserRole.includes('manager')) role = 'manager';
+        role = mapChatRole(user.role);
       } else if (user.user_metadata?.role) {
-        const metaRole = (user.user_metadata.role || '').toLowerCase();
-        if (metaRole.includes('admin')) role = 'admin';
-        else if (metaRole.includes('manager')) role = 'manager';
+        role = mapChatRole(user.user_metadata.role);
       }
 
       const empRecord = employee && employee.length > 0 ? employee[0] : null;

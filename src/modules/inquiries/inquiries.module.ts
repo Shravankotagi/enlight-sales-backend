@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { InquiriesController } from './inquiries.controller';
 import { InquiriesService } from './inquiries.service';
+import { InquiryPricingService } from './inquiry-pricing.service';
 import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { JwtModule } from '@nestjs/jwt';
 import { DealsModule } from '../deals/deals.module';
@@ -21,7 +22,7 @@ import { PricingModule } from '../pricing/pricing.module';
     }),
   ],
   controllers: [InquiriesController],
-  providers: [InquiriesService],
+  providers: [InquiriesService, InquiryPricingService],
   exports: [InquiriesService],
 })
 export class InquiriesModule {}

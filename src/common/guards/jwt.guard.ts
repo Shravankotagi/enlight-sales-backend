@@ -24,6 +24,12 @@ export function isProcurementRequestAllowed(
     cleanPath === prefix || cleanPath.startsWith(`${prefix}/`);
 
   if (under('/inquiries')) return true;
+  if (
+    (under('/chat/message') || under('/chat/sessions')) &&
+    (verb === 'GET' || verb === 'POST')
+  ) {
+    return true;
+  }
   if (verb !== 'GET') return false;
   return under('/products') || under('/pricing') || cleanPath === '/employees';
 }
