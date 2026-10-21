@@ -40,11 +40,25 @@ export function isProcurementRequestAllowed(
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
+  private permissions?: PermissionsService;
+  private supabaseService?: SupabaseService;
+
   constructor(
     private jwtService: JwtService,
-    @Optional() private permissions?: PermissionsService,
-    @Optional() private supabaseService?: SupabaseService,
-  ) {}
+    @Optional() permissionsOrSupabase?: PermissionsService | SupabaseService,
+    @Optional() supabaseService?: SupabaseService,
+  ) {
+    if (
+      permissionsOrSupabase &&
+      typeof (permissionsOrSupabase as any).getAdminClient === 'function'
+    ) {
+      this.supabaseService = permissionsOrSupabase as SupabaseService;
+      this.permissions = undefined;
+    } else {
+      this.permissions = permissionsOrSupabase as PermissionsService;
+      this.supabaseService = supabaseService;
+    }
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();

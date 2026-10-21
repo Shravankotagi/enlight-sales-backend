@@ -165,7 +165,14 @@ export class ActivityLogsService {
       }
 
       if (!options?.includeStaffModules && !options?.includeAuth) {
-        q = q.or('module.is.null,module.not.in.(Auth,Employees,Roles)');
+        if (
+          options?.includeStaffModules === undefined &&
+          options?.includeAuth === false
+        ) {
+          q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+        } else {
+          q = q.or('module.is.null,module.not.in.(Auth,Employees,Roles)');
+        }
       }
 
       if (

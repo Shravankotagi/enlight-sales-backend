@@ -42,11 +42,25 @@ export function phoneInList(phone?: string, list?: string[] | null): boolean {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
+  private permissionsService?: PermissionsService;
+  private activityLogs?: ActivityLogsService;
+
   constructor(
     private supabaseService: SupabaseService,
-    @Optional() private permissionsService?: PermissionsService,
-    @Optional() private activityLogs?: ActivityLogsService,
-  ) {}
+    @Optional() permissionsOrLogs?: PermissionsService | ActivityLogsService,
+    @Optional() activityLogs?: ActivityLogsService,
+  ) {
+    if (
+      permissionsOrLogs &&
+      typeof (permissionsOrLogs as any).logActivity === 'function'
+    ) {
+      this.activityLogs = permissionsOrLogs as ActivityLogsService;
+      this.permissionsService = undefined;
+    } else {
+      this.permissionsService = permissionsOrLogs as PermissionsService;
+      this.activityLogs = activityLogs;
+    }
+  }
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
