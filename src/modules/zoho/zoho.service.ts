@@ -559,21 +559,30 @@ export class ZohoService implements OnModuleInit {
       const advanceTimestamp = results.errors.length === 0;
       const finishedAt = new Date().toISOString().replace(/\.\d{3}/, '');
       const description = `Zoho Bigin Customers Sync: Created: ${results.recordsCreated} | Updated: ${results.recordsUpdated} | Skipped (Unassigned): ${results.recordsSkipped} | Errors: ${results.errors.length}`;
-      await this.writeCustomerSyncLog({
-        actionType: advanceTimestamp ? 'sync' : 'sync_failed',
-        description,
-        actorName,
-        actorRole,
-        changeDetail: {
-          run_timestamp: runStartedAt,
-          last_successful_sync_timestamp: advanceTimestamp ? finishedAt : since,
-          records_created: results.recordsCreated,
-          records_updated: results.recordsUpdated,
-          records_skipped: results.recordsSkipped,
-          skipped_accounts: skippedAccounts.slice(0, 50),
-          errors: results.errors.slice(0, 20),
-        },
-      });
+      const hasActivity =
+        results.recordsCreated > 0 ||
+        results.recordsUpdated > 0 ||
+        results.recordsSkipped > 0 ||
+        results.errors.length > 0;
+      if (options?.manual || hasActivity) {
+        await this.writeCustomerSyncLog({
+          actionType: advanceTimestamp ? 'sync' : 'sync_failed',
+          description,
+          actorName,
+          actorRole,
+          changeDetail: {
+            run_timestamp: runStartedAt,
+            last_successful_sync_timestamp: advanceTimestamp
+              ? finishedAt
+              : since,
+            records_created: results.recordsCreated,
+            records_updated: results.recordsUpdated,
+            records_skipped: results.recordsSkipped,
+            skipped_accounts: skippedAccounts.slice(0, 50),
+            errors: results.errors.slice(0, 20),
+          },
+        });
+      }
       if (restoreOverwritten && advanceTimestamp) {
         await this.writeCustomerSyncLog({
           actionType: 'ownership_restore',

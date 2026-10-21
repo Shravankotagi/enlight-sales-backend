@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
+import { mapChatRole } from './chat-role';
 import { CallerContext } from './interfaces/caller-context.interface';
 import { GuardrailsService } from './guardrails/guardrails.service';
 import { PermissionsService } from '../roles/permissions.service';
@@ -84,7 +85,7 @@ export class ChatbotService {
         .eq('is_active', true)
         .limit(1);
 
-      let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
+      let role = 'salesperson';
       let employeeId: string | undefined = user.employee_id;
       let reportsToId: string | undefined;
       let phone: string | undefined =
@@ -101,7 +102,6 @@ export class ChatbotService {
         phone = emp.phone || phone;
         name = emp.name || name;
 
-        const rawRole = (emp.role || '').toLowerCase();
         let permissions: Record<string, boolean> | undefined;
         let dataScope: 'own' | 'team' | 'all' | undefined;
         if (this.permissionsService && emp.id) {
@@ -110,12 +110,18 @@ export class ChatbotService {
             if (resolved) {
               permissions = resolved.permissions;
               dataScope = resolved.dataScope;
-              role =
-                resolved.dataScope === 'all'
-                  ? 'admin'
-                  : resolved.dataScope === 'team'
-                    ? 'manager'
-                    : 'salesperson';
+              if (
+                resolved.role === 'procurement_person' ||
+                resolved.role === 'procurement_manager'
+              ) {
+                role = resolved.role;
+              } else if (resolved.dataScope === 'all') {
+                role = 'admin';
+              } else if (resolved.dataScope === 'team') {
+                role = 'manager';
+              } else {
+                role = 'salesperson';
+              }
             }
           } catch (err: any) {
             this.logger.warn(
@@ -124,21 +130,14 @@ export class ChatbotService {
           }
         }
         if (!dataScope) {
-          if (rawRole === 'admin') role = 'admin';
-          else if (rawRole === 'sales_manager' || rawRole === 'manager')
-            role = 'manager';
-          else role = 'salesperson';
+          role = mapChatRole(emp.role);
         }
         (emp as any).__permissions = permissions;
         (emp as any).__dataScope = dataScope;
       } else if (user.role) {
-        const rawUserRole = (user.role || '').toLowerCase();
-        if (rawUserRole.includes('admin')) role = 'admin';
-        else if (rawUserRole.includes('manager')) role = 'manager';
+        role = mapChatRole(user.role);
       } else if (user.user_metadata?.role) {
-        const metaRole = (user.user_metadata.role || '').toLowerCase();
-        if (metaRole.includes('admin')) role = 'admin';
-        else if (metaRole.includes('manager')) role = 'manager';
+        role = mapChatRole(user.user_metadata.role);
       }
 
       const empRecord = employee && employee.length > 0 ? employee[0] : null;

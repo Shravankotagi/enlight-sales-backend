@@ -16,9 +16,21 @@ describe('isProcurementRequestAllowed', () => {
     );
   });
 
-  it('denies lookalike paths, chat, deals, and non-GET catalog routes', () => {
+  it('allows the assistant message and session routes', () => {
+    expect(isProcurementRequestAllowed('POST', '/chat/message')).toBe(true);
+    expect(isProcurementRequestAllowed('GET', '/chat/sessions')).toBe(true);
+    expect(isProcurementRequestAllowed('POST', '/chat/sessions')).toBe(true);
+    expect(
+      isProcurementRequestAllowed('GET', '/chat/sessions/abc/messages'),
+    ).toBe(true);
+  });
+
+  it('denies lookalike paths, the knowledge base, deals, and non-GET catalog routes', () => {
     expect(isProcurementRequestAllowed('GET', '/inquiries-x')).toBe(false);
-    expect(isProcurementRequestAllowed('POST', '/chat/message')).toBe(false);
+    expect(isProcurementRequestAllowed('GET', '/chat/kb/documents')).toBe(
+      false,
+    );
+    expect(isProcurementRequestAllowed('POST', '/chat/kb/upload')).toBe(false);
     expect(isProcurementRequestAllowed('GET', '/deals')).toBe(false);
     expect(isProcurementRequestAllowed('POST', '/products')).toBe(false);
   });

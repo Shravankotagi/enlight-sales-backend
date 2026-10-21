@@ -12,12 +12,106 @@ import axios from 'axios';
 
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
-import { phoneInList } from '../employees/employees.service';
+import { normalizePhone, phoneInList } from '../employees/employees.service';
 import { isProcurementRole } from '../../common/utils/roles';
+import {
+  anonymizeInquiry,
+  nextProcurementNumber,
+  preserveHistoricalPricingStatus,
+} from './inquiry-pricing.util';
 import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 
 const QUOTATION_FROM_EMAIL = 'quotes@enlightmetals.com';
+const QUOTATION_SUBJECT_PREFIX = 'Enlight Metals- ';
+
+export function inquiryStageLabel(stageOrStatus?: string | null): string {
+  const s = String(stageOrStatus || '')
+    .toLowerCase()
+    .trim();
+  if (!s) return '';
+  if (
+    [
+      'quoted',
+      'quotation_sent',
+      'qualified',
+      'saved',
+      'confirmed',
+      'processed',
+      'price quote',
+    ].includes(s)
+  ) {
+    return 'Price Quote';
+  }
+  if (s.includes('negot')) return 'Negotiation';
+  if (s === 'on_hold' || s === 'hold' || s === 'on hold') return 'On Hold';
+  if (s === 'won' || s === 'closed won') return 'Closed Won';
+  if (s === 'lost' || s === 'closed lost') return 'Closed Lost';
+  if (
+    [
+      'new_inquiry',
+      'new',
+      'review',
+      'needs_review',
+      'pending',
+      'received',
+      'new inquiry',
+    ].includes(s)
+  ) {
+    return 'New Inquiry';
+  }
+  return '';
+}
+
+export function inquiryStageLog(
+  inquiryId: string,
+  company: string,
+  stageOrStatus?: string | null,
+): string {
+  const hexId = String(inquiryId || '')
+    .replace(/-/g, '')
+    .slice(0, 6)
+    .toUpperCase();
+  const label = inquiryStageLabel(stageOrStatus);
+  return `Inquiry INQ-${hexId} details updated for ${company || 'Customer'}${label ? ` (Stage: ${label})` : ''}`;
+}
+
+function quotationEmailText(customerName: string): string {
+  const name = String(customerName || 'VALUED CUSTOMER')
+    .trim()
+    .toUpperCase();
+  return `Dear ${name},
+
+Greetings from the ENLIGHT METALS PVT LTD.
+
+Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
+
+Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
+
+We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
+
+Thank you once again for considering ENLIGHT METALS PVT LTD.
+
+Regards,
+ENLIGHT METALS PVT LTD.`;
+}
+
+function quotationEmailHtml(text: string): string {
+  const body = text
+    .split(/\n{2,}/)
+    .map(
+      (paragraph) =>
+        `<p style="margin:0 0 16px;line-height:1.55;">${paragraph
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>')}</p>`,
+    )
+    .join('');
+  const logo =
+    '<p style="margin:0 0 16px;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>';
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2128;">${body}${logo}</div>`;
+}
 
 function getCompanyLogoBuffer(): Buffer | null {
   const possiblePaths = [
@@ -664,11 +758,18 @@ export type ProcurementScope = {
   ids: string[];
   includeUnassignedPool: boolean;
   unrestricted?: boolean;
+  salespersonPhones?: string[];
+  salespersonEmployeeIds?: string[];
 };
 
 /** In-memory scope. Empty ids match nothing and never throw. */
 export function matchesProcurementScope(
-  item: { procurement_employee_id?: string | null; status?: string | null },
+  item: {
+    procurement_employee_id?: string | null;
+    status?: string | null;
+    salesperson_phone?: string | null;
+    employee_id?: string | null;
+  },
   scope?: ProcurementScope | null,
 ): boolean {
   if (!scope) return false;
@@ -679,12 +780,21 @@ export function matchesProcurementScope(
   ) {
     return true;
   }
+  if (item?.procurement_employee_id) return false;
   const status = String(item?.status || '').toLowerCase();
-  return Boolean(
+  if (
     scope.includeUnassignedPool &&
-    !item?.procurement_employee_id &&
-    PROCUREMENT_OPEN_STATUSES.includes(status),
-  );
+    PROCUREMENT_OPEN_STATUSES.includes(status)
+  ) {
+    return true;
+  }
+  const phones = scope.salespersonPhones || [];
+  const employeeIds = scope.salespersonEmployeeIds || [];
+  if (item?.employee_id && employeeIds.includes(item.employee_id)) {
+    return true;
+  }
+  const phone = normalizePhone(item?.salesperson_phone || '');
+  return Boolean(phone && phones.includes(phone));
 }
 
 @Injectable()
@@ -790,30 +900,48 @@ export class InquiriesService implements OnModuleInit {
         return [];
       }
 
-      let query = this.supabase
-        .from('inquiries')
-        .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason, procurement_employee_id, procurement_assigned_at',
-        )
-        .order('created_at', { ascending: false });
-
-      if (filters?.from) {
-        const fromDate = filters.from.includes('T')
-          ? filters.from
-          : `${filters.from}T00:00:00.000Z`;
-        query = query.gte('created_at', fromDate);
-      }
-      if (filters?.to) {
-        const toDate = filters.to.includes('T')
-          ? filters.to
-          : `${filters.to}T23:59:59.999Z`;
-        query = query.lte('created_at', toDate);
-      }
+      const inquiryColumns =
+        'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, employee_id, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason, procurement_employee_id, procurement_assigned_at';
+      const applyDateRange = (source: any, columns: string) => {
+        let next = source
+          .from('inquiries')
+          .select(columns)
+          .order('created_at', { ascending: false });
+        if (filters?.from) {
+          const fromDate = filters.from.includes('T')
+            ? filters.from
+            : `${filters.from}T00:00:00.000Z`;
+          next = next.gte('created_at', fromDate);
+        }
+        if (filters?.to) {
+          const toDate = filters.to.includes('T')
+            ? filters.to
+            : `${filters.to}T23:59:59.999Z`;
+          next = next.lte('created_at', toDate);
+        }
+        return next;
+      };
 
       // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
       // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
-      const { data, error } = await query;
+      let { data, error } = await applyDateRange(
+        this.supabase,
+        `${inquiryColumns}, pricing_status, procurement_note, decline_sent_at, procurement_number`,
+      );
+      if (
+        error &&
+        /pricing_status|procurement_note|decline_sent_at|procurement_number/i.test(
+          error.message || '',
+        )
+      ) {
+        this.logger.warn(
+          'Inquiry pricing columns are not available yet; listing inquiries without them.',
+        );
+        const fallback = await applyDateRange(this.supabase, inquiryColumns);
+        data = fallback.data;
+        error = fallback.error;
+      }
       if (error) throw error;
 
       // Extract inquiry IDs to scope the deals query efficiently
@@ -965,7 +1093,12 @@ export class InquiriesService implements OnModuleInit {
         return String(b.id || '').localeCompare(String(a.id || ''));
       });
 
-      return scopedData;
+      const preserved = scopedData.map((item: any) =>
+        preserveHistoricalPricingStatus(item),
+      );
+      return filters?.procurementScope
+        ? preserved.map((item: any) => anonymizeInquiry(item))
+        : preserved;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
@@ -1057,13 +1190,17 @@ export class InquiriesService implements OnModuleInit {
             cleanAiJson.paymentTerms = entities.payment_terms;
           }
         }
-        return {
+        const result = preserveHistoricalPricingStatus({
           ...data,
           ...entities,
           ai_extraction_json: cleanAiJson,
-        };
+        });
+        return procurementScope ? anonymizeInquiry(result) : result;
       }
-      return data;
+      const preserved = data ? preserveHistoricalPricingStatus(data) : data;
+      return procurementScope && preserved
+        ? anonymizeInquiry(preserved)
+        : preserved;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
@@ -1425,37 +1562,35 @@ export class InquiriesService implements OnModuleInit {
         .single();
       if (error) throw error;
 
+      let pipelineStage: string | undefined;
+      if (status === 'quoted' || status === 'quotation_sent') {
+        pipelineStage = 'quoted';
+      } else if (
+        status === 'confirmed' ||
+        status === 'saved' ||
+        status === 'processed'
+      ) {
+        pipelineStage = 'qualified';
+      } else if (
+        status === 'review' ||
+        status === 'needs_review' ||
+        status === 'pending'
+      ) {
+        pipelineStage = 'new_inquiry';
+      } else if (status === 'lost') {
+        pipelineStage = 'lost';
+      } else if (status === 'won') {
+        pipelineStage = 'won';
+      } else if (status === 'negotiation') {
+        pipelineStage = 'negotiation';
+      } else if (status === 'on_hold' || status === 'hold') {
+        pipelineStage = 'on_hold';
+      } else {
+        pipelineStage = details?.stage || undefined;
+      }
       // Procurement edits stay on the inquiry. They must not create or move a deal.
       if (!procurementScope) {
-        if (status === 'quoted' || status === 'quotation_sent') {
-          await this.syncInquiryToDeal(id, 'quoted', details);
-        } else if (
-          status === 'confirmed' ||
-          status === 'saved' ||
-          status === 'processed'
-        ) {
-          await this.syncInquiryToDeal(id, 'qualified', details);
-        } else if (
-          status === 'review' ||
-          status === 'needs_review' ||
-          status === 'pending'
-        ) {
-          await this.syncInquiryToDeal(id, 'new_inquiry', details);
-        } else if (status === 'lost') {
-          await this.syncInquiryToDeal(id, 'lost', details);
-        } else if (status === 'won') {
-          await this.syncInquiryToDeal(id, 'won', details);
-        } else if (status === 'negotiation') {
-          await this.syncInquiryToDeal(id, 'negotiation', details);
-        } else if (status === 'on_hold' || status === 'hold') {
-          await this.syncInquiryToDeal(id, 'on_hold', details);
-        } else {
-          await this.syncInquiryToDeal(
-            id,
-            details?.stage || undefined,
-            details,
-          );
-        }
+        await this.syncInquiryToDeal(id, pipelineStage, details, true);
       }
 
       // Non-blocking activity log
@@ -1470,7 +1605,7 @@ export class InquiriesService implements OnModuleInit {
           salesperson_name:
             (data as any)?.assigned_salesperson_name || 'Sales Team',
           salesperson_phone: (data as any)?.salesperson_phone || null,
-          description: `Inquiry status for ${custName} updated to ${status}`,
+          description: inquiryStageLog(id, custName, pipelineStage || status),
           module: 'Inquiries',
           customer_name: custName,
         });
@@ -1684,6 +1819,29 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  private async lookupProcurementOwner(
+    salespersonPhone?: string | null,
+  ): Promise<string | null> {
+    const target = String(salespersonPhone || '')
+      .replace(/\D/g, '')
+      .slice(-10);
+    if (target.length !== 10) return null;
+    const { data, error } = await this.supabase.from('employees').select('*');
+    if (error) return null;
+    const match = (data || []).find((emp: any) => {
+      const phone = String(emp?.phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      return (
+        phone === target &&
+        emp?.role === 'salesperson' &&
+        emp?.is_active !== false &&
+        emp?.assigned_procurement_employee_id
+      );
+    });
+    return match?.assigned_procurement_employee_id || null;
+  }
+
   async createInquiry(data: any, salespersonPhone?: string) {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -1743,6 +1901,19 @@ export class InquiriesService implements OnModuleInit {
             if (aiExtractionJson.customer)
               aiExtractionJson.customer.phone = ext.customer_phone;
           }
+          const extractedEmail = String(
+            ext.customer_email || ext.customerEmail || '',
+          ).trim();
+          if (
+            extractedEmail &&
+            !aiExtractionJson.customer_email &&
+            !aiExtractionJson.customerEmail
+          ) {
+            aiExtractionJson.customer_email = extractedEmail;
+            aiExtractionJson.customerEmail = extractedEmail;
+            if (aiExtractionJson.customer)
+              aiExtractionJson.customer.email = extractedEmail;
+          }
           if (ext.delivery_location) {
             aiExtractionJson.delivery_location = ext.delivery_location;
             aiExtractionJson.deliveryLocation = ext.delivery_location;
@@ -1792,6 +1963,29 @@ export class InquiriesService implements OnModuleInit {
       }
     }
 
+    let procurementEmployeeId: string | null = null;
+    try {
+      procurementEmployeeId = await this.lookupProcurementOwner(
+        effectiveSalespersonPhone,
+      );
+    } catch (routeErr: any) {
+      this.logger.warn('Procurement route lookup warning:', routeErr?.message);
+    }
+    let procurementNumber = nextProcurementNumber([]);
+    try {
+      const { data: existingNumbers, error: numberErr } = await this.supabase
+        .from('inquiries')
+        .select('procurement_number');
+      if (!numberErr) {
+        procurementNumber = nextProcurementNumber(existingNumbers || []);
+      }
+    } catch (numberErr: any) {
+      this.logger.warn(
+        'Procurement number lookup warning:',
+        numberErr?.message,
+      );
+    }
+
     const payload: any = {
       source_channel: data.source_channel || 'web_dashboard',
       raw_text: rawText,
@@ -1804,13 +1998,30 @@ export class InquiriesService implements OnModuleInit {
       ai_extraction_json: aiExtractionJson,
       overall_confidence: Number(data.overall_confidence) || 0.95,
       created_at: nowIso,
+      pricing_status: 'awaiting_price',
+      procurement_number: procurementNumber,
     };
+    if (procurementEmployeeId) {
+      payload.procurement_employee_id = procurementEmployeeId;
+      payload.procurement_assigned_at = nowIso;
+    }
 
-    const { data: created, error } = await this.supabase
+    let { data: created, error } = await this.supabase
       .from('inquiries')
       .insert(payload)
       .select()
       .single();
+
+    if (error && /procurement_number/i.test(error.message || '')) {
+      delete payload.procurement_number;
+      const retry = await this.supabase
+        .from('inquiries')
+        .insert(payload)
+        .select()
+        .single();
+      created = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       this.logger.error('Error inserting inquiry into Supabase:', error);
@@ -1896,6 +2107,7 @@ export class InquiriesService implements OnModuleInit {
     inquiryId: string,
     stage?: string,
     overrideDetails?: any,
+    skipActivityLog = false,
   ) {
     try {
       // 1. Fetch latest inquiry data
@@ -2266,21 +2478,24 @@ export class InquiriesService implements OnModuleInit {
           .catch(() => {});
       }
 
-      // Non-blocking activity log
-      try {
-        const custName = customerName || 'Customer';
-        const hexId = inquiryId.replace(/-/g, '').slice(0, 6).toUpperCase();
-        this.activityLogsService.logActivity({
-          salesperson_phone: salespersonPhone || null,
-          description: `Inquiry INQ-${hexId} details updated for ${custName}${stage ? ` (Stage: ${stage})` : ''}`,
-          module: 'Inquiries',
-          customer_name: custName,
-          entity_id: inquiryId,
-          entity_type: 'inquiry',
-          action_type: 'inquiry_updated',
-        });
-      } catch (actErr: any) {
-        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      if (!skipActivityLog) {
+        try {
+          const custName = customerName || 'Customer';
+          this.activityLogsService.logActivity({
+            salesperson_phone: salespersonPhone || null,
+            description: inquiryStageLog(inquiryId, custName, stage),
+            module: 'Inquiries',
+            customer_name: custName,
+            entity_id: inquiryId,
+            entity_type: 'inquiry',
+            action_type: 'inquiry_updated',
+          });
+        } catch (actErr: any) {
+          this.logger.warn(
+            'Non-blocking activity log notice:',
+            actErr?.message,
+          );
+        }
       }
 
       this.logger.log(
@@ -2476,20 +2691,12 @@ Warm regards,
 Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`
-      : `Dear ${customerName},
-
-Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
-
-Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
-
-We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
-
-Thank you once again for considering us.`;
+      : quotationEmailText(customerName);
 
     return {
       subject: isOrderDoc
         ? `Purchase Order ${referenceNumber} - ${customerName} | Enlight Metals`
-        : `Official Commercial Quotation ${referenceNumber} - ${customerName}`,
+        : `${QUOTATION_SUBJECT_PREFIX}Quotation for ${customerName}`,
       text,
       referenceNumber,
       customerName,
@@ -2504,10 +2711,9 @@ Thank you once again for considering us.`;
     requestedCc?: unknown,
   ): string[] {
     const normalizedCustomerEmail = customerEmail.trim().toLowerCase();
+    const fixedCc = ['dj@enlightmetals.com', 'vedant@enlightmetals.com'];
     const recipients =
-      requestedCc === undefined
-        ? [senderEmail, 'dj@enlightmetals.com', 'vedant@enlightmetals.com']
-        : requestedCc;
+      requestedCc === undefined ? [senderEmail, ...fixedCc] : requestedCc;
 
     if (
       !Array.isArray(recipients) ||
@@ -2527,12 +2733,13 @@ Thank you once again for considering us.`;
       );
     }
 
+    const withFixed = [
+      ...normalizedRecipients,
+      ...fixedCc.filter((email) => !normalizedRecipients.includes(email)),
+    ];
+
     return Array.from(
-      new Set(
-        normalizedRecipients.filter(
-          (email) => email !== normalizedCustomerEmail,
-        ),
-      ),
+      new Set(withFixed.filter((email) => email !== normalizedCustomerEmail)),
     );
   }
 
@@ -2601,6 +2808,41 @@ Thank you once again for considering us.`;
         .eq('id', id)
         .single();
       inquiry = inqData;
+      if (inquiry && payload) {
+        try {
+          const { data: storedLines } = await this.supabase
+            .from('inquiry_line_pricing')
+            .select('*')
+            .eq('inquiry_id', inquiry.id);
+          const available = (storedLines || []).filter(
+            (line: any) =>
+              line.line_status !== 'cannot_price' &&
+              Number(line.rate_per_mt) > 0,
+          );
+          if (available.length) {
+            const details = { ...(payload.details || {}) };
+            details.lineItems = available.map((line: any) => ({
+              line_key: line.line_key,
+              sku_text: line.sku_text,
+              quantity: line.quantity,
+              unit: line.unit,
+              rate: Number(line.rate_per_mt),
+              amount: Number(line.taxable_amount || 0),
+            }));
+            details.totalAmount = available.reduce(
+              (sum: number, line: any) =>
+                sum + Number(line.taxable_amount || 0),
+              0,
+            );
+            payload = { ...payload, details };
+          }
+        } catch (pricingErr: any) {
+          this.logger.warn(
+            'Stored pricing overlay skipped:',
+            pricingErr?.message,
+          );
+        }
+      }
 
       if (!inquiry) {
         const { data: dealData } = await this.supabase
@@ -2791,15 +3033,7 @@ Sales Operations Team
 Enlight Metals Private Limited
 MIDC Industrial Zone, Mumbai - 400001`;
 
-          const quotationTextContent = `Dear ${customerName},
-
-Thank you for your enquiry and for giving us the opportunity to quote for your requirements.
-
-Please find attached our detailed quotation for the materials as requested. The quotation includes unit prices, applicable taxes & duties, payment terms, validity of the offer, delivery details, and other commercial conditions.
-
-We kindly request you to review the quotation carefully. If you have any issues kindly connect with us. We look forward to your confirmation and remain available to discuss any points at your convenience.
-
-Thank you once again for considering us.`;
+          const quotationTextContent = quotationEmailText(customerName);
 
           const textContent =
             String(payload.email_body || '').trim() ||
@@ -2833,7 +3067,11 @@ Thank you once again for considering us.`;
             lineItems: lineItemsList,
           };
 
-          const attachments: Array<{ filename: string; content: string }> = [];
+          const attachments: Array<{
+            filename: string;
+            content: string;
+            content_id?: string;
+          }> = [];
           const sanitizedRef = qRefNum.replace(/[/\\?%*:|"<>]/g, '_');
 
           if (isOrderDoc) {
@@ -2929,8 +3167,31 @@ Thank you once again for considering us.`;
 
           const fromAddress = `Enlight Metals <${fromEmail}>`;
 
-          const docSubject =
+          let docSubject =
             String(payload.email_subject || '').trim() || emailContent.subject;
+          if (!isOrderDoc && !docSubject.startsWith(QUOTATION_SUBJECT_PREFIX)) {
+            docSubject = `${QUOTATION_SUBJECT_PREFIX}${docSubject}`;
+          }
+
+          const emailPayload: Record<string, unknown> = {
+            from: fromAddress,
+            to: [customerEmail],
+            cc: this.buildQuotationCc(employeeEmail, customerEmail, payload.cc),
+            subject: docSubject,
+            text: textContent,
+            attachments,
+          };
+          if (!isOrderDoc) {
+            emailPayload.html = quotationEmailHtml(textContent);
+            const logo = getCompanyLogoBuffer();
+            if (logo) {
+              attachments.push({
+                filename: 'enlight-logo.png',
+                content: logo.toString('base64'),
+                content_id: 'enlight-logo',
+              });
+            }
+          }
 
           const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -2938,18 +3199,7 @@ Thank you once again for considering us.`;
               Authorization: `Bearer ${resendApiKey}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              from: fromAddress,
-              to: [customerEmail],
-              cc: this.buildQuotationCc(
-                employeeEmail,
-                customerEmail,
-                payload.cc,
-              ),
-              subject: docSubject,
-              text: textContent,
-              attachments,
-            }),
+            body: JSON.stringify(emailPayload),
           });
 
           const resendData = await resendRes.json();
@@ -3561,6 +3811,7 @@ Return ONLY the JSON.`;
   "customer_name": "Company or customer name e.g. BuildCorp Engineering",
   "contact_person": "Contact person name if mentioned e.g. Rajesh",
   "customer_phone": "Phone number if present else null",
+  "customer_email": "Customer email address if present else null",
   "delivery_location": "Full detailed delivery address / location exactly as stated in inquiry (e.g. Plot No 42, MIDC Industrial Area, Khopoli, Raigad, Maharashtra 410203 or Chakan Industrial Area, Pune)",
   "preferred_make": "Preferred make / brand e.g. JSW, AM/NS, Tata, SAIL, JSPL if mentioned else null",
   "payment_terms": "Payment terms e.g. 30 Days Credit, 100% Advance, 45 Days Credit if mentioned else null",
@@ -4100,7 +4351,7 @@ ${rawText}`;
           });
           doc.text('Qty', 342, headerY + 7.5, {
             width: 68,
-            align: 'right',
+            align: 'center',
             lineBreak: false,
           });
           doc.text('Rate', 412, headerY + 7.5, {
@@ -4109,7 +4360,7 @@ ${rawText}`;
             lineBreak: false,
           });
           doc.text('Amount', 479, headerY + 7.5, {
-            width: 76.28,
+            width: 68.28,
             align: 'right',
             lineBreak: false,
           });
@@ -4186,7 +4437,7 @@ ${rawText}`;
             .fontSize(8.5)
             .text(item.qty_mt_label, 342, rowY + 9, {
               width: 68,
-              align: 'right',
+              align: 'center',
               lineBreak: false,
             });
 
@@ -4207,7 +4458,7 @@ ${rawText}`;
             .font(fontRegular)
             .fontSize(8.5)
             .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
-              width: 76.28,
+              width: 68.28,
               align: 'right',
               lineBreak: false,
             });

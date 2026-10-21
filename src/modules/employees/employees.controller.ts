@@ -88,14 +88,14 @@ export class EmployeesController {
     ) {
       throw new ForbiddenException('You cannot change your own role.');
     }
-    return this.employeesService.update(id, body);
+    return this.employeesService.update(id, body, employee);
   }
 
   // PATCH /employees/:id/deactivate - deactivate employee (admin only)
   @Patch(':id/deactivate')
   async deactivate(@CurrentEmployee() employee: any, @Param('id') id: string) {
     assertPermission(employee, 'staff.manage');
-    return this.employeesService.deactivate(id);
+    return this.employeesService.deactivate(id, employee);
   }
 
   // DELETE /employees/:id - completely delete employee and associated records (admin only)

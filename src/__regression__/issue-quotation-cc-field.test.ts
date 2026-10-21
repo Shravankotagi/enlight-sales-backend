@@ -30,7 +30,11 @@ describe('quotation CC field regression', () => {
         'customer@example.com',
         ['Team@Example.com', 'team@example.com', 'CUSTOMER@example.com'],
       ),
-    ).toEqual(['team@example.com']);
+    ).toEqual([
+      'team@example.com',
+      'dj@enlightmetals.com',
+      'vedant@enlightmetals.com',
+    ]);
   });
 
   it('rejects invalid CC addresses before sending', () => {

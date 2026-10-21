@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { isProcurementRole } from '../utils/roles';
 import { PermissionsService } from '../../modules/roles/permissions.service';
 import { JWT_SIGNING_SECRET } from '../auth/jwt-secret';
@@ -27,6 +28,12 @@ export function isProcurementRequestAllowed(
     cleanPath === prefix || cleanPath.startsWith(`${prefix}/`);
 
   if (under('/inquiries')) return true;
+  if (
+    (under('/chat/message') || under('/chat/sessions')) &&
+    (verb === 'GET' || verb === 'POST')
+  ) {
+    return true;
+  }
   if (verb !== 'GET') return false;
   return under('/products') || under('/pricing') || cleanPath === '/employees';
 }
@@ -36,6 +43,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private jwtService: JwtService,
     @Optional() private permissions?: PermissionsService,
+    @Optional() private supabaseService?: SupabaseService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -76,17 +84,38 @@ export class JwtAuthGuard implements CanActivate {
       const payload = this.jwtService.verify(token, {
         secret: JWT_SIGNING_SECRET,
       });
+
       if (this.permissions) {
         const resolved = await this.permissions.resolveFromToken(payload);
         if (resolved && !resolved.isActive) {
-          throw new UnauthorizedException('Invalid or expired token');
+          throw new UnauthorizedException(
+            'Your account has been deactivated. Please contact your admin.',
+          );
         }
         request.employee = resolved
           ? { ...payload, ...resolved, role: resolved.role }
           : payload;
       } else {
         request.employee = payload;
+        if (this.supabaseService && payload?.id) {
+          const { data: emp, error } = await this.supabaseService
+            .getAdminClient()
+            .from('employees')
+            .select('is_active')
+            .eq('id', payload.id)
+            .maybeSingle();
+
+          if (error || !emp) {
+            throw new UnauthorizedException('Employee record not found');
+          }
+          if (emp.is_active === false) {
+            throw new UnauthorizedException(
+              'Your account has been deactivated. Please contact your admin.',
+            );
+          }
+        }
       }
+
       if (
         isProcurementRole(request.employee?.role) &&
         !isProcurementRequestAllowed(
@@ -98,6 +127,7 @@ export class JwtAuthGuard implements CanActivate {
           'Access Denied: Procurement roles can only use Inquiries.',
         );
       }
+
       return true;
     } catch (err: any) {
       console.error('[JwtAuthGuard Error]:', err?.name, err?.message);
