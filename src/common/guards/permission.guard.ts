@@ -9,6 +9,8 @@ import { PERMISSION_KEY } from '../decorators/require-permission.decorator';
 
 export function hasPermission(employee: any, key: string): boolean {
   if (employee?.isInternal) return true;
+  if (employee?.role === 'admin' || employee?.role === 'super_admin')
+    return true;
   return employee?.permissions?.[key] === true;
 }
 
@@ -32,6 +34,8 @@ export class PermissionGuard implements CanActivate {
     if (!keys?.length) return true;
     const employee = context.switchToHttp().getRequest()?.employee;
     if (employee?.isInternal) return true;
+    if (employee?.role === 'admin' || employee?.role === 'super_admin')
+      return true;
     if (keys.some((key) => employee?.permissions?.[key] === true)) return true;
     throw new ForbiddenException(
       'Access Denied: you do not have permission for this action.',

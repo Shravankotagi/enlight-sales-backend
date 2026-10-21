@@ -162,9 +162,10 @@ export function isKnownPermissionKey(key: string): boolean {
 export function mergePermissions(
   rolePerms?: Record<string, boolean> | null,
   overrides?: Record<string, boolean> | null,
+  baseTemplate?: Record<string, boolean>,
 ): Record<string, boolean> {
   const merged: Record<string, boolean> = {
-    ...BUILTIN_ROLE_TEMPLATES.salesperson,
+    ...(baseTemplate || BUILTIN_ROLE_TEMPLATES.salesperson),
   };
   if (rolePerms && typeof rolePerms === 'object') {
     for (const [key, value] of Object.entries(rolePerms)) {

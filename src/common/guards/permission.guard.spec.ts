@@ -29,4 +29,13 @@ describe('PermissionGuard', () => {
   it('allows a user who has the key', () => {
     expect(activate({ permissions: { 'visits.delete': true } })).toBe(true);
   });
+
+  it('allows an admin without explicit permission keys', () => {
+    expect(activate({ role: 'admin' })).toBe(true);
+    expect(hasPermission({ role: 'admin' }, 'visits.delete')).toBe(true);
+    expect(activate({ role: 'super_admin' })).toBe(true);
+    expect(hasPermission({ role: 'super_admin' }, 'staff.manage_acl')).toBe(
+      true,
+    );
+  });
 });

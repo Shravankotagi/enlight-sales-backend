@@ -13,6 +13,7 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { isProcurementRole } from '../utils/roles';
 import { PermissionsService } from '../../modules/roles/permissions.service';
 import { JWT_SIGNING_SECRET } from '../auth/jwt-secret';
+import { BUILTIN_ROLE_TEMPLATES } from '../acl/permissionKeys';
 
 /** Procurement tokens may only hit these routes. Segment match, so /inquiries-x is denied. */
 export function isProcurementRequestAllowed(
@@ -45,17 +46,18 @@ export class JwtAuthGuard implements CanActivate {
 
   constructor(
     private jwtService: JwtService,
-    @Optional() permissionsOrSupabase?: PermissionsService | SupabaseService,
+    @Optional() permissions?: PermissionsService,
     @Optional() supabaseService?: SupabaseService,
   ) {
     if (
-      permissionsOrSupabase &&
-      typeof (permissionsOrSupabase as any).getAdminClient === 'function'
+      permissions &&
+      typeof (permissions as any).getAdminClient === 'function' &&
+      !supabaseService
     ) {
-      this.supabaseService = permissionsOrSupabase as SupabaseService;
+      this.supabaseService = permissions as unknown as SupabaseService;
       this.permissions = undefined;
     } else {
-      this.permissions = permissionsOrSupabase as PermissionsService;
+      this.permissions = permissions;
       this.supabaseService = supabaseService;
     }
   }
@@ -110,7 +112,13 @@ export class JwtAuthGuard implements CanActivate {
           ? { ...payload, ...resolved, role: resolved.role }
           : payload;
       } else {
-        request.employee = payload;
+        const fallbackPermissions =
+          BUILTIN_ROLE_TEMPLATES[payload?.role] ||
+          BUILTIN_ROLE_TEMPLATES.salesperson;
+        request.employee = {
+          ...payload,
+          permissions: fallbackPermissions,
+        };
         if (this.supabaseService && payload?.id) {
           const { data: emp, error } = await this.supabaseService
             .getAdminClient()
