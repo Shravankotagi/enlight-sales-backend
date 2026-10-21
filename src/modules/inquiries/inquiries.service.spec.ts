@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { InquiriesService } from './inquiries.service';
+import { InquiriesService, inquiryStageLog } from './inquiries.service';
 
 describe('InquiriesService quotation email', () => {
   const createService = (employeeLookup: any = { data: null }) => {
@@ -92,5 +92,55 @@ describe('InquiriesService quotation email', () => {
         employee_id: 'EMP-1',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('inquiry stage activity text', () => {
+  it('uses the pipeline name in one sentence', () => {
+    expect(
+      inquiryStageLog(
+        '175b9d00-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'qualified',
+      ),
+    ).toBe(
+      'Inquiry INQ-175B9D details updated for HERO Industries (Stage: Price Quote)',
+    );
+    expect(
+      inquiryStageLog(
+        '175b9d00-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'confirmed',
+      ),
+    ).toBe(
+      'Inquiry INQ-175B9D details updated for HERO Industries (Stage: Price Quote)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'won',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: Closed Won)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'lost',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: Closed Lost)',
+    );
+    expect(
+      inquiryStageLog(
+        'aabbccdd-0000-0000-0000-000000000000',
+        'HERO Industries',
+        'new_inquiry',
+      ),
+    ).toBe(
+      'Inquiry INQ-AABBCC details updated for HERO Industries (Stage: New Inquiry)',
+    );
   });
 });

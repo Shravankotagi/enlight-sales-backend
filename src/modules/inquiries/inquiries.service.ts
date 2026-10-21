@@ -19,6 +19,57 @@ import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
 const QUOTATION_FROM_EMAIL = 'quotes@enlightmetals.com';
 const QUOTATION_SUBJECT_PREFIX = 'Enlight Metals- ';
 
+export function inquiryStageLabel(stageOrStatus?: string | null): string {
+  const s = String(stageOrStatus || '')
+    .toLowerCase()
+    .trim();
+  if (!s) return '';
+  if (
+    [
+      'quoted',
+      'quotation_sent',
+      'qualified',
+      'saved',
+      'confirmed',
+      'processed',
+      'price quote',
+    ].includes(s)
+  ) {
+    return 'Price Quote';
+  }
+  if (s.includes('negot')) return 'Negotiation';
+  if (s === 'on_hold' || s === 'hold' || s === 'on hold') return 'On Hold';
+  if (s === 'won' || s === 'closed won') return 'Closed Won';
+  if (s === 'lost' || s === 'closed lost') return 'Closed Lost';
+  if (
+    [
+      'new_inquiry',
+      'new',
+      'review',
+      'needs_review',
+      'pending',
+      'received',
+      'new inquiry',
+    ].includes(s)
+  ) {
+    return 'New Inquiry';
+  }
+  return '';
+}
+
+export function inquiryStageLog(
+  inquiryId: string,
+  company: string,
+  stageOrStatus?: string | null,
+): string {
+  const hexId = String(inquiryId || '')
+    .replace(/-/g, '')
+    .slice(0, 6)
+    .toUpperCase();
+  const label = inquiryStageLabel(stageOrStatus);
+  return `Inquiry INQ-${hexId} details updated for ${company || 'Customer'}${label ? ` (Stage: ${label})` : ''}`;
+}
+
 function quotationEmailText(customerName: string): string {
   const name = String(customerName || 'VALUED CUSTOMER')
     .trim()
@@ -1368,32 +1419,33 @@ export class InquiriesService implements OnModuleInit {
         .single();
       if (error) throw error;
 
-      // Automatically sync to pipeline / deals with strict status-to-stage mapping
+      let pipelineStage: string | undefined;
       if (status === 'quoted' || status === 'quotation_sent') {
-        await this.syncInquiryToDeal(id, 'quoted', details);
+        pipelineStage = 'quoted';
       } else if (
         status === 'confirmed' ||
         status === 'saved' ||
         status === 'processed'
       ) {
-        await this.syncInquiryToDeal(id, 'qualified', details);
+        pipelineStage = 'qualified';
       } else if (
         status === 'review' ||
         status === 'needs_review' ||
         status === 'pending'
       ) {
-        await this.syncInquiryToDeal(id, 'new_inquiry', details);
+        pipelineStage = 'new_inquiry';
       } else if (status === 'lost') {
-        await this.syncInquiryToDeal(id, 'lost', details);
+        pipelineStage = 'lost';
       } else if (status === 'won') {
-        await this.syncInquiryToDeal(id, 'won', details);
+        pipelineStage = 'won';
       } else if (status === 'negotiation') {
-        await this.syncInquiryToDeal(id, 'negotiation', details);
+        pipelineStage = 'negotiation';
       } else if (status === 'on_hold' || status === 'hold') {
-        await this.syncInquiryToDeal(id, 'on_hold', details);
+        pipelineStage = 'on_hold';
       } else {
-        await this.syncInquiryToDeal(id, details?.stage || undefined, details);
+        pipelineStage = details?.stage || undefined;
       }
+      await this.syncInquiryToDeal(id, pipelineStage, details, true);
 
       // Non-blocking activity log
       try {
@@ -1407,7 +1459,7 @@ export class InquiriesService implements OnModuleInit {
           salesperson_name:
             (data as any)?.assigned_salesperson_name || 'Sales Team',
           salesperson_phone: (data as any)?.salesperson_phone || null,
-          description: `Inquiry status for ${custName} updated to ${status}`,
+          description: inquiryStageLog(id, custName, pipelineStage || status),
           module: 'Inquiries',
           customer_name: custName,
         });
@@ -1604,6 +1656,19 @@ export class InquiriesService implements OnModuleInit {
             if (aiExtractionJson.customer)
               aiExtractionJson.customer.phone = ext.customer_phone;
           }
+          const extractedEmail = String(
+            ext.customer_email || ext.customerEmail || '',
+          ).trim();
+          if (
+            extractedEmail &&
+            !aiExtractionJson.customer_email &&
+            !aiExtractionJson.customerEmail
+          ) {
+            aiExtractionJson.customer_email = extractedEmail;
+            aiExtractionJson.customerEmail = extractedEmail;
+            if (aiExtractionJson.customer)
+              aiExtractionJson.customer.email = extractedEmail;
+          }
           if (ext.delivery_location) {
             aiExtractionJson.delivery_location = ext.delivery_location;
             aiExtractionJson.deliveryLocation = ext.delivery_location;
@@ -1757,6 +1822,7 @@ export class InquiriesService implements OnModuleInit {
     inquiryId: string,
     stage?: string,
     overrideDetails?: any,
+    skipActivityLog = false,
   ) {
     try {
       // 1. Fetch latest inquiry data
@@ -2127,21 +2193,24 @@ export class InquiriesService implements OnModuleInit {
           .catch(() => {});
       }
 
-      // Non-blocking activity log
-      try {
-        const custName = customerName || 'Customer';
-        const hexId = inquiryId.replace(/-/g, '').slice(0, 6).toUpperCase();
-        this.activityLogsService.logActivity({
-          salesperson_phone: salespersonPhone || null,
-          description: `Inquiry INQ-${hexId} details updated for ${custName}${stage ? ` (Stage: ${stage})` : ''}`,
-          module: 'Inquiries',
-          customer_name: custName,
-          entity_id: inquiryId,
-          entity_type: 'inquiry',
-          action_type: 'inquiry_updated',
-        });
-      } catch (actErr: any) {
-        this.logger.warn('Non-blocking activity log notice:', actErr?.message);
+      if (!skipActivityLog) {
+        try {
+          const custName = customerName || 'Customer';
+          this.activityLogsService.logActivity({
+            salesperson_phone: salespersonPhone || null,
+            description: inquiryStageLog(inquiryId, custName, stage),
+            module: 'Inquiries',
+            customer_name: custName,
+            entity_id: inquiryId,
+            entity_type: 'inquiry',
+            action_type: 'inquiry_updated',
+          });
+        } catch (actErr: any) {
+          this.logger.warn(
+            'Non-blocking activity log notice:',
+            actErr?.message,
+          );
+        }
       }
 
       this.logger.log(
@@ -3422,6 +3491,7 @@ Return ONLY the JSON.`;
   "customer_name": "Company or customer name e.g. BuildCorp Engineering",
   "contact_person": "Contact person name if mentioned e.g. Rajesh",
   "customer_phone": "Phone number if present else null",
+  "customer_email": "Customer email address if present else null",
   "delivery_location": "Full detailed delivery address / location exactly as stated in inquiry (e.g. Plot No 42, MIDC Industrial Area, Khopoli, Raigad, Maharashtra 410203 or Chakan Industrial Area, Pune)",
   "preferred_make": "Preferred make / brand e.g. JSW, AM/NS, Tata, SAIL, JSPL if mentioned else null",
   "payment_terms": "Payment terms e.g. 30 Days Credit, 100% Advance, 45 Days Credit if mentioned else null",
