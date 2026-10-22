@@ -29,6 +29,7 @@ export const VISIT_CUSTOMER_TYPES = [
   'EPC',
   'Manufacturer',
   'Trader',
+  'Other',
 ] as const;
 
 export const VISIT_TYPES = [
@@ -61,6 +62,11 @@ export function hashVisitSecret(value: string): string {
 
 export function generateVisitOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/** TEMPORARY VISIT OTP TEST MODE — delete this after the WhatsApp Authentication template is live. */
+export function visitOtpTestMode(): boolean {
+  return String(process.env.VISIT_OTP_TEST_MODE || '').trim().toLowerCase() === 'true';
 }
 
 export function generateVisitToken(): string {
@@ -223,6 +229,36 @@ function text(value: unknown): string {
   return String(value ?? '').trim();
 }
 
+function visitCalendarToday(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === 'year')?.value ?? '';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '';
+  return `${year}-${month}-${day}`;
+}
+
+function visitCalendarDay(value: unknown): string {
+  const match = text(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return '';
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
 function finiteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
@@ -243,6 +279,7 @@ export interface NormalizedVisit {
   phone: string;
   preferredMake: string;
   preferredMakeOther: string | null;
+  customerTypeOther: string | null;
   locationSource: 'gps' | 'manual';
   visitLatitude: number | null;
   visitLongitude: number | null;
@@ -266,6 +303,16 @@ export function assertNewVisit(data: any): NormalizedVisit {
   for (const [value, message] of required) {
     if (!text(value)) throw new BadRequestException(message);
   }
+  if (visitCalendarDay(data?.next_purchase_expected) < visitCalendarToday()) {
+    throw new BadRequestException(
+      'Choose a next purchase date that is today or later.',
+    );
+  }
+  if (visitCalendarDay(data?.follow_up_date) < visitCalendarToday()) {
+    throw new BadRequestException(
+      'Choose a follow-up date that is today or later.',
+    );
+  }
 
   const email = text(data?.email).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -274,8 +321,13 @@ export function assertNewVisit(data: any): NormalizedVisit {
 
   const phone = normalizeVisitPhone(data?.contact_phone || data?.contact_no);
 
-  if (!VISIT_CUSTOMER_TYPES.includes(text(data?.customer_type) as any)) {
+  const customerType = text(data?.customer_type);
+  if (!VISIT_CUSTOMER_TYPES.includes(customerType as any)) {
     throw new BadRequestException('Select a customer type.');
+  }
+  const customerTypeOther = text(data?.customer_type_other);
+  if (customerType === 'Other' && !customerTypeOther) {
+    throw new BadRequestException('Enter the other customer type.');
   }
   if (!VISIT_TYPES.includes(text(data?.visit_type) as any)) {
     throw new BadRequestException('Select a visit type.');
@@ -365,20 +417,40 @@ export function assertNewVisit(data: any): NormalizedVisit {
     phone,
     preferredMake: brands.join(', '),
     preferredMakeOther: brands.includes('Others') ? other : null,
+    customerTypeOther: customerType === 'Other' ? customerTypeOther : null,
     locationSource: locationSource === 'manual' ? 'manual' : 'gps',
     visitLatitude: locationSource === 'gps' ? visitLatitude : null,
     visitLongitude: locationSource === 'gps' ? visitLongitude : null,
   };
 }
 
-export function visitOtpMessage(otp: string): string {
-  return [
-    'Enlight Metals – Customer Visits',
-    '',
-    `Your visit verification code is: *${otp}*`,
-    '',
-    'This code expires in 5 minutes. Do not share it with anyone.',
-  ].join('\n');
+export function visitOtpTemplatePayload(
+  phone: string,
+  otp: string,
+  templateName: string,
+) {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: phone,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: 'en' },
+      components: [
+        {
+          type: 'body',
+          parameters: [{ type: 'text', text: otp }],
+        },
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{ type: 'text', text: otp }],
+        },
+      ],
+    },
+  };
 }
 
 export async function sendVisitOtpWhatsApp(
@@ -387,7 +459,8 @@ export async function sendVisitOtpWhatsApp(
 ): Promise<void> {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  if (!token || !phoneNumberId) {
+  const templateName = String(process.env.WHATSAPP_VISIT_OTP_TEMPLATE || '').trim();
+  if (!token || !phoneNumberId || !templateName) {
     throw new BadRequestException(
       'WhatsApp is not configured for visit codes.',
     );
@@ -395,13 +468,7 @@ export async function sendVisitOtpWhatsApp(
 
   await axios.post(
     `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: phone,
-      type: 'text',
-      text: { body: visitOtpMessage(otp) },
-    },
+    visitOtpTemplatePayload(phone, otp, templateName),
     {
       headers: {
         Authorization: `Bearer ${token}`,

@@ -353,6 +353,7 @@ export class ChatbotService {
     sessionId?: string,
     image?: { base64: string; mimeType: string },
     gps?: { latitude: number; longitude: number; accuracy?: number },
+    photoSource?: 'camera' | 'upload',
   ): Promise<ChatMessageResult> {
     this.logger.log(
       `Processing chat message from user ${caller.userId} (${caller.role}): "${messageText.slice(0, 60)}"`,
@@ -422,7 +423,8 @@ export class ChatbotService {
           role: caller.role,
           resetSession: !sessionId,
           image,
-          gps,
+          gps: photoSource === 'upload' ? undefined : gps,
+          photoSource,
         },
         {
           headers: {

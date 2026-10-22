@@ -15,6 +15,16 @@ import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 
+function isFollowUpStatusOnly(body: any): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const keys = Object.keys(body);
+  return (
+    keys.length === 1 &&
+    keys[0] === 'follow_up_status' &&
+    (body.follow_up_status === 'completed' || body.follow_up_status === 'pending')
+  );
+}
+
 @Controller('kra')
 @UseGuards(JwtAuthGuard)
 export class KraController {
@@ -233,7 +243,10 @@ export class KraController {
     @Body() body: any,
   ) {
     const role = (employee?.role || '').toLowerCase();
-    const isAuthorized = role.includes('admin') || role.includes('manager');
+    const isAuthorized =
+      role.includes('admin') ||
+      role.includes('manager') ||
+      isFollowUpStatusOnly(body);
     if (!isAuthorized) {
       throw new ForbiddenException(
         'Access Denied: Field visits can only be updated by Sales Managers and Administrators.',
