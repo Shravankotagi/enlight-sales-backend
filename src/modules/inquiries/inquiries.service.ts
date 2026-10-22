@@ -13,7 +13,6 @@ import axios from 'axios';
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { normalizePhone, phoneInList } from '../employees/employees.service';
-import { isProcurementRole } from '../../common/utils/roles';
 import {
   anonymizeInquiry,
   nextProcurementNumber,
@@ -1108,10 +1107,163 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  /** Same salesperson identity the inquiry list uses before procurement scope. */
+  private async resolvedProcurementItem(item: any) {
+    const id = item?.id;
+    const [dealsRes, employeesRes, customersRes] = await Promise.all([
+      id
+        ? this.supabase
+            .from('deals')
+            .select(
+              'inquiry_id, customer_name, customer_phone, salesperson_phone',
+            )
+            .eq('inquiry_id', id)
+        : Promise.resolve({ data: [] }),
+      this.supabase.from('employees').select('name, phone'),
+      this.supabase
+        .from('recurring_customers')
+        .select(
+          'customer_name, assigned_salesperson_phone, is_active, updated_at',
+        ),
+    ]);
+
+    const deals = dealsRes.data || [];
+    const employees = employeesRes.data || [];
+    const customers = customersRes.data || [];
+    const dealByInqId = new Map<string, string>();
+    const dealByName = new Map<string, string>();
+    deals.forEach((deal: any) => {
+      if (deal.inquiry_id && deal.customer_phone) {
+        dealByInqId.set(deal.inquiry_id, deal.customer_phone);
+      }
+      if (deal.customer_name && deal.customer_phone) {
+        dealByName.set(
+          deal.customer_name.trim().toLowerCase(),
+          deal.customer_phone,
+        );
+      }
+    });
+
+    const empPhoneMap = new Map<string, string>();
+    employees.forEach((employee: any) => {
+      if (employee.name && employee.phone) {
+        const clean = String(employee.phone).replace(/\D/g, '');
+        empPhoneMap.set(clean, employee.name);
+        empPhoneMap.set(clean.slice(-10), employee.name);
+      }
+    });
+
+    const entities = resolveInquiryEntities(
+      item,
+      dealByInqId,
+      dealByName,
+      empPhoneMap,
+      buildCustomerOwnerMap(customers, empPhoneMap),
+    );
+    return {
+      ...item,
+      salesperson_phone: entities.salesperson_phone || item.salesperson_phone,
+    };
+  }
+
+  /** employees.id values that own this inquiry. A phone is only a lookup. */
+  private async owningSalespersonIds(item: any): Promise<string[]> {
+    const ids = new Set<string>();
+    if (item?.employee_id) ids.add(String(item.employee_id));
+
+    const inquiryId = item?.id;
+    const [dealsRes, employeesRes, customersRes] = await Promise.all([
+      inquiryId
+        ? this.supabase
+            .from('deals')
+            .select(
+              'inquiry_id, employee_id, salesperson_phone, customer_name, customer_phone',
+            )
+            .eq('inquiry_id', inquiryId)
+        : Promise.resolve({ data: [] }),
+      this.supabase.from('employees').select('id, name, phone, role, is_active'),
+      this.supabase
+        .from('recurring_customers')
+        .select(
+          'customer_name, assigned_salesperson_phone, is_active, updated_at',
+        ),
+    ]);
+
+    const deals = dealsRes.data || [];
+    const employees = (employeesRes.data || []).filter(
+      (employee: any) => employee?.id && employee.is_active !== false,
+    );
+    deals.forEach((deal: any) => {
+      if (deal.employee_id) ids.add(String(deal.employee_id));
+    });
+
+    const dealByInqId = new Map<string, string>();
+    const dealByName = new Map<string, string>();
+    deals.forEach((deal: any) => {
+      if (deal.inquiry_id && deal.customer_phone) {
+        dealByInqId.set(deal.inquiry_id, deal.customer_phone);
+      }
+      if (deal.customer_name && deal.customer_phone) {
+        dealByName.set(
+          deal.customer_name.trim().toLowerCase(),
+          deal.customer_phone,
+        );
+      }
+    });
+    const empPhoneMap = new Map<string, string>();
+    employees.forEach((employee: any) => {
+      if (employee.name && employee.phone) {
+        const clean = String(employee.phone).replace(/\D/g, '');
+        empPhoneMap.set(clean, employee.name);
+        empPhoneMap.set(clean.slice(-10), employee.name);
+      }
+    });
+    const entities = resolveInquiryEntities(
+      item,
+      dealByInqId,
+      dealByName,
+      empPhoneMap,
+      buildCustomerOwnerMap(customersRes.data || [], empPhoneMap),
+    );
+    const phones = [
+      item?.salesperson_phone,
+      entities.customer_owner_phone,
+      ...deals.map((deal: any) => deal.salesperson_phone),
+    ];
+    phones.forEach((phone) => {
+      const target = normalizePhone(phone || '');
+      if (target.length !== 10) return;
+      const match = employees.find(
+        (employee: any) => normalizePhone(employee.phone) === target,
+      );
+      if (match?.id) ids.add(String(match.id));
+    });
+    return Array.from(ids);
+  }
+
+  private async salespersonOwnsInquiry(item: any, accessibleIds: string[]) {
+    if (!accessibleIds.length) return false;
+    const allowed = new Set(accessibleIds.map((id) => String(id)));
+    const owners = await this.owningSalespersonIds(item);
+    return owners.some((id) => allowed.has(id));
+  }
+
+  private async assertQuotationAccess(
+    record: any,
+    accessibleEmployeeIds?: string[] | null,
+  ) {
+    if (accessibleEmployeeIds == null) return;
+    if (await this.salespersonOwnsInquiry(record, accessibleEmployeeIds)) return;
+    throw new ForbiddenException(
+      'Access Denied: You do not have permission to send quotations for this record.',
+    );
+  }
+
   async findOne(
     id: string,
     accessiblePhones?: string[] | null,
     procurementScope?: ProcurementScope | null,
+    accessibleEmployeeIds?: string[] | null,
   ) {
     try {
       const { data, error } = await this.supabase
@@ -1124,7 +1276,17 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (procurementScope) {
-        if (!matchesProcurementScope(data, procurementScope)) {
+        const visible = await this.resolvedProcurementItem(data);
+        if (!matchesProcurementScope(visible, procurementScope)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this inquiry.',
+          );
+        }
+      } else if (accessibleEmployeeIds !== undefined) {
+        if (
+          accessibleEmployeeIds !== null &&
+          !(await this.salespersonOwnsInquiry(data, accessibleEmployeeIds))
+        ) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to view this inquiry.',
           );
@@ -1449,12 +1611,13 @@ export class InquiriesService implements OnModuleInit {
     details?: any,
     accessiblePhones?: string[] | null,
     procurementScope?: ProcurementScope | null,
+    accessibleEmployeeIds?: string[] | null,
   ) {
     try {
       const { data: existingInq, error: fetchErr } = await this.supabase
         .from('inquiries')
         .select(
-          'id, salesperson_phone, sender_phone, ai_extraction_json, procurement_employee_id, status, procurement_assigned_at',
+          'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, procurement_assigned_at',
         )
         .eq('id', id)
         .single();
@@ -1463,7 +1626,8 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (procurementScope) {
-        if (!matchesProcurementScope(existingInq, procurementScope)) {
+        const visible = await this.resolvedProcurementItem(existingInq);
+        if (!matchesProcurementScope(visible, procurementScope)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to update this inquiry.',
           );
@@ -1475,6 +1639,18 @@ export class InquiriesService implements OnModuleInit {
         ) {
           throw new ForbiddenException(
             'Access Denied: Procurement roles cannot move an inquiry to confirmed, won, or lost.',
+          );
+        }
+      } else if (accessibleEmployeeIds !== undefined) {
+        if (
+          accessibleEmployeeIds !== null &&
+          !(await this.salespersonOwnsInquiry(
+            existingInq,
+            accessibleEmployeeIds,
+          ))
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this inquiry.',
           );
         }
       } else if (accessiblePhones && accessiblePhones.length > 0) {
@@ -1619,76 +1795,6 @@ export class InquiriesService implements OnModuleInit {
       this.logger.error(`Error in updateStatus for id ${id}:`, error);
       throw error;
     }
-  }
-
-  async assignProcurement(
-    id: string,
-    assigneeId: string | null,
-    scope: ProcurementScope,
-  ) {
-    const { data: inquiry, error } = await this.supabase
-      .from('inquiries')
-      .select('id, procurement_employee_id, status')
-      .eq('id', id)
-      .single();
-    if (error || !inquiry) {
-      throw new NotFoundException('Inquiry not found');
-    }
-
-    if (!scope.unrestricted) {
-      const assignedToTeam = scope.ids.includes(
-        inquiry.procurement_employee_id,
-      );
-      const inPool =
-        matchesProcurementScope(inquiry, scope) &&
-        !inquiry.procurement_employee_id;
-      if (!assigneeId) {
-        if (!assignedToTeam) {
-          throw new ForbiddenException(
-            'Access Denied: You can only unassign inquiries owned by your team.',
-          );
-        }
-      } else if (!assignedToTeam && !inPool) {
-        throw new ForbiddenException(
-          'Access Denied: This inquiry is outside your procurement scope.',
-        );
-      }
-      if (assigneeId && !scope.ids.includes(assigneeId)) {
-        throw new ForbiddenException(
-          'Access Denied: You can only assign inquiries to yourself or your team.',
-        );
-      }
-    }
-
-    if (assigneeId) {
-      const { data: emp, error: empErr } = await this.supabase
-        .from('employees')
-        .select('id, role, is_active')
-        .eq('id', assigneeId)
-        .single();
-      if (
-        empErr ||
-        !emp ||
-        emp.is_active === false ||
-        !isProcurementRole(emp.role)
-      ) {
-        throw new BadRequestException(
-          'Assignee must be an active procurement person or procurement manager.',
-        );
-      }
-    }
-
-    const { data, error: updErr } = await this.supabase
-      .from('inquiries')
-      .update({
-        procurement_employee_id: assigneeId,
-        procurement_assigned_at: assigneeId ? new Date().toISOString() : null,
-      })
-      .eq('id', id)
-      .select('id, procurement_employee_id, procurement_assigned_at')
-      .single();
-    if (updErr) throw updErr;
-    return data;
   }
 
   async getStats(
@@ -1843,6 +1949,26 @@ export class InquiriesService implements OnModuleInit {
     return match?.assigned_procurement_employee_id || null;
   }
 
+  private async lookupSalespersonId(
+    salespersonPhone?: string | null,
+  ): Promise<string | null> {
+    const target = normalizePhone(salespersonPhone || '');
+    if (target.length !== 10) return null;
+    const { data, error } = await this.supabase
+      .from('employees')
+      .select('id, phone, role, is_active');
+    if (error) return null;
+    const matches = (data || []).filter(
+      (emp: any) =>
+        emp?.id &&
+        emp.is_active !== false &&
+        normalizePhone(emp.phone) === target,
+    );
+    const salesperson =
+      matches.find((emp: any) => emp.role === 'salesperson') || matches[0];
+    return salesperson?.id || null;
+  }
+
   async createInquiry(data: any, salespersonPhone?: string) {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -1965,8 +2091,12 @@ export class InquiriesService implements OnModuleInit {
     }
 
     let procurementEmployeeId: string | null = null;
+    let salespersonEmployeeId: string | null = null;
     try {
       procurementEmployeeId = await this.lookupProcurementOwner(
+        effectiveSalespersonPhone,
+      );
+      salespersonEmployeeId = await this.lookupSalespersonId(
         effectiveSalespersonPhone,
       );
     } catch (routeErr: any) {
@@ -2005,6 +2135,9 @@ export class InquiriesService implements OnModuleInit {
     if (procurementEmployeeId) {
       payload.procurement_employee_id = procurementEmployeeId;
       payload.procurement_assigned_at = nowIso;
+    }
+    if (salespersonEmployeeId) {
+      payload.employee_id = salespersonEmployeeId;
     }
 
     let { data: created, error } = await this.supabase
@@ -2748,7 +2881,7 @@ MIDC Industrial Zone, Mumbai - 400001`
     id: string,
     payload: any,
     employee: any,
-    accessiblePhones?: string[] | null,
+    accessibleEmployeeIds?: string[] | null,
   ) {
     const { data: inquiry } = await this.supabase
       .from('inquiries')
@@ -2767,16 +2900,7 @@ MIDC Industrial Zone, Mumbai - 400001`
 
     if (!record)
       throw new NotFoundException('Inquiry or Order record not found');
-    if (accessiblePhones && accessiblePhones.length > 0) {
-      const hasAccess =
-        phoneInList(record.salesperson_phone, accessiblePhones) ||
-        phoneInList(record.sender_phone, accessiblePhones);
-      if (!hasAccess) {
-        throw new ForbiddenException(
-          'Access Denied: You do not have permission to send quotations for this record.',
-        );
-      }
-    }
+    await this.assertQuotationAccess(record, accessibleEmployeeIds);
 
     const content = this.buildQuotationEmailContent(record, payload);
     const employeeEmail = await this.resolveQuotationSenderEmail(employee);
@@ -2794,7 +2918,7 @@ MIDC Industrial Zone, Mumbai - 400001`
   async sendQuotation(
     id: string,
     payload: any,
-    accessiblePhones?: string[] | null,
+    accessibleEmployeeIds?: string[] | null,
     employee?: any,
   ) {
     const senderName =
@@ -2854,6 +2978,7 @@ MIDC Industrial Zone, Mumbai - 400001`
           isDealRecord = true;
           inquiry = {
             id: dealData.id,
+            employee_id: dealData.employee_id,
             customer_name: dealData.customer_name,
             customer_phone: dealData.customer_phone,
             salesperson_phone: dealData.salesperson_phone,
@@ -2874,16 +2999,7 @@ MIDC Industrial Zone, Mumbai - 400001`
         throw new NotFoundException('Inquiry or Order record not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
-        const hasAccess =
-          phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
-          phoneInList(inquiry.sender_phone, accessiblePhones);
-        if (!hasAccess) {
-          throw new ForbiddenException(
-            'Access Denied: You do not have permission to send quotations for this record.',
-          );
-        }
-      }
+      await this.assertQuotationAccess(inquiry, accessibleEmployeeIds);
 
       const customerEmail = (
         payload.customer_email ||

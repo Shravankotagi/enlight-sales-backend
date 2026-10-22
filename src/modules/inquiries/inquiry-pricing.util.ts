@@ -1,3 +1,5 @@
+import { convertLineItemToMt, normalizeUnit } from '../pricing/pricing.engine';
+
 export type PricingStatus =
   | 'awaiting_price'
   | 'price_ready'
@@ -31,6 +33,7 @@ export interface StoredPricingLine extends PricingLineInput {
 
 const money = (value: number) => Math.round(value * 100) / 100;
 const nonNegative = (value: unknown) => Math.max(0, Number(value) || 0);
+const PIECE_UNITS = new Set(['Nos', 'Pcs', 'Pieces', 'Units', 'Bundles', 'Sheets', 'Plates', 'Coils']);
 
 export function lineKeyFor(item: any, index: number) {
   return String(item?.id || item?.line_key || `${index}:${item?.sku_text || 'line'}`);
@@ -53,6 +56,34 @@ export function quantityToMt(quantity: number, unit: string) {
   const normalized = String(unit || '').toLowerCase();
   if (normalized === 'kg' || normalized === 'kgs') return nonNegative(quantity) / 1000;
   return nonNegative(quantity);
+}
+
+export function sourceItemFor(inquiry: any, line: { line_key?: string }, index: number) {
+  const ai = inquiry?.ai_extraction_json || {};
+  const lines = ai.line_items || ai.lineItems || [];
+  return (
+    lines.find((item: any, itemIndex: number) => lineKeyFor(item, itemIndex) === line?.line_key) ||
+    lines[index] ||
+    {}
+  );
+}
+
+export function pricingWeightMt(line: any, sourceItem: any = {}) {
+  const item = {
+    ...(sourceItem || {}),
+    quantity: line?.quantity ?? sourceItem?.quantity,
+    unit: line?.unit || sourceItem?.unit || sourceItem?.original_unit,
+    sku_text: line?.sku_text || sourceItem?.sku_text || sourceItem?.description,
+    dimensions: line?.dimensions || sourceItem?.dimensions,
+    weight_mt: line?.weight_mt ?? sourceItem?.weight_mt,
+    converted_mt: line?.converted_mt ?? sourceItem?.converted_mt,
+  };
+  const converted = convertLineItemToMt(item);
+  if (converted.canConvert && converted.mt != null && converted.mt > 0) {
+    return Math.round(Number(converted.mt) * 1000) / 1000;
+  }
+  if (PIECE_UNITS.has(normalizeUnit(item.unit))) return 0;
+  return quantityToMt(Number(item.quantity) || 0, item.unit || 'MT');
 }
 
 export function deriveProcurementLines(existing: StoredPricingLine[], submitted: PricingLineInput[]) {
@@ -89,7 +120,7 @@ export function gstSplit(amount: number, deliveryAddress = '') {
   return { cgst_amount: 0, sgst_amount: 0, igst_amount: igst, total: igst };
 }
 
-export function calculateSalesLine(line: StoredPricingLine, deliveryAddress = '') {
+export function calculateSalesLine(line: StoredPricingLine, deliveryAddress = '', sourceItem?: any) {
   const base = nonNegative(line.sales_base_price_per_mt ?? line.procurement_base_price_per_mt);
   const rate = money(
     base +
@@ -98,7 +129,7 @@ export function calculateSalesLine(line: StoredPricingLine, deliveryAddress = ''
       nonNegative(line.credit_per_mt) +
       nonNegative(line.margin_per_mt),
   );
-  const taxable = money(rate * quantityToMt(Number(line.quantity) || 0, line.unit || 'MT'));
+  const taxable = money(rate * pricingWeightMt(line, sourceItem));
   const gst = gstSplit(taxable, deliveryAddress);
   return {
     ...line,

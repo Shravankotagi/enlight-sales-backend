@@ -327,6 +327,31 @@ export class EmployeesService {
   }
 
   /**
+   * employees.id values this caller may open.
+   * Admin: null, unrestricted. Salesperson: their own id.
+   * Sales manager: their own id plus the salespeople assigned to them.
+   */
+  async getAccessibleSalespersonIds(employee: any): Promise<string[] | null> {
+    if (
+      !employee ||
+      employee.role === 'admin' ||
+      employee.role === 'super_admin'
+    ) {
+      return null;
+    }
+    if (employee.role === 'sales_manager' || employee.role === 'manager') {
+      const assigned = await this.getAssignedSalespersons(
+        employee.id,
+        employee.phone,
+      );
+      const ids = assigned.map((person: any) => person.id).filter(Boolean);
+      if (employee.id) ids.push(employee.id);
+      return Array.from(new Set(ids));
+    }
+    return employee.id ? [employee.id] : [];
+  }
+
+  /**
    * Inquiry ids a procurement user may see.
    * Person: own id plus salespeople routed to them.
    * Manager: own id, people who report to them, the salespeople routed to
