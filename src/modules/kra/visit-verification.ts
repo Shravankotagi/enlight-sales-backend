@@ -187,6 +187,7 @@ export function addressFromGoogleGeocode(body: any): string | null {
   if (!result) return null;
   const types = Array.isArray(result.types) ? result.types : [];
   const formatted = String(result.formatted_address ?? '').trim();
+  if (formatted) return formatted;
   const premise = googleComponent(result, 'premise') || googleComponent(result, 'subpremise');
   const streetNumber = googleComponent(result, 'street_number');
   const route = googleComponent(result, 'route');

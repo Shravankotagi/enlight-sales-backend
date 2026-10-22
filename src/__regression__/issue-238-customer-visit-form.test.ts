@@ -210,7 +210,7 @@ describe('issue 238 customer visit form', () => {
       ],
     };
     expect(addressFromGoogleGeocode(girgaon)).toBe(
-      'Girgaon Court, 12 Girgaon Road, Girgaon, Mumbai, Maharashtra, 400004',
+      'Girgaon Court, 12, Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India',
     );
     expect(cityFromGoogleGeocode(girgaon)).toBe('Mumbai');
     expect(
@@ -229,7 +229,23 @@ describe('issue 238 customer visit form', () => {
           },
         ],
       }),
-    ).toBe('Girgaon Road, Girgaon, Mumbai, Maharashtra, 400004');
+    ).toBe('Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India');
+    expect(
+      addressFromGoogleGeocode({
+        results: [
+          {
+            formatted_address:
+              'Enlight Office, Plot 12, MIDC Road, Bhosari, Pune, Maharashtra 411026, India',
+            types: ['street_address'],
+            address_components: [
+              { long_name: 'MIDC Road', types: ['route'] },
+              { long_name: 'Bhosari', types: ['sublocality_level_1', 'sublocality'] },
+              { long_name: 'Pune', types: ['locality', 'political'] },
+            ],
+          },
+        ],
+      }),
+    ).toBe('Enlight Office, Plot 12, MIDC Road, Bhosari, Pune, Maharashtra 411026, India');
     expect(
       addressFromGoogleGeocode({
         results: [
