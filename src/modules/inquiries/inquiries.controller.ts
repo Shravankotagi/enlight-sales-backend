@@ -158,31 +158,9 @@ export class InquiriesController {
         await this.employeesService.getAccessibleProcurementIds(employee);
       return this.inquiriesService.findOne(id, null, procurementScope);
     }
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.findOne(id, phones);
-  }
-
-  @Patch(':id/procurement-assignee')
-  async assignProcurementOwner(
-    @CurrentEmployee() employee: any,
-    @Param('id') id: string,
-    @Body() body: { procurement_employee_id?: string | null },
-  ) {
-    const assigneeId = body?.procurement_employee_id || null;
-    if (employee?.role === 'admin') {
-      return this.inquiriesService.assignProcurement(id, assigneeId, {
-        ids: [],
-        includeUnassignedPool: true,
-        unrestricted: true,
-      });
-    }
-    if (!isProcurementManager(employee?.role)) {
-      this.denyProcurement('assign a procurement owner');
-    }
-    const scope =
-      await this.employeesService.getAccessibleProcurementIds(employee);
-    return this.inquiriesService.assignProcurement(id, assigneeId, scope);
+    const ids =
+      await this.employeesService.getAccessibleSalespersonIds(employee);
+    return this.inquiriesService.findOne(id, null, null, ids);
   }
 
   @Patch(':id/status')
@@ -203,13 +181,15 @@ export class InquiriesController {
         procurementScope,
       );
     }
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+    const ids =
+      await this.employeesService.getAccessibleSalespersonIds(employee);
     return this.inquiriesService.updateStatus(
       id,
       body.status,
       body.details,
-      phones,
+      null,
+      null,
+      ids,
     );
   }
 
@@ -288,12 +268,9 @@ export class InquiriesController {
       if (!inquiry) throw new ForbiddenException('Inquiry not found');
       return inquiry;
     }
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
-    const inquiry = await this.inquiriesService.findOne(
-      id,
-      phones && phones.length ? phones : null,
-    );
+    const ids =
+      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const inquiry = await this.inquiriesService.findOne(id, null, null, ids);
     if (!inquiry) throw new ForbiddenException('Inquiry not found');
     return inquiry;
   }
@@ -315,9 +292,9 @@ export class InquiriesController {
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('send quotations');
     }
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.sendQuotation(id, body, phones, employee);
+    const ids =
+      await this.employeesService.getAccessibleSalespersonIds(employee);
+    return this.inquiriesService.sendQuotation(id, body, ids, employee);
   }
 
   @Post('quotation-preview/:id')
@@ -329,9 +306,9 @@ export class InquiriesController {
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('preview quotations');
     }
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
-    return this.inquiriesService.previewQuotation(id, body, employee, phones);
+    const ids =
+      await this.employeesService.getAccessibleSalespersonIds(employee);
+    return this.inquiriesService.previewQuotation(id, body, employee, ids);
   }
 
   @Post('parse-document')

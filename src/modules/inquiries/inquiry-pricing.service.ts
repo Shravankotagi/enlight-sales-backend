@@ -9,6 +9,7 @@ import {
   calculateSalesLine,
   deriveProcurementLines,
   procurementStatus,
+  sourceItemFor,
   sourceLines,
   StoredPricingLine,
 } from './inquiry-pricing.util';
@@ -39,13 +40,14 @@ export class InquiryPricingService {
     const next = deriveProcurementLines(existing, submitted);
     await this.upsert(inquiry.id, next, { priced_by: employee?.id || null });
     const status = procurementStatus(next);
-    await this.supabase
+    const { error: statusError } = await this.supabase
       .from('inquiries')
       .update({
         pricing_status: status,
         procurement_note: body?.note || null,
       })
       .eq('id', inquiry.id);
+    if (statusError) throw new Error(statusError.message);
     this.activityLogsService.logActivity({
       module: 'Inquiries',
       description: `Procurement saved prices for inquiry ${inquiry.id}`,
@@ -72,7 +74,7 @@ export class InquiryPricingService {
           ...line,
           line_status: 'needs_price' as const,
         }));
-    const next = baseLines.map((line: StoredPricingLine) => {
+    const next = baseLines.map((line: StoredPricingLine, index: number) => {
       const update = submitted.find((item: any) => item.line_key === line.line_key);
       if (!update || line.line_status === 'cannot_price') return line;
       const priced = calculateSalesLine(
@@ -86,6 +88,7 @@ export class InquiryPricingService {
           margin_per_mt: update.margin_per_mt,
         },
         delivery,
+        sourceItemFor(inquiry, line, index),
       );
       return {
         ...priced,
@@ -100,7 +103,11 @@ export class InquiryPricingService {
     if (!['negotiation', 'on_hold', 'hold', 'won', 'lost'].includes(stage)) {
       update.status = 'quoted';
     }
-    await this.supabase.from('inquiries').update(update).eq('id', inquiry.id);
+    const { error: statusError } = await this.supabase
+      .from('inquiries')
+      .update(update)
+      .eq('id', inquiry.id);
+    if (statusError) throw new Error(statusError.message);
     this.activityLogsService.logActivity({
       module: 'Inquiries',
       description: `Sales saved prices for inquiry ${inquiry.id}`,
@@ -197,9 +204,15 @@ export class InquiryPricingService {
       sales_priced_by: actor.sales_priced_by ?? line.sales_priced_by ?? null,
       updated_at: new Date().toISOString(),
     }));
-    const { error } = await this.supabase
-      .from('inquiry_line_pricing')
-      .upsert(rows, { onConflict: 'inquiry_id,line_key' });
-    if (error) throw error;
+    const write = (payload: any[]) =>
+      this.supabase
+        .from('inquiry_line_pricing')
+        .upsert(payload, { onConflict: 'inquiry_id,line_key' });
+    let { error } = await write(rows);
+    if (error && /credit_per_mt/i.test(error.message || '')) {
+      const retryRows = rows.map(({ credit_per_mt: _credit, ...rest }) => rest);
+      ({ error } = await write(retryRows));
+    }
+    if (error) throw new Error(error.message || 'Could not save line prices');
   }
 }
