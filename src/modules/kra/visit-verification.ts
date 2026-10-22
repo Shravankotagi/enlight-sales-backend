@@ -64,6 +64,11 @@ export function generateVisitOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+/** TEMPORARY VISIT OTP TEST MODE — delete this after the WhatsApp Authentication template is live. */
+export function visitOtpTestMode(): boolean {
+  return String(process.env.VISIT_OTP_TEST_MODE || '').trim().toLowerCase() === 'true';
+}
+
 export function generateVisitToken(): string {
   return randomBytes(32).toString('hex');
 }

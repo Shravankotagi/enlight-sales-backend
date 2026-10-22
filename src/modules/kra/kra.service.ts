@@ -23,6 +23,7 @@ import {
   hashVisitSecret,
   normalizeVisitPhone,
   sendVisitOtpWhatsApp,
+  visitOtpTestMode,
 } from './visit-verification';
 
 const POST_LOG_COMPLAINT_EDITABLE_FIELDS = new Set([
@@ -3023,6 +3024,15 @@ export class KraService {
       locked: false,
       created_at: now.toISOString(),
     });
+
+    if (visitOtpTestMode()) {
+      this.logger.log(`Visit test code issued for ****${phone.slice(-4)}`);
+      return {
+        message: 'Temporary test code. Enter it below. WhatsApp was not used.',
+        test_otp: otp,
+        resend_after_seconds: 60,
+      };
+    }
 
     try {
       await sendVisitOtpWhatsApp(`91${phone}`, otp);
