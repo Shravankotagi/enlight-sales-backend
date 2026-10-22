@@ -213,11 +213,18 @@ export class PermissionsService {
       return this.builtin(id, overrides);
     }
 
-    const scope = roleRow.data_scope;
+    const isBuiltin = Boolean(BUILTIN_ROLE_TEMPLATES[id]);
+    const scope =
+      isBuiltin && legacyDataScope(id)
+        ? legacyDataScope(id)
+        : roleRow.data_scope;
     const base =
       BUILTIN_ROLE_TEMPLATES[id] || BUILTIN_ROLE_TEMPLATES.salesperson;
+    const rolePermissions = isBuiltin
+      ? BUILTIN_ROLE_TEMPLATES[id]
+      : roleRow.permissions;
     return {
-      permissions: mergePermissions(roleRow.permissions, overrides, base),
+      permissions: mergePermissions(rolePermissions, overrides, base),
       dataScope:
         scope === 'all' || scope === 'team' || scope === 'own' ? scope : 'own',
       roleName: roleRow.name || id,

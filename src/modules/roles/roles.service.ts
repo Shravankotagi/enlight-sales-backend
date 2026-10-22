@@ -115,6 +115,15 @@ export class RolesService {
     actor?: any,
   ) {
     const existing = await this.getRow(id);
+    const normId = normalizeRoleId(id);
+    if (
+      existing.is_system ||
+      SYSTEM_ROLES.some((r) => r.id === normId || r.id === id)
+    ) {
+      throw new ForbiddenException(
+        'System roles and their default permissions are fixed and non-editable. To customize permissions, create a new role using this template.',
+      );
+    }
     if (body.permissions) this.assertPerms(body.permissions);
     const nextPerms = body.permissions || existing.permissions || {};
     if (id === 'admin' && nextPerms['staff.manage_acl'] !== true) {
@@ -164,7 +173,11 @@ export class RolesService {
 
   async remove(id: string, actor?: any) {
     const existing = await this.getRow(id);
-    if (existing.is_system) {
+    const normId = normalizeRoleId(id);
+    if (
+      existing.is_system ||
+      SYSTEM_ROLES.some((r) => r.id === normId || r.id === id)
+    ) {
       throw new ForbiddenException('System roles cannot be deleted.');
     }
     const assigned = await this.assignedCount(id);
@@ -277,15 +290,27 @@ export class RolesService {
     }));
   }
 
-  private toItem = (row: any) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description || '',
-    data_scope: row.data_scope || 'own',
-    is_system: Boolean(row.is_system),
-    is_active: row.is_active !== false,
-    permissions: row.permissions || {},
-  });
+  private toItem = (row: any) => {
+    const roleId = normalizeRoleId(row.id);
+    const isSys =
+      Boolean(row.is_system) ||
+      SYSTEM_ROLES.some((r) => r.id === row.id || r.id === roleId);
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || '',
+      data_scope:
+        isSys && ROLE_DATA_SCOPE[roleId]
+          ? ROLE_DATA_SCOPE[roleId]
+          : row.data_scope || 'own',
+      is_system: isSys,
+      is_active: row.is_active !== false,
+      permissions:
+        isSys && BUILTIN_ROLE_TEMPLATES[roleId]
+          ? BUILTIN_ROLE_TEMPLATES[roleId]
+          : row.permissions || {},
+    };
+  };
 
   private async log(
     actor: any,
