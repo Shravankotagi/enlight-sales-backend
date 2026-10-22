@@ -23,6 +23,12 @@ export class CustomersController {
     private readonly employeesService: EmployeesService,
   ) {}
 
+  @Post()
+  async create(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'customers.create');
+    return this.customersService.createCustomer(body, employee);
+  }
+
   @Post('import')
   async importClients(
     @CurrentEmployee() employee: any,

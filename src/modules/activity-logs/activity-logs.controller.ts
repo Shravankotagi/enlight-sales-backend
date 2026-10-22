@@ -56,8 +56,12 @@ export class ActivityLogsController {
         salespersonPhoneOverride,
         mode,
       );
+    const canSeeStaff =
+      hasPermission(employee, 'staff.view') || employee?.role === 'admin';
+
     return this.activityLogsService.countActivityLogs({ from, to }, phones, {
-      includeAuth: employee?.role === 'admin',
+      includeAuth: canSeeStaff,
+      includeStaffModules: canSeeStaff,
     });
   }
 }

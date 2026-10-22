@@ -214,7 +214,7 @@ export class ActivityLogsService {
   async countActivityLogs(
     query: { from?: string; to?: string },
     accessiblePhones?: string[] | null,
-    options?: { includeAuth?: boolean },
+    options?: { includeAuth?: boolean; includeStaffModules?: boolean },
   ) {
     const buckets: [string, string | null][] = [
       ['All', null],
@@ -255,7 +255,7 @@ export class ActivityLogsService {
     q: any,
     query: { from?: string; to?: string; module?: string },
     accessiblePhones?: string[] | null,
-    options?: { includeAuth?: boolean },
+    options?: { includeAuth?: boolean; includeStaffModules?: boolean },
   ) {
     if (accessiblePhones && accessiblePhones.length > 0) {
       const parts: string[] = [];
@@ -290,8 +290,8 @@ export class ActivityLogsService {
 
     if (query.module && query.module !== 'All' && query.module !== 'all') {
       q = q.ilike('module', query.module);
-    } else if (!options?.includeAuth) {
-      q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+    } else if (!options?.includeAuth && !options?.includeStaffModules) {
+      q = q.or('module.is.null,module.not.in.(Auth,Employees,Roles)');
     }
 
     return q;
