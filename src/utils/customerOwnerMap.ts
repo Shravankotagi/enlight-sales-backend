@@ -5,7 +5,7 @@ export function isValidSalespersonPhone(phone?: string | null): boolean {
     return false;
   const clean = phone.replace(/\D/g, '').slice(-10);
   if (!clean || clean.length < 10) return false;
-  if (clean === '9975003940' || clean === '0000000000') return false;
+  if (clean === '0000000000') return false;
   return true;
 }
 

@@ -303,11 +303,8 @@ export class ZohoService implements OnModuleInit {
     if (error) throw new Error(error.message);
     for (const emp of data || []) {
       if (emp.is_active === false) continue;
-      const role = String(emp.role || '').toLowerCase();
-      if (role === 'admin') continue; // Admins are not field sales reps
       const phone = String(emp.phone || '').trim();
       if (!cleanPhone(phone)) continue;
-      if (phone.replace(/\D/g, '').endsWith('9975003940')) continue; // Skip Dhananjay Goel
       if (emp.email) byEmail.set(String(emp.email).toLowerCase().trim(), phone);
       const name = this.normalizePersonName(emp.name);
       if (name) byName.set(name, phone);
