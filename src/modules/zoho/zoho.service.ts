@@ -309,6 +309,17 @@ export class ZohoService implements OnModuleInit {
       const name = this.normalizePersonName(emp.name);
       if (name) byName.set(name, phone);
     }
+
+    // Suvarna Patil's customer portfolio is reassigned to Vedant Goel
+    const vedantPhone =
+      byEmail.get('vedant@enlightmetals.com') ||
+      byName.get('vedant goel') ||
+      null;
+    if (vedantPhone) {
+      byEmail.set('suvarna.patil@enlightmetals.com', vedantPhone);
+      byName.set('suvarna patil', vedantPhone);
+    }
+
     return { byEmail, byZohoId, byName };
   }
 
