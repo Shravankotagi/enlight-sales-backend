@@ -35,10 +35,14 @@ export class ZohoController {
         'Access Denied: Procurement roles cannot run Zoho sync.',
       );
     }
-    const isAllowed = role.includes('admin');
+    const isAllowed =
+      role.includes('admin') ||
+      role.includes('manager') ||
+      role.includes('salesperson') ||
+      role.includes('sales');
     if (!isAllowed) {
       throw new ForbiddenException(
-        'Access Denied: Only administrators can run this Zoho sync operation.',
+        'Access Denied: You do not have permission to run this Zoho sync operation.',
       );
     }
   }
