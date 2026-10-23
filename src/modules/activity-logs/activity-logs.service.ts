@@ -145,6 +145,7 @@ export class ActivityLogsService {
         if (parts.length > 0) {
           q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
         }
+        q = q.neq('source', 'zoho_sync');
       }
 
       if (query.from) {
@@ -273,6 +274,7 @@ export class ActivityLogsService {
       if (parts.length > 0) {
         q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
       }
+      q = q.neq('source', 'zoho_sync');
     }
 
     if (query.from) {

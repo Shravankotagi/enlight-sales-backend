@@ -85,4 +85,35 @@ describe('ActivityLogsService auth rows', () => {
     expect(login('s3').logout_status).toBe('Session expired');
     expect(login('s3').duration_minutes).toBe(5);
   });
+
+  it('hides zoho_sync rows when accessiblePhones is provided (salesperson/manager scope)', async () => {
+    const db = createSupabaseMock({
+      tables: {
+        activity_logs: [
+          {
+            module: 'Customers',
+            source: 'zoho_sync',
+            salesperson_phone: null,
+            description: 'Zoho Bigin Customers Sync',
+          },
+          {
+            module: 'Inquiries',
+            source: 'manual',
+            salesperson_phone: '919876543210',
+            description: 'Saved Inquiry',
+          },
+        ],
+      },
+    });
+    const service = new ActivityLogsService(asSupabaseService(db.client));
+
+    const rows = await service.getActivityLogs({}, ['9876543210']);
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ description: 'Saved Inquiry' }),
+      ]),
+    );
+    expect(rows.some((r) => r.source === 'zoho_sync')).toBe(false);
+  });
 });
