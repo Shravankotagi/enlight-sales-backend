@@ -52,6 +52,7 @@ export class ChatbotController {
       dto.sessionId,
       dto.image,
       dto.gps,
+      dto.photoSource,
     );
 
     return {

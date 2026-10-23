@@ -13,7 +13,21 @@ import { KraService } from './kra.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
-import { assertPermission } from '../../common/guards/permission.guard';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
+
+function isFollowUpStatusOnly(body: any): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const keys = Object.keys(body);
+  return (
+    keys.length === 1 &&
+    keys[0] === 'follow_up_status' &&
+    (body.follow_up_status === 'completed' ||
+      body.follow_up_status === 'pending')
+  );
+}
 
 @Controller('kra')
 @UseGuards(JwtAuthGuard)
@@ -244,7 +258,17 @@ export class KraController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
-    assertPermission(employee, 'visits.update');
+    const role = (employee?.role || '').toLowerCase();
+    const isAuthorized =
+      role.includes('admin') ||
+      role.includes('manager') ||
+      hasPermission(employee, 'visits.update') ||
+      isFollowUpStatusOnly(body);
+    if (!isAuthorized) {
+      throw new ForbiddenException(
+        'Access Denied: Field visits can only be updated by Sales Managers and Administrators.',
+      );
+    }
 
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
