@@ -1617,7 +1617,7 @@ export class InquiriesService implements OnModuleInit {
       const { data: existingInq, error: fetchErr } = await this.supabase
         .from('inquiries')
         .select(
-          'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, procurement_assigned_at',
+          'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at',
         )
         .eq('id', id)
         .single();
@@ -1639,6 +1639,14 @@ export class InquiriesService implements OnModuleInit {
         ) {
           throw new ForbiddenException(
             'Access Denied: Procurement roles cannot move an inquiry to confirmed, won, or lost.',
+          );
+        }
+        if (
+          preserveHistoricalPricingStatus(existingInq).pricing_status !==
+          'awaiting_price'
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: Procurement roles can change only an awaiting price inquiry.',
           );
         }
       } else if (accessibleEmployeeIds !== undefined) {

@@ -218,6 +218,14 @@ export class InquiriesController {
       );
     }
     const inquiry = await this.assertInquiryAccess(employee, id);
+    if (
+      isProcurementRole(employee?.role) &&
+      inquiry?.pricing_status !== 'awaiting_price'
+    ) {
+      throw new ForbiddenException(
+        'Access Denied: Procurement roles can change only an awaiting price inquiry.',
+      );
+    }
     return this.inquiryPricingService.saveProcurement(inquiry, body, employee);
   }
 
