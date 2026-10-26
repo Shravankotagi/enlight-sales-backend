@@ -15,6 +15,8 @@ import { SupabaseService } from '../../infrastructure/supabase/supabase.service'
 import { normalizePhone, phoneInList } from '../employees/employees.service';
 import {
   anonymizeInquiry,
+  displayStage,
+  linkedDealStage,
   nextProcurementNumber,
   preserveHistoricalPricingStatus,
 } from './inquiry-pricing.util';
@@ -957,7 +959,7 @@ export class InquiriesService implements OnModuleInit {
           ? this.supabase
               .from('deals')
               .select(
-                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+                'id, inquiry_id, stage, created_at, customer_name, customer_phone, salesperson_phone',
               )
               .in('inquiry_id', inquiryIds)
           : Promise.resolve({ data: [] }),
@@ -1041,6 +1043,8 @@ export class InquiriesService implements OnModuleInit {
         return {
           ...item,
           ...entities,
+          linked_deal_stage: linkedDealStage(deals, item.id),
+          display_stage: displayStage(item, deals, item.id),
           ai_extraction_json: cleanAiJson,
           has_media: hasAttachment,
           media_urls: hasAttachment ? ['attached_document'] : [],
@@ -1308,7 +1312,9 @@ export class InquiriesService implements OnModuleInit {
         const [dealsRes, employeesRes] = await Promise.all([
           this.supabase
             .from('deals')
-            .select('inquiry_id, customer_name, customer_phone')
+            .select(
+              'id, inquiry_id, stage, created_at, customer_name, customer_phone',
+            )
             .eq('inquiry_id', id),
           this.supabase.from('employees').select('name, phone'),
         ]);
@@ -1360,6 +1366,8 @@ export class InquiriesService implements OnModuleInit {
         const result = preserveHistoricalPricingStatus({
           ...data,
           ...entities,
+          linked_deal_stage: linkedDealStage(deals, id),
+          display_stage: displayStage(data, deals, id),
           ai_extraction_json: cleanAiJson,
         });
         return procurementScope ? anonymizeInquiry(result) : result;
