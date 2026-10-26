@@ -25,7 +25,12 @@ describe('salesperson visit follow-up', () => {
     await api.updateVisit(salesperson, 'visit-1', {
       follow_up_status: 'completed',
     });
-    expect(getAccessibleSalespersonPhones).toHaveBeenCalledWith(salesperson);
+    expect(getAccessibleSalespersonPhones).toHaveBeenCalledWith(
+      salesperson,
+      undefined,
+      undefined,
+      'visits.scope_assigned',
+    );
     expect(updateVisit).toHaveBeenCalledWith(
       'visit-1',
       { follow_up_status: 'completed' },
