@@ -4,12 +4,15 @@ import {
   NotFoundException,
   UnauthorizedException,
   ForbiddenException,
+  Optional,
+  Inject,
 } from '@nestjs/common';
 import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { mapChatRole } from './chat-role';
 import { CallerContext } from './interfaces/caller-context.interface';
 import { GuardrailsService } from './guardrails/guardrails.service';
+import { PermissionsService } from '../roles/permissions.service';
 
 export interface ChatMessageResult {
   reply: string;
@@ -33,6 +36,10 @@ export interface ChatMessageResult {
 @Injectable()
 export class ChatbotService {
   private readonly logger = new Logger(ChatbotService.name);
+
+  @Optional()
+  @Inject(PermissionsService)
+  private readonly permissionsService?: PermissionsService;
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -95,7 +102,38 @@ export class ChatbotService {
         phone = emp.phone || phone;
         name = emp.name || name;
 
-        role = mapChatRole(emp.role);
+        let permissions: Record<string, boolean> | undefined;
+        let dataScope: 'own' | 'team' | 'all' | undefined;
+        if (this.permissionsService && emp.id) {
+          try {
+            const resolved = await this.permissionsService.resolve(emp.id);
+            if (resolved) {
+              permissions = resolved.permissions;
+              dataScope = resolved.dataScope;
+              if (
+                resolved.role === 'procurement_person' ||
+                resolved.role === 'procurement_manager'
+              ) {
+                role = resolved.role;
+              } else if (resolved.dataScope === 'all') {
+                role = 'admin';
+              } else if (resolved.dataScope === 'team') {
+                role = 'manager';
+              } else {
+                role = 'salesperson';
+              }
+            }
+          } catch (err: any) {
+            this.logger.warn(
+              `Assistant permission resolve failed: ${err?.message}`,
+            );
+          }
+        }
+        if (!dataScope) {
+          role = mapChatRole(emp.role);
+        }
+        (emp as any).__permissions = permissions;
+        (emp as any).__dataScope = dataScope;
       } else if (user.role) {
         role = mapChatRole(user.role);
       } else if (user.user_metadata?.role) {
@@ -126,6 +164,8 @@ export class ChatbotService {
         reportsToId,
         name,
         allUserIds: allIds,
+        permissions: empRecord?.__permissions,
+        dataScope: empRecord?.__dataScope,
       };
     } catch (err: any) {
       this.logger.error(
@@ -343,6 +383,7 @@ export class ChatbotService {
     sessionId?: string,
     image?: { base64: string; mimeType: string },
     gps?: { latitude: number; longitude: number; accuracy?: number },
+    photoSource?: 'camera' | 'upload',
   ): Promise<ChatMessageResult> {
     this.logger.log(
       `Processing chat message from user ${caller.userId} (${caller.role}): "${messageText.slice(0, 60)}"`,
@@ -412,7 +453,8 @@ export class ChatbotService {
           role: caller.role,
           resetSession: !sessionId,
           image,
-          gps,
+          gps: photoSource === 'upload' ? undefined : gps,
+          photoSource,
         },
         {
           headers: {

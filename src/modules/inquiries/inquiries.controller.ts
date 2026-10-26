@@ -19,6 +19,7 @@ import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 import { isProcurementRole } from '../../common/utils/roles';
+import { assertPermission } from '../../common/guards/permission.guard';
 import {
   canDeleteInquiries,
   canEditInquiries,
@@ -122,12 +123,7 @@ export class InquiriesController {
     if (isProcurementRole(employee?.role)) {
       const { permissions, scope } = await this.procurementGate(employee);
       if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
-      return this.inquiriesService.findReviewQueue(
-        undefined,
-        from,
-        to,
-        scope,
-      );
+      return this.inquiriesService.findReviewQueue(undefined, from, to, scope);
     }
 
     const { phones } =
@@ -223,10 +219,7 @@ export class InquiriesController {
   }
 
   @Get(':id/line-pricing')
-  async linePricing(
-    @CurrentEmployee() employee: any,
-    @Param('id') id: string,
-  ) {
+  async linePricing(@CurrentEmployee() employee: any, @Param('id') id: string) {
     await this.assertInquiryAccess(employee, id);
     return { lines: await this.inquiryPricingService.linesFor(id) };
   }
@@ -320,6 +313,7 @@ export class InquiriesController {
 
   @Post()
   async createInquiry(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'inquiries.manage');
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('create inquiries');
     }
@@ -332,6 +326,7 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    assertPermission(employee, 'inquiries.send_quote');
     if (isProcurementRole(employee?.role)) {
       const { permissions } = await this.procurementGate(employee);
       if (!canSendQuote(permissions)) this.denyProcurement('send quotations');
@@ -351,7 +346,8 @@ export class InquiriesController {
   ) {
     if (isProcurementRole(employee?.role)) {
       const { permissions } = await this.procurementGate(employee);
-      if (!canSendQuote(permissions)) this.denyProcurement('preview quotations');
+      if (!canSendQuote(permissions))
+        this.denyProcurement('preview quotations');
       await this.assertInquiryAccess(employee, id);
       return this.inquiriesService.previewQuotation(id, body, employee, null);
     }
@@ -403,6 +399,7 @@ export class InquiriesController {
         includeUnassignedPool: false,
       });
     }
+    assertPermission(employee, 'inquiries.delete');
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.inquiriesService.deleteInquiry(id, phones);

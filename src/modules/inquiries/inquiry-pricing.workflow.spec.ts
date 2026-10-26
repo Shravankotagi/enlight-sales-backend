@@ -79,14 +79,29 @@ describe('procurement pricing workflow', () => {
       inquiry,
       {
         lines: [
-          { line_key: '0:HR Coil', sku_text: 'HR Coil', quantity: 2, unit: 'MT', base_price_per_mt: 61000 },
-          { line_key: '1:GI Sheet', sku_text: 'GI Sheet', quantity: 500, unit: 'KG', base_price_per_mt: null },
+          {
+            line_key: '0:HR Coil',
+            sku_text: 'HR Coil',
+            quantity: 2,
+            unit: 'MT',
+            base_price_per_mt: 61000,
+          },
+          {
+            line_key: '1:GI Sheet',
+            sku_text: 'GI Sheet',
+            quantity: 500,
+            unit: 'KG',
+            base_price_per_mt: null,
+          },
         ],
       },
       { id: 'buyer', phone: '9100000002' },
     );
     expect(partial.pricing_status).toBe('price_ready');
-    expect(partial.lines.map((line) => line.line_status)).toEqual(['priced', 'cannot_price']);
+    expect(partial.lines.map((line) => line.line_status)).toEqual([
+      'priced',
+      'cannot_price',
+    ]);
 
     const { service: blankService } = pricingService();
     const unavailable = await blankService.saveProcurement(
@@ -192,7 +207,10 @@ describe('procurement pricing workflow', () => {
   it('allows a decline only when every line is unavailable', async () => {
     const { service } = pricingService();
     expect(() =>
-      service.declinePreview(inquiry, [{ line_status: 'priced' }, { line_status: 'cannot_price' }]),
+      service.declinePreview(inquiry, [
+        { line_status: 'priced' },
+        { line_status: 'cannot_price' },
+      ]),
     ).toThrow(ForbiddenException);
 
     const preview = service.declinePreview(inquiry, [

@@ -8,12 +8,12 @@ import {
   Param,
   Query,
   UseGuards,
-  ForbiddenException,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { assertPermission } from '../../common/guards/permission.guard';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
@@ -22,6 +22,12 @@ export class CustomersController {
     private readonly customersService: CustomersService,
     private readonly employeesService: EmployeesService,
   ) {}
+
+  @Post()
+  async create(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'customers.create');
+    return this.customersService.createCustomer(body, employee);
+  }
 
   @Post('import')
   async importClients(
@@ -37,15 +43,16 @@ export class CustomersController {
         address?: string;
         customer_gst?: string;
         industry?: string;
+        assigned_salesperson_email?: string;
+        assigned_salesperson_name?: string;
+        assigned_salesperson_zoho_id?: string;
         assigned_salesperson_phone?: string;
+        assigned_salesperson?: string;
+        salesperson_phone?: string;
       }>;
     },
   ) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can import clients.',
-      );
-    }
+    assertPermission(employee, 'clients.import_csv');
 
     return this.customersService.importClients(
       body.clients,
@@ -148,10 +155,11 @@ export class CustomersController {
     @Body() body: any,
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
-    if (body.is_active !== undefined && employee?.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can modify customer active status.',
-      );
+    if (body.is_active !== undefined) {
+      assertPermission(employee, 'customers.toggle_active');
+    }
+    if (Object.keys(body || {}).some((key) => key !== 'is_active')) {
+      assertPermission(employee, 'customers.edit');
     }
 
     const { phones } =
@@ -172,11 +180,7 @@ export class CustomersController {
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
   ) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can deactivate or delete customers.',
-      );
-    }
+    assertPermission(employee, 'customers.delete');
 
     return this.customersService.deleteCustomer(id);
   }

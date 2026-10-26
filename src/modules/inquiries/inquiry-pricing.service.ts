@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
@@ -35,7 +31,9 @@ export class InquiryPricingService {
   }
 
   async saveProcurement(inquiry: any, body: any, employee: any) {
-    const submitted = Array.isArray(body?.lines) ? body.lines : sourceLines(inquiry);
+    const submitted = Array.isArray(body?.lines)
+      ? body.lines
+      : sourceLines(inquiry);
     const existing = await this.linesFor(inquiry.id);
     const next = deriveProcurementLines(existing, submitted);
     await this.upsert(inquiry.id, next, { priced_by: employee?.id || null });
@@ -75,13 +73,17 @@ export class InquiryPricingService {
           line_status: 'needs_price' as const,
         }));
     const next = baseLines.map((line: StoredPricingLine, index: number) => {
-      const update = submitted.find((item: any) => item.line_key === line.line_key);
+      const update = submitted.find(
+        (item: any) => item.line_key === line.line_key,
+      );
       if (!update || line.line_status === 'cannot_price') return line;
       const priced = calculateSalesLine(
         {
           ...line,
           sales_base_price_per_mt:
-            update.base_price_per_mt ?? line.sales_base_price_per_mt ?? line.procurement_base_price_per_mt,
+            update.base_price_per_mt ??
+            line.sales_base_price_per_mt ??
+            line.procurement_base_price_per_mt,
           transport_per_mt: update.transport_per_mt,
           loading_per_mt: update.loading_per_mt,
           credit_per_mt: update.credit_per_mt,
@@ -92,13 +94,20 @@ export class InquiryPricingService {
       );
       return {
         ...priced,
-        procurement_base_price_per_mt: line.procurement_base_price_per_mt ?? null,
+        procurement_base_price_per_mt:
+          line.procurement_base_price_per_mt ?? null,
         line_status:
-          Number(priced.sales_base_price_per_mt) > 0 ? 'priced' : line.line_status,
+          Number(priced.sales_base_price_per_mt) > 0
+            ? 'priced'
+            : line.line_status,
       };
     });
-    await this.upsert(inquiry.id, next, { sales_priced_by: employee?.id || null });
-    const stage = String(inquiry?.status || '').toLowerCase().trim();
+    await this.upsert(inquiry.id, next, {
+      sales_priced_by: employee?.id || null,
+    });
+    const stage = String(inquiry?.status || '')
+      .toLowerCase()
+      .trim();
     const update: Record<string, string> = { pricing_status: 'sales_priced' };
     if (!['negotiation', 'on_hold', 'hold', 'won', 'lost'].includes(stage)) {
       update.status = 'quoted';
@@ -120,7 +129,10 @@ export class InquiryPricingService {
   }
 
   declinePreview(inquiry: any, lines: any[]) {
-    if (!lines.length || lines.some((line) => line.line_status !== 'cannot_price')) {
+    if (
+      !lines.length ||
+      lines.some((line) => line.line_status !== 'cannot_price')
+    ) {
       throw new ForbiddenException(
         'A decline email is available only when every line is unavailable.',
       );
@@ -187,7 +199,8 @@ export class InquiryPricingService {
       quantity: line.quantity ?? null,
       unit: line.unit || null,
       procurement_base_price_per_mt: line.procurement_base_price_per_mt ?? null,
-      procurement_line_note: line.procurement_line_note || line.line_note || null,
+      procurement_line_note:
+        line.procurement_line_note || line.line_note || null,
       line_status: line.line_status || 'needs_price',
       sales_base_price_per_mt: line.sales_base_price_per_mt ?? null,
       transport_per_mt: line.transport_per_mt ?? null,
@@ -210,7 +223,11 @@ export class InquiryPricingService {
         .upsert(payload, { onConflict: 'inquiry_id,line_key' });
     let { error } = await write(rows);
     if (error && /credit_per_mt/i.test(error.message || '')) {
-      const retryRows = rows.map(({ credit_per_mt: _credit, ...rest }) => rest);
+      const retryRows = rows.map((row) => {
+        const copy = { ...row };
+        delete (copy as any).credit_per_mt;
+        return copy;
+      });
       ({ error } = await write(retryRows));
     }
     if (error) throw new Error(error.message || 'Could not save line prices');

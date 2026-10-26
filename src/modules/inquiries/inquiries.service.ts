@@ -791,10 +791,7 @@ export function matchesProcurementScope(
   }
   const phones = scope.salespersonPhones || [];
   const employeeIds = scope.salespersonEmployeeIds || [];
-  if (
-    item?.employee_id &&
-    employeeIds.includes(item.employee_id)
-  ) {
+  if (item?.employee_id && employeeIds.includes(item.employee_id)) {
     return true;
   }
   const phone = normalizePhone(item?.salesperson_phone || '');
@@ -1183,7 +1180,9 @@ export class InquiriesService implements OnModuleInit {
             )
             .eq('inquiry_id', inquiryId)
         : Promise.resolve({ data: [] }),
-      this.supabase.from('employees').select('id, name, phone, role, is_active'),
+      this.supabase
+        .from('employees')
+        .select('id, name, phone, role, is_active'),
       this.supabase
         .from('recurring_customers')
         .select(
@@ -1255,7 +1254,8 @@ export class InquiriesService implements OnModuleInit {
     accessibleEmployeeIds?: string[] | null,
   ) {
     if (accessibleEmployeeIds == null) return;
-    if (await this.salespersonOwnsInquiry(record, accessibleEmployeeIds)) return;
+    if (await this.salespersonOwnsInquiry(record, accessibleEmployeeIds))
+      return;
     throw new ForbiddenException(
       'Access Denied: You do not have permission to send quotations for this record.',
     );
@@ -1365,7 +1365,9 @@ export class InquiriesService implements OnModuleInit {
         return procurementScope ? anonymizeInquiry(result) : result;
       }
       const preserved = data ? preserveHistoricalPricingStatus(data) : data;
-      return procurementScope && preserved ? anonymizeInquiry(preserved) : preserved;
+      return procurementScope && preserved
+        ? anonymizeInquiry(preserved)
+        : preserved;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
@@ -1421,6 +1423,11 @@ export class InquiriesService implements OnModuleInit {
           await this.dealsService.deleteDeal(d.id, accessiblePhones);
         }
       }
+
+      await this.supabase
+        .from('inquiry_line_pricing')
+        .delete()
+        .eq('inquiry_id', id);
 
       const { error: delErr } = await this.supabase
         .from('inquiries')
@@ -2965,7 +2972,8 @@ MIDC Industrial Zone, Mumbai - 400001`
               amount: Number(line.taxable_amount || 0),
             }));
             details.totalAmount = available.reduce(
-              (sum: number, line: any) => sum + Number(line.taxable_amount || 0),
+              (sum: number, line: any) =>
+                sum + Number(line.taxable_amount || 0),
               0,
             );
             payload = { ...payload, details };

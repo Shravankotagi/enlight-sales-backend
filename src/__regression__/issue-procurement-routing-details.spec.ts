@@ -42,9 +42,7 @@ describe('procurement routing and inquiry detail', () => {
         customer_name: 'Alpha Metals',
         ai_extraction_json: {
           customer_name: 'Alpha Metals',
-          line_items: [
-            { sku_text: 'HR Coil', quantity: 12, unit: 'MT' },
-          ],
+          line_items: [{ sku_text: 'HR Coil', quantity: 12, unit: 'MT' }],
         },
       },
       '919811111111',
@@ -86,7 +84,9 @@ describe('procurement routing and inquiry detail', () => {
       },
     });
     const rows = await inquiriesService(db).findAll({});
-    expect(rows.find((row: any) => row.id === 'old')?.pricing_status).toBeNull();
+    expect(
+      rows.find((row: any) => row.id === 'old')?.pricing_status,
+    ).toBeNull();
     expect(rows.find((row: any) => row.id === 'kept')?.pricing_status).toBe(
       'price_ready',
     );
@@ -117,7 +117,12 @@ describe('procurement routing and inquiry detail', () => {
       },
     };
     const db = createSupabaseMock({
-      tables: { inquiries: [row], deals: [], employees: [], recurring_customers: [] },
+      tables: {
+        inquiries: [row],
+        deals: [],
+        employees: [],
+        recurring_customers: [],
+      },
     });
     const service = inquiriesService(db);
 
@@ -129,7 +134,9 @@ describe('procurement routing and inquiry detail', () => {
     expect(procurement.raw_text).toBeUndefined();
     expect(procurement.delivery_location).toBe('Pune, Maharashtra');
     expect(procurement.procurement_number).toBe('PR-10041');
-    expect(procurement.ai_extraction_json.line_items[0].original_quantity).toBe(12);
+    expect(procurement.ai_extraction_json.line_items[0].original_quantity).toBe(
+      12,
+    );
     expect(procurement.ai_extraction_json.customer_name).toBeUndefined();
 
     const sales = await service.findOne('inq-1', null, null);

@@ -1,4 +1,10 @@
-import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { CustomerInsightsService } from './customer-insights.service';
 import { phoneInList } from '../employees/employees.service';
@@ -41,6 +47,15 @@ function buildMultiFieldOrFilter(
     }
   }
   return parts.length > 0 ? parts.join(',') : null;
+}
+
+const GSTIN_FORMAT = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function indianMobile(raw: string): string | null {
+  const digits = String(raw || '').replace(/\D/g, '');
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  return /^[6-9]\d{9}$/.test(last10) ? last10 : null;
 }
 
 function cleanLegalSuffixes(str?: string): string {
@@ -1522,15 +1537,184 @@ export class CustomersService {
         throw new Error('No client records provided for import');
       }
 
+      // Preload active employees for CSV salesperson matching
+      const { data: allEmployeesData, error: empFetchError } =
+        await this.supabase.from('employees').select('*');
+
+      if (empFetchError) {
+        this.logger.warn(
+          'Failed to fetch employees for CSV salesperson mapping:',
+          empFetchError.message,
+        );
+      }
+
+      const activeEmployees = (allEmployeesData || []).filter(
+        (e: any) => e.is_active !== false && Boolean(e.phone),
+      );
+
+      // Helper to resolve salesperson for each row using:
+      // Corporate Email ID -> Name -> Zoho User ID -> Phone Number (fallback) with maximum matched scoring
+      const resolveSalesperson = (c: any): string => {
+        let rawEmail = String(c.assigned_salesperson_email || '')
+          .trim()
+          .toLowerCase();
+        let rawName = String(c.assigned_salesperson_name || '').trim();
+        let rawZohoId = String(c.assigned_salesperson_zoho_id || '').trim();
+        let rawPhone = String(
+          c.assigned_salesperson_phone || c.salesperson_phone || '',
+        ).trim();
+        const rawGeneric = String(
+          c.assigned_salesperson || c.salesperson || '',
+        ).trim();
+
+        // If generic salesperson column was provided, inspect value type
+        if (rawGeneric) {
+          if (rawGeneric.includes('@') && !rawEmail) {
+            rawEmail = rawGeneric.toLowerCase();
+          } else if (
+            /^\d{15,}$/.test(rawGeneric.replace(/\D/g, '')) &&
+            !rawZohoId
+          ) {
+            rawZohoId = rawGeneric.trim();
+          } else if (
+            /^\d{10,14}$/.test(rawGeneric.replace(/\D/g, '')) &&
+            !rawPhone
+          ) {
+            rawPhone = rawGeneric.trim();
+          } else if (/[a-zA-Z]/.test(rawGeneric) && !rawName) {
+            rawName = rawGeneric.trim();
+          }
+        }
+
+        // If rawPhone accidentally contains an email or alphabetic name
+        if (rawPhone.includes('@') && !rawEmail) {
+          rawEmail = rawPhone.toLowerCase();
+          rawPhone = '';
+        } else if (/[a-zA-Z]/.test(rawPhone) && !rawName) {
+          rawName = rawPhone;
+          rawPhone = '';
+        }
+
+        const cleanRawPhone = cleanPhone(rawPhone);
+        const normRawName = rawName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+        // Score each candidate employee based on maximum matched
+        // Hierarchy & weights:
+        // Corporate Email ID: +10 pts
+        // Name: +5 pts (exact) / +3 pts (token containment)
+        // Zoho User ID / Employee ID: +4 pts
+        // Phone Number: +2 pts
+        let bestEmp: any = null;
+        let highestScore = 0;
+        let bestTieBreaker = 0; // email=1000, name=100, zoho=10, phone=1
+
+        for (const emp of activeEmployees) {
+          let score = 0;
+          let tieBreaker = 0;
+
+          // 1. Corporate Email Match
+          const empEmail = String(emp.email || '')
+            .trim()
+            .toLowerCase();
+          if (rawEmail && empEmail && rawEmail === empEmail) {
+            score += 10;
+            tieBreaker += 1000;
+          }
+
+          // 2. Name Match
+          const normEmpName = String(emp.name || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+          if (normRawName && normEmpName) {
+            if (normRawName === normEmpName) {
+              score += 5;
+              tieBreaker += 100;
+            } else {
+              const rawTokens = normRawName
+                .split(' ')
+                .filter((t) => t.length > 2);
+              const empTokens = normEmpName
+                .split(' ')
+                .filter((t) => t.length > 2);
+              if (
+                rawTokens.length > 0 &&
+                empTokens.length > 0 &&
+                (rawTokens.every((t) => empTokens.includes(t)) ||
+                  empTokens.every((t) => rawTokens.includes(t)))
+              ) {
+                score += 3;
+                tieBreaker += 100;
+              }
+            }
+          }
+
+          // 3. Zoho User ID / Employee ID Match
+          const empZohoId = String(emp.zoho_user_id || '').trim();
+          const empCode = String(emp.employee_id || '').trim();
+          if (rawZohoId) {
+            if (
+              empZohoId &&
+              rawZohoId.toLowerCase() === empZohoId.toLowerCase()
+            ) {
+              score += 4;
+              tieBreaker += 10;
+            } else if (
+              empCode &&
+              rawZohoId.toLowerCase() === empCode.toLowerCase()
+            ) {
+              score += 4;
+              tieBreaker += 10;
+            }
+          }
+
+          // 4. Phone Number Fallback Match
+          const empCleanPhone = cleanPhone(emp.phone);
+          if (
+            cleanRawPhone &&
+            empCleanPhone &&
+            cleanRawPhone === empCleanPhone
+          ) {
+            score += 2;
+            tieBreaker += 1;
+          }
+
+          if (
+            score > highestScore ||
+            (score === highestScore && score > 0 && tieBreaker > bestTieBreaker)
+          ) {
+            highestScore = score;
+            bestTieBreaker = tieBreaker;
+            bestEmp = emp;
+          }
+        }
+
+        if (bestEmp && highestScore > 0) {
+          return String(bestEmp.phone).trim();
+        }
+
+        // If phone was provided and has 10 digits
+        if (cleanRawPhone) {
+          return cleanRawPhone.length === 10
+            ? `91${cleanRawPhone}`
+            : cleanRawPhone;
+        }
+
+        if (defaultSalespersonPhone && cleanPhone(defaultSalespersonPhone)) {
+          return defaultSalespersonPhone.trim();
+        }
+
+        return 'unassigned';
+      };
+
       const formattedClients = clients
         .map((c) => {
-          const assignedPhone =
-            c.assigned_salesperson_phone ||
-            c.salesperson_phone ||
-            defaultSalespersonPhone ||
-            null;
+          const assignedPhone = resolveSalesperson(c);
 
-          const cleanPhone =
+          const cleanPhoneNum =
             c.customer_phone || c.phone
               ? String(c.customer_phone || c.phone).replace(/\D/g, '')
               : null;
@@ -1554,7 +1738,7 @@ export class CustomersService {
               c.name ||
               ''
             ).trim(),
-            customer_phone: cleanPhone,
+            customer_phone: cleanPhoneNum,
             customer_gst:
               (c.customer_gst || c.gstin || c.gst || '').trim() || null,
             customer_address:
@@ -1637,5 +1821,127 @@ export class CustomersService {
       this.logger.error('Error in importClients:', error);
       throw error;
     }
+  }
+
+  async createCustomer(body: any, employee: { phone?: string; name?: string }) {
+    const customerName = String(body?.customer_name || '').trim();
+    const contactPerson = String(body?.contact_person || '').trim();
+    const deliveryLocation = String(body?.delivery_location || '').trim();
+    const rawPhone = String(body?.customer_phone || '').trim();
+    const email = String(body?.customer_email || '').trim();
+    const gst = String(body?.customer_gst || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '');
+    const ownerPhone = String(employee?.phone || '').trim();
+
+    if (!customerName || !contactPerson || !rawPhone || !deliveryLocation) {
+      throw new BadRequestException(
+        'Company name, contact person, mobile number, and delivery location are required',
+      );
+    }
+    const phone = indianMobile(rawPhone);
+    if (!phone) {
+      throw new BadRequestException('Enter a valid 10-digit mobile number');
+    }
+    if (!ownerPhone) {
+      throw new BadRequestException(
+        'Your account has no phone number, so this customer cannot be assigned',
+      );
+    }
+    if (email && !EMAIL_FORMAT.test(email)) {
+      throw new BadRequestException('Enter a valid email address');
+    }
+    if (gst && !GSTIN_FORMAT.test(gst)) {
+      throw new BadRequestException('Invalid GST number');
+    }
+
+    const { data: existing, error: lookupError } = await this.supabase
+      .from('recurring_customers')
+      .select('id, customer_name, is_active')
+      .ilike('customer_name', customerName);
+    if (lookupError) throw lookupError;
+
+    const duplicate = (existing || []).find(
+      (row: any) =>
+        row.is_active !== false &&
+        String(row.customer_name || '')
+          .trim()
+          .toLowerCase() === customerName.toLowerCase(),
+    );
+    if (duplicate) {
+      throw new ConflictException('Customer already exists');
+    }
+
+    const now = new Date().toISOString();
+    const { data: created, error } = await this.supabase
+      .from('recurring_customers')
+      .insert({
+        customer_name: customerName,
+        contact_person: contactPerson,
+        customer_phone: phone,
+        customer_address: deliveryLocation,
+        customer_gst: gst || null,
+        notes: email ? `Email: ${email}` : null,
+        assigned_salesperson_phone: ownerPhone,
+        is_active: true,
+        avg_order_frequency_days: 30,
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error || !created) {
+      throw new BadRequestException(
+        error?.message || 'Could not save customer',
+      );
+    }
+
+    const kraBase = {
+      salesperson_phone: ownerPhone,
+      kra_type: 'new_customer',
+      customer_name: customerName,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+      created_at: now,
+    };
+    const { error: kraError } = await this.supabase.from('kra_logs').insert([
+      {
+        ...kraBase,
+        kra_number: 2,
+        description: `New Customer Acquired: ${customerName}`,
+      },
+      {
+        ...kraBase,
+        kra_number: 6,
+        description: `Added New Customer: ${customerName}`,
+      },
+    ]);
+    if (kraError) {
+      this.logger.warn('KRA log for new customer failed', kraError.message);
+    }
+
+    const { error: logError } = await this.supabase
+      .from('activity_logs')
+      .insert({
+        timestamp: now,
+        salesperson_name: employee?.name || null,
+        salesperson_phone: ownerPhone,
+        description: `New customer ${customerName} added`,
+        module: 'Customers',
+        source: 'dashboard',
+        action_type: 'customer_created',
+        entity_id: created.id,
+        entity_type: 'customer',
+        customer_name: customerName,
+      });
+    if (logError) {
+      this.logger.warn(
+        'Activity log for new customer failed',
+        logError.message,
+      );
+    }
+
+    return created;
   }
 }

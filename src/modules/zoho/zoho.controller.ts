@@ -19,12 +19,13 @@ export class ZohoController {
   constructor(private readonly zohoService: ZohoService) {}
 
   private assertAdmin(employee: any) {
+    if (employee?.isInternal) return;
+    if (employee?.permissions?.['staff.manage_acl'] === true) return;
     const role = String(employee?.role || '').toLowerCase();
-    if (!role.includes('admin')) {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can run this Zoho operation.',
-      );
-    }
+    if (role === 'admin') return;
+    throw new ForbiddenException(
+      'Access Denied: Only administrators can run this Zoho operation.',
+    );
   }
 
   private assertCanSync(employee: any) {

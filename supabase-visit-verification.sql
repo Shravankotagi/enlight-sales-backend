@@ -9,7 +9,8 @@
 --     DROP COLUMN IF EXISTS location_source,
 --     DROP COLUMN IF EXISTS visit_latitude,
 --     DROP COLUMN IF EXISTS visit_longitude,
---     DROP COLUMN IF EXISTS preferred_make_other;
+--     DROP COLUMN IF EXISTS preferred_make_other,
+--     DROP COLUMN IF EXISTS customer_type_other;
 
 CREATE TABLE IF NOT EXISTS visit_phone_verifications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -34,7 +35,8 @@ ALTER TABLE customer_visits
   ADD COLUMN IF NOT EXISTS location_source text,
   ADD COLUMN IF NOT EXISTS visit_latitude numeric,
   ADD COLUMN IF NOT EXISTS visit_longitude numeric,
-  ADD COLUMN IF NOT EXISTS preferred_make_other text;
+  ADD COLUMN IF NOT EXISTS preferred_make_other text,
+  ADD COLUMN IF NOT EXISTS customer_type_other text;
 
 -- Service-role clients bypass RLS. This table is not granted to anon or authenticated.
 REVOKE ALL ON TABLE visit_phone_verifications FROM anon, authenticated;
