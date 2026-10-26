@@ -18,10 +18,15 @@ import { InquiryPricingService } from './inquiry-pricing.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { isProcurementRole } from '../../common/utils/roles';
 import {
-  isProcurementManager,
-  isProcurementRole,
-} from '../../common/utils/roles';
+  canDeleteInquiries,
+  canEditInquiries,
+  canFillBasePrices,
+  canSendQuote,
+  canViewInquiries,
+  resolveProcurementPermissions,
+} from './procurement-permissions';
 
 @Controller('inquiries')
 @UseGuards(JwtAuthGuard)
@@ -38,6 +43,35 @@ export class InquiriesController {
     );
   }
 
+  private denyPermission(action: string): never {
+    throw new ForbiddenException(
+      `Access Denied: You do not have permission to ${action}.`,
+    );
+  }
+
+  private async procurementActor(employee: any) {
+    const load = this.employeesService.findById;
+    if (typeof load !== 'function' || !employee?.id) return employee;
+    const row = await load.call(this.employeesService, employee.id);
+    if (!row) return employee;
+    return {
+      ...employee,
+      ...row,
+      role: row.role || employee.role,
+      id: row.id || employee.id,
+    };
+  }
+
+  private async procurementGate(employee: any) {
+    const actor = await this.procurementActor(employee);
+    const permissions = resolveProcurementPermissions(actor);
+    const scope = await this.employeesService.getAccessibleProcurementIds(
+      actor,
+      permissions,
+    );
+    return { permissions, scope };
+  }
+
   @Get()
   async findAll(
     @CurrentEmployee() employee: any,
@@ -48,13 +82,13 @@ export class InquiriesController {
     @Query('mode') mode?: string,
   ) {
     if (isProcurementRole(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
       return this.inquiriesService.findAll({
         status,
         from,
         to,
-        procurementScope,
+        procurementScope: scope,
       });
     }
 
@@ -86,13 +120,13 @@ export class InquiriesController {
     @Query('mode') mode?: string,
   ) {
     if (isProcurementRole(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
       return this.inquiriesService.findReviewQueue(
         undefined,
         from,
         to,
-        procurementScope,
+        scope,
       );
     }
 
@@ -119,14 +153,9 @@ export class InquiriesController {
     @Query('mode') mode?: string,
   ) {
     if (isProcurementRole(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
-      return this.inquiriesService.getStats(
-        undefined,
-        from,
-        to,
-        procurementScope,
-      );
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
+      return this.inquiriesService.getStats(undefined, from, to, scope);
     }
 
     const { phones } =
@@ -154,9 +183,9 @@ export class InquiriesController {
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     if (isProcurementRole(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
-      return this.inquiriesService.findOne(id, null, procurementScope);
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
+      return this.inquiriesService.findOne(id, null, scope);
     }
     const ids =
       await this.employeesService.getAccessibleSalespersonIds(employee);
@@ -171,14 +200,14 @@ export class InquiriesController {
     @Body() body: { status: string; details?: any },
   ) {
     if (isProcurementRole(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canEditInquiries(permissions)) this.denyPermission('edit inquiries');
       return this.inquiriesService.updateStatus(
         id,
         body.status,
         body.details,
         null,
-        procurementScope,
+        scope,
       );
     }
     const ids =
@@ -216,6 +245,12 @@ export class InquiriesController {
       throw new ForbiddenException(
         'Access Denied: Only procurement can save base prices.',
       );
+    }
+    if (isProcurementRole(employee?.role)) {
+      const { permissions } = await this.procurementGate(employee);
+      if (!canFillBasePrices(permissions)) {
+        this.denyPermission('save base prices');
+      }
     }
     const inquiry = await this.assertInquiryAccess(employee, id);
     if (
@@ -270,8 +305,8 @@ export class InquiriesController {
 
   private async assertInquiryAccess(employee: any, id: string) {
     if (isProcurementRole(employee?.role)) {
-      const scope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
       const inquiry = await this.inquiriesService.findOne(id, null, scope);
       if (!inquiry) throw new ForbiddenException('Inquiry not found');
       return inquiry;
@@ -298,7 +333,10 @@ export class InquiriesController {
     @Body() body: any,
   ) {
     if (isProcurementRole(employee?.role)) {
-      this.denyProcurement('send quotations');
+      const { permissions } = await this.procurementGate(employee);
+      if (!canSendQuote(permissions)) this.denyProcurement('send quotations');
+      await this.assertInquiryAccess(employee, id);
+      return this.inquiriesService.sendQuotation(id, body, null, employee);
     }
     const ids =
       await this.employeesService.getAccessibleSalespersonIds(employee);
@@ -312,7 +350,10 @@ export class InquiriesController {
     @Body() body: any,
   ) {
     if (isProcurementRole(employee?.role)) {
-      this.denyProcurement('preview quotations');
+      const { permissions } = await this.procurementGate(employee);
+      if (!canSendQuote(permissions)) this.denyProcurement('preview quotations');
+      await this.assertInquiryAccess(employee, id);
+      return this.inquiriesService.previewQuotation(id, body, employee, null);
     }
     const ids =
       await this.employeesService.getAccessibleSalespersonIds(employee);
@@ -352,17 +393,13 @@ export class InquiriesController {
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
   ) {
-    if (
-      isProcurementRole(employee?.role) &&
-      !isProcurementManager(employee?.role)
-    ) {
-      this.denyProcurement('delete inquiries');
-    }
-    if (isProcurementManager(employee?.role)) {
-      const procurementScope =
-        await this.employeesService.getAccessibleProcurementIds(employee);
+    if (isProcurementRole(employee?.role)) {
+      const { permissions, scope } = await this.procurementGate(employee);
+      if (!canDeleteInquiries(permissions)) {
+        this.denyProcurement('delete inquiries');
+      }
       return this.inquiriesService.deleteInquiry(id, null, {
-        ...procurementScope,
+        ...scope,
         includeUnassignedPool: false,
       });
     }
