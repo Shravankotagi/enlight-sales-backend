@@ -326,13 +326,13 @@ export class InquiriesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
-    assertPermission(employee, 'inquiries.send_quote');
     if (isProcurementRole(employee?.role)) {
       const { permissions } = await this.procurementGate(employee);
       if (!canSendQuote(permissions)) this.denyProcurement('send quotations');
       await this.assertInquiryAccess(employee, id);
       return this.inquiriesService.sendQuotation(id, body, null, employee);
     }
+    assertPermission(employee, 'inquiries.send_quote');
     const ids =
       await this.employeesService.getAccessibleSalespersonIds(employee);
     return this.inquiriesService.sendQuotation(id, body, ids, employee);
