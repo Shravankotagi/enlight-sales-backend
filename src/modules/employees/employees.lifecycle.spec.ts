@@ -108,4 +108,18 @@ describe('employee lifecycle logs', () => {
       }),
     );
   });
+
+  it('rejects an employee being assigned as their own manager', async () => {
+    const { service } = setup({
+      ...target,
+      role: 'procurement_manager',
+    });
+
+    await expect(
+      service.update('emp-1', {
+        role: 'procurement_person',
+        manager_id: 'emp-1',
+      }),
+    ).rejects.toThrow('An employee cannot be assigned as their own manager.');
+  });
 });

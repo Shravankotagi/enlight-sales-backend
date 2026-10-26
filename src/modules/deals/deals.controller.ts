@@ -15,6 +15,7 @@ import { DealsService } from './deals.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { assertPermission } from '../../common/guards/permission.guard';
 
 @Controller('deals')
 @UseGuards(JwtAuthGuard)
@@ -25,8 +26,12 @@ export class DealsController {
   ) {}
 
   private async rejectUnassignedCustomer(employee: any, customerName?: string) {
-    const role = String(employee?.role || '').toLowerCase();
-    if (role.includes('admin')) return;
+    if (
+      employee?.dataScope === 'all' ||
+      employee?.isInternal ||
+      employee?.role === 'admin'
+    )
+      return;
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     await this.dealsService.assertAssignedCustomer(customerName, phones || []);
@@ -241,19 +246,24 @@ export class DealsController {
 
   @Post('order')
   async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'orders.create');
     await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.createOrder(body, employee.phone);
   }
 
   @Post('process-po')
   async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'orders.attach_po');
     await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.processPo(body, employee.phone);
   }
 
   @Post('process-po-internal')
   async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
-    const isCallerAdmin = employee?.role === 'admin';
+    const isCallerAdmin =
+      employee?.dataScope === 'all' ||
+      employee?.isInternal ||
+      employee?.role === 'admin';
     const phone =
       isCallerAdmin && body.salesperson_phone
         ? body.salesperson_phone
@@ -264,6 +274,7 @@ export class DealsController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async deleteDeal(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    assertPermission(employee, 'deals.delete');
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.dealsService.deleteDeal(id, phones);

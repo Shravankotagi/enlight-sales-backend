@@ -121,7 +121,7 @@ export class ActivityLogsService {
       limit?: number;
     },
     accessiblePhones?: string[] | null,
-    options?: { includeAuth?: boolean },
+    options?: { includeStaffModules?: boolean; includeAuth?: boolean },
   ) {
     try {
       let q = this.supabase
@@ -145,6 +145,7 @@ export class ActivityLogsService {
         if (parts.length > 0) {
           q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
         }
+        q = q.neq('source', 'zoho_sync');
       }
 
       if (query.from) {
@@ -164,8 +165,15 @@ export class ActivityLogsService {
         q = q.ilike('module', query.module);
       }
 
-      if (!options?.includeAuth) {
-        q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+      if (!options?.includeStaffModules && !options?.includeAuth) {
+        if (
+          options?.includeStaffModules === undefined &&
+          options?.includeAuth === false
+        ) {
+          q = q.or('module.is.null,module.not.in.(Auth,Employees)');
+        } else {
+          q = q.or('module.is.null,module.not.in.(Auth,Employees,Roles)');
+        }
       }
 
       if (
@@ -191,11 +199,104 @@ export class ActivityLogsService {
       const { data, error } = await q;
       if (error) throw error;
 
-      return this.attachLogout(data || []);
+      let rows = data || [];
+      if (!options?.includeStaffModules && !options?.includeAuth) {
+        rows = rows.filter(
+          (row: any) => !['Roles', 'Auth', 'Employees'].includes(row.module),
+        );
+      }
+      return this.attachLogout(rows);
     } catch (err: any) {
       this.logger.error('Error fetching activity logs:', err);
       return [];
     }
+  }
+
+  async countActivityLogs(
+    query: { from?: string; to?: string },
+    accessiblePhones?: string[] | null,
+    options?: { includeAuth?: boolean; includeStaffModules?: boolean },
+  ) {
+    const buckets: [string, string | null][] = [
+      ['All', null],
+      ['Inquiries', '%inquir%'],
+      ['Orders', '%order%'],
+      ['Visits', '%visit%'],
+      ['Complaints', '%complaint%'],
+      ['Auth', 'Auth'],
+      ['Employees', 'Employees'],
+    ];
+    const counts: Record<string, number> = {};
+    await Promise.all(
+      buckets.map(async ([name, pattern]) => {
+        let q = this.supabase
+          .from('activity_logs')
+          .select('*', { count: 'exact', head: true });
+        q = this.applyLogFilters(
+          q,
+          {
+            ...query,
+            module: name === 'Orders' ? undefined : pattern || undefined,
+          },
+          accessiblePhones,
+          options,
+        );
+        if (name === 'Orders') {
+          q = q.or('module.ilike.%order%,module.ilike.%deal%');
+        }
+        const { count, error } = await q;
+        if (error) throw error;
+        counts[name] = count || 0;
+      }),
+    );
+    return counts;
+  }
+
+  private applyLogFilters(
+    q: any,
+    query: { from?: string; to?: string; module?: string },
+    accessiblePhones?: string[] | null,
+    options?: { includeAuth?: boolean; includeStaffModules?: boolean },
+  ) {
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      const parts: string[] = [];
+      for (const phone of accessiblePhones) {
+        if (!phone || typeof phone !== 'string') continue;
+        const clean = phone.replace(/\D/g, '');
+        const p10 = clean.slice(-10);
+        if (!p10) continue;
+        const p12 = '91' + p10;
+        parts.push(
+          `salesperson_phone.ilike.%${p10}%`,
+          `salesperson_phone.ilike.%${p12}%`,
+        );
+      }
+      if (parts.length > 0) {
+        q = q.or(`${parts.join(',')},salesperson_phone.is.null`);
+      }
+      q = q.neq('source', 'zoho_sync');
+    }
+
+    if (query.from) {
+      const fromIso = query.from.includes('T')
+        ? query.from
+        : `${query.from}T00:00:00.000Z`;
+      q = q.gte('timestamp', fromIso);
+    }
+    if (query.to) {
+      const toIso = query.to.includes('T')
+        ? query.to
+        : `${query.to}T23:59:59.999Z`;
+      q = q.lte('timestamp', toIso);
+    }
+
+    if (query.module && query.module !== 'All' && query.module !== 'all') {
+      q = q.ilike('module', query.module);
+    } else if (!options?.includeAuth && !options?.includeStaffModules) {
+      q = q.or('module.is.null,module.not.in.(Auth,Employees,Roles)');
+    }
+
+    return q;
   }
 
   private async attachLogout(rows: any[]) {

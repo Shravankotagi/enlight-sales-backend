@@ -14,6 +14,14 @@ import {
   isProcurementRole,
 } from '../../common/utils/roles';
 import { procurementScopeMode } from '../inquiries/procurement-permissions';
+import {
+  legacyDataScope,
+  normalizeRoleId,
+} from '../../common/acl/permissionKeys';
+import {
+  PermissionsService,
+  invalidatePermissions,
+} from '../roles/permissions.service';
 
 export function normalizePhone(phone?: string): string {
   if (!phone) return '';
@@ -37,10 +45,25 @@ export function phoneInList(phone?: string, list?: string[] | null): boolean {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
+  private permissionsService?: PermissionsService;
+  private activityLogs?: ActivityLogsService;
+
   constructor(
     private supabaseService: SupabaseService,
-    @Optional() private activityLogs?: ActivityLogsService,
-  ) {}
+    @Optional() permissionsOrLogs?: PermissionsService | ActivityLogsService,
+    @Optional() activityLogs?: ActivityLogsService,
+  ) {
+    if (
+      permissionsOrLogs &&
+      typeof (permissionsOrLogs as any).logActivity === 'function'
+    ) {
+      this.activityLogs = permissionsOrLogs as ActivityLogsService;
+      this.permissionsService = undefined;
+    } else {
+      this.permissionsService = permissionsOrLogs as PermissionsService;
+      this.activityLogs = activityLogs;
+    }
+  }
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -246,6 +269,7 @@ export class EmployeesService {
     employee: any,
     requestedPhoneOverride?: string,
     mode?: string,
+    scopeAssignedKey?: string,
   ): Promise<{
     phones: string[] | null;
     isManagerView?: boolean;
@@ -255,9 +279,23 @@ export class EmployeesService {
       mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
     if (
-      !employee ||
-      employee.role === 'admin' ||
-      employee.role === 'super_admin'
+      scopeAssignedKey &&
+      employee &&
+      !employee.isInternal &&
+      employee.permissions?.[scopeAssignedKey] === true
+    ) {
+      return { phones: employee.phone ? [employee.phone] : [] };
+    }
+
+    const scope =
+      !employee || employee.isInternal
+        ? 'all'
+        : employee.dataScope || legacyDataScope(employee.role);
+
+    if (
+      scope === 'all' ||
+      employee?.role === 'admin' ||
+      employee?.role === 'super_admin'
     ) {
       if (requestedPhoneOverride) {
         const normOverride = normalizePhone(requestedPhoneOverride);
@@ -270,10 +308,8 @@ export class EmployeesService {
           (e: any) => normalizePhone(e.phone) === normOverride,
         );
 
-        if (
-          targetEmp &&
-          (targetEmp.role === 'sales_manager' || targetEmp.role === 'manager')
-        ) {
+        const targetScope = await this.scopeFor(targetEmp);
+        if (targetEmp && targetScope === 'team') {
           if (isPersonalMode) {
             return { phones: [targetEmp.phone], isPersonalView: true };
           }
@@ -304,7 +340,7 @@ export class EmployeesService {
       return { phones: null };
     }
 
-    if (employee.role === 'sales_manager' || employee.role === 'manager') {
+    if (scope === 'team') {
       const assigned = await this.getAssignedSalespersons(
         employee.id,
         employee.phone,
@@ -322,7 +358,6 @@ export class EmployeesService {
 
       if (requestedPhoneOverride) {
         const normReq = normalizePhone(requestedPhoneOverride);
-        // If manager requested their own phone, treat as personal mode
         if (normReq === normalizePhone(employee.phone)) {
           return { phones: [employee.phone], isPersonalView: true };
         }
@@ -339,8 +374,20 @@ export class EmployeesService {
       return { phones: teamPhones, isManagerView: true };
     }
 
-    // Default Salesperson: strictly own phone
-    return { phones: [employee.phone] };
+    return { phones: employee?.phone ? [employee.phone] : [] };
+  }
+
+  private async scopeFor(targetEmp: any): Promise<'own' | 'team' | 'all'> {
+    if (!targetEmp) return 'own';
+    if (this.permissionsService && targetEmp.id) {
+      try {
+        const resolved = await this.permissionsService.resolve(targetEmp.id);
+        if (resolved?.dataScope) return resolved.dataScope;
+      } catch {
+        /* use the role string */
+      }
+    }
+    return legacyDataScope(targetEmp.role);
   }
 
   /**
@@ -625,6 +672,11 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          if (mgr.id === id) {
+            throw new BadRequestException(
+              'An employee cannot be assigned as their own manager.',
+            );
+          }
           this.assertManagerFitsRole(nextRole, mgr);
           updatePayload.manager_id = mgr.id;
           updatePayload.manager_phone = mgr.phone;
@@ -646,6 +698,23 @@ export class EmployeesService {
         .select()
         .single();
       if (error) throw error;
+      invalidatePermissions(id);
+      if (
+        dto.role &&
+        normalizeRoleId(dto.role) !== normalizeRoleId(currentEmp.role)
+      ) {
+        await this.supabase.from('activity_logs').insert({
+          timestamp: new Date().toISOString(),
+          salesperson_name: currentEmp.name,
+          description: `Role changed from ${currentEmp.role} to ${dto.role}`,
+          module: 'Roles',
+          source: 'dashboard',
+          action_type: 'employee_role_changed',
+          entity_id: id,
+          entity_type: 'employee',
+          change_detail: { from: currentEmp.role, to: dto.role },
+        });
+      }
 
       if (typeof dto.is_active === 'boolean' && dto.is_active !== wasActive) {
         this.logLifecycle(
@@ -805,7 +874,8 @@ export class EmployeesService {
   }
 
   private async salespeopleRoutedTo(personIds: string[]) {
-    if (!personIds.length) return { phones: [] as string[], ids: [] as string[] };
+    if (!personIds.length)
+      return { phones: [] as string[], ids: [] as string[] };
     try {
       const { data, error } = await this.supabase
         .from('employees')

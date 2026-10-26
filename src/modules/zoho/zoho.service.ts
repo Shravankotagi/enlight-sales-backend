@@ -303,15 +303,23 @@ export class ZohoService implements OnModuleInit {
     if (error) throw new Error(error.message);
     for (const emp of data || []) {
       if (emp.is_active === false) continue;
-      const role = String(emp.role || '').toLowerCase();
-      if (role === 'admin') continue; // Admins are not field sales reps
       const phone = String(emp.phone || '').trim();
       if (!cleanPhone(phone)) continue;
-      if (phone.replace(/\D/g, '').endsWith('9975003940')) continue; // Skip Dhananjay Goel
       if (emp.email) byEmail.set(String(emp.email).toLowerCase().trim(), phone);
       const name = this.normalizePersonName(emp.name);
       if (name) byName.set(name, phone);
     }
+
+    // Suvarna Patil's customer portfolio is reassigned to Vedant Goel
+    const vedantPhone =
+      byEmail.get('vedant@enlightmetals.com') ||
+      byName.get('vedant goel') ||
+      null;
+    if (vedantPhone) {
+      byEmail.set('suvarna.patil@enlightmetals.com', vedantPhone);
+      byName.set('suvarna patil', vedantPhone);
+    }
+
     return { byEmail, byZohoId, byName };
   }
 
@@ -450,6 +458,34 @@ export class ZohoService implements OnModuleInit {
         `[ZohoSync] Customer sync starting${cleanSince ? ` since ${cleanSince}` : ' (full accounts pull)'}.`,
       );
 
+      // Pre-load all recurring_customers in one batch for fast O(1) in-memory lookup.
+      // Customer record matching is strictly done by Zoho Account ID or normalized company name.
+      // Phone number is NEVER used to match, sync, or fall back for records.
+      const { data: allExistingCusts, error: custsFetchErr } =
+        await this.supabase
+          .from('recurring_customers')
+          .select(
+            'id, customer_name, assigned_salesperson_phone, notes, customer_phone, customer_address, customer_gst',
+          );
+      if (custsFetchErr) throw new Error(custsFetchErr.message);
+
+      const custByZohoId = new Map<string, any>();
+      const custByName = new Map<string, any>();
+
+      for (const cust of allExistingCusts || []) {
+        if (cust.notes) {
+          const match = String(cust.notes).match(
+            /Zoho Account ID:\s*([^\s|]+)/i,
+          );
+          if (match && match[1]) {
+            custByZohoId.set(match[1].trim(), cust);
+          }
+        }
+        if (cust.customer_name) {
+          custByName.set(cust.customer_name.trim().toLowerCase(), cust);
+        }
+      }
+
       let page = 1;
       let hasMore = true;
       while (hasMore) {
@@ -483,64 +519,81 @@ export class ZohoService implements OnModuleInit {
             )?.[0];
             const ownerName = String(acc.Owner?.name || '').trim() || 'Unknown';
             const mappedPhone = this.resolveBiginOwnerPhone(acc.Owner, lookup);
-            const { data: existingCust, error: findErr } = await this.supabase
-              .from('recurring_customers')
-              .select('id, assigned_salesperson_phone, notes')
-              .ilike('customer_name', companyName)
-              .limit(1);
-            if (findErr) throw new Error(findErr.message);
+            const targetPhone = mappedPhone || 'unassigned';
+            const accId = acc.id ? String(acc.id).trim() : '';
 
-            const currentPhone = existingCust?.[0]?.assigned_salesperson_phone;
+            // Customer match strictly by Zoho Account ID or normalized company name.
+            // Phone number is NEVER used to match customer records.
+            const existing =
+              (accId ? custByZohoId.get(accId) : null) ||
+              custByName.get(companyName.toLowerCase());
+
+            const currentPhone = existing?.assigned_salesperson_phone;
             const noteContent = `Zoho Bigin Account Owner: ${ownerName}${acc.id ? ` | Zoho Account ID: ${acc.id}` : ''}`;
-            if (!existingCust || existingCust.length === 0) {
-              const { error: insertErr } = await this.supabase
+            if (!existing) {
+              const { data: inserted, error: insertErr } = await this.supabase
                 .from('recurring_customers')
                 .insert({
                   customer_name: companyName,
                   customer_phone: phone || null,
                   customer_address: address || null,
                   customer_gst: gst || null,
-                  assigned_salesperson_phone: mappedPhone || 'unassigned',
+                  assigned_salesperson_phone: targetPhone,
                   is_active: true,
                   avg_order_frequency_days: 30,
                   notes: noteContent,
-                });
+                })
+                .select(
+                  'id, customer_name, assigned_salesperson_phone, notes, customer_phone, customer_address, customer_gst',
+                )
+                .single();
               if (insertErr) throw new Error(insertErr.message);
               results.recordsCreated++;
+              if (inserted) {
+                if (accId) custByZohoId.set(accId, inserted);
+                custByName.set(companyName.toLowerCase(), inserted);
+              }
               if (!mappedPhone) {
                 results.recordsSkipped++;
                 skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
               }
             } else {
-              const updateData: Record<string, any> = {
-                updated_at: new Date().toISOString(),
-              };
-              if (phone) updateData.customer_phone = phone;
-              if (address) updateData.customer_address = address;
-              if (gst) updateData.customer_gst = gst;
-              if (!existingCust[0]?.notes && acc.id) {
+              const updateData: Record<string, any> = {};
+              if (phone && phone !== existing.customer_phone) {
+                updateData.customer_phone = phone;
+              }
+              if (address && address !== existing.customer_address) {
+                updateData.customer_address = address;
+              }
+              if (gst && gst !== existing.customer_gst) {
+                updateData.customer_gst = gst;
+              }
+              if (!existing.notes && acc.id) {
                 updateData.notes = noteContent;
               }
 
-              const isUnassigned =
-                !currentPhone ||
-                currentPhone === 'unassigned' ||
-                currentPhone === 'null';
+              // Owner resolution: strictly email ID, normalized name, and zoho user ID.
+              // Phone number is NEVER used as fallback. If owner is not an active salesperson,
+              // targetPhone is 'unassigned'. NEVER keep an old salesperson phone!
+              if (targetPhone !== currentPhone) {
+                updateData.assigned_salesperson_phone = targetPhone;
+              }
 
-              if (mappedPhone && mappedPhone !== currentPhone) {
-                updateData.assigned_salesperson_phone = mappedPhone;
-              } else if (isUnassigned && !mappedPhone) {
-                updateData.assigned_salesperson_phone = 'unassigned';
+              if (!mappedPhone) {
                 results.recordsSkipped++;
                 skippedAccounts.push(`${companyName} (Owner ${ownerName})`);
               }
 
-              const { error: updateErr } = await this.supabase
-                .from('recurring_customers')
-                .update(updateData)
-                .eq('id', existingCust[0].id);
-              if (updateErr) throw new Error(updateErr.message);
-              results.recordsUpdated++;
+              if (Object.keys(updateData).length > 0) {
+                updateData.updated_at = new Date().toISOString();
+                const { error: updateErr } = await this.supabase
+                  .from('recurring_customers')
+                  .update(updateData)
+                  .eq('id', existing.id);
+                if (updateErr) throw new Error(updateErr.message);
+                results.recordsUpdated++;
+                Object.assign(existing, updateData);
+              }
             }
           } catch (accErr: any) {
             results.errors.push(
@@ -683,12 +736,14 @@ export class ZohoService implements OnModuleInit {
               .ilike('customer_name', companyName)
               .limit(1);
 
+            const targetPhone = mappedPhone || 'unassigned';
+
             if (!existing || existing.length === 0) {
               await this.supabase.from('recurring_customers').insert({
                 customer_name: companyName,
                 customer_phone: data.Phone || null,
                 customer_address: data.Billing_City || null,
-                assigned_salesperson_phone: mappedPhone,
+                assigned_salesperson_phone: targetPhone,
                 industry: data.Industry || 'Steel & Manufacturing',
                 is_active: true,
                 avg_order_frequency_days: 30,
@@ -701,10 +756,8 @@ export class ZohoService implements OnModuleInit {
                 is_active: true,
                 zoho_account_id: String(entityId),
                 updated_at: new Date().toISOString(),
+                assigned_salesperson_phone: targetPhone,
               };
-              if (!existing[0].assigned_salesperson_phone && mappedPhone) {
-                updatePayload.assigned_salesperson_phone = mappedPhone;
-              }
               await this.supabase
                 .from('recurring_customers')
                 .update(updatePayload)

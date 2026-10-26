@@ -138,6 +138,27 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
     expect(managerView.phones).toContain('9200000001');
     expect(managerView.phones).not.toContain('9400000002');
   });
+
+  it('narrows an all-scope user to their own phone in personal mode', async () => {
+    const service = createService();
+    await expect(
+      service.getAccessibleSalespersonPhones(
+        { ...employees[0], dataScope: 'all' },
+        undefined,
+        'personal',
+      ),
+    ).resolves.toEqual({ phones: ['9000000000'], isPersonalView: true });
+  });
+
+  it('ignores a phone override for an own-scope user', async () => {
+    const service = createService();
+    await expect(
+      service.getAccessibleSalespersonPhones(
+        { ...employees[2], dataScope: 'own' },
+        '9300000003',
+      ),
+    ).resolves.toEqual({ phones: ['9200000001'] });
+  });
 });
 
 describe('EmployeesService procurement scope', () => {

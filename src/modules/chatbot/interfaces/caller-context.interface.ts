@@ -7,4 +7,6 @@ export interface CallerContext {
   reportsToId?: string;
   name?: string;
   allUserIds?: string[];
+  permissions?: Record<string, boolean>;
+  dataScope?: 'own' | 'team' | 'all';
 }
