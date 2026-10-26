@@ -1,4 +1,10 @@
-import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { CustomerInsightsService } from './customer-insights.service';
 import { phoneInList } from '../employees/employees.service';
@@ -43,7 +49,7 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
-function cleanLegalSuffixes(str?: string): string {
+export function cleanLegalSuffixes(str?: string): string {
   if (!str) return '';
   return str
     .toLowerCase()
@@ -57,10 +63,115 @@ function cleanLegalSuffixes(str?: string): string {
     .trim();
 }
 
-function cleanPhone(p?: string): string {
+export function cleanPhone(p?: string): string {
   if (!p) return '';
   const digits = String(p).replace(/\D/g, '');
   return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+export function cleanGst(gst?: string): string {
+  if (!gst) return '';
+  return String(gst)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+export function calculateDiceCoefficient(s1: string, s2: string): number {
+  const a = s1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const b = s2.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (a === b) return 1.0;
+  if (a.length < 2 || b.length < 2) return 0.0;
+  const getBigrams = (str: string) => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < str.length - 1; i++) {
+      const bg = str.slice(i, i + 2);
+      map.set(bg, (map.get(bg) || 0) + 1);
+    }
+    return map;
+  };
+  const b1 = getBigrams(a);
+  const b2 = getBigrams(b);
+  let intersection = 0;
+  for (const [bg, count] of b1.entries()) {
+    if (b2.has(bg)) intersection += Math.min(count, b2.get(bg)!);
+  }
+  return (2 * intersection) / (a.length - 1 + (b.length - 1));
+}
+
+export function calculateLevenshteinSimilarity(s1: string, s2: string): number {
+  const a = s1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const b = s2.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (a === b) return 1.0;
+  const m = a.length,
+    n = b.length;
+  const maxLen = Math.max(m, n);
+  if (maxLen === 0) return 1.0;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0),
+  );
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+      else
+        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return (maxLen - dp[m][n]) / maxLen;
+}
+
+export function calculateJaroWinklerSimilarity(s1: string, s2: string): number {
+  const a = s1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const b = s2.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (a === b) return 1.0;
+  const len1 = a.length,
+    len2 = b.length;
+  if (len1 === 0 || len2 === 0) return 0.0;
+
+  const matchDist = Math.floor(Math.max(len1, len2) / 2) - 1;
+  const aMatches = new Array(len1).fill(false);
+  const bMatches = new Array(len2).fill(false);
+  let matches = 0;
+
+  for (let i = 0; i < len1; i++) {
+    const start = Math.max(0, i - matchDist);
+    const end = Math.min(i + matchDist + 1, len2);
+    for (let j = start; j < end; j++) {
+      if (!bMatches[j] && a[i] === b[j]) {
+        aMatches[i] = true;
+        bMatches[j] = true;
+        matches++;
+        break;
+      }
+    }
+  }
+  if (matches === 0) return 0.0;
+
+  let t = 0,
+    k = 0;
+  for (let i = 0; i < len1; i++) {
+    if (aMatches[i]) {
+      while (!bMatches[k]) k++;
+      if (a[i] !== b[k]) t++;
+      k++;
+    }
+  }
+  const jaro =
+    (matches / len1 + matches / len2 + (matches - t / 2) / matches) / 3;
+  let l = 0;
+  while (l < Math.min(4, len1, len2) && a[l] === b[l]) l++;
+  return jaro + l * 0.1 * (1 - jaro);
+}
+
+export function calculateStringSimilarity(s1: string, s2: string): number {
+  return Math.max(
+    calculateDiceCoefficient(s1, s2),
+    calculateLevenshteinSimilarity(s1, s2),
+  );
 }
 
 function getDealTonnage(deal: any): number {
@@ -166,6 +277,86 @@ function isCustomerMatch(
   }
 
   return false;
+}
+
+/** Delete match: same company name, or the same phone with a compatible name. */
+export function customerRecordsMatch(
+  custName?: string,
+  custPhone?: string,
+  targetName?: string,
+  targetPhone?: string,
+): boolean {
+  const cClean = cleanLegalSuffixes(custName);
+  const tClean = cleanLegalSuffixes(targetName);
+  if (cClean && tClean && cClean === tClean) return true;
+  if (
+    cClean &&
+    tClean &&
+    (cClean.startsWith(tClean) || tClean.startsWith(cClean)) &&
+    Math.min(cClean.length, tClean.length) >= 8
+  ) {
+    return true;
+  }
+  const cp = cleanPhone(custPhone);
+  const tp = cleanPhone(targetPhone);
+  if (!cp || !tp || cp !== tp || !cClean || !tClean) return false;
+  return (
+    cClean === tClean || cClean.startsWith(tClean) || tClean.startsWith(cClean)
+  );
+}
+
+function customerIdentityFilters(
+  name: string | undefined,
+  phone: string | undefined,
+  nameFields: string[],
+  phoneFields: string[],
+): string[] {
+  const parts: string[] = [];
+  const clean = cleanLegalSuffixes(name)
+    .replace(/[%_,.()]/g, '')
+    .trim();
+  if (clean.length >= 3) {
+    for (const field of nameFields) parts.push(`${field}.ilike.%${clean}%`);
+  }
+  const digits = cleanPhone(phone);
+  if (digits) {
+    for (const field of phoneFields) parts.push(`${field}.ilike.%${digits}%`);
+  }
+  return parts;
+}
+
+function inquiryBelongsToCustomer(customer: any, inquiry: any): boolean {
+  if (
+    customerRecordsMatch(
+      customer.customer_name,
+      customer.customer_phone,
+      inquiry.sender_name,
+      inquiry.sender_phone,
+    )
+  ) {
+    return true;
+  }
+  const ai = inquiry.ai_extraction_json || {};
+  const aiName =
+    ai.customer_name || ai.companyName || ai.customer?.name || ai.company_name;
+  const aiPhone =
+    ai.customerPhone || ai.customer_phone || ai.customer?.phone || ai.phone;
+  if (
+    customerRecordsMatch(
+      customer.customer_name,
+      customer.customer_phone,
+      aiName,
+      aiPhone,
+    )
+  ) {
+    return true;
+  }
+  const clean = cleanLegalSuffixes(customer.customer_name);
+  return (
+    clean.length >= 8 &&
+    Boolean(inquiry.raw_text) &&
+    cleanLegalSuffixes(inquiry.raw_text).includes(clean)
+  );
 }
 
 @Injectable()
@@ -1129,6 +1320,345 @@ export class CustomersService {
     }
   }
 
+  async findCustomerConflict(
+    customerName?: string,
+    customerPhone?: string,
+    customerGst?: string,
+    callerPhone?: string,
+    allowSimilar?: boolean,
+  ): Promise<{
+    conflict: boolean;
+    conflictType?: 'exact' | 'similar';
+    reason?: string;
+    existing?: any;
+    isOwnCustomer?: boolean;
+    isUnassigned?: boolean;
+    repName?: string;
+    repPhone?: string;
+    similarityScore?: number;
+  }> {
+    const rawName = String(customerName || '').trim();
+    const coreName = cleanLegalSuffixes(rawName);
+    const phone10 = cleanPhone(customerPhone);
+    const gstClean = cleanGst(customerGst);
+    const caller10 = cleanPhone(callerPhone);
+
+    if (!rawName && !phone10 && !gstClean) {
+      return { conflict: false };
+    }
+
+    const { data: candidates, error } = await this.supabase
+      .from('recurring_customers')
+      .select('*')
+      .eq('is_active', true);
+
+    if (error) {
+      this.logger.error(
+        'Error fetching recurring_customers for conflict check:',
+        error,
+      );
+      return { conflict: false };
+    }
+
+    const allRecords = candidates || [];
+
+    // 1. Exact Match Check
+    const exactMatch = allRecords.find((c: any) => {
+      const dbRaw = String(c.customer_name || '').trim();
+      const dbCore = cleanLegalSuffixes(dbRaw);
+
+      if (rawName && dbRaw.toLowerCase() === rawName.toLowerCase()) return true;
+      if (coreName && dbCore && coreName === dbCore) return true;
+
+      const dbPhone = cleanPhone(c.customer_phone);
+      if (phone10 && dbPhone && phone10 === dbPhone) return true;
+
+      const dbGst = cleanGst(c.customer_gst);
+      if (gstClean && dbGst && gstClean === dbGst) return true;
+
+      return false;
+    });
+
+    if (exactMatch) {
+      const assignedPhone10 = cleanPhone(exactMatch.assigned_salesperson_phone);
+      const isUnassigned =
+        !assignedPhone10 ||
+        assignedPhone10 === 'unassigned' ||
+        String(exactMatch.assigned_salesperson_phone || '').toLowerCase() ===
+          'unassigned';
+      const isOwnCustomer = Boolean(
+        assignedPhone10 && caller10 && assignedPhone10 === caller10,
+      );
+
+      if (isUnassigned) {
+        return { conflict: false, existing: exactMatch, isUnassigned: true };
+      }
+
+      if (isOwnCustomer) {
+        return {
+          conflict: true,
+          conflictType: 'exact',
+          isOwnCustomer: true,
+          existing: exactMatch,
+          reason: `Customer "${exactMatch.customer_name}" is already registered and assigned to your account.`,
+        };
+      }
+
+      let repName = '';
+      if (assignedPhone10) {
+        try {
+          const { data: rep } = await this.supabase
+            .from('employees')
+            .select('name, phone')
+            .or(
+              `phone.eq.${assignedPhone10},phone.eq.91${assignedPhone10},phone.eq.+91${assignedPhone10}`,
+            )
+            .limit(1)
+            .maybeSingle();
+
+          if (rep?.name) {
+            repName = rep.name;
+          }
+        } catch {
+          // fallback
+        }
+      }
+
+      const repDisplay = repName
+        ? `${repName} (${assignedPhone10})`
+        : assignedPhone10 || 'another salesperson';
+
+      return {
+        conflict: true,
+        conflictType: 'exact',
+        existing: exactMatch,
+        isOwnCustomer: false,
+        repName,
+        repPhone: assignedPhone10,
+        reason: `Customer "${exactMatch.customer_name}" is already registered and assigned to salesperson ${repDisplay}. Cannot add to your account.`,
+      };
+    }
+
+    // 2. High Similarity Check (> 80%) for customer name
+    if (rawName && !allowSimilar) {
+      let highestSimilarCandidate: any = null;
+      let highestScore = 0;
+
+      for (const c of allRecords) {
+        const dbRaw = String(c.customer_name || '').trim();
+        if (!dbRaw) continue;
+
+        const assignedPhone10 = cleanPhone(c.assigned_salesperson_phone);
+        const isCUnassigned =
+          !assignedPhone10 ||
+          assignedPhone10 === 'unassigned' ||
+          String(c.assigned_salesperson_phone || '').toLowerCase() ===
+            'unassigned';
+        const isCOwn = Boolean(
+          assignedPhone10 && caller10 && assignedPhone10 === caller10,
+        );
+
+        // Similarity checks only apply against customers assigned to other salespeople
+        if (isCUnassigned || isCOwn) continue;
+
+        const score = calculateStringSimilarity(rawName, dbRaw);
+        const dbCore = cleanLegalSuffixes(dbRaw);
+        const coreScore =
+          coreName && dbCore ? calculateStringSimilarity(coreName, dbCore) : 0;
+        const maxCandidateScore = Math.max(score, coreScore);
+
+        if (maxCandidateScore > highestScore) {
+          highestScore = maxCandidateScore;
+          highestSimilarCandidate = c;
+        }
+      }
+
+      if (highestSimilarCandidate && highestScore > 0.8) {
+        const assignedPhone10 = cleanPhone(
+          highestSimilarCandidate.assigned_salesperson_phone,
+        );
+        let repName = '';
+        if (assignedPhone10) {
+          try {
+            const { data: rep } = await this.supabase
+              .from('employees')
+              .select('name, phone')
+              .or(
+                `phone.eq.${assignedPhone10},phone.eq.91${assignedPhone10},phone.eq.+91${assignedPhone10}`,
+              )
+              .limit(1)
+              .maybeSingle();
+
+            if (rep?.name) {
+              repName = rep.name;
+            }
+          } catch {
+            // fallback
+          }
+        }
+
+        const repDisplay = repName
+          ? `${repName} (${assignedPhone10})`
+          : assignedPhone10 || 'another salesperson';
+
+        return {
+          conflict: true,
+          conflictType: 'similar',
+          existing: highestSimilarCandidate,
+          isOwnCustomer: false,
+          similarityScore: highestScore,
+          repName,
+          repPhone: assignedPhone10,
+          reason: `"${highestSimilarCandidate.customer_name}" is already assigned for other customer${repDisplay ? ` (${repDisplay})` : ''} and still do you want to add customer "${rawName}"? Kindly contact your admin for adding only this customer.`,
+        };
+      }
+    }
+
+    return { conflict: false };
+  }
+
+  async createCustomer(
+    dto: {
+      customer_name: string;
+      contact_person: string;
+      customer_phone: string;
+      customer_address: string;
+      customer_email?: string;
+      customer_gst?: string;
+      customer_state?: string;
+      assigned_salesperson_phone?: string;
+      allow_similar?: boolean;
+    },
+    employee: any,
+    accessiblePhones?: string[] | null,
+  ) {
+    const rawName = String(dto.customer_name || '').trim();
+    const contact = String(dto.contact_person || '').trim();
+    const phone = cleanPhone(dto.customer_phone);
+    const address = String(dto.customer_address || '').trim();
+    const gst = cleanGst(dto.customer_gst) || null;
+    const email = dto.customer_email ? String(dto.customer_email).trim() : null;
+
+    if (!rawName) throw new BadRequestException('Company name is required.');
+    if (!contact) throw new BadRequestException('Contact person is required.');
+    if (phone.length < 10) {
+      throw new BadRequestException(
+        'A valid 10-digit mobile number is required.',
+      );
+    }
+    if (!address) {
+      throw new BadRequestException('Delivery location is required.');
+    }
+
+    let targetPhone = employee?.phone
+      ? `91${cleanPhone(employee.phone)}`
+      : 'unassigned';
+    if (employee?.role === 'admin' && dto.assigned_salesperson_phone) {
+      targetPhone = `91${cleanPhone(dto.assigned_salesperson_phone)}`;
+    } else if (
+      dto.assigned_salesperson_phone &&
+      accessiblePhones &&
+      accessiblePhones.length > 0
+    ) {
+      const target10 = cleanPhone(dto.assigned_salesperson_phone);
+      if (phoneInList(target10, accessiblePhones)) {
+        targetPhone = `91${target10}`;
+      }
+    }
+
+    const caller10 = cleanPhone(targetPhone);
+    const check = await this.findCustomerConflict(
+      rawName,
+      phone,
+      gst || undefined,
+      caller10,
+      employee?.role === 'admin' ? Boolean(dto.allow_similar) : false,
+    );
+
+    if (check.conflict) {
+      throw new ConflictException({
+        conflictType: check.conflictType || 'exact',
+        message: check.reason,
+        existingName: check.existing?.customer_name,
+        repName: check.repName,
+        repPhone: check.repPhone,
+        similarityScore: check.similarityScore,
+      });
+    }
+
+    const resolvedState =
+      dto.customer_state?.trim() ||
+      resolveCustomerState({
+        customerGstin: gst || undefined,
+        customerAddress: address,
+      })?.label ||
+      '';
+
+    const notesParts: string[] = [];
+    if (email) notesParts.push(`Email: ${email}`);
+    if (resolvedState) notesParts.push(`[State: ${resolvedState}]`);
+    const notes = notesParts.length > 0 ? notesParts.join(' | ') : null;
+
+    if (check.existing && check.isUnassigned) {
+      const { data: updated, error: updErr } = await this.supabase
+        .from('recurring_customers')
+        .update({
+          customer_name: rawName,
+          contact_person: contact,
+          customer_phone: `91${phone}`,
+          customer_address: address,
+          customer_gst: gst,
+          assigned_salesperson_phone: targetPhone,
+          is_active: true,
+          notes: notes || check.existing.notes || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', check.existing.id)
+        .select()
+        .single();
+
+      if (updErr) {
+        this.logger.error('Error claiming unassigned customer:', updErr);
+        throw updErr;
+      }
+      return {
+        ...updated,
+        customer_state: extractCustomerState(updated),
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const insertPayload = {
+      customer_name: rawName,
+      contact_person: contact,
+      customer_phone: `91${phone}`,
+      customer_address: address,
+      customer_gst: gst,
+      assigned_salesperson_phone: targetPhone,
+      is_active: true,
+      avg_order_frequency_days: 30,
+      notes,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    const { data: created, error: insErr } = await this.supabase
+      .from('recurring_customers')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (insErr) {
+      this.logger.error('Error creating recurring customer:', insErr);
+      throw insErr;
+    }
+
+    return {
+      ...created,
+      customer_state: extractCustomerState(created),
+    };
+  }
+
   async updateCustomer(
     id: string,
     data: any,
@@ -1256,6 +1786,50 @@ export class CustomersService {
             ? accessiblePhones[0]
             : 'unassigned');
 
+        const check = await this.findCustomerConflict(
+          namePart,
+          data.customer_phone || data.mobile,
+          data.customer_gst || data.gstin,
+          defaultPhone,
+        );
+
+        if (check.conflict) {
+          throw new ConflictException({
+            conflictType: check.conflictType || 'exact',
+            message: check.reason,
+            existingName: check.existing?.customer_name,
+            repName: check.repName,
+            repPhone: check.repPhone,
+            similarityScore: check.similarityScore,
+          });
+        }
+
+        if (check.isUnassigned && check.existing) {
+          const { data: updatedUnassigned, error: updErr } = await this.supabase
+            .from('recurring_customers')
+            .update({
+              customer_name: namePart,
+              assigned_salesperson_phone: defaultPhone,
+              ...updatePayload,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', check.existing.id)
+            .select()
+            .single();
+
+          if (updErr) {
+            this.logger.error(
+              'Error claiming unassigned customer in updateCustomer fallback:',
+              updErr,
+            );
+            throw updErr;
+          }
+          return {
+            ...updatedUnassigned,
+            customer_state: extractCustomerState(updatedUnassigned),
+          };
+        }
+
         const { data: created, error } = await this.supabase
           .from('recurring_customers')
           .insert({
@@ -1302,31 +1876,173 @@ export class CustomersService {
     }
   }
 
+  private async loadCustomerMatches(
+    table: string,
+    filters: string[],
+    match: (row: any) => boolean,
+  ) {
+    if (filters.length === 0) return [];
+    const { data, error } = await this.supabase
+      .from(table)
+      .select('*')
+      .or(filters.join(','));
+    if (error) throw error;
+    return (data || []).filter(match);
+  }
+
+  private async deleteIds(table: string, column: string, ids: string[]) {
+    const unique = Array.from(new Set(ids.filter(Boolean)));
+    for (let i = 0; i < unique.length; i += 100) {
+      const chunk = unique.slice(i, i + 100);
+      const { error } = await this.supabase
+        .from(table)
+        .delete()
+        .in(column, chunk);
+      if (error) throw error;
+    }
+  }
+
   async deleteCustomer(id: string) {
     try {
       const decodedId = decodeURIComponent(id || '').trim();
-      const { data, error } = await this.supabase
-        .from('recurring_customers')
-        .update({
-          is_active: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', decodedId)
-        .select()
-        .single();
+      if (!decodedId || decodedId.startsWith('virtual-')) {
+        throw new BadRequestException('This customer cannot be deleted.');
+      }
 
-      if (error) throw error;
-      this.logger.log(
-        `Customer deactivated in Enlight Sigma (Preserved in Zoho Bigin): ${decodedId}`,
+      const { data: customer, error } = await this.supabase
+        .from('recurring_customers')
+        .select('*')
+        .eq('id', decodedId)
+        .single();
+      if (error || !customer) {
+        throw new BadRequestException('Customer not found.');
+      }
+
+      const name = customer.customer_name;
+      const phone = customer.customer_phone;
+      const named = (rowName?: string, rowPhone?: string) =>
+        customerRecordsMatch(name, phone, rowName, rowPhone);
+
+      const deals = await this.loadCustomerMatches(
+        'deals',
+        customerIdentityFilters(
+          name,
+          phone,
+          ['customer_name'],
+          ['customer_phone'],
+        ),
+        (row) => named(row.customer_name, row.customer_phone),
       );
+      const dealIds = deals.map((row) => row.id);
+      const inquiries = await this.loadCustomerMatches(
+        'inquiries',
+        customerIdentityFilters(
+          name,
+          phone,
+          ['sender_name', 'raw_text'],
+          ['sender_phone'],
+        ),
+        (row) => inquiryBelongsToCustomer(customer, row),
+      );
+      const visits = await this.loadCustomerMatches(
+        'customer_visits',
+        customerIdentityFilters(name, phone, ['customer_name'], ['contact_no']),
+        (row) => named(row.customer_name, row.contact_no),
+      );
+      const complaints = await this.loadCustomerMatches(
+        'complaints',
+        customerIdentityFilters(name, phone, ['customer_name'], []),
+        (row) => named(row.customer_name, null),
+      );
+      const payments = await this.loadCustomerMatches(
+        'payment_tracking',
+        customerIdentityFilters(name, phone, ['customer_name'], []),
+        (row) =>
+          named(row.customer_name, null) || dealIds.includes(row.deal_id),
+      );
+      const followups = await this.loadCustomerMatches(
+        'followup_tasks',
+        customerIdentityFilters(
+          name,
+          phone,
+          ['customer_name'],
+          ['customer_phone'],
+        ),
+        (row) =>
+          named(row.customer_name, row.customer_phone) ||
+          dealIds.includes(row.deal_id),
+      );
+      const kraLogs = await this.loadCustomerMatches(
+        'kra_logs',
+        customerIdentityFilters(name, phone, ['customer_name'], []),
+        (row) => named(row.customer_name, null),
+      );
+
+      const complaintIds = complaints.map((row) => row.id);
+      await this.deleteIds(
+        'complaint_attachments',
+        'complaint_id',
+        complaintIds,
+      );
+      await this.deleteIds('deal_items', 'deal_id', dealIds);
+      await this.deleteIds('payment_tracking', 'deal_id', dealIds);
+      await this.deleteIds('followup_tasks', 'deal_id', dealIds);
+      await this.deleteIds('deals', 'id', dealIds);
+      await this.deleteIds('inquiries', 'id', [
+        ...inquiries.map((row) => row.id),
+        ...deals.map((row) => row.inquiry_id),
+      ]);
+      await this.deleteIds(
+        'customer_visits',
+        'id',
+        visits.map((row) => row.id),
+      );
+      await this.deleteIds('complaints', 'id', complaintIds);
+      await this.deleteIds(
+        'payment_tracking',
+        'id',
+        payments.map((row) => row.id),
+      );
+      await this.deleteIds(
+        'followup_tasks',
+        'id',
+        followups.map((row) => row.id),
+      );
+      await this.deleteIds(
+        'kra_logs',
+        'id',
+        kraLogs.map((row) => row.id),
+      );
+
+      const { error: deleteErr } = await this.supabase
+        .from('recurring_customers')
+        .delete()
+        .eq('id', customer.id);
+      if (deleteErr) throw deleteErr;
+
+      const { error: logErr } = await this.supabase
+        .from('activity_logs')
+        .insert({
+          timestamp: new Date().toISOString(),
+          description: `Customer ${name || 'record'} and related records deleted`,
+          module: 'Customers',
+          source: 'dashboard',
+          action_type: 'customer_deleted',
+          entity_id: customer.id,
+          entity_type: 'customer',
+        });
+      if (logErr) {
+        this.logger.warn('Customer delete was not written to the activity log');
+      }
+
       return {
         success: true,
-        message:
-          'Customer deactivated successfully in Enlight Sigma (Preserved in Zoho Bigin CRM).',
-        data,
+        message: 'Customer and related records deleted.',
       };
     } catch (error) {
-      this.logger.error(`Error deactivating customer ${id}:`, error);
+      if (!(error instanceof BadRequestException)) {
+        this.logger.error(`Error deleting customer ${id}:`, error);
+      }
       throw error;
     }
   }

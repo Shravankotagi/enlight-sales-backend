@@ -21,12 +21,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       : HttpStatus.INTERNAL_SERVER_ERROR;
 
     let errorMessage = 'Internal server error. Please try again later.';
+    let extraData: any = {};
     if (isHttpException) {
       const res: any = exception.getResponse();
       if (typeof res === 'string') {
         errorMessage = res;
       } else if (res && typeof res === 'object') {
         errorMessage = res.message || res.error || exception.message;
+        extraData = res;
       } else {
         errorMessage = exception.message;
       }
@@ -34,10 +36,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       console.error('[UNHANDLED SERVER EXCEPTION]:', exception);
     }
 
-    const errorResponse: ApiResponse<null> = {
+    const errorResponse: ApiResponse<null> & Record<string, any> = {
       success: false,
       data: null,
       error: errorMessage,
+      ...(typeof extraData === 'object' && extraData ? extraData : {}),
       timestamp: new Date().toISOString(),
       path: request.url,
     };

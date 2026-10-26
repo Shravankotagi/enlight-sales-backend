@@ -122,7 +122,10 @@ describe('customer type Other', () => {
     const { service, tables } = createHarness();
     await expect(
       service.createVisit(
-        validVisit('token', { customer_type: 'Other', customer_type_other: ' ' }),
+        validVisit('token', {
+          customer_type: 'Other',
+          customer_type_other: ' ',
+        }),
         '919822011111',
       ),
     ).rejects.toThrow('Enter the other customer type.');
