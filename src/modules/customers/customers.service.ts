@@ -1988,10 +1988,12 @@ export class CustomersService {
       await this.deleteIds('payment_tracking', 'deal_id', dealIds);
       await this.deleteIds('followup_tasks', 'deal_id', dealIds);
       await this.deleteIds('deals', 'id', dealIds);
-      await this.deleteIds('inquiries', 'id', [
+      const inquiryIds = [
         ...inquiries.map((row) => row.id),
         ...deals.map((row) => row.inquiry_id),
-      ]);
+      ];
+      await this.deleteIds('inquiry_items', 'inquiry_id', inquiryIds);
+      await this.deleteIds('inquiries', 'id', inquiryIds);
       await this.deleteIds(
         'customer_visits',
         'id',

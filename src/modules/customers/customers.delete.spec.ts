@@ -65,6 +65,10 @@ describe('customer delete', () => {
             sender_phone: '9000000000',
           },
         ],
+        inquiry_items: [
+          { id: 'ii1', inquiry_id: 'inq1' },
+          { id: 'ii2', inquiry_id: 'inq2' },
+        ],
         customer_visits: [
           {
             id: 'v1',
@@ -95,6 +99,7 @@ describe('customer delete', () => {
     expect(db.store.deals.map((row) => row.id)).toEqual(['d2']);
     expect(db.store.deal_items.map((row) => row.id)).toEqual(['item2']);
     expect(db.store.inquiries.map((row) => row.id)).toEqual(['inq2']);
+    expect(db.store.inquiry_items.map((row) => row.id)).toEqual(['ii2']);
     expect(db.store.customer_visits.map((row) => row.id)).toEqual(['v2']);
     expect(db.store.complaints.map((row) => row.id)).toEqual(['comp2']);
     expect(db.store.complaint_attachments).toEqual([]);
