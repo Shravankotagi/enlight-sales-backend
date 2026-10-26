@@ -1890,7 +1890,12 @@ export class CustomersService {
     return (data || []).filter(match);
   }
 
-  private async deleteIds(table: string, column: string, ids: string[]) {
+  private async deleteIds(
+    table: string,
+    column: string,
+    ids: string[],
+    missingColumnOk = false,
+  ) {
     const unique = Array.from(new Set(ids.filter(Boolean)));
     for (let i = 0; i < unique.length; i += 100) {
       const chunk = unique.slice(i, i + 100);
@@ -1898,7 +1903,10 @@ export class CustomersService {
         .from(table)
         .delete()
         .in(column, chunk);
-      if (error) throw error;
+      if (error) {
+        if (missingColumnOk && error.code === '42703') return;
+        throw error;
+      }
     }
   }
 
@@ -1970,6 +1978,7 @@ export class CustomersService {
         ),
         (row) =>
           named(row.customer_name, row.customer_phone) ||
+          dealIds.includes(row.linked_deal_id) ||
           dealIds.includes(row.deal_id),
       );
       const kraLogs = await this.loadCustomerMatches(
@@ -1986,7 +1995,7 @@ export class CustomersService {
       );
       await this.deleteIds('deal_items', 'deal_id', dealIds);
       await this.deleteIds('payment_tracking', 'deal_id', dealIds);
-      await this.deleteIds('followup_tasks', 'deal_id', dealIds);
+      await this.deleteIds('followup_tasks', 'linked_deal_id', dealIds, true);
       await this.deleteIds('deals', 'id', dealIds);
       const inquiryIds = [
         ...inquiries.map((row) => row.id),
