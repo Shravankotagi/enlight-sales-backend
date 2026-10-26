@@ -213,6 +213,113 @@ export function nextProcurementNumber(
   return `PR-${String(max + 1).padStart(5, '0')}`;
 }
 
+const LINKED_DEAL_STAGES = new Set([
+  'won',
+  'lost',
+  'negotiation',
+  'quoted',
+  'on_hold',
+  'qualified',
+  'hold',
+]);
+
+/** Newest pipeline stage among deals linked to this inquiry. */
+export function linkedDealStage(
+  deals:
+    | Array<{
+        id?: string | null;
+        inquiry_id?: string | null;
+        stage?: string | null;
+        created_at?: string | null;
+      }>
+    | null
+    | undefined,
+  inquiryId?: string | null,
+): string | null {
+  if (!inquiryId) return null;
+  const matches = (deals || []).filter((deal) => deal?.inquiry_id === inquiryId);
+  if (!matches.length) return null;
+  matches.sort((a, b) => {
+    const timeA = new Date(a?.created_at || 0).getTime() || 0;
+    const timeB = new Date(b?.created_at || 0).getTime() || 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return String(b?.id || '').localeCompare(String(a?.id || ''));
+  });
+  const stage = String(matches[0]?.stage || '')
+    .toLowerCase()
+    .trim();
+  return LINKED_DEAL_STAGES.has(stage) ? stage : null;
+}
+
+/**
+ * Canonical pipeline stage for every inquiry surface.
+ *
+ * Pricing status is intentionally excluded: it is a separate procurement
+ * workflow badge and must not alter sales pipeline totals.
+ */
+export function displayStage(
+  inquiry: {
+    status?: string | null;
+    stage?: string | null;
+    inquiry_type?: string | null;
+    source_channel?: string | null;
+    raw_text?: string | null;
+  },
+  deals?: Array<{
+    id?: string | null;
+    inquiry_id?: string | null;
+    stage?: string | null;
+    created_at?: string | null;
+  }> | null,
+  inquiryId?: string | null,
+): string {
+  const normalizePipelineStage = (value: unknown): string | null => {
+    const stage = String(value || '').toLowerCase().trim();
+    if (stage === 'qualified') return 'quoted';
+    if (stage === 'hold') return 'on_hold';
+    return ['won', 'lost', 'negotiation', 'quoted', 'on_hold'].includes(stage)
+      ? stage
+      : null;
+  };
+
+  const linked = normalizePipelineStage(linkedDealStage(deals, inquiryId));
+  if (linked) return linked;
+
+  const direct = normalizePipelineStage(inquiry?.stage);
+  if (direct) return direct;
+
+  const status = String(inquiry?.status || '').toLowerCase().trim();
+  const inquiryType = String(inquiry?.inquiry_type || '').toLowerCase().trim();
+  const sourceChannel = String(inquiry?.source_channel || '').toLowerCase().trim();
+
+  if (
+    (inquiryType === 'purchase_order' ||
+      sourceChannel === 'whatsapp_po' ||
+      String(inquiry?.raw_text || '').includes('[PO Document Attached')) &&
+    ['confirmed', 'won', 'processed'].includes(status)
+  ) {
+    return 'won';
+  }
+  if (status === 'won') return 'won';
+  if (status === 'lost') return 'lost';
+  if (status === 'negotiation') return 'negotiation';
+  if (status === 'on_hold' || status === 'hold') return 'on_hold';
+  if (
+    [
+      'quoted',
+      'quotation_sent',
+      'confirmed',
+      'saved',
+      'processed',
+      'quotation_ready',
+    ].includes(status) ||
+    inquiryType === 'quotation_sent'
+  ) {
+    return 'quoted';
+  }
+  return 'new_inquiry';
+}
+
 export function anonymizeInquiry(item: any) {
   const ai = { ...(item?.ai_extraction_json || {}) };
   delete ai.customer_name;
