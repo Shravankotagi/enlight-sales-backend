@@ -13,6 +13,7 @@ import {
   isProcurementManager,
   isProcurementRole,
 } from '../../common/utils/roles';
+import { procurementScopeMode } from '../inquiries/procurement-permissions';
 
 export function normalizePhone(phone?: string): string {
   if (!phone) return '';
@@ -154,6 +155,22 @@ export class EmployeesService {
       return data[0];
     } catch (error) {
       this.logger.error(`Error in findByPhone for phone ${phone}:`, error);
+      return null;
+    }
+  }
+
+  async findById(id: string) {
+    try {
+      if (!id) return null;
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error || !data) return null;
+      return data;
+    } catch (error) {
+      this.logger.error(`Error in findById for id ${id}:`, error);
       return null;
     }
   }
@@ -357,14 +374,32 @@ export class EmployeesService {
    * Manager: own id, people who report to them, the salespeople routed to
    * those people, and the open unassigned intake pool.
    */
-  async getAccessibleProcurementIds(employee: any): Promise<{
+  async getAccessibleProcurementIds(
+    employee: any,
+    permissions?: Record<string, boolean>,
+  ): Promise<{
     ids: string[];
     includeUnassignedPool: boolean;
     salespersonPhones?: string[];
     salespersonEmployeeIds?: string[];
+    stampedOnly?: boolean;
   }> {
     const ownId = employee?.id ? [employee.id] : [];
-    if (!employee || !isProcurementManager(employee.role)) {
+    const mode = permissions
+      ? procurementScopeMode(permissions)
+      : !employee || !isProcurementManager(employee.role)
+        ? 'assigned'
+        : 'team';
+    if (mode === 'stamped') {
+      return {
+        ids: ownId,
+        includeUnassignedPool: false,
+        salespersonPhones: [],
+        salespersonEmployeeIds: [],
+        stampedOnly: true,
+      };
+    }
+    if (mode === 'assigned') {
       const routed = await this.salespeopleRoutedTo(ownId);
       return {
         ids: ownId,

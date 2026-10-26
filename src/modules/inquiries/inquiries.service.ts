@@ -759,6 +759,7 @@ export type ProcurementScope = {
   unrestricted?: boolean;
   salespersonPhones?: string[];
   salespersonEmployeeIds?: string[];
+  stampedOnly?: boolean;
 };
 
 /** In-memory scope. Empty ids match nothing and never throw. */
@@ -779,6 +780,7 @@ export function matchesProcurementScope(
   ) {
     return true;
   }
+  if (scope.stampedOnly) return false;
   if (item?.procurement_employee_id) return false;
   const status = String(item?.status || '').toLowerCase();
   if (
