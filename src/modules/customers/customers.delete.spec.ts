@@ -83,7 +83,18 @@ describe('customer delete', () => {
         ],
         complaint_attachments: [{ id: 'att1', complaint_id: 'comp1' }],
         payment_tracking: [],
-        followup_tasks: [],
+        followup_tasks: [
+          {
+            id: 'f1',
+            customer_name: 'Unrelated Name',
+            linked_deal_id: 'd1',
+          },
+          {
+            id: 'f2',
+            customer_name: 'Other Mills',
+            linked_deal_id: 'd2',
+          },
+        ],
         kra_logs: [{ id: 'k1', customer_name: 'ABC Fabricators' }],
         activity_logs: [],
       },
@@ -104,6 +115,7 @@ describe('customer delete', () => {
     expect(db.store.complaints.map((row) => row.id)).toEqual(['comp2']);
     expect(db.store.complaint_attachments).toEqual([]);
     expect(db.store.kra_logs).toEqual([]);
+    expect(db.store.followup_tasks.map((row) => row.id)).toEqual(['f2']);
   });
 
   it('rejects a virtual customer id', async () => {
