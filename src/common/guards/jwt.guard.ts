@@ -28,6 +28,7 @@ export function isProcurementRequestAllowed(
   const under = (prefix: string) =>
     cleanPath === prefix || cleanPath.startsWith(`${prefix}/`);
 
+  if (under('/auth')) return true;
   if (under('/inquiries')) return true;
   if (
     (under('/chat/message') || under('/chat/sessions')) &&

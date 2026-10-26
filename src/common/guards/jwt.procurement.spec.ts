@@ -41,6 +41,12 @@ describe('isProcurementRequestAllowed', () => {
     expect(isProcurementRequestAllowed('GET', '/employees')).toBe(true);
     expect(isProcurementRequestAllowed('PATCH', '/employees/1')).toBe(false);
   });
+
+  it('allows auth routes (identity refresh, logout)', () => {
+    expect(isProcurementRequestAllowed('GET', '/auth/me')).toBe(true);
+    expect(isProcurementRequestAllowed('GET', '/api/auth/me')).toBe(true);
+    expect(isProcurementRequestAllowed('POST', '/auth/logout')).toBe(true);
+  });
 });
 
 describe('JwtAuthGuard procurement allowlist', () => {
@@ -65,11 +71,12 @@ describe('JwtAuthGuard procurement allowlist', () => {
     );
   });
 
-  it('allows a procurement token on inquiries and leaves other roles alone', async () => {
+  it('allows a procurement token on inquiries and auth/me and leaves other roles alone', async () => {
     const procurement = guardFor({ role: 'procurement_person' });
     await expect(activate(procurement, 'GET', '/inquiries')).resolves.toBe(
       true,
     );
+    await expect(activate(procurement, 'GET', '/auth/me')).resolves.toBe(true);
 
     const salesperson = guardFor({ role: 'salesperson' });
     await expect(activate(salesperson, 'GET', '/deals')).resolves.toBe(true);

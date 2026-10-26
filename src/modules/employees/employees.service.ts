@@ -610,6 +610,11 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          if (mgr.id === id) {
+            throw new BadRequestException(
+              'An employee cannot be assigned as their own manager.',
+            );
+          }
           this.assertManagerFitsRole(nextRole, mgr);
           updatePayload.manager_id = mgr.id;
           updatePayload.manager_phone = mgr.phone;
