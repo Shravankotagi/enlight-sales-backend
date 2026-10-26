@@ -201,9 +201,15 @@ describe('issue 238 customer visit form', () => {
             { long_name: 'Girgaon Court', types: ['premise'] },
             { long_name: '12', types: ['street_number'] },
             { long_name: 'Girgaon Road', types: ['route'] },
-            { long_name: 'Girgaon', types: ['sublocality_level_1', 'sublocality'] },
+            {
+              long_name: 'Girgaon',
+              types: ['sublocality_level_1', 'sublocality'],
+            },
             { long_name: 'Mumbai', types: ['locality', 'political'] },
-            { long_name: 'Maharashtra', types: ['administrative_area_level_1', 'political'] },
+            {
+              long_name: 'Maharashtra',
+              types: ['administrative_area_level_1', 'political'],
+            },
             { long_name: '400004', types: ['postal_code'] },
           ],
         },
@@ -217,13 +223,17 @@ describe('issue 238 customer visit form', () => {
       addressFromGoogleGeocode({
         results: [
           {
-            formatted_address: 'Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India',
+            formatted_address:
+              'Girgaon Road, Girgaon, Mumbai, Maharashtra 400004, India',
             types: ['route'],
             address_components: [
               { long_name: 'Girgaon Road', types: ['route'] },
               { long_name: 'Girgaon', types: ['neighborhood'] },
               { long_name: 'Mumbai', types: ['locality'] },
-              { long_name: 'Maharashtra', types: ['administrative_area_level_1'] },
+              {
+                long_name: 'Maharashtra',
+                types: ['administrative_area_level_1'],
+              },
               { long_name: '400004', types: ['postal_code'] },
             ],
           },
@@ -239,13 +249,18 @@ describe('issue 238 customer visit form', () => {
             types: ['street_address'],
             address_components: [
               { long_name: 'MIDC Road', types: ['route'] },
-              { long_name: 'Bhosari', types: ['sublocality_level_1', 'sublocality'] },
+              {
+                long_name: 'Bhosari',
+                types: ['sublocality_level_1', 'sublocality'],
+              },
               { long_name: 'Pune', types: ['locality', 'political'] },
             ],
           },
         ],
       }),
-    ).toBe('Enlight Office, Plot 12, MIDC Road, Bhosari, Pune, Maharashtra 411026, India');
+    ).toBe(
+      'Enlight Office, Plot 12, MIDC Road, Bhosari, Pune, Maharashtra 411026, India',
+    );
     expect(
       addressFromGoogleGeocode({
         results: [
@@ -254,7 +269,10 @@ describe('issue 238 customer visit form', () => {
             types: ['locality', 'political'],
             address_components: [
               { long_name: 'Mumbai', types: ['locality'] },
-              { long_name: 'Maharashtra', types: ['administrative_area_level_1'] },
+              {
+                long_name: 'Maharashtra',
+                types: ['administrative_area_level_1'],
+              },
             ],
           },
         ],

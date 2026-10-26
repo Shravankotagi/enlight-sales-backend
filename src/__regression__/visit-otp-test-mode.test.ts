@@ -76,14 +76,18 @@ describe('visit otp test mode', () => {
 
   it('returns the code without calling WhatsApp when the flag is on', async () => {
     process.env.VISIT_OTP_TEST_MODE = 'true';
-    const send = jest.spyOn(visitOtp, 'sendVisitOtpWhatsApp').mockResolvedValue();
+    const send = jest
+      .spyOn(visitOtp, 'sendVisitOtpWhatsApp')
+      .mockResolvedValue();
     const { service } = createHarness();
 
     const result = await service.requestVisitOtp('9822012345');
 
     expect(send).not.toHaveBeenCalled();
     expect(result.test_otp).toMatch(/^\d{6}$/);
-    await expect(service.verifyVisitOtp('9822012345', result.test_otp!)).resolves.toMatchObject({
+    await expect(
+      service.verifyVisitOtp('9822012345', result.test_otp!),
+    ).resolves.toMatchObject({
       message: 'Phone verified.',
     });
   });

@@ -21,7 +21,8 @@ function isFollowUpStatusOnly(body: any): boolean {
   return (
     keys.length === 1 &&
     keys[0] === 'follow_up_status' &&
-    (body.follow_up_status === 'completed' || body.follow_up_status === 'pending')
+    (body.follow_up_status === 'completed' ||
+      body.follow_up_status === 'pending')
   );
 }
 

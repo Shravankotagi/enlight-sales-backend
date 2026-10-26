@@ -66,7 +66,11 @@ export function generateVisitOtp(): string {
 
 /** TEMPORARY VISIT OTP TEST MODE — delete this after the WhatsApp Authentication template is live. */
 export function visitOtpTestMode(): boolean {
-  return String(process.env.VISIT_OTP_TEST_MODE || '').trim().toLowerCase() === 'true';
+  return (
+    String(process.env.VISIT_OTP_TEST_MODE || '')
+      .trim()
+      .toLowerCase() === 'true'
+  );
 }
 
 export function generateVisitToken(): string {
@@ -99,37 +103,40 @@ export function cityFromNominatim(body: any): string | null {
 
 export function addressFromNominatim(body: any): string | null {
   const address = body?.address || {};
-  const building = [
-    body?.namedetails?.name,
-    body?.name,
-    address.building,
-    address.house_name,
-    address.amenity,
-    address.shop,
-    address.office,
-    address.tourism,
-  ]
-    .map((part) => String(part ?? '').trim())
-    .find(Boolean) || '';
-  const street = [
-    address.road,
-    address.pedestrian,
-    address.footway,
-    address.street,
-    address.residential,
-  ]
-    .map((part) => String(part ?? '').trim())
-    .find(Boolean) || '';
-  const locality = [
-    address.city,
-    address.town,
-    address.city_district,
-    address.municipality,
-    address.village,
-    address.county,
-  ]
-    .map((part) => String(part ?? '').trim())
-    .find(Boolean) || '';
+  const building =
+    [
+      body?.namedetails?.name,
+      body?.name,
+      address.building,
+      address.house_name,
+      address.amenity,
+      address.shop,
+      address.office,
+      address.tourism,
+    ]
+      .map((part) => String(part ?? '').trim())
+      .find(Boolean) || '';
+  const street =
+    [
+      address.road,
+      address.pedestrian,
+      address.footway,
+      address.street,
+      address.residential,
+    ]
+      .map((part) => String(part ?? '').trim())
+      .find(Boolean) || '';
+  const locality =
+    [
+      address.city,
+      address.town,
+      address.city_district,
+      address.municipality,
+      address.village,
+      address.county,
+    ]
+      .map((part) => String(part ?? '').trim())
+      .find(Boolean) || '';
   const parts = [
     building,
     address.house_number,
@@ -149,8 +156,8 @@ export function addressFromNominatim(body: any): string | null {
 }
 
 function googleComponent(result: any, type: string): string {
-  const match = (result?.address_components || []).find((part: any) =>
-    Array.isArray(part?.types) && part.types.includes(type),
+  const match = (result?.address_components || []).find(
+    (part: any) => Array.isArray(part?.types) && part.types.includes(type),
   );
   return String(match?.long_name ?? '').trim();
 }
@@ -162,7 +169,11 @@ function googleResultRank(result: any): number {
   if (has('premise') || has('subpremise') || has('street_address')) rank = 3;
   else if (has('establishment') || has('point_of_interest')) rank = 2;
   else if (has('route')) rank = 1;
-  else if (googleComponent(result, 'premise') || googleComponent(result, 'subpremise')) rank = 3;
+  else if (
+    googleComponent(result, 'premise') ||
+    googleComponent(result, 'subpremise')
+  )
+    rank = 3;
   else if (googleComponent(result, 'route')) rank = 1;
   if (result?.geometry?.location_type === 'ROOFTOP') rank += 0.5;
   return rank;
@@ -188,14 +199,19 @@ export function addressFromGoogleGeocode(body: any): string | null {
   const types = Array.isArray(result.types) ? result.types : [];
   const formatted = String(result.formatted_address ?? '').trim();
   if (formatted) return formatted;
-  const premise = googleComponent(result, 'premise') || googleComponent(result, 'subpremise');
+  const premise =
+    googleComponent(result, 'premise') || googleComponent(result, 'subpremise');
   const streetNumber = googleComponent(result, 'street_number');
   const route = googleComponent(result, 'route');
   const firstSegment = formatted.split(',')[0]?.trim() || '';
-  const isPlace = types.includes('establishment') || types.includes('point_of_interest');
+  const isPlace =
+    types.includes('establishment') || types.includes('point_of_interest');
   const building =
     premise ||
-    (isPlace && firstSegment && firstSegment !== route && firstSegment !== streetNumber
+    (isPlace &&
+    firstSegment &&
+    firstSegment !== route &&
+    firstSegment !== streetNumber
       ? firstSegment
       : '');
   const street = [streetNumber, route].filter(Boolean).join(' ');
@@ -215,7 +231,9 @@ export function addressFromGoogleGeocode(body: any): string | null {
     .map((part) => String(part ?? '').trim())
     .filter(Boolean);
   const unique = parts.filter(
-    (part, index) => parts.findIndex((item) => item.toLowerCase() === part.toLowerCase()) === index,
+    (part, index) =>
+      parts.findIndex((item) => item.toLowerCase() === part.toLowerCase()) ===
+      index,
   );
   return unique.join(', ') || formatted || null;
 }
@@ -460,7 +478,9 @@ export async function sendVisitOtpWhatsApp(
 ): Promise<void> {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const templateName = String(process.env.WHATSAPP_VISIT_OTP_TEMPLATE || '').trim();
+  const templateName = String(
+    process.env.WHATSAPP_VISIT_OTP_TEMPLATE || '',
+  ).trim();
   if (!token || !phoneNumberId || !templateName) {
     throw new BadRequestException(
       'WhatsApp is not configured for visit codes.',

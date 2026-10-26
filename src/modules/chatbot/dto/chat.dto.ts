@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsIn,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SendChatMessageDto {
@@ -44,7 +50,8 @@ export class SendChatMessageDto {
   };
 
   @ApiPropertyOptional({
-    description: 'Whether an attached image was taken with the camera or uploaded as a document',
+    description:
+      'Whether an attached image was taken with the camera or uploaded as a document',
     enum: ['camera', 'upload'],
   })
   @IsOptional()
