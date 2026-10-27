@@ -2097,15 +2097,32 @@ export class InquiriesService implements OnModuleInit {
       try {
         const { data: matchedCust } = await this.supabase
           .from('recurring_customers')
-          .select('assigned_salesperson_phone')
-          .ilike('customer_name', finalCustomerName.trim())
-          .limit(1);
-        if (
-          matchedCust &&
-          matchedCust.length > 0 &&
-          matchedCust[0].assigned_salesperson_phone
-        ) {
-          effectiveSalespersonPhone = matchedCust[0].assigned_salesperson_phone;
+          .select('assigned_salesperson_phone, is_active')
+          .ilike('customer_name', finalCustomerName.trim());
+        if (matchedCust && matchedCust.length > 0) {
+          const spDigits = String(effectiveSalespersonPhone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const currentRepMatch =
+            spDigits && spDigits !== '0000000000'
+              ? matchedCust.find((c) => {
+                  const cDigits = String(c.assigned_salesperson_phone || '')
+                    .replace(/\D/g, '')
+                    .slice(-10);
+                  return cDigits === spDigits;
+                })
+              : null;
+
+          const chosen =
+            currentRepMatch ||
+            matchedCust.find(
+              (c) => c.is_active !== false && c.assigned_salesperson_phone,
+            ) ||
+            matchedCust[0];
+
+          if (chosen?.assigned_salesperson_phone) {
+            effectiveSalespersonPhone = chosen.assigned_salesperson_phone;
+          }
         }
       } catch (custLookupErr: any) {
         this.logger.warn(
