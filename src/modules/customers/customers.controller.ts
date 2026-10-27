@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { EmployeesService } from '../employees/employees.service';
@@ -22,12 +23,6 @@ export class CustomersController {
     private readonly customersService: CustomersService,
     private readonly employeesService: EmployeesService,
   ) {}
-
-  @Post()
-  async create(@CurrentEmployee() employee: any, @Body() body: any) {
-    assertPermission(employee, 'customers.create');
-    return this.customersService.createCustomer(body, employee);
-  }
 
   @Post('import')
   async importClients(
@@ -58,6 +53,70 @@ export class CustomersController {
       body.clients,
       body.default_salesperson_phone,
     );
+  }
+
+  @Get('check-conflict')
+  async checkConflict(
+    @CurrentEmployee() employee: any,
+    @Query('customer_name') customerName?: string,
+    @Query('customer_phone') customerPhone?: string,
+    @Query('customer_gst') customerGst?: string,
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+    @Query('allow_similar') allowSimilar?: string,
+  ) {
+    const callerPhone =
+      employee?.role === 'admin' && salespersonPhoneOverride
+        ? salespersonPhoneOverride
+        : employee?.phone;
+
+    return this.customersService.findCustomerConflict(
+      customerName,
+      customerPhone,
+      customerGst,
+      callerPhone,
+      employee?.role === 'admin' && allowSimilar === 'true',
+    );
+  }
+
+  @Post()
+  async create(
+    @CurrentEmployee() employee: any,
+    @Body()
+    body: {
+      customer_name: string;
+      contact_person: string;
+      customer_phone: string;
+      customer_address: string;
+      customer_email?: string;
+      customer_gst?: string;
+      customer_state?: string;
+      assigned_salesperson_phone?: string;
+      allow_similar?: boolean;
+    },
+    @Query('salesperson_phone') salespersonPhoneOverride?: string,
+  ) {
+    assertPermission(employee, 'customers.create');
+
+    if (!body?.customer_name?.trim()) {
+      throw new BadRequestException('Company name is required.');
+    }
+    if (!body?.contact_person?.trim()) {
+      throw new BadRequestException('Contact person is required.');
+    }
+    if (!body?.customer_phone?.trim()) {
+      throw new BadRequestException('Mobile number is required.');
+    }
+    if (!body?.customer_address?.trim()) {
+      throw new BadRequestException('Delivery location is required.');
+    }
+
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+      );
+
+    return this.customersService.createCustomer(body, employee, phones);
   }
 
   @Get()
