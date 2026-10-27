@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { EmployeesService } from '../employees/employees.service';
@@ -22,12 +23,6 @@ export class CustomersController {
     private readonly customersService: CustomersService,
     private readonly employeesService: EmployeesService,
   ) {}
-
-  @Post()
-  async create(@CurrentEmployee() employee: any, @Body() body: any) {
-    assertPermission(employee, 'customers.create');
-    return this.customersService.createCustomer(body, employee);
-  }
 
   @Post('import')
   async importClients(
@@ -100,6 +95,8 @@ export class CustomersController {
     },
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
   ) {
+    assertPermission(employee, 'customers.create');
+
     if (!body?.customer_name?.trim()) {
       throw new BadRequestException('Company name is required.');
     }
