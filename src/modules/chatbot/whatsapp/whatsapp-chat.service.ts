@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { SupabaseService } from '../../../infrastructure/supabase/supabase.service';
 import { ChatbotService } from '../chatbot.service';
 import { CallerContext } from '../interfaces/caller-context.interface';
+import { PermissionsService } from '../../roles/permissions.service';
 
 export interface WhatsAppMessageResult {
   success: boolean;
@@ -18,6 +19,10 @@ export interface WhatsAppMessageResult {
 @Injectable()
 export class WhatsAppChatService {
   private readonly logger = new Logger(WhatsAppChatService.name);
+
+  @Optional()
+  @Inject(PermissionsService)
+  private readonly permissionsService?: PermissionsService;
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -114,12 +119,31 @@ export class WhatsAppChatService {
 
       const rawRole = (emp.role || '').toLowerCase();
       let role: 'salesperson' | 'manager' | 'admin' = 'salesperson';
-      if (rawRole.includes('admin')) {
-        role = 'admin';
-      } else if (rawRole.includes('manager')) {
-        role = 'manager';
-      } else {
-        role = 'salesperson';
+      let permissions: Record<string, boolean> | undefined;
+      let dataScope: 'own' | 'team' | 'all' | undefined;
+      if (this.permissionsService && emp.id) {
+        try {
+          const resolved = await this.permissionsService.resolve(emp.id);
+          if (resolved) {
+            permissions = resolved.permissions;
+            dataScope = resolved.dataScope;
+            role =
+              resolved.dataScope === 'all'
+                ? 'admin'
+                : resolved.dataScope === 'team'
+                  ? 'manager'
+                  : 'salesperson';
+          }
+        } catch (err: any) {
+          this.logger.warn(
+            `WhatsApp permission resolve failed: ${err?.message}`,
+          );
+        }
+      }
+      if (!dataScope) {
+        if (rawRole === 'admin') role = 'admin';
+        else if (rawRole === 'sales_manager' || rawRole === 'manager')
+          role = 'manager';
       }
 
       const caller: CallerContext = {
@@ -131,6 +155,8 @@ export class WhatsAppChatService {
         reportsToId: emp.reports_to_employee_id || undefined,
         name: emp.name || 'Sales Staff',
         allUserIds: allIds,
+        permissions,
+        dataScope,
       };
 
       return {

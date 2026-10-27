@@ -15,6 +15,7 @@ import {
 import { EmployeesService } from './employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { assertPermission } from '../../common/guards/permission.guard';
 
 @Controller('employees')
 @UseGuards(JwtAuthGuard)
@@ -58,11 +59,7 @@ export class EmployeesController {
       manager_phone?: string;
     },
   ) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can create staff accounts.',
-      );
-    }
+    assertPermission(employee, 'staff.create');
 
     // Auto-generate employee_id if not provided
     const employeeId =
@@ -82,10 +79,14 @@ export class EmployeesController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can update staff accounts.',
-      );
+    assertPermission(employee, 'staff.manage');
+    if (
+      employee?.id === id &&
+      body?.role &&
+      body.role !== employee.role &&
+      employee.permissions?.['staff.manage_acl']
+    ) {
+      throw new ForbiddenException('You cannot change your own role.');
     }
     return this.employeesService.update(id, body, employee);
   }
@@ -93,11 +94,7 @@ export class EmployeesController {
   // PATCH /employees/:id/deactivate - deactivate employee (admin only)
   @Patch(':id/deactivate')
   async deactivate(@CurrentEmployee() employee: any, @Param('id') id: string) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can deactivate staff accounts.',
-      );
-    }
+    assertPermission(employee, 'staff.manage');
     return this.employeesService.deactivate(id, employee);
   }
 
@@ -105,11 +102,7 @@ export class EmployeesController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async delete(@CurrentEmployee() employee: any, @Param('id') id: string) {
-    if (!employee || employee.role !== 'admin') {
-      throw new ForbiddenException(
-        'Access Denied: Only administrators can delete staff accounts.',
-      );
-    }
+    assertPermission(employee, 'staff.delete');
     return this.employeesService.delete(id, employee);
   }
 }

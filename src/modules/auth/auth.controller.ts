@@ -1,6 +1,5 @@
 import {
   Controller,
-  Get,
   Post,
   UseGuards,
   Request,
@@ -50,21 +49,5 @@ export class AuthController {
   })
   async signOut(@Request() req) {
     return this.authService.signOut(req.user.token);
-  }
-
-  @Get('me')
-  @UseGuards(SupabaseGuard)
-  @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({
-    status: 200,
-    description: 'Returns the current user profile',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized',
-  })
-  async getProfile(@Request() req) {
-    return this.authService.getUser(req.user.token);
   }
 }

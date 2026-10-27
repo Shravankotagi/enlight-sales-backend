@@ -4,6 +4,7 @@ import { OtpService } from './otp.service';
 import { SupabaseModule } from '../../infrastructure/supabase/supabase.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { JwtModule } from '@nestjs/jwt';
+import { JWT_SIGNING_SECRET } from '../../common/auth/jwt-secret';
 
 @Module({
   imports: [
@@ -11,7 +12,7 @@ import { JwtModule } from '@nestjs/jwt';
     EmployeesModule,
     JwtModule.register({
       global: true,
-      secret: process.env.JWT_SECRET || 'enlight-sales-secret-2026',
+      secret: JWT_SIGNING_SECRET,
       signOptions: { expiresIn: '7d' },
     }),
   ],

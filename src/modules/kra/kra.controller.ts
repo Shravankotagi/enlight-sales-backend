@@ -14,6 +14,10 @@ import { KraService } from './kra.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
 
 function isFollowUpStatusOnly(body: any): boolean {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
@@ -119,7 +123,10 @@ export class KraController {
     @Query('all_time') allTime?: string,
     @Query('mode') mode?: string,
   ) {
-    const isAdmin = employee.role === 'admin';
+    const isAdmin =
+      employee?.dataScope === 'all' ||
+      employee?.role === 'admin' ||
+      employee?.isInternal;
     const parsedMonth = month ? parseInt(month) : undefined;
     const parsedYear = year ? parseInt(year) : undefined;
 
@@ -178,6 +185,7 @@ export class KraController {
 
   @Post('complaints')
   async createComplaint(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'complaints.log');
     return this.kraService.createComplaint(body, employee?.phone);
   }
 
@@ -187,6 +195,13 @@ export class KraController {
     @Param('id') id: string,
     @Body() body: any,
   ) {
+    assertPermission(employee, 'complaints.update');
+    const status = String(
+      body?.status || body?.complaint_status || '',
+    ).toLowerCase();
+    if (status === 'resolved' || status === 'closed') {
+      assertPermission(employee, 'complaints.resolve');
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(employee);
     return this.kraService.updateComplaint(id, body, phones);
@@ -234,6 +249,7 @@ export class KraController {
 
   @Post('visits')
   async createVisit(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'visits.log');
     return this.kraService.createVisit(body, employee?.phone);
   }
 
@@ -247,6 +263,7 @@ export class KraController {
     const isAuthorized =
       role.includes('admin') ||
       role.includes('manager') ||
+      hasPermission(employee, 'visits.update') ||
       isFollowUpStatusOnly(body);
     if (!isAuthorized) {
       throw new ForbiddenException(
@@ -255,7 +272,12 @@ export class KraController {
     }
 
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'visits.scope_assigned',
+      );
     return this.kraService.updateVisit(
       id,
       body,
@@ -265,16 +287,15 @@ export class KraController {
 
   @Delete('visits/:id')
   async deleteVisit(@CurrentEmployee() employee: any, @Param('id') id: string) {
-    const role = (employee?.role || '').toLowerCase();
-    const isAuthorized = role.includes('admin') || role.includes('manager');
-    if (!isAuthorized) {
-      throw new ForbiddenException(
-        'Access Denied: Field visits can only be deleted by Sales Managers and Administrators.',
-      );
-    }
+    assertPermission(employee, 'visits.delete');
 
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'visits.scope_assigned',
+      );
     return this.kraService.deleteVisit(
       id,
       phones === null ? undefined : phones,

@@ -49,7 +49,16 @@ function buildMultiFieldOrFilter(
   return parts.length > 0 ? parts.join(',') : null;
 }
 
-export function cleanLegalSuffixes(str?: string): string {
+const GSTIN_FORMAT = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function indianMobile(raw: string): string | null {
+  const digits = String(raw || '').replace(/\D/g, '');
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  return /^[6-9]\d{9}$/.test(last10) ? last10 : null;
+}
+
+function cleanLegalSuffixes(str?: string): string {
   if (!str) return '';
   return str
     .toLowerCase()
@@ -2533,5 +2542,127 @@ export class CustomersService {
       this.logger.error('Error in importClients:', error);
       throw error;
     }
+  }
+
+  async createCustomer(body: any, employee: { phone?: string; name?: string }) {
+    const customerName = String(body?.customer_name || '').trim();
+    const contactPerson = String(body?.contact_person || '').trim();
+    const deliveryLocation = String(body?.delivery_location || '').trim();
+    const rawPhone = String(body?.customer_phone || '').trim();
+    const email = String(body?.customer_email || '').trim();
+    const gst = String(body?.customer_gst || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '');
+    const ownerPhone = String(employee?.phone || '').trim();
+
+    if (!customerName || !contactPerson || !rawPhone || !deliveryLocation) {
+      throw new BadRequestException(
+        'Company name, contact person, mobile number, and delivery location are required',
+      );
+    }
+    const phone = indianMobile(rawPhone);
+    if (!phone) {
+      throw new BadRequestException('Enter a valid 10-digit mobile number');
+    }
+    if (!ownerPhone) {
+      throw new BadRequestException(
+        'Your account has no phone number, so this customer cannot be assigned',
+      );
+    }
+    if (email && !EMAIL_FORMAT.test(email)) {
+      throw new BadRequestException('Enter a valid email address');
+    }
+    if (gst && !GSTIN_FORMAT.test(gst)) {
+      throw new BadRequestException('Invalid GST number');
+    }
+
+    const { data: existing, error: lookupError } = await this.supabase
+      .from('recurring_customers')
+      .select('id, customer_name, is_active')
+      .ilike('customer_name', customerName);
+    if (lookupError) throw lookupError;
+
+    const duplicate = (existing || []).find(
+      (row: any) =>
+        row.is_active !== false &&
+        String(row.customer_name || '')
+          .trim()
+          .toLowerCase() === customerName.toLowerCase(),
+    );
+    if (duplicate) {
+      throw new ConflictException('Customer already exists');
+    }
+
+    const now = new Date().toISOString();
+    const { data: created, error } = await this.supabase
+      .from('recurring_customers')
+      .insert({
+        customer_name: customerName,
+        contact_person: contactPerson,
+        customer_phone: phone,
+        customer_address: deliveryLocation,
+        customer_gst: gst || null,
+        notes: email ? `Email: ${email}` : null,
+        assigned_salesperson_phone: ownerPhone,
+        is_active: true,
+        avg_order_frequency_days: 30,
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error || !created) {
+      throw new BadRequestException(
+        error?.message || 'Could not save customer',
+      );
+    }
+
+    const kraBase = {
+      salesperson_phone: ownerPhone,
+      kra_type: 'new_customer',
+      customer_name: customerName,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+      created_at: now,
+    };
+    const { error: kraError } = await this.supabase.from('kra_logs').insert([
+      {
+        ...kraBase,
+        kra_number: 2,
+        description: `New Customer Acquired: ${customerName}`,
+      },
+      {
+        ...kraBase,
+        kra_number: 6,
+        description: `Added New Customer: ${customerName}`,
+      },
+    ]);
+    if (kraError) {
+      this.logger.warn('KRA log for new customer failed', kraError.message);
+    }
+
+    const { error: logError } = await this.supabase
+      .from('activity_logs')
+      .insert({
+        timestamp: now,
+        salesperson_name: employee?.name || null,
+        salesperson_phone: ownerPhone,
+        description: `New customer ${customerName} added`,
+        module: 'Customers',
+        source: 'dashboard',
+        action_type: 'customer_created',
+        entity_id: created.id,
+        entity_type: 'customer',
+        customer_name: customerName,
+      });
+    if (logError) {
+      this.logger.warn(
+        'Activity log for new customer failed',
+        logError.message,
+      );
+    }
+
+    return created;
   }
 }
