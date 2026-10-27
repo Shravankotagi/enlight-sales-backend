@@ -38,13 +38,25 @@ export class InquiryPricingService {
     const next = deriveProcurementLines(existing, submitted);
     await this.upsert(inquiry.id, next, { priced_by: employee?.id || null });
     const status = procurementStatus(next);
-    const { error: statusError } = await this.supabase
+    const statusUpdate: Record<string, unknown> = {
+      pricing_status: status,
+      procurement_note: body?.note || null,
+      tonnage_review_open: false,
+      tonnage_review: null,
+    };
+    let { error: statusError } = await this.supabase
       .from('inquiries')
-      .update({
-        pricing_status: status,
-        procurement_note: body?.note || null,
-      })
+      .update(statusUpdate)
       .eq('id', inquiry.id);
+    if (statusError && /tonnage_review/i.test(statusError.message || '')) {
+      delete statusUpdate.tonnage_review_open;
+      delete statusUpdate.tonnage_review;
+      const retry = await this.supabase
+        .from('inquiries')
+        .update(statusUpdate)
+        .eq('id', inquiry.id);
+      statusError = retry.error;
+    }
     if (statusError) throw new Error(statusError.message);
     this.activityLogsService.logActivity({
       module: 'Inquiries',
@@ -117,6 +129,14 @@ export class InquiryPricingService {
       .update(update)
       .eq('id', inquiry.id);
     if (statusError) throw new Error(statusError.message);
+    if (update.status === 'quoted') {
+      const { error: dealError } = await this.supabase
+        .from('deals')
+        .update({ stage: 'quoted' })
+        .eq('inquiry_id', inquiry.id)
+        .in('stage', ['new_inquiry', 'review', 'qualified']);
+      if (dealError) throw new Error(dealError.message);
+    }
     this.activityLogsService.logActivity({
       module: 'Inquiries',
       description: `Sales saved prices for inquiry ${inquiry.id}`,

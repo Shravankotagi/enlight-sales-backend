@@ -16,9 +16,11 @@ import { normalizePhone, phoneInList } from '../employees/employees.service';
 import {
   anonymizeInquiry,
   displayStage,
+  inquiryCommercialLines,
   linkedDealStage,
   nextProcurementNumber,
   preserveHistoricalPricingStatus,
+  tonnageReviewPatch,
 } from './inquiry-pricing.util';
 import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
@@ -928,10 +930,24 @@ export class InquiriesService implements OnModuleInit {
       // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
       // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
+      const pricingColumns =
+        'pricing_status, procurement_note, decline_sent_at, procurement_number';
+      const tonnageColumns = 'tonnage_review_open, tonnage_review';
       let { data, error } = await applyDateRange(
         this.supabase,
-        `${inquiryColumns}, pricing_status, procurement_note, decline_sent_at, procurement_number`,
+        `${inquiryColumns}, ${pricingColumns}, ${tonnageColumns}`,
       );
+      if (error && /tonnage_review/i.test(error.message || '')) {
+        this.logger.warn(
+          'Inquiry tonnage review columns are not available yet; listing inquiries without them.',
+        );
+        const withoutTonnage = await applyDateRange(
+          this.supabase,
+          `${inquiryColumns}, ${pricingColumns}`,
+        );
+        data = withoutTonnage.data;
+        error = withoutTonnage.error;
+      }
       if (
         error &&
         /pricing_status|procurement_note|decline_sent_at|procurement_number/i.test(
@@ -1622,6 +1638,77 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  async listTonnageReviews(scope: ProcurementScope) {
+    const columns =
+      'id, procurement_number, procurement_employee_id, salesperson_phone, employee_id, status, tonnage_review, tonnage_review_open';
+    let { data, error } = await this.supabase
+      .from('inquiries')
+      .select(columns)
+      .eq('tonnage_review_open', true);
+    if (error && /tonnage_review/i.test(error.message || '')) return [];
+    if (error) throw error;
+
+    const { data: employees } = await this.supabase
+      .from('employees')
+      .select('name, phone');
+    const namesByPhone = new Map<string, string>();
+    (employees || []).forEach((employee: any) => {
+      if (!employee?.name || !employee?.phone) return;
+      const clean = String(employee.phone).replace(/\D/g, '');
+      namesByPhone.set(clean, employee.name);
+      namesByPhone.set(clean.slice(-10), employee.name);
+    });
+
+    const rows = [];
+    for (const item of data || []) {
+      const visible = await this.resolvedProcurementItem(item);
+      if (!matchesProcurementScope(visible, scope)) continue;
+      const review = item.tonnage_review || {};
+      const phone = String(visible.salesperson_phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      rows.push({
+        id: item.id,
+        procurement_number: item.procurement_number || null,
+        salesperson_name: namesByPhone.get(phone) || 'Salesperson',
+        changed_at: review.changed_at || null,
+        previous_total_mt: review.previous_total_mt ?? null,
+        next_total_mt: review.next_total_mt ?? null,
+        lines: Array.isArray(review.lines)
+          ? review.lines.map((line: any) => ({
+              sku_text: line?.sku_text || 'Material',
+              from_mt: line?.from_mt ?? 0,
+              to_mt: line?.to_mt ?? 0,
+            }))
+          : [],
+      });
+    }
+    rows.sort((a, b) =>
+      String(b.changed_at || '').localeCompare(String(a.changed_at || '')),
+    );
+    return rows;
+  }
+
+  private async loadInquiryForStatusUpdate(id: string) {
+    const base =
+      'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at, procurement_number';
+    const withReview = `${base}, tonnage_review_open, tonnage_review`;
+    const first = await this.supabase
+      .from('inquiries')
+      .select(withReview)
+      .eq('id', id)
+      .single();
+    if (!first.error || !/tonnage_review/i.test(first.error?.message || '')) {
+      return { ...first, reviewColumns: !first.error };
+    }
+    const fallback = await this.supabase
+      .from('inquiries')
+      .select(base)
+      .eq('id', id)
+      .single();
+    return { ...fallback, reviewColumns: false };
+  }
+
   async updateStatus(
     id: string,
     status: string,
@@ -1631,13 +1718,9 @@ export class InquiriesService implements OnModuleInit {
     accessibleEmployeeIds?: string[] | null,
   ) {
     try {
-      const { data: existingInq, error: fetchErr } = await this.supabase
-        .from('inquiries')
-        .select(
-          'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at',
-        )
-        .eq('id', id)
-        .single();
+      const loaded = await this.loadInquiryForStatusUpdate(id);
+      const { data: existingInq, error: fetchErr } = loaded;
+      const reviewColumns = loaded.reviewColumns;
       if (fetchErr || !existingInq) {
         throw new NotFoundException('Inquiry not found');
       }
@@ -1735,6 +1818,26 @@ export class InquiriesService implements OnModuleInit {
       }
 
       const updatePayload: any = { status };
+      const afterLines = Array.isArray(details?.lineItems)
+        ? details.lineItems
+        : Array.isArray(details?.line_items)
+          ? details.line_items
+          : null;
+      const reviewPatch =
+        !procurementScope && reviewColumns && afterLines
+          ? tonnageReviewPatch({
+              pricingStatus: existingInq.pricing_status,
+              reviewOpen: (existingInq as any).tonnage_review_open,
+              existingReview: (existingInq as any).tonnage_review,
+              beforeLines: inquiryCommercialLines(existingInq),
+              afterLines,
+            })
+          : null;
+      if (reviewPatch) Object.assign(updatePayload, reviewPatch);
+      const reviewOpened = Boolean(reviewPatch?.tonnage_review);
+      if (reviewOpened && existingInq.status) {
+        updatePayload.status = existingInq.status;
+      }
       if (details) {
         if (details.companyName)
           updatePayload.sender_name = details.companyName;
@@ -1790,9 +1893,34 @@ export class InquiriesService implements OnModuleInit {
       } else {
         pipelineStage = details?.stage || undefined;
       }
+      // A tonnage review reopens pricing only. The pipeline stage stays put.
       // Procurement edits stay on the inquiry. They must not create or move a deal.
       if (!procurementScope) {
-        await this.syncInquiryToDeal(id, pipelineStage, details, true);
+        await this.syncInquiryToDeal(
+          id,
+          reviewOpened ? undefined : pipelineStage,
+          details,
+          true,
+        );
+      }
+
+      if (reviewPatch?.tonnage_review) {
+        try {
+          const review = reviewPatch.tonnage_review;
+          const procurementNumber = existingInq.procurement_number || id;
+          this.activityLogsService.logActivity({
+            module: 'Inquiries',
+            description: `Tonnage changed on ${procurementNumber} from ${review.previous_total_mt} MT to ${review.next_total_mt} MT`,
+            action_type: 'procurement_tonnage_review',
+            entity_id: id,
+            entity_type: 'inquiry',
+          });
+        } catch (reviewLogErr: any) {
+          this.logger.warn(
+            'Non-blocking tonnage review log notice:',
+            reviewLogErr?.message,
+          );
+        }
       }
 
       // Non-blocking activity log
@@ -1807,7 +1935,11 @@ export class InquiriesService implements OnModuleInit {
           salesperson_name:
             (data as any)?.assigned_salesperson_name || 'Sales Team',
           salesperson_phone: (data as any)?.salesperson_phone || null,
-          description: inquiryStageLog(id, custName, pipelineStage || status),
+          description: inquiryStageLog(
+            id,
+            custName,
+            reviewOpened ? existingInq.status : pipelineStage || status,
+          ),
           module: 'Inquiries',
           customer_name: custName,
         });
@@ -2658,7 +2790,7 @@ export class InquiriesService implements OnModuleInit {
       }
 
       this.logger.log(
-        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${stage}' in pipeline`,
+        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${targetStage}' in pipeline`,
       );
       return dealId;
     } catch (err: any) {
