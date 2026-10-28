@@ -46,7 +46,7 @@ describe('procurement pricing workflow', () => {
   it('strips customer identity from a procurement list and keeps it for sales', async () => {
     const db = createSupabaseMock({
       tables: {
-        inquiries: [inquiry],
+        inquiries: [{ ...inquiry, procurement_employee_id: 'buyer' }],
         deals: [],
         employees: [],
         recurring_customers: [],
@@ -60,7 +60,7 @@ describe('procurement pricing workflow', () => {
     );
 
     const hidden = await inquiries.findAll({
-      procurementScope: { ids: ['buyer'], includeUnassignedPool: true },
+      procurementScope: { ids: ['buyer'], includeUnassignedPool: false },
     });
     expect(hidden).toHaveLength(1);
     expect(hidden[0].customer_name).toBeUndefined();

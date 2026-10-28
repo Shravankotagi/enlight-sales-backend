@@ -26,12 +26,12 @@ describe('matchesProcurementScope', () => {
     includeUnassignedPool: true,
   };
 
-  it('lets a manager see their team and open unassigned inquiries only', () => {
+  it('lets a manager see only inquiries stamped to their team', () => {
     expect(matchesProcurementScope(inquiry('1', 'new', 'person'), team)).toBe(
       true,
     );
     expect(matchesProcurementScope(inquiry('2', 'pending', null), team)).toBe(
-      true,
+      false,
     );
     expect(matchesProcurementScope(inquiry('3', 'won', null), team)).toBe(
       false,
@@ -88,13 +88,13 @@ describe('InquiriesService procurement scope', () => {
     return service;
   };
 
-  it('returns team rows plus the open pool for a manager, without throwing on empty ids', async () => {
+  it('returns stamped team rows for a manager, without throwing on empty ids', async () => {
     const service = createService();
     const managerRows = await service.findAll({
-      procurementScope: { ids: ['mgr', 'person'], includeUnassignedPool: true },
+      procurementScope: { ids: ['mgr', 'person'], includeUnassignedPool: false },
     });
     expect(managerRows.map((row: any) => row.id).sort()).toEqual(
-      ['mine', 'pool', 'team'].sort(),
+      ['mine', 'team'].sort(),
     );
 
     const empty = await service.findAll({

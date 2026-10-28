@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  BadRequestException,
   NotFoundException,
   UnauthorizedException,
   ForbiddenException,
@@ -388,6 +389,12 @@ export class ChatbotService {
     this.logger.log(
       `Processing chat message from user ${caller.userId} (${caller.role}): "${messageText.slice(0, 60)}"`,
     );
+    const employeePhone = String(caller?.phone || '').trim();
+    if (!employeePhone) {
+      throw new BadRequestException(
+        'Sign in again. This account has no phone number.',
+      );
+    }
 
     // 1. Rate limit check (Security & Guardrail)
     await this.guardrailsService.checkRateLimit(caller.userId);
@@ -447,7 +454,7 @@ export class ChatbotService {
         `${botUrl}/chat/web/message`,
         {
           message: messageText,
-          employeePhone: caller.phone || '9619226169',
+          employeePhone,
           userId: caller.userId,
           employeeName: caller.name || 'User',
           role: caller.role,
