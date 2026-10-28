@@ -293,7 +293,7 @@ function generateSamplePO(outputPath) {
   doc.font(fontBold).fontSize(8).fillColor('#000000');
 
   let cX = leftX;
-  doc.text('Sr No.', cX, currY + 5, { width: colW.sr, align: 'center' });
+  doc.text('Sr. No.', cX, currY + 5, { width: colW.sr, align: 'center' });
   cX += colW.sr;
   doc
     .moveTo(cX, currY)
