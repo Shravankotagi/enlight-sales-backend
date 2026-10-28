@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { PermissionGuard, hasPermission } from './permission.guard';
+import { canReadDealLists } from '../../modules/deals/deals.controller';
 
 describe('PermissionGuard', () => {
   const guard = new PermissionGuard({
@@ -37,5 +38,15 @@ describe('PermissionGuard', () => {
     expect(hasPermission({ role: 'super_admin' }, 'staff.manage_acl')).toBe(
       true,
     );
+  });
+
+  it('hides deal lists from a customer-only user', () => {
+    expect(canReadDealLists({ permissions: { 'customers.view': true } })).toBe(
+      false,
+    );
+    expect(canReadDealLists({ permissions: { 'orders.view': true } })).toBe(
+      true,
+    );
+    expect(canReadDealLists({ role: 'admin' })).toBe(true);
   });
 });

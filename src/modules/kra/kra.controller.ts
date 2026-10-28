@@ -156,6 +156,7 @@ export class KraController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'complaints.view')) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -226,6 +227,7 @@ export class KraController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'visits.view')) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,

@@ -22,7 +22,10 @@ import {
   isProcurementManager,
   isProcurementRole,
 } from '../../common/utils/roles';
-import { assertPermission } from '../../common/guards/permission.guard';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
 import {
   canDeleteInquiries,
   canEditInquiries,
@@ -85,6 +88,12 @@ export class InquiriesController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (
+      !isProcurementRole(employee?.role) &&
+      !hasPermission(employee, 'inquiries.view')
+    ) {
+      return [];
+    }
     if (isProcurementRole(employee?.role)) {
       const { permissions, scope } = await this.procurementGate(employee);
       if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
