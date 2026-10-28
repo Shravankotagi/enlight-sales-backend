@@ -1371,10 +1371,11 @@ export class CustomersService {
       if (coreName && dbCore && coreName === dbCore) return true;
 
       const dbPhone = cleanPhone(c.customer_phone);
-      if (phone10 && dbPhone && phone10 === dbPhone) return true;
-
       const dbGst = cleanGst(c.customer_gst);
-      if (gstClean && dbGst && gstClean === dbGst) return true;
+      const samePhone = Boolean(phone10 && dbPhone && phone10 === dbPhone);
+      const sameGst = Boolean(gstClean && dbGst && gstClean === dbGst);
+      if ((samePhone || sameGst) && areNamesCompatible(rawName, dbRaw))
+        return true;
 
       return false;
     });
