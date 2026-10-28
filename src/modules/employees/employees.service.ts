@@ -417,9 +417,9 @@ export class EmployeesService {
 
   /**
    * Inquiry ids a procurement user may see.
-   * Person: own id plus salespeople routed to them.
-   * Manager: own id, people who report to them, the salespeople routed to
-   * those people, and the open unassigned intake pool.
+   * Person: inquiries stamped to them.
+   * Manager: inquiries stamped to them and to the procurement people who
+   * report to them. An inquiry with no procurement owner stays out of both lists.
    */
   async getAccessibleProcurementIds(
     employee: any,
@@ -485,7 +485,7 @@ export class EmployeesService {
     const routed = await this.salespeopleRoutedTo(teamIds);
     return {
       ids: Array.from(new Set([...ownId, ...teamIds])),
-      includeUnassignedPool: true,
+      includeUnassignedPool: false,
       salespersonPhones: routed.phones,
       salespersonEmployeeIds: routed.ids,
     };
@@ -849,16 +849,41 @@ export class EmployeesService {
         .filter((phone) => phone.length === 10),
     );
     const employeeIds = new Set(selected.map((salesperson) => salesperson.id));
-    const { data: openRows, error: listErr } = await this.supabase
-      .from('inquiries')
-      .select('id, salesperson_phone, employee_id, procurement_employee_id')
-      .is('procurement_employee_id', null);
+    const [{ data: openRows, error: listErr }, { data: customers }] =
+      await Promise.all([
+        this.supabase
+          .from('inquiries')
+          .select(
+            'id, salesperson_phone, sender_phone, employee_id, customer_name, ai_extraction_json, procurement_employee_id',
+          )
+          .is('procurement_employee_id', null),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone'),
+      ]);
     if (listErr) throw listErr;
+    const customerNames = new Set<string>();
+    for (const customer of customers || []) {
+      const phone = normalizePhone(customer.assigned_salesperson_phone);
+      const name = String(customer.customer_name || '')
+        .trim()
+        .toLowerCase();
+      if (phone.length === 10 && phones.has(phone) && name) {
+        customerNames.add(name);
+      }
+    }
     const matchIds = (openRows || [])
       .filter((row: any) => {
         if (row.employee_id && employeeIds.has(row.employee_id)) return true;
-        const phone = normalizePhone(row.salesperson_phone);
-        return Boolean(phone && phones.has(phone));
+        const stored = normalizePhone(row.salesperson_phone);
+        if (stored.length === 10 && phones.has(stored)) return true;
+        const sender = normalizePhone(row.sender_phone);
+        if (sender.length === 10 && phones.has(sender)) return true;
+        const ai = row.ai_extraction_json || {};
+        const name = String(row.customer_name || ai.customer_name || '')
+          .trim()
+          .toLowerCase();
+        return Boolean(name && customerNames.has(name));
       })
       .map((row: any) => row.id);
     if (matchIds.length) {

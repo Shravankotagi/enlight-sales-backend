@@ -92,6 +92,164 @@ export function sourceItemFor(
   );
 }
 
+export interface TonnageReviewLine {
+  sku_text: string;
+  from_mt: number;
+  to_mt: number;
+}
+
+export interface TonnageReviewBaseline {
+  sku_text: string;
+  mt: number;
+}
+
+export interface TonnageReview {
+  changed_at: string;
+  previous_total_mt: number;
+  next_total_mt: number;
+  lines: TonnageReviewLine[];
+  baseline: TonnageReviewBaseline[];
+}
+
+const roundMt = (value: number) => Math.round((Number(value) || 0) * 1000) / 1000;
+
+function isManualMt(item: any) {
+  const flag = item?.is_manual_mt;
+  return flag === true || flag === 'true' || flag === 1 || flag === '1';
+}
+
+function lineForWeight(item: any) {
+  const manualMt = Number(item?.converted_mt);
+  if (isManualMt(item) && Number.isFinite(manualMt) && manualMt > 0) {
+    return {
+      ...(item || {}),
+      quantity: manualMt,
+      unit: 'MT',
+      original_unit: 'MT',
+      converted_mt: manualMt,
+      weight_mt: undefined,
+    };
+  }
+  const unit = String(item?.original_unit || item?.unit || 'MT').toLowerCase();
+  if (unit === 'mt' || unit === 'kg' || unit === 'kgs') {
+    const copy = { ...(item || {}) };
+    delete copy.weight_mt;
+    delete copy.converted_mt;
+    return copy;
+  }
+  return item || {};
+}
+
+function lineSnapshot(item: any): TonnageReviewBaseline {
+  const weighed = lineForWeight(item);
+  return {
+    sku_text: String(item?.sku_text || item?.description || 'Material'),
+    mt: roundMt(pricingWeightMt(weighed, weighed)),
+  };
+}
+
+export function inquiryCommercialLines(source: any): any[] {
+  if (Array.isArray(source)) return source;
+  const ai = source?.ai_extraction_json || source || {};
+  const lines =
+    ai.line_items || ai.lineItems || source?.line_items || source?.lineItems;
+  if (Array.isArray(lines) && lines.length) return lines;
+  const tons = Number(ai.quantityTons || source?.quantityTons || 0);
+  if (tons > 0) {
+    return [
+      {
+        sku_text: ai.productType || ai.product_type || 'Material',
+        quantity: tons,
+        unit: 'MT',
+      },
+    ];
+  }
+  return [];
+}
+
+export function tonnageReviewPatch(input: {
+  pricingStatus?: string | null;
+  reviewOpen?: boolean;
+  existingReview?: Partial<TonnageReview> | null;
+  beforeLines: any[];
+  afterLines: any[];
+  now?: string;
+}): {
+  pricing_status: 'awaiting_price' | 'price_ready';
+  tonnage_review_open: boolean;
+  tonnage_review: TonnageReview | null;
+} | null {
+  const status = input.pricingStatus || null;
+  const open = Boolean(input.reviewOpen);
+  const canOpen = status === 'price_ready';
+  const canUpdate = open && status === 'awaiting_price';
+  if (!canOpen && !canUpdate) return null;
+  if (!Array.isArray(input.afterLines) || input.afterLines.length === 0) {
+    return null;
+  }
+
+  const before = (input.beforeLines || []).map(lineSnapshot);
+  const after = input.afterLines.map(lineSnapshot);
+  const countNow = Math.max(before.length, after.length);
+  let weightChanged = before.length !== after.length;
+  for (let index = 0; index < countNow; index += 1) {
+    if ((before[index]?.mt ?? 0) !== (after[index]?.mt ?? 0)) weightChanged = true;
+  }
+  if (!weightChanged) return null;
+
+  const baseline =
+    canUpdate && input.existingReview?.baseline?.length
+      ? input.existingReview.baseline.map((line) => ({
+          sku_text: line.sku_text || 'Material',
+          mt: roundMt(line.mt),
+        }))
+      : before;
+  const count = Math.max(baseline.length, after.length);
+  const lines: TonnageReviewLine[] = [];
+  let previous = 0;
+  let next = 0;
+  for (let index = 0; index < count; index += 1) {
+    const from = roundMt(baseline[index]?.mt ?? 0);
+    const to = roundMt(after[index]?.mt ?? 0);
+    previous += from;
+    next += to;
+    if (from !== to) {
+      lines.push({
+        sku_text: after[index]?.sku_text || baseline[index]?.sku_text || 'Material',
+        from_mt: from,
+        to_mt: to,
+      });
+    }
+  }
+  previous = roundMt(previous);
+  next = roundMt(next);
+  const previousTotal =
+    canUpdate && input.existingReview?.previous_total_mt != null
+      ? roundMt(Number(input.existingReview.previous_total_mt))
+      : previous;
+
+  if (!lines.length && previousTotal === next) {
+    if (!canUpdate) return null;
+    return {
+      pricing_status: 'price_ready',
+      tonnage_review_open: false,
+      tonnage_review: null,
+    };
+  }
+
+  return {
+    pricing_status: 'awaiting_price',
+    tonnage_review_open: true,
+    tonnage_review: {
+      changed_at: input.now || new Date().toISOString(),
+      previous_total_mt: previousTotal,
+      next_total_mt: next,
+      lines,
+      baseline,
+    },
+  };
+}
+
 export function pricingWeightMt(line: any, sourceItem: any = {}) {
   const item = {
     ...(sourceItem || {}),
@@ -191,9 +349,14 @@ export function calculateSalesLine(
 export const PROCUREMENT_PRICING_CUTOFF = '2026-10-15T00:00:00+05:30';
 
 export function preserveHistoricalPricingStatus<
-  T extends { pricing_status?: string | null; created_at?: string | null },
+  T extends {
+    pricing_status?: string | null;
+    created_at?: string | null;
+    tonnage_review_open?: boolean | null;
+  },
 >(item: T): T {
   if (!item || item.pricing_status !== 'awaiting_price') return item;
+  if (item.tonnage_review_open) return item;
   const created = item.created_at ? new Date(item.created_at).getTime() : NaN;
   const cutoff = new Date(PROCUREMENT_PRICING_CUTOFF).getTime();
   if (!Number.isNaN(created) && created < cutoff) {

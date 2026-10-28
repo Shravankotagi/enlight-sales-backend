@@ -162,11 +162,11 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
 });
 
 describe('EmployeesService procurement scope', () => {
-  it('gives a procurement manager their team ids and the unassigned pool', async () => {
+  it('gives a procurement manager their team ids without an unassigned pool', async () => {
     const service = createService();
     const scope = await service.getAccessibleProcurementIds(employees[5]);
 
-    expect(scope.includeUnassignedPool).toBe(true);
+    expect(scope.includeUnassignedPool).toBe(false);
     expect(scope.ids.sort()).toEqual(['pm-1', 'pp-1'].sort());
     expect(scope.salespersonPhones).toEqual(['9500000005']);
     expect(scope.salespersonEmployeeIds).toEqual(['sp-routed']);

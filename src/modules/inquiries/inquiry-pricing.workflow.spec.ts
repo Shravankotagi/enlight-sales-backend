@@ -46,7 +46,7 @@ describe('procurement pricing workflow', () => {
   it('strips customer identity from a procurement list and keeps it for sales', async () => {
     const db = createSupabaseMock({
       tables: {
-        inquiries: [inquiry],
+        inquiries: [{ ...inquiry, procurement_employee_id: 'buyer' }],
         deals: [],
         employees: [],
         recurring_customers: [],
@@ -60,7 +60,7 @@ describe('procurement pricing workflow', () => {
     );
 
     const hidden = await inquiries.findAll({
-      procurementScope: { ids: ['buyer'], includeUnassignedPool: true },
+      procurementScope: { ids: ['buyer'], includeUnassignedPool: false },
     });
     expect(hidden).toHaveLength(1);
     expect(hidden[0].customer_name).toBeUndefined();
@@ -177,6 +177,50 @@ describe('procurement pricing workflow', () => {
     expect(available.igst_amount).toBe(0);
     expect(blocked.line_status).toBe('cannot_price');
     expect(blocked.rate_per_mt).toBeUndefined();
+  });
+
+  it('moves a New Inquiry deal to Price Quote and leaves Negotiation where it is', async () => {
+    const { service, db } = pricingService({
+      inquiry_line_pricing: [
+        {
+          inquiry_id: 'inq-1',
+          line_key: '0:HR Coil',
+          sku_text: 'HR Coil',
+          quantity: 2,
+          unit: 'MT',
+          procurement_base_price_per_mt: 61000,
+          line_status: 'priced',
+        },
+      ],
+      deals: [
+        { id: 'deal-new', inquiry_id: 'inq-1', stage: 'new_inquiry' },
+        { id: 'deal-talk', inquiry_id: 'inq-1', stage: 'negotiation' },
+      ],
+    });
+
+    await service.saveSales(
+      inquiry,
+      {
+        lines: [
+          {
+            line_key: '0:HR Coil',
+            base_price_per_mt: 62000,
+            transport_per_mt: 1000,
+            loading_per_mt: 500,
+            credit_per_mt: 0,
+            margin_per_mt: 1500,
+          },
+        ],
+      },
+      { id: 'sales-1', phone: '9100000003' },
+    );
+
+    expect(db.store.deals.find((deal) => deal.id === 'deal-new').stage).toBe(
+      'quoted',
+    );
+    expect(db.store.deals.find((deal) => deal.id === 'deal-talk').stage).toBe(
+      'negotiation',
+    );
   });
 
   it('keeps a won inquiry stage when the sales price is saved', async () => {

@@ -16,9 +16,11 @@ import { normalizePhone, phoneInList } from '../employees/employees.service';
 import {
   anonymizeInquiry,
   displayStage,
+  inquiryCommercialLines,
   linkedDealStage,
   nextProcurementNumber,
   preserveHistoricalPricingStatus,
+  tonnageReviewPatch,
 } from './inquiry-pricing.util';
 import { ZohoService } from '../zoho/zoho.service';
 import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
@@ -744,8 +746,6 @@ function resolveInquiryEntities(
   };
 }
 
-export const PROCUREMENT_OPEN_STATUSES = ['new', 'pending', 'review', 'draft'];
-
 /** Statuses that create or move a deal. Procurement cannot set these. */
 export const PROCUREMENT_BLOCKED_STATUSES = [
   'confirmed',
@@ -764,7 +764,7 @@ export type ProcurementScope = {
   stampedOnly?: boolean;
 };
 
-/** In-memory scope. Empty ids match nothing and never throw. */
+/** In-memory scope. An inquiry is visible only when it is stamped to one of these ids. */
 export function matchesProcurementScope(
   item: {
     procurement_employee_id?: string | null;
@@ -776,28 +776,57 @@ export function matchesProcurementScope(
 ): boolean {
   if (!scope) return false;
   const ids = scope.ids || [];
-  if (
-    item?.procurement_employee_id &&
-    ids.includes(item.procurement_employee_id)
-  ) {
-    return true;
+  return Boolean(
+    item?.procurement_employee_id && ids.includes(item.procurement_employee_id),
+  );
+}
+
+type ProcurementRoutes = {
+  byPhone: Map<string, string>;
+  byEmployeeId: Map<string, string>;
+};
+
+function procurementRoutes(employees: any[]): ProcurementRoutes {
+  const byPhone = new Map<string, string>();
+  const byEmployeeId = new Map<string, string>();
+  for (const employee of employees || []) {
+    if (String(employee?.role || '') !== 'salesperson') continue;
+    if (employee?.is_active === false) continue;
+    const owner = employee?.assigned_procurement_employee_id;
+    if (!owner) continue;
+    if (employee.id) byEmployeeId.set(employee.id, owner);
+    const phone = normalizePhone(employee.phone);
+    if (phone.length === 10) byPhone.set(phone, owner);
   }
-  if (scope.stampedOnly) return false;
-  if (item?.procurement_employee_id) return false;
-  const status = String(item?.status || '').toLowerCase();
-  if (
-    scope.includeUnassignedPool &&
-    PROCUREMENT_OPEN_STATUSES.includes(status)
-  ) {
-    return true;
+  return { byPhone, byEmployeeId };
+}
+
+/** Owner for a row that is still null. A stamped row is never moved. */
+export function routedProcurementOwner(
+  item: {
+    procurement_employee_id?: string | null;
+    employee_id?: string | null;
+    salesperson_phone?: string | null;
+    sender_phone?: string | null;
+    customer_owner_phone?: string | null;
+  },
+  routes: ProcurementRoutes,
+): string | null {
+  if (!item || item.procurement_employee_id) return null;
+  if (item.employee_id && routes.byEmployeeId.has(item.employee_id)) {
+    return routes.byEmployeeId.get(item.employee_id) || null;
   }
-  const phones = scope.salespersonPhones || [];
-  const employeeIds = scope.salespersonEmployeeIds || [];
-  if (item?.employee_id && employeeIds.includes(item.employee_id)) {
-    return true;
+  for (const phone of [
+    item.salesperson_phone,
+    item.sender_phone,
+    item.customer_owner_phone,
+  ]) {
+    const key = normalizePhone(phone || '');
+    if (key.length === 10 && routes.byPhone.has(key)) {
+      return routes.byPhone.get(key) || null;
+    }
   }
-  const phone = normalizePhone(item?.salesperson_phone || '');
-  return Boolean(phone && phones.includes(phone));
+  return null;
 }
 
 @Injectable()
@@ -928,10 +957,24 @@ export class InquiriesService implements OnModuleInit {
       // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
       // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
+      const pricingColumns =
+        'pricing_status, procurement_note, decline_sent_at, procurement_number';
+      const tonnageColumns = 'tonnage_review_open, tonnage_review';
       let { data, error } = await applyDateRange(
         this.supabase,
-        `${inquiryColumns}, pricing_status, procurement_note, decline_sent_at, procurement_number`,
+        `${inquiryColumns}, ${pricingColumns}, ${tonnageColumns}`,
       );
+      if (error && /tonnage_review/i.test(error.message || '')) {
+        this.logger.warn(
+          'Inquiry tonnage review columns are not available yet; listing inquiries without them.',
+        );
+        const withoutTonnage = await applyDateRange(
+          this.supabase,
+          `${inquiryColumns}, ${pricingColumns}`,
+        );
+        data = withoutTonnage.data;
+        error = withoutTonnage.error;
+      }
       if (
         error &&
         /pricing_status|procurement_note|decline_sent_at|procurement_number/i.test(
@@ -1053,6 +1096,7 @@ export class InquiriesService implements OnModuleInit {
       let scopedData = lightweightData;
       if (filters?.procurementScope) {
         const scope = filters.procurementScope;
+        await this.stampRoutedOwners(lightweightData);
         scopedData = lightweightData.filter((item: any) =>
           matchesProcurementScope(item, scope),
         );
@@ -1108,6 +1152,61 @@ export class InquiriesService implements OnModuleInit {
       this.logger.error('Error in findAll:', error);
       throw error;
     }
+  }
+
+  /**
+   * Write the routed procurement owner onto rows that are still null.
+   * One update per owner. A row that already has an owner is left alone.
+   */
+  private async stampRoutedOwners(items: any[]) {
+    const pending = (items || []).filter(
+      (item) => item?.id && !item.procurement_employee_id,
+    );
+    if (!pending.length) return;
+    const { data: employees, error } = await this.supabase
+      .from('employees')
+      .select('id, phone, role, is_active, assigned_procurement_employee_id');
+    if (error) {
+      this.logger.warn(
+        `Could not stamp routed inquiries: ${error.message || error}`,
+      );
+      return;
+    }
+    const routes = procurementRoutes(employees || []);
+    const byOwner = new Map<string, any[]>();
+    for (const item of pending) {
+      const owner = routedProcurementOwner(item, routes);
+      if (!owner) continue;
+      const group = byOwner.get(owner) || [];
+      group.push(item);
+      byOwner.set(owner, group);
+    }
+    const assignedAt = new Date().toISOString();
+    await Promise.all(
+      [...byOwner.entries()].map(async ([owner, group]) => {
+        const { error: updateError } = await this.supabase
+          .from('inquiries')
+          .update({
+            procurement_employee_id: owner,
+            procurement_assigned_at: assignedAt,
+          })
+          .in(
+            'id',
+            group.map((item) => item.id),
+          )
+          .is('procurement_employee_id', null);
+        if (updateError) {
+          this.logger.warn(
+            `Could not stamp inquiries for ${owner}: ${updateError.message || updateError}`,
+          );
+          return;
+        }
+        for (const item of group) {
+          item.procurement_employee_id = owner;
+          item.procurement_assigned_at = assignedAt;
+        }
+      }),
+    );
   }
 
   /** Same salesperson identity the inquiry list uses before procurement scope. */
@@ -1283,6 +1382,11 @@ export class InquiriesService implements OnModuleInit {
 
       if (procurementScope) {
         const visible = await this.resolvedProcurementItem(data);
+        await this.stampRoutedOwners([visible]);
+        if (visible.procurement_employee_id) {
+          data.procurement_employee_id = visible.procurement_employee_id;
+          data.procurement_assigned_at = visible.procurement_assigned_at;
+        }
         if (!matchesProcurementScope(visible, procurementScope)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to view this inquiry.',
@@ -1403,7 +1507,7 @@ export class InquiriesService implements OnModuleInit {
       }
 
       if (procurementScope) {
-        // Pool rows are shared with sales. Delete only rows already assigned to this team.
+        // Only an inquiry stamped to this procurement scope can be deleted.
         if (!procurementScope.ids.includes(inquiry.procurement_employee_id)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to delete this inquiry.',
@@ -1568,6 +1672,7 @@ export class InquiriesService implements OnModuleInit {
 
       let scopedReviewList = reviewList;
       if (procurementScope) {
+        await this.stampRoutedOwners(reviewList);
         scopedReviewList = reviewList.filter((item: any) =>
           matchesProcurementScope(item, procurementScope),
         );
@@ -1622,6 +1727,82 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  async listTonnageReviews(scope: ProcurementScope) {
+    const columns =
+      'id, procurement_number, procurement_employee_id, salesperson_phone, employee_id, status, tonnage_review, tonnage_review_open';
+    let { data, error } = await this.supabase
+      .from('inquiries')
+      .select(columns)
+      .eq('tonnage_review_open', true);
+    if (error && /tonnage_review/i.test(error.message || '')) return [];
+    if (error) throw error;
+
+    const { data: employees } = await this.supabase
+      .from('employees')
+      .select('name, phone');
+    const namesByPhone = new Map<string, string>();
+    (employees || []).forEach((employee: any) => {
+      if (!employee?.name || !employee?.phone) return;
+      const clean = String(employee.phone).replace(/\D/g, '');
+      namesByPhone.set(clean, employee.name);
+      namesByPhone.set(clean.slice(-10), employee.name);
+    });
+
+    const visibleRows = [];
+    for (const item of data || []) {
+      visibleRows.push(await this.resolvedProcurementItem(item));
+    }
+    await this.stampRoutedOwners(visibleRows);
+
+    const rows = [];
+    for (const visible of visibleRows) {
+      if (!matchesProcurementScope(visible, scope)) continue;
+      const review = visible.tonnage_review || {};
+      const phone = String(visible.salesperson_phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      rows.push({
+        id: visible.id,
+        procurement_number: visible.procurement_number || null,
+        salesperson_name: namesByPhone.get(phone) || 'Salesperson',
+        changed_at: review.changed_at || null,
+        previous_total_mt: review.previous_total_mt ?? null,
+        next_total_mt: review.next_total_mt ?? null,
+        lines: Array.isArray(review.lines)
+          ? review.lines.map((line: any) => ({
+              sku_text: line?.sku_text || 'Material',
+              from_mt: line?.from_mt ?? 0,
+              to_mt: line?.to_mt ?? 0,
+            }))
+          : [],
+      });
+    }
+    rows.sort((a, b) =>
+      String(b.changed_at || '').localeCompare(String(a.changed_at || '')),
+    );
+    return rows;
+  }
+
+  private async loadInquiryForStatusUpdate(id: string) {
+    const base =
+      'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at, procurement_number';
+    const withReview = `${base}, tonnage_review_open, tonnage_review`;
+    const first = await this.supabase
+      .from('inquiries')
+      .select(withReview)
+      .eq('id', id)
+      .single();
+    if (!first.error || !/tonnage_review/i.test(first.error?.message || '')) {
+      return { ...first, reviewColumns: !first.error };
+    }
+    const fallback = await this.supabase
+      .from('inquiries')
+      .select(base)
+      .eq('id', id)
+      .single();
+    return { ...fallback, reviewColumns: false };
+  }
+
   async updateStatus(
     id: string,
     status: string,
@@ -1631,19 +1812,21 @@ export class InquiriesService implements OnModuleInit {
     accessibleEmployeeIds?: string[] | null,
   ) {
     try {
-      const { data: existingInq, error: fetchErr } = await this.supabase
-        .from('inquiries')
-        .select(
-          'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at',
-        )
-        .eq('id', id)
-        .single();
+      const loaded = await this.loadInquiryForStatusUpdate(id);
+      const { data: existingInq, error: fetchErr } = loaded;
+      const reviewColumns = loaded.reviewColumns;
       if (fetchErr || !existingInq) {
         throw new NotFoundException('Inquiry not found');
       }
 
       if (procurementScope) {
         const visible = await this.resolvedProcurementItem(existingInq);
+        await this.stampRoutedOwners([visible]);
+        if (visible.procurement_employee_id) {
+          existingInq.procurement_employee_id = visible.procurement_employee_id;
+          existingInq.procurement_assigned_at =
+            visible.procurement_assigned_at;
+        }
         if (!matchesProcurementScope(visible, procurementScope)) {
           throw new ForbiddenException(
             'Access Denied: You do not have permission to update this inquiry.',
@@ -1735,6 +1918,26 @@ export class InquiriesService implements OnModuleInit {
       }
 
       const updatePayload: any = { status };
+      const afterLines = Array.isArray(details?.lineItems)
+        ? details.lineItems
+        : Array.isArray(details?.line_items)
+          ? details.line_items
+          : null;
+      const reviewPatch =
+        !procurementScope && reviewColumns && afterLines
+          ? tonnageReviewPatch({
+              pricingStatus: existingInq.pricing_status,
+              reviewOpen: (existingInq as any).tonnage_review_open,
+              existingReview: (existingInq as any).tonnage_review,
+              beforeLines: inquiryCommercialLines(existingInq),
+              afterLines,
+            })
+          : null;
+      if (reviewPatch) Object.assign(updatePayload, reviewPatch);
+      const reviewOpened = Boolean(reviewPatch?.tonnage_review);
+      if (reviewOpened && existingInq.status) {
+        updatePayload.status = existingInq.status;
+      }
       if (details) {
         if (details.companyName)
           updatePayload.sender_name = details.companyName;
@@ -1790,9 +1993,34 @@ export class InquiriesService implements OnModuleInit {
       } else {
         pipelineStage = details?.stage || undefined;
       }
+      // A tonnage review reopens pricing only. The pipeline stage stays put.
       // Procurement edits stay on the inquiry. They must not create or move a deal.
       if (!procurementScope) {
-        await this.syncInquiryToDeal(id, pipelineStage, details, true);
+        await this.syncInquiryToDeal(
+          id,
+          reviewOpened ? undefined : pipelineStage,
+          details,
+          true,
+        );
+      }
+
+      if (reviewPatch?.tonnage_review) {
+        try {
+          const review = reviewPatch.tonnage_review;
+          const procurementNumber = existingInq.procurement_number || id;
+          this.activityLogsService.logActivity({
+            module: 'Inquiries',
+            description: `Tonnage changed on ${procurementNumber} from ${review.previous_total_mt} MT to ${review.next_total_mt} MT`,
+            action_type: 'procurement_tonnage_review',
+            entity_id: id,
+            entity_type: 'inquiry',
+          });
+        } catch (reviewLogErr: any) {
+          this.logger.warn(
+            'Non-blocking tonnage review log notice:',
+            reviewLogErr?.message,
+          );
+        }
       }
 
       // Non-blocking activity log
@@ -1807,7 +2035,11 @@ export class InquiriesService implements OnModuleInit {
           salesperson_name:
             (data as any)?.assigned_salesperson_name || 'Sales Team',
           salesperson_phone: (data as any)?.salesperson_phone || null,
-          description: inquiryStageLog(id, custName, pipelineStage || status),
+          description: inquiryStageLog(
+            id,
+            custName,
+            reviewOpened ? existingInq.status : pipelineStage || status,
+          ),
           module: 'Inquiries',
           customer_name: custName,
         });
@@ -1891,7 +2123,23 @@ export class InquiriesService implements OnModuleInit {
 
       let scopedGenuine = genuineData;
       if (procurementScope) {
-        scopedGenuine = genuineData.filter((item: any) =>
+        const resolved = genuineData.map((item: any) => {
+          const entities = resolveInquiryEntities(
+            item,
+            undefined,
+            undefined,
+            empPhoneMap,
+            customerOwnerMap,
+          );
+          return {
+            ...item,
+            salesperson_phone:
+              entities.salesperson_phone || item.salesperson_phone,
+            customer_owner_phone: entities.customer_owner_phone,
+          };
+        });
+        await this.stampRoutedOwners(resolved);
+        scopedGenuine = resolved.filter((item: any) =>
           matchesProcurementScope(item, procurementScope),
         );
       } else if (salespersonPhones) {
@@ -2675,7 +2923,7 @@ export class InquiriesService implements OnModuleInit {
       }
 
       this.logger.log(
-        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${stage}' in pipeline`,
+        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${targetStage}' in pipeline`,
       );
       return dealId;
     } catch (err: any) {

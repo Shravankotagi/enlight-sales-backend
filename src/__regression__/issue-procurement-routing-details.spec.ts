@@ -199,6 +199,27 @@ describe('procurement routing and inquiry detail', () => {
             procurement_employee_id: null,
             status: 'processed',
           },
+          {
+            id: 'by-sender',
+            salesperson_phone: null,
+            sender_phone: '919811111111',
+            procurement_employee_id: null,
+            status: 'review',
+          },
+          {
+            id: 'by-customer',
+            salesperson_phone: null,
+            sender_phone: '919100000000',
+            customer_name: 'Acme Steel',
+            procurement_employee_id: null,
+            status: 'review',
+          },
+        ],
+        recurring_customers: [
+          {
+            customer_name: 'Acme Steel',
+            assigned_salesperson_phone: '919811111111',
+          },
         ],
       },
     });
@@ -229,11 +250,36 @@ describe('procurement routing and inquiry detail', () => {
       db.store.inquiries.find((row) => row.id === 'by-employee')
         ?.procurement_employee_id,
     ).toBe('proc-1');
+    expect(
+      db.store.inquiries.find((row) => row.id === 'by-sender')
+        ?.procurement_employee_id,
+    ).toBe('proc-1');
+    expect(
+      db.store.inquiries.find((row) => row.id === 'by-customer')
+        ?.procurement_employee_id,
+    ).toBe('proc-1');
   });
 
-  it('includes unassigned inquiries for a person assigned salespeople', async () => {
+  it('stamps every inquiry of a routed salesperson before the list filter', async () => {
     const db = createSupabaseMock({
       tables: {
+        employees: [
+          {
+            id: 'sp-1',
+            name: 'Akruti',
+            phone: '919811111111',
+            role: 'salesperson',
+            is_active: true,
+            assigned_procurement_employee_id: 'proc-1',
+          },
+        ],
+        recurring_customers: [
+          {
+            customer_name: 'Acme Steel',
+            assigned_salesperson_phone: '919811111111',
+            is_active: true,
+          },
+        ],
         inquiries: [
           {
             id: 'won',
@@ -275,10 +321,29 @@ describe('procurement routing and inquiry detail', () => {
             raw_text: 'Someone else',
             created_at: '2026-08-04T00:00:00.000Z',
           },
+          {
+            id: 'by-sender',
+            status: 'review',
+            procurement_employee_id: null,
+            sender_phone: '919811111111',
+            inquiry_type: 'inquiry',
+            source_channel: 'web_dashboard',
+            raw_text: 'Sender coil',
+            created_at: '2026-08-05T00:00:00.000Z',
+          },
+          {
+            id: 'by-customer',
+            status: 'review',
+            procurement_employee_id: null,
+            customer_name: 'Acme Steel',
+            sender_phone: '919100000000',
+            inquiry_type: 'inquiry',
+            source_channel: 'web_dashboard',
+            raw_text: 'Customer coil',
+            created_at: '2026-08-06T00:00:00.000Z',
+          },
         ],
-        employees: [],
         deals: [],
-        recurring_customers: [],
       },
     });
     const rows = await inquiriesService(db).findAll({
@@ -290,7 +355,19 @@ describe('procurement routing and inquiry detail', () => {
       },
     });
     expect(rows.map((row: any) => row.id).sort()).toEqual(
-      ['by-employee', 'won'].sort(),
+      ['by-customer', 'by-employee', 'by-sender', 'won'].sort(),
     );
+    expect(
+      db.store.inquiries.find((row) => row.id === 'won')
+        ?.procurement_employee_id,
+    ).toBe('proc-1');
+    expect(
+      db.store.inquiries.find((row) => row.id === 'other-owner')
+        ?.procurement_employee_id,
+    ).toBe('other');
+    expect(
+      db.store.inquiries.find((row) => row.id === 'stranger')
+        ?.procurement_employee_id,
+    ).toBeNull();
   });
 });

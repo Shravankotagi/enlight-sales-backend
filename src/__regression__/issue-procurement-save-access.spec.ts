@@ -23,7 +23,14 @@ function serviceFor(extra: Record<string, any[]> = {}) {
       inquiries: [],
       deals: [],
       employees: [
-        { id: 'sp-1', name: 'Akruti', phone: '919876543210', role: 'salesperson' },
+        {
+          id: 'sp-1',
+          name: 'Akruti',
+          phone: '919876543210',
+          role: 'salesperson',
+          is_active: true,
+          assigned_procurement_employee_id: 'person',
+        },
       ],
       recurring_customers: [
         {

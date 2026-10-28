@@ -176,6 +176,18 @@ export class InquiriesController {
     return this.inquiriesService.getStats(phones || undefined, from, to);
   }
 
+  @Get('tonnage-reviews')
+  async tonnageReviews(@CurrentEmployee() employee: any) {
+    if (!isProcurementRole(employee?.role)) {
+      throw new ForbiddenException(
+        'Access Denied: Only procurement can view tonnage updates.',
+      );
+    }
+    const { permissions, scope } = await this.procurementGate(employee);
+    if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
+    return this.inquiriesService.listTonnageReviews(scope);
+  }
+
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     if (isProcurementRole(employee?.role)) {
