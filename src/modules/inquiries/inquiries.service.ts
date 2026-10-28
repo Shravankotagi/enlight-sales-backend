@@ -2343,16 +2343,19 @@ export class InquiriesService implements OnModuleInit {
     const itemsSummary =
       Array.isArray(lineItemsList) && lineItemsList.length > 0
         ? lineItemsList
-            .map(
-              (item: any, idx: number) =>
-                `  ${idx + 1}. ${item.sku_text || 'Material'}${
-                  item.dimensions ? ` (${item.dimensions})` : ''
-                } - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(
-                  item.rate || 0,
-                ).toLocaleString('en-IN')}/unit = Rs. ${Number(
-                  item.amount || 0,
-                ).toLocaleString('en-IN')}`,
-            )
+            .map((item: any, idx: number) => {
+              const makeStr =
+                item.brand || item.make || item.preferred_make
+                  ? ` [Make: ${item.brand || item.make || item.preferred_make}]`
+                  : '';
+              return `  ${idx + 1}. ${item.sku_text || 'Material'}${
+                item.dimensions ? ` (${item.dimensions})` : ''
+              }${makeStr} - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(
+                item.rate || 0,
+              ).toLocaleString('en-IN')}/unit = Rs. ${Number(
+                item.amount || 0,
+              ).toLocaleString('en-IN')}`;
+            })
             .join('\n')
         : `  - Specification: ${specText}\n${
             quantityTons > 0 ? `  - Quantity: ${quantityTons} MT\n` : ''
@@ -2671,7 +2674,11 @@ MIDC Industrial Zone, Mumbai - 400001`
             itemsSummary = lineItemsList
               .map((item: any, idx: number) => {
                 const spec = item.dimensions ? ` (${item.dimensions})` : '';
-                return `  ${idx + 1}. ${item.sku_text || 'Material'}${spec} - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(item.rate || 0).toLocaleString('en-IN')}/unit = Rs. ${Number(item.amount || 0).toLocaleString('en-IN')}`;
+                const makeStr =
+                  item.brand || item.make || item.preferred_make
+                    ? ` [Make: ${item.brand || item.make || item.preferred_make}]`
+                    : '';
+                return `  ${idx + 1}. ${item.sku_text || 'Material'}${spec}${makeStr} - Qty: ${item.quantity} ${item.unit || 'MT'} @ Rs. ${Number(item.rate || 0).toLocaleString('en-IN')}/unit = Rs. ${Number(item.amount || 0).toLocaleString('en-IN')}`;
               })
               .join('\n');
           } else {
@@ -3980,6 +3987,12 @@ ${rawText}`;
             'HR - COIL / SHEET'
           ).toUpperCase(),
           dimensions: item.dimensions || undefined,
+          brand:
+            item.brand ||
+            item.make ||
+            item.preferred_make ||
+            details.preferred_make ||
+            undefined,
           hsn_code:
             item.hsn_code ||
             item.hsn ||
@@ -4016,31 +4029,36 @@ ${rawText}`;
           doc.rect(leftX, headerY, contentWidth, 24).fill('#525E6F');
           doc.fillColor('#FFFFFF').font(fontBold).fontSize(8.5);
           doc.text('#', leftX, headerY + 7.5, {
-            width: 26,
+            width: 24,
             align: 'center',
             lineBreak: false,
           });
-          doc.text('Item & Description', 70, headerY + 7.5, {
-            width: 205,
+          doc.text('Item & Description', 68, headerY + 7.5, {
+            width: 160,
             lineBreak: false,
           });
-          doc.text('HSN/SAC', 278, headerY + 7.5, {
+          doc.text('HSN/SAC', 232, headerY + 7.5, {
+            width: 58,
+            align: 'center',
+            lineBreak: false,
+          });
+          doc.text('Brand/Make', 294, headerY + 7.5, {
             width: 62,
             align: 'center',
             lineBreak: false,
           });
-          doc.text('Qty', 342, headerY + 7.5, {
-            width: 68,
+          doc.text('Qty', 360, headerY + 7.5, {
+            width: 60,
             align: 'center',
             lineBreak: false,
           });
-          doc.text('Rate', 412, headerY + 7.5, {
-            width: 65,
+          doc.text('Rate', 424, headerY + 7.5, {
+            width: 58,
             align: 'right',
             lineBreak: false,
           });
-          doc.text('Amount', 479, headerY + 7.5, {
-            width: 68.28,
+          doc.text('Amount', 486, headerY + 7.5, {
+            width: 61.28,
             align: 'right',
             lineBreak: false,
           });
@@ -4051,12 +4069,12 @@ ${rawText}`;
         let rowY = drawItemHeader(tableY);
         lineItems.forEach((item, idx) => {
           doc.font(fontBold).fontSize(8.5);
-          const skuH = doc.heightOfString(item.sku_text, { width: 205 });
+          const skuH = doc.heightOfString(item.sku_text, { width: 160 });
           const dimH = item.dimensions
             ? doc
                 .font(fontRegular)
                 .fontSize(7.5)
-                .heightOfString(item.dimensions, { width: 205 }) + 3
+                .heightOfString(item.dimensions, { width: 160 }) + 3
             : 0;
           const rowH = Math.max(34, skuH + dimH + 18);
           const pageBottom = doc.page.maxY();
@@ -4073,7 +4091,7 @@ ${rawText}`;
             .font(fontRegular)
             .fontSize(8.5)
             .text(String(idx + 1), leftX, rowY + 9, {
-              width: 26,
+              width: 24,
               align: 'center',
               lineBreak: false,
             });
@@ -4083,7 +4101,7 @@ ${rawText}`;
             .fillColor('#0F172A')
             .font(fontBold)
             .fontSize(8.5)
-            .text(item.sku_text, 70, rowY + 9, { width: 205 });
+            .text(item.sku_text, 68, rowY + 9, { width: 160 });
 
           // Dimensions placed cleanly below SKU title
           if (item.dimensions) {
@@ -4091,7 +4109,7 @@ ${rawText}`;
               .fillColor('#64748B')
               .font(fontRegular)
               .fontSize(7.5)
-              .text(item.dimensions, 70, rowY + 9 + skuH + 3, { width: 205 });
+              .text(item.dimensions, 68, rowY + 9 + skuH + 3, { width: 160 });
           }
 
           // HSN/SAC
@@ -4101,22 +4119,33 @@ ${rawText}`;
             .fontSize(8.5)
             .text(
               item.hsn_code || detectHsnCode(item.sku_text, item.dimensions),
-              278,
+              232,
               rowY + 9,
               {
-                width: 62,
+                width: 58,
                 align: 'center',
                 lineBreak: false,
               },
             );
+
+          // Brand / Make column
+          doc
+            .fillColor('#0F172A')
+            .font(fontBold)
+            .fontSize(8)
+            .text(item.brand || '-', 294, rowY + 9, {
+              width: 62,
+              align: 'center',
+              lineBreak: false,
+            });
 
           // Qty
           doc
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(item.qty_mt_label, 342, rowY + 9, {
-              width: 68,
+            .text(item.qty_mt_label, 360, rowY + 9, {
+              width: 60,
               align: 'center',
               lineBreak: false,
             });
@@ -4126,8 +4155,8 @@ ${rawText}`;
             .fillColor('#475569')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(formatIndianCurrency(item.rate, true), 412, rowY + 9, {
-              width: 65,
+            .text(formatIndianCurrency(item.rate, true), 424, rowY + 9, {
+              width: 58,
               align: 'right',
               lineBreak: false,
             });
@@ -4137,8 +4166,8 @@ ${rawText}`;
             .fillColor('#0F172A')
             .font(fontRegular)
             .fontSize(8.5)
-            .text(formatIndianCurrency(item.amount, true), 479, rowY + 9, {
-              width: 68.28,
+            .text(formatIndianCurrency(item.amount, true), 486, rowY + 9, {
+              width: 61.28,
               align: 'right',
               lineBreak: false,
             });
