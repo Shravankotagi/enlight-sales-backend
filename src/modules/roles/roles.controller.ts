@@ -38,6 +38,7 @@ export class RolesController {
       roleName: current?.roleName || current?.role,
       dataScope: current?.dataScope || 'own',
       permissions: current?.permissions || {},
+      visibilityScope: current?.visibilityScope || {},
       isActive: current?.isActive !== false,
     };
   }

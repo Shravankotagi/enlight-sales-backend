@@ -33,7 +33,12 @@ export class DealsController {
     )
       return;
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     await this.dealsService.assertAssignedCustomer(customerName, phones || []);
   }
 
@@ -51,6 +56,7 @@ export class DealsController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'orders.scope_assigned',
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -78,6 +84,7 @@ export class DealsController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'orders.scope_assigned',
       );
 
     const stages = [
@@ -134,6 +141,7 @@ export class DealsController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'orders.scope_assigned',
       );
 
     const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
@@ -209,7 +217,12 @@ export class DealsController {
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.findOne(id, phones);
   }
 
@@ -230,7 +243,12 @@ export class DealsController {
     },
   ) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.updateStage(
       id,
       body.stage,
@@ -276,7 +294,12 @@ export class DealsController {
   async deleteDeal(@CurrentEmployee() employee: any, @Param('id') id: string) {
     assertPermission(employee, 'deals.delete');
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.deleteDeal(id, phones);
   }
 }

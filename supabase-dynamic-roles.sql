@@ -13,6 +13,8 @@ create table if not exists roles (
   updated_by text
 );
 
+alter table roles add column if not exists visibility_scope jsonb not null default '{}'::jsonb;
+
 create index if not exists employees_role_idx on employees (role);
 
 alter table roles enable row level security;

@@ -29,9 +29,15 @@ function inquiry(pricingStatus = 'awaiting_price') {
 function controllerFor(
   row: any,
   employeeRow: any,
-  extra: { saveProcurement?: jest.Mock; deleteInquiry?: jest.Mock; sendQuotation?: jest.Mock } = {},
+  extra: {
+    saveProcurement?: jest.Mock;
+    deleteInquiry?: jest.Mock;
+    sendQuotation?: jest.Mock;
+  } = {},
 ) {
-  const saveProcurement = extra.saveProcurement || jest.fn(async () => ({ pricing_status: 'price_ready' }));
+  const saveProcurement =
+    extra.saveProcurement ||
+    jest.fn(async () => ({ pricing_status: 'price_ready' }));
   const inquiries = new InquiriesController(
     {
       findOne: async () => row,
@@ -104,7 +110,7 @@ describe('procurement inquiry ACL', () => {
     expect(open.saveProcurement).toHaveBeenCalled();
   });
 
-  it('refuses delete without inquiries.delete and allows a manager whose permissions are empty', async () => {
+  it('refuses inquiry delete for a procurement manager', async () => {
     const deleteInquiry = jest.fn(async () => ({ ok: true }));
     const denied = controllerFor(
       inquiry(),
@@ -116,20 +122,24 @@ describe('procurement inquiry ACL', () => {
       { deleteInquiry },
     );
     await expect(
-      denied.inquiries.deleteInquiry({ role: 'procurement_manager', id: 'mgr' }, 'inq-1'),
+      denied.inquiries.deleteInquiry(
+        { role: 'procurement_manager', id: 'mgr' },
+        'inq-1',
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(deleteInquiry).not.toHaveBeenCalled();
 
     const allowed = controllerFor(
       inquiry(),
       { id: 'mgr', role: 'procurement_manager', permissions: null },
       { deleteInquiry },
     );
-    await allowed.inquiries.deleteInquiry(
-      { role: 'procurement_manager', id: 'mgr' },
-      'inq-1',
-    );
-    expect(deleteInquiry).toHaveBeenCalled();
+    await expect(
+      allowed.inquiries.deleteInquiry(
+        { role: 'procurement_manager', id: 'mgr' },
+        'inq-1',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deleteInquiry).not.toHaveBeenCalled();
   });
 
   it('sends a quotation only when inquiries.send_quote is on', async () => {
@@ -174,7 +184,11 @@ describe('procurement inquiry ACL', () => {
     };
     expect(
       matchesProcurementScope(
-        { procurement_employee_id: null, salesperson_phone: '919800000001', status: 'new' },
+        {
+          procurement_employee_id: null,
+          salesperson_phone: '919800000001',
+          status: 'new',
+        },
         stamped,
       ),
     ).toBe(false);

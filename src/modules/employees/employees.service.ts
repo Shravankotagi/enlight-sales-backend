@@ -83,8 +83,12 @@ export class EmployeesService {
 
       const allEmployees = data || [];
 
-      // Admin callers always receive the complete employee directory across all roles
-      if (!currentEmployee || currentEmployee.role === 'admin') {
+      // Full directory for admins and anyone allowed to view staff.
+      if (
+        !currentEmployee ||
+        currentEmployee.role === 'admin' ||
+        currentEmployee.permissions?.['staff.view'] === true
+      ) {
         return allEmployees;
       }
 
@@ -264,6 +268,7 @@ export class EmployeesService {
    *          If no override -> returns null (unrestricted/all).
    * - Sales Manager: Returns requested phone (if in assigned team) or array of all team phones
    * - Salesperson: Strictly returns [employee.phone]
+   * - Unchecked assigned-only with a role visibility list: own phone plus those people.
    */
   async getAccessibleSalespersonPhones(
     employee: any,
@@ -285,6 +290,15 @@ export class EmployeesService {
       employee.permissions?.[scopeAssignedKey] === true
     ) {
       return { phones: employee.phone ? [employee.phone] : [] };
+    }
+
+    const extraIds = this.visibilityEmployeeIds(employee, scopeAssignedKey);
+    if (extraIds.length) {
+      const extraPhones = await this.phonesForEmployeeIds(extraIds);
+      const own = employee?.phone ? [employee.phone] : [];
+      return {
+        phones: Array.from(new Set([...own, ...extraPhones].filter(Boolean))),
+      };
     }
 
     const scope =
@@ -395,7 +409,10 @@ export class EmployeesService {
    * Admin: null, unrestricted. Salesperson: their own id.
    * Sales manager: their own id plus the salespeople assigned to them.
    */
-  async getAccessibleSalespersonIds(employee: any): Promise<string[] | null> {
+  async getAccessibleSalespersonIds(
+    employee: any,
+    scopeAssignedKey?: string,
+  ): Promise<string[] | null> {
     if (
       !employee ||
       employee.role === 'admin' ||
@@ -403,6 +420,7 @@ export class EmployeesService {
     ) {
       return null;
     }
+    const extra = this.visibilityEmployeeIds(employee, scopeAssignedKey);
     if (employee.role === 'sales_manager' || employee.role === 'manager') {
       const assigned = await this.getAssignedSalespersons(
         employee.id,
@@ -410,9 +428,46 @@ export class EmployeesService {
       );
       const ids = assigned.map((person: any) => person.id).filter(Boolean);
       if (employee.id) ids.push(employee.id);
-      return Array.from(new Set(ids));
+      return Array.from(new Set([...ids, ...extra]));
     }
-    return employee.id ? [employee.id] : [];
+    const own = employee.id ? [employee.id] : [];
+    return Array.from(new Set([...own, ...extra]));
+  }
+
+  private visibilityEmployeeIds(employee: any, scopeAssignedKey?: string) {
+    const modules: Record<string, string> = {
+      'customers.scope_assigned': 'customers',
+      'inquiries.scope_assigned': 'inquiries',
+      'orders.scope_assigned': 'orders',
+      'visits.scope_assigned': 'visits',
+      'complaints.scope_assigned': 'complaints',
+    };
+    const module = scopeAssignedKey ? modules[scopeAssignedKey] : '';
+    if (
+      !module ||
+      !employee ||
+      employee.isInternal ||
+      employee.permissions?.[scopeAssignedKey] === true
+    ) {
+      return [];
+    }
+    const ids = employee.visibilityScope?.[module];
+    if (!Array.isArray(ids)) return [];
+    return [
+      ...new Set(
+        ids.map((id: unknown) => String(id || '').trim()).filter(Boolean),
+      ),
+    ];
+  }
+
+  private async phonesForEmployeeIds(ids: string[]) {
+    const { data } = await this.supabase
+      .from('employees')
+      .select('id, phone, is_active')
+      .in('id', ids);
+    return (data || [])
+      .filter((row: any) => row?.is_active !== false && row.phone)
+      .map((row: any) => row.phone);
   }
 
   /**

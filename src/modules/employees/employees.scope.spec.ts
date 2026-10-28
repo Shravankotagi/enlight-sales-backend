@@ -159,6 +159,37 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
       ),
     ).resolves.toEqual({ phones: ['9200000001'] });
   });
+
+  it('adds selected inquiry owners and keeps a checked visit scope own-only', async () => {
+    const service = createService();
+    const user = {
+      ...employees[2],
+      dataScope: 'own',
+      permissions: {
+        'inquiries.scope_assigned': false,
+        'visits.scope_assigned': true,
+      },
+      visibilityScope: { inquiries: ['sp-3'], visits: ['sp-3'] },
+    };
+
+    await expect(
+      service.getAccessibleSalespersonPhones(
+        user,
+        undefined,
+        undefined,
+        'inquiries.scope_assigned',
+      ),
+    ).resolves.toEqual({ phones: ['9200000001', '9300000003'] });
+
+    await expect(
+      service.getAccessibleSalespersonPhones(
+        user,
+        undefined,
+        undefined,
+        'visits.scope_assigned',
+      ),
+    ).resolves.toEqual({ phones: ['9200000001'] });
+  });
 });
 
 describe('EmployeesService procurement scope', () => {
@@ -206,6 +237,21 @@ describe('EmployeesService procurement scope', () => {
     } finally {
       delete employees[1].manager_id;
     }
+  });
+
+  it('returns the full directory when staff view is on, and only self when it is off', async () => {
+    const service = createService();
+    const viewer = {
+      ...employees[2],
+      permissions: { 'staff.view': true, 'staff.delete': true },
+    };
+
+    const everyone = await service.findAll(viewer);
+    expect(everyone.map((row: any) => row.id)).toContain('admin-1');
+    expect(everyone.map((row: any) => row.id)).toContain('sp-3');
+
+    const selfOnly = await service.findAll(employees[2]);
+    expect(selfOnly.map((row: any) => row.id)).toEqual(['sp-1']);
   });
 
   it('rejects a procurement person assigned to a sales manager', async () => {
