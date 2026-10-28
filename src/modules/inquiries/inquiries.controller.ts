@@ -292,20 +292,21 @@ export class InquiriesController {
     }
     const inquiry = await this.assertInquiryAccess(employee, id);
     const lines = await this.inquiryPricingService.linesFor(id);
-    return this.inquiryPricingService.declinePreview(inquiry, lines);
+    return this.inquiryPricingService.declinePreview(inquiry, lines, employee);
   }
 
   @Post(':id/decline-email')
   async declineEmail(
     @CurrentEmployee() employee: any,
     @Param('id') id: string,
+    @Body() body: any,
   ) {
     if (isProcurementRole(employee?.role)) {
       this.denyProcurement('send decline emails');
     }
     const inquiry = await this.assertInquiryAccess(employee, id);
     const lines = await this.inquiryPricingService.linesFor(id);
-    return this.inquiryPricingService.sendDecline(inquiry, lines, employee);
+    return this.inquiryPricingService.sendDecline(inquiry, lines, employee, body);
   }
 
   private async assertInquiryAccess(employee: any, id: string) {

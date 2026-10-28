@@ -250,18 +250,18 @@ describe('procurement pricing workflow', () => {
 
   it('allows a decline only when every line is unavailable', async () => {
     const { service } = pricingService();
-    expect(() =>
+    await expect(
       service.declinePreview(inquiry, [
         { line_status: 'priced' },
         { line_status: 'cannot_price' },
       ]),
-    ).toThrow(ForbiddenException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
-    const preview = service.declinePreview(inquiry, [
+    const preview = await service.declinePreview(inquiry, [
       { line_status: 'cannot_price' },
       { line_status: 'cannot_price' },
     ]);
-    expect(preview.subject).toMatch(/inquiry/i);
+    expect(preview.subject).toBe('Enlight Metals - Quotation Update for Alpha Metals');
     expect(preview.body).toContain('Alpha Metals');
     expect(preview.body).toMatch(/unable to offer/i);
   });
