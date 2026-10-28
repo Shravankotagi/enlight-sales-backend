@@ -25,6 +25,7 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { ActivityLogsModule } from './modules/activity-logs/activity-logs.module';
 import { ProductsModule } from './modules/products/products.module';
+import { InvoicesModule } from './modules/invoices/invoices.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ProductsModule } from './modules/products/products.module';
     ChatbotModule,
     ActivityLogsModule,
     ProductsModule,
+    InvoicesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
