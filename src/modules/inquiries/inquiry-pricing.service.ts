@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import {
@@ -9,6 +13,10 @@ import {
   sourceLines,
   StoredPricingLine,
 } from './inquiry-pricing.util';
+import {
+  getCompanyLogoBuffer,
+  quotationEmailHtml,
+} from './quotation-email-html';
 
 @Injectable()
 export class InquiryPricingService {
@@ -148,7 +156,148 @@ export class InquiryPricingService {
     return { pricing_status: 'sales_priced', lines: next };
   }
 
-  declinePreview(inquiry: any, lines: any[]) {
+  private isValidEmail(value: unknown): value is string {
+    return (
+      typeof value === 'string' &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+    );
+  }
+
+  private customerEmailFrom(inquiry: any): string {
+    const raw =
+      inquiry?.customer_email ||
+      inquiry?.ai_extraction_json?.customer_email ||
+      inquiry?.ai_extraction_json?.customerEmail ||
+      '';
+    const email = String(raw).trim().toLowerCase();
+    return this.isValidEmail(email) ? email : '';
+  }
+
+  private senderEmailFrom(employee: any): string {
+    const email = String(employee?.email || '')
+      .trim()
+      .toLowerCase();
+    return this.isValidEmail(email) ? email : '';
+  }
+
+  private async resolveDeclineSenderEmail(employee: any): Promise<string> {
+    const direct = this.senderEmailFrom(employee);
+    if (direct) return direct;
+
+    const id = String(employee?.id || '').trim();
+    if (id) {
+      const { data } = await this.supabase
+        .from('employees')
+        .select('email')
+        .eq('id', id)
+        .maybeSingle();
+      const email = this.senderEmailFrom(data);
+      if (email) return email;
+    }
+
+    const code = String(employee?.employee_id || '').trim();
+    if (code && code !== id) {
+      const { data } = await this.supabase
+        .from('employees')
+        .select('email')
+        .eq('employee_id', code)
+        .maybeSingle();
+      const email = this.senderEmailFrom(data);
+      if (email) return email;
+    }
+
+    const phone = String(employee?.phone || '')
+      .replace(/\D/g, '')
+      .slice(-10);
+    if (!phone) return '';
+    const { data } = await this.supabase
+      .from('employees')
+      .select('email, phone')
+      .ilike('phone', `%${phone}`)
+      .limit(5);
+    const row = (data || []).find(
+      (emp: any) =>
+        String(emp?.phone || '')
+          .replace(/\D/g, '')
+          .slice(-10) === phone,
+    );
+    return this.senderEmailFrom(row);
+  }
+
+  private declineSubject(inquiry: any): string {
+    const customer =
+      inquiry?.customer_name ||
+      inquiry?.sender_name ||
+      inquiry?.ai_extraction_json?.customer_name ||
+      'Customer';
+    return `Enlight Metals - Quotation Update for ${customer}`;
+  }
+
+  private declineLogoAttachment() {
+    const logo = getCompanyLogoBuffer();
+    if (!logo) return undefined;
+    return [
+      {
+        filename: 'enlight-logo.png',
+        content: logo.toString('base64'),
+        content_id: 'enlight-logo',
+      },
+    ];
+  }
+
+  private declineCc(
+    senderEmail: string,
+    customerEmail: string,
+    requestedCc?: unknown,
+  ): string[] {
+    const fixedCc = ['dj@enlightmetals.com', 'vedant@enlightmetals.com'];
+    const normalizedCustomer = customerEmail.trim().toLowerCase();
+    const recipients =
+      requestedCc === undefined
+        ? [senderEmail, ...fixedCc].filter(Boolean)
+        : requestedCc;
+    if (
+      !Array.isArray(recipients) ||
+      recipients.some((email) => typeof email !== 'string')
+    ) {
+      throw new BadRequestException(
+        'CC recipients must be an array of email addresses.',
+      );
+    }
+    const normalized = recipients
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    if (normalized.some((email) => !this.isValidEmail(email))) {
+      throw new BadRequestException(
+        'CC recipients must contain valid email addresses.',
+      );
+    }
+    const withFixed = [
+      ...normalized,
+      ...fixedCc.filter((email) => !normalized.includes(email)),
+    ];
+    return Array.from(
+      new Set(withFixed.filter((email) => email !== normalizedCustomer)),
+    );
+  }
+
+  private materialLabel(line: any): string {
+    const name = String(line?.sku_text || line?.description || '').trim();
+    const dimensions = String(line?.dimensions || line?.spec || '').trim();
+    const titled = [
+      name || 'the requested material',
+      dimensions ? `(${dimensions})` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const quantity =
+      line?.quantity != null && String(line.quantity).trim() !== ''
+        ? `${line.quantity} ${line.unit || 'MT'}`
+        : '';
+    return quantity ? `${titled}, ${quantity}` : titled;
+  }
+
+  async declinePreview(inquiry: any, lines: any[], employee?: any) {
     if (
       !lines.length ||
       lines.some((line) => line.line_status !== 'cannot_price')
@@ -162,21 +311,41 @@ export class InquiryPricingService {
       inquiry.sender_name ||
       inquiry.ai_extraction_json?.customer_name ||
       'Customer';
+    const listed = lines
+      .map((line) => `- ${this.materialLabel(line)}`)
+      .join('\n');
+    const customerEmail = this.customerEmailFrom(inquiry);
+    const senderEmail = await this.resolveDeclineSenderEmail(employee);
     return {
-      subject: 'Update on your material inquiry',
-      body: `Dear ${customer},\n\nThank you for your inquiry. We are unable to offer the requested material at this time.\n\nPlease let us know if you would like us to look at an alternative specification.\n\nRegards,\nEnlight Metals`,
+      subject: this.declineSubject(inquiry),
+      body: `Dear ${customer},\n\nThank you for your inquiry. We are unable to offer the following material at this time, as it is not available with us:\n\n${listed}\n\nPlease let us know if you would like us to look at an alternative specification.\n\nWarm regards,\nEnlight Metals`,
+      customer_email: customerEmail,
+      sender_email: 'quotations@enlightmetals.com',
+      employee_email: senderEmail,
+      cc: this.declineCc(senderEmail, customerEmail),
     };
   }
 
-  async sendDecline(inquiry: any, lines: any[], employee: any) {
-    const preview = this.declinePreview(inquiry, lines);
-    const to =
-      inquiry.customer_email ||
-      inquiry.ai_extraction_json?.customer_email ||
-      inquiry.ai_extraction_json?.customerEmail;
+  async sendDecline(inquiry: any, lines: any[], employee: any, payload: any = {}) {
+    const preview = await this.declinePreview(inquiry, lines, employee);
+    const senderEmail = await this.resolveDeclineSenderEmail(employee);
+    const customerEmail = String(
+      payload?.customer_email || preview.customer_email || '',
+    )
+      .trim()
+      .toLowerCase();
+    if (!this.isValidEmail(customerEmail)) {
+      throw new BadRequestException(
+        'Please provide a valid customer email address to send the decline.',
+      );
+    }
+    const subject =
+      String(payload?.email_subject || '').trim() || preview.subject;
+    const body = String(payload?.email_body || '').trim() || preview.body;
+    const cc = this.declineCc(senderEmail, customerEmail, payload?.cc);
     let sent = false;
     const apiKey = process.env.RESEND_API_KEY || '';
-    if (apiKey && to) {
+    if (apiKey) {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -185,16 +354,26 @@ export class InquiryPricingService {
         },
         body: JSON.stringify({
           from: 'Enlight Metals <quotations@enlightmetals.com>',
-          to: [to],
-          subject: preview.subject,
-          text: preview.body,
+          to: [customerEmail],
+          cc,
+          subject,
+          text: body,
+          html: quotationEmailHtml(body),
+          attachments: this.declineLogoAttachment(),
         }),
       });
       sent = response.ok;
     }
+    const ai = {
+      ...(inquiry.ai_extraction_json || {}),
+      customer_email: customerEmail,
+    };
     await this.supabase
       .from('inquiries')
-      .update({ decline_sent_at: new Date().toISOString() })
+      .update({
+        decline_sent_at: new Date().toISOString(),
+        ai_extraction_json: ai,
+      })
       .eq('id', inquiry.id);
     this.activityLogsService.logActivity({
       module: 'Inquiries',
@@ -204,7 +383,7 @@ export class InquiryPricingService {
       entity_id: inquiry.id,
       entity_type: 'inquiry',
     });
-    return { ...preview, sent };
+    return { ...preview, subject, body, customer_email: customerEmail, cc, sent };
   }
 
   private async upsert(

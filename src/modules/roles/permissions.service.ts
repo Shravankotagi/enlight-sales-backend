@@ -15,6 +15,7 @@ export interface ResolvedAccess {
   id: string;
   employee_id?: string;
   phone?: string;
+  email?: string;
   name?: string;
   role: string;
   roleName: string;
@@ -69,7 +70,7 @@ export class PermissionsService {
 
     const { data, error } = await this.supabase
       .from('employees')
-      .select('id, employee_id, phone, name, role, permissions, is_active')
+      .select('id, employee_id, phone, email, name, role, permissions, is_active')
       .eq('id', employeeId)
       .maybeSingle();
 
@@ -103,7 +104,7 @@ export class PermissionsService {
       if (digits) {
         const { data, error } = await this.supabase
           .from('employees')
-          .select('id, employee_id, phone, name, role, permissions, is_active')
+          .select('id, employee_id, phone, email, name, role, permissions, is_active')
           .ilike('phone', `%${digits}`)
           .limit(5);
         if (error) {
@@ -127,7 +128,7 @@ export class PermissionsService {
   private async findEmployee(column: 'employee_id', value: string) {
     const { data, error } = await this.supabase
       .from('employees')
-      .select('id, employee_id, phone, name, role, permissions, is_active')
+      .select('id, employee_id, phone, email, name, role, permissions, is_active')
       .eq(column, value)
       .maybeSingle();
     if (error) {
@@ -156,6 +157,7 @@ export class PermissionsService {
       id: data.id,
       employee_id: data.employee_id,
       phone: data.phone,
+      email: data.email || undefined,
       name: data.name,
       role: roleId,
       roleName: resolved.roleName,

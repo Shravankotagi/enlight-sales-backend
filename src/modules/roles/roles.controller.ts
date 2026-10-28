@@ -34,6 +34,7 @@ export class RolesController {
       employee_id: current?.employee_id,
       name: current?.name,
       phone: current?.phone,
+      email: current?.email || undefined,
       role: current?.role,
       roleName: current?.roleName || current?.role,
       dataScope: current?.dataScope || 'own',
