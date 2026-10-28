@@ -144,7 +144,38 @@ describe('Customers cross-verification & duplicate prevention', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it('detects conflict by phone number even if name differs slightly', async () => {
+  it('allows a different company that reuses a phone or GST', async () => {
+    const db = createSupabaseMock({
+      tables: {
+        recurring_customers: [
+          {
+            id: 'c-qwer',
+            customer_name: 'qwer',
+            customer_phone: '918262837458',
+            customer_gst: '29ABCDE1234F1Z5',
+            assigned_salesperson_phone: '919826293745',
+            is_active: true,
+          },
+        ],
+        employees: [],
+      },
+    });
+
+    const service = new CustomersService(
+      asSupabaseService(db.client),
+      {} as any,
+    );
+
+    const check = await service.findCustomerConflict(
+      'man industries',
+      '8262837458',
+      '29ABCDE1234F1Z5',
+      '9826293745',
+    );
+    expect(check.conflict).toBe(false);
+  });
+
+  it('detects conflict by phone number when the company name is the same', async () => {
     const db = createSupabaseMock({
       tables: {
         recurring_customers: [
@@ -174,7 +205,7 @@ describe('Customers cross-verification & duplicate prevention', () => {
     );
 
     const checkByPhone = await service.findCustomerConflict(
-      'Different Name LLC',
+      'Beta Steels Pvt Ltd',
       '9876543210',
       undefined,
       '9822222222',
