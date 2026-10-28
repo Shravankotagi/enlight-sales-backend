@@ -3,6 +3,7 @@ import { ReportsService } from './reports.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import { hasPermission } from '../../common/guards/permission.guard';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
@@ -11,6 +12,16 @@ export class ReportsController {
     private readonly reportsService: ReportsService,
     private readonly employeesService: EmployeesService,
   ) {}
+
+  private reportAccess(employee: any) {
+    return {
+      customers: hasPermission(employee, 'customers.view'),
+      inquiries: hasPermission(employee, 'inquiries.view'),
+      orders: hasPermission(employee, 'orders.view'),
+      visits: hasPermission(employee, 'visits.view'),
+      complaints: hasPermission(employee, 'complaints.view'),
+    };
+  }
 
   // GET /reports/monthly
   @Get('monthly')
@@ -24,6 +35,23 @@ export class ReportsController {
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
   ) {
+    const access = this.reportAccess(employee);
+    if (!access.orders && !access.inquiries) {
+      return {
+        summary: {
+          total_revenue: 0,
+          deals_won: 0,
+          deals_lost: 0,
+          deals_pending: 0,
+          total_deals: 0,
+          conversion_rate: 0,
+          total_inquiries: 0,
+        },
+        by_customer: [],
+        by_type: [],
+        lost_reasons: {},
+      };
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -53,6 +81,15 @@ export class ReportsController {
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
   ) {
+    const access = this.reportAccess(employee);
+    if (
+      !access.orders &&
+      !access.visits &&
+      !access.complaints &&
+      !access.customers
+    ) {
+      return [];
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -82,6 +119,10 @@ export class ReportsController {
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
   ) {
+    const access = this.reportAccess(employee);
+    if (!access.inquiries) {
+      return { funnel: [], max_count: 0, overall_win_rate: 0 };
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -111,6 +152,8 @@ export class ReportsController {
     @Query('to') to?: string,
     @Query('all_time') allTime?: string,
   ) {
+    const access = this.reportAccess(employee);
+    if (!access.orders) return { skus: [] };
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -154,6 +197,7 @@ export class ReportsController {
       from,
       to,
       allTime === 'true',
+      this.reportAccess(employee),
     );
   }
 }

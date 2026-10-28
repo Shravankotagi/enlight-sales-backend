@@ -1178,6 +1178,7 @@ export class ReportsService {
     from?: string,
     to?: string,
     allTime?: boolean,
+    access?: { customers?: boolean; inquiries?: boolean; orders?: boolean },
   ) {
     try {
       const isAllTime = Boolean(
@@ -1267,15 +1268,24 @@ export class ReportsService {
       }
 
       // Execute queries in parallel in ONE batch
+      const allowOrders = access?.orders !== false;
+      const allowInquiries = access?.inquiries !== false;
+      const allowCustomers = access?.customers !== false;
       const [dealsResult, inquiriesResult, customersResult] = await Promise.all(
         [
-          dealsQuery,
-          inquiriesQuery,
-          this.supabase
-            .from('recurring_customers')
-            .select('customer_name, assigned_salesperson_phone, updated_at')
-            .eq('is_active', true)
-            .order('updated_at', { ascending: false }),
+          allowOrders || allowInquiries
+            ? dealsQuery
+            : Promise.resolve({ data: [], error: null }),
+          allowInquiries
+            ? inquiriesQuery
+            : Promise.resolve({ data: [], error: null }),
+          allowCustomers
+            ? this.supabase
+                .from('recurring_customers')
+                .select('customer_name, assigned_salesperson_phone, updated_at')
+                .eq('is_active', true)
+                .order('updated_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
         ],
       );
 
@@ -1322,6 +1332,13 @@ export class ReportsService {
             '';
           return allowedSet.has(owner.replace(/\D/g, '').slice(-10));
         });
+      }
+
+      if (!allowOrders) {
+        deals = deals.filter((d: any) => normalizeDealStage(d.stage) !== 'won');
+      }
+      if (!allowInquiries) {
+        deals = deals.filter((d: any) => normalizeDealStage(d.stage) === 'won');
       }
 
       const wonDeals = deals.filter(
@@ -1487,17 +1504,21 @@ export class ReportsService {
           conversion_rate: conversionRate,
           total_inquiries: inquiries.length,
         },
-        funnel,
-        by_customer: Object.values(byCustomer).sort(
-          (a: any, b: any) => b.value - a.value,
-        ),
-        by_type: Object.values(byType),
-        lost_reasons: lostReasons,
-        skus: Object.values(bysku).sort(
-          (a: any, b: any) => b.total_value - a.total_value,
-        ),
-        orders: wonDeals,
-        inquiries_count: totalDealsCount,
+        funnel: allowInquiries ? funnel : [],
+        by_customer: allowCustomers
+          ? Object.values(byCustomer).sort(
+              (a: any, b: any) => b.value - a.value,
+            )
+          : [],
+        by_type: allowOrders || allowInquiries ? Object.values(byType) : [],
+        lost_reasons: allowInquiries ? lostReasons : {},
+        skus: allowOrders
+          ? Object.values(bysku).sort(
+              (a: any, b: any) => b.total_value - a.total_value,
+            )
+          : [],
+        orders: allowOrders ? wonDeals : [],
+        inquiries_count: allowInquiries ? totalDealsCount : 0,
       };
     } catch (error) {
       this.logger.error('Error in getOverviewReport:', error);

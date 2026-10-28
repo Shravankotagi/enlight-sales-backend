@@ -15,7 +15,17 @@ import { DealsService } from './deals.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
-import { assertPermission } from '../../common/guards/permission.guard';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
+
+export function canReadDealLists(employee: any) {
+  return (
+    hasPermission(employee, 'inquiries.view') ||
+    hasPermission(employee, 'orders.view')
+  );
+}
 
 @Controller('deals')
 @UseGuards(JwtAuthGuard)
@@ -51,6 +61,11 @@ export class DealsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    const allowInquiries = hasPermission(employee, 'inquiries.view');
+    const allowOrders = hasPermission(employee, 'orders.view');
+    if (!allowInquiries && !allowOrders) return [];
+    if (stage === 'won' && !allowOrders) return [];
+    if (stage && stage !== 'won' && !allowInquiries) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -63,12 +78,18 @@ export class DealsController {
       return [];
     }
 
-    return this.dealsService.findAll({
+    const deals = await this.dealsService.findAll({
       stage,
       from,
       to,
       salesperson_phone: phones === null ? undefined : phones,
     });
+    if (allowInquiries && allowOrders) return deals;
+    const won = (deal: any) =>
+      deal?.stage === 'won' || deal?.stage === 'closed_won';
+    return (deals || []).filter((deal: any) =>
+      allowOrders ? won(deal) : !won(deal),
+    );
   }
 
   @Get('pipeline')
@@ -79,14 +100,6 @@ export class DealsController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(
-        employee,
-        salespersonPhoneOverride,
-        mode,
-        'orders.scope_assigned',
-      );
-
     const stages = [
       'new_inquiry',
       'qualified',
@@ -95,6 +108,16 @@ export class DealsController {
       'won',
       'lost',
     ];
+    if (!hasPermission(employee, 'inquiries.view')) {
+      return stages.map((stage) => ({ stage, count: 0, total_value: 0 }));
+    }
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+        mode,
+        'orders.scope_assigned',
+      );
 
     if (Array.isArray(phones) && phones.length === 0) {
       return stages.map((stage) => ({
@@ -136,6 +159,14 @@ export class DealsController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'inquiries.view')) {
+      return {
+        new_inquiry: [],
+        qualified: [],
+        quoted: [],
+        negotiation: [],
+      };
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,

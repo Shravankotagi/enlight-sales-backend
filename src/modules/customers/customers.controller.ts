@@ -14,7 +14,10 @@ import { CustomersService } from './customers.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
-import { assertPermission } from '../../common/guards/permission.guard';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
@@ -127,6 +130,7 @@ export class CustomersController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'customers.view')) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -144,6 +148,7 @@ export class CustomersController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'customers.view')) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -163,6 +168,11 @@ export class CustomersController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (
+      !hasPermission(employee, 'orders.view') ||
+      !hasPermission(employee, 'customers.view')
+    )
+      return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
@@ -182,6 +192,9 @@ export class CustomersController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'inquiries.view')) {
+      return [];
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
