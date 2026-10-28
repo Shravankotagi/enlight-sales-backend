@@ -18,7 +18,10 @@ import { InquiryPricingService } from './inquiry-pricing.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
-import { isProcurementRole } from '../../common/utils/roles';
+import {
+  isProcurementManager,
+  isProcurementRole,
+} from '../../common/utils/roles';
 import { assertPermission } from '../../common/guards/permission.guard';
 import {
   canDeleteInquiries,
@@ -98,6 +101,7 @@ export class InquiriesController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'inquiries.scope_assigned',
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -131,6 +135,7 @@ export class InquiriesController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'inquiries.scope_assigned',
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -159,6 +164,7 @@ export class InquiriesController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'inquiries.scope_assigned',
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
@@ -195,8 +201,10 @@ export class InquiriesController {
       if (!canViewInquiries(permissions)) this.denyPermission('view inquiries');
       return this.inquiriesService.findOne(id, null, scope);
     }
-    const ids =
-      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const ids = await this.employeesService.getAccessibleSalespersonIds(
+      employee,
+      'inquiries.scope_assigned',
+    );
     return this.inquiriesService.findOne(id, null, null, ids);
   }
 
@@ -218,8 +226,10 @@ export class InquiriesController {
         scope,
       );
     }
-    const ids =
-      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const ids = await this.employeesService.getAccessibleSalespersonIds(
+      employee,
+      'inquiries.scope_assigned',
+    );
     return this.inquiriesService.updateStatus(
       id,
       body.status,
@@ -317,8 +327,10 @@ export class InquiriesController {
       if (!inquiry) throw new ForbiddenException('Inquiry not found');
       return inquiry;
     }
-    const ids =
-      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const ids = await this.employeesService.getAccessibleSalespersonIds(
+      employee,
+      'inquiries.scope_assigned',
+    );
     const inquiry = await this.inquiriesService.findOne(id, null, null, ids);
     if (!inquiry) throw new ForbiddenException('Inquiry not found');
     return inquiry;
@@ -346,8 +358,10 @@ export class InquiriesController {
       return this.inquiriesService.sendQuotation(id, body, null, employee);
     }
     assertPermission(employee, 'inquiries.send_quote');
-    const ids =
-      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const ids = await this.employeesService.getAccessibleSalespersonIds(
+      employee,
+      'inquiries.scope_assigned',
+    );
     return this.inquiriesService.sendQuotation(id, body, ids, employee);
   }
 
@@ -364,8 +378,10 @@ export class InquiriesController {
       await this.assertInquiryAccess(employee, id);
       return this.inquiriesService.previewQuotation(id, body, employee, null);
     }
-    const ids =
-      await this.employeesService.getAccessibleSalespersonIds(employee);
+    const ids = await this.employeesService.getAccessibleSalespersonIds(
+      employee,
+      'inquiries.scope_assigned',
+    );
     return this.inquiriesService.previewQuotation(id, body, employee, ids);
   }
 
@@ -403,6 +419,9 @@ export class InquiriesController {
     @Param('id') id: string,
   ) {
     if (isProcurementRole(employee?.role)) {
+      if (isProcurementManager(employee?.role)) {
+        this.denyProcurement('delete inquiries');
+      }
       const { permissions, scope } = await this.procurementGate(employee);
       if (!canDeleteInquiries(permissions)) {
         this.denyProcurement('delete inquiries');
@@ -414,7 +433,12 @@ export class InquiriesController {
     }
     assertPermission(employee, 'inquiries.delete');
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'inquiries.scope_assigned',
+      );
     return this.inquiriesService.deleteInquiry(id, phones);
   }
 }

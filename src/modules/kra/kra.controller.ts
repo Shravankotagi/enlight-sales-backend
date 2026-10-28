@@ -161,6 +161,7 @@ export class KraController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'complaints.scope_assigned',
       );
 
     return this.kraService.getComplaints(
@@ -176,7 +177,12 @@ export class KraController {
     @Param('id') id: string,
   ) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'complaints.scope_assigned',
+      );
     return this.kraService.getComplaintAttachments(
       id,
       phones === null ? undefined : phones,
@@ -203,7 +209,12 @@ export class KraController {
       assertPermission(employee, 'complaints.resolve');
     }
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'complaints.scope_assigned',
+      );
     return this.kraService.updateComplaint(id, body, phones);
   }
 
@@ -220,6 +231,7 @@ export class KraController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'visits.scope_assigned',
       );
 
     return this.kraService.getVisits(

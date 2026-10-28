@@ -21,6 +21,7 @@ export interface ResolvedAccess {
   roleName: string;
   dataScope: 'own' | 'team' | 'all';
   permissions: Record<string, boolean>;
+  visibilityScope: Record<string, string[]>;
   isActive: boolean;
 }
 
@@ -46,6 +47,29 @@ function ignoreCopiedSalespersonTemplate(
 export function invalidatePermissions(employeeId?: string) {
   if (!employeeId) cache.clear();
   else cache.delete(employeeId);
+}
+
+const VISIBILITY_MODULES = [
+  'customers',
+  'inquiries',
+  'orders',
+  'visits',
+  'complaints',
+] as const;
+
+export function cleanVisibilityScope(input: unknown): Record<string, string[]> {
+  const source =
+    input && typeof input === 'object'
+      ? (input as Record<string, unknown>)
+      : {};
+  const cleaned: Record<string, string[]> = {};
+  for (const module of VISIBILITY_MODULES) {
+    const ids = Array.isArray(source[module]) ? source[module] : [];
+    cleaned[module] = [
+      ...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)),
+    ];
+  }
+  return cleaned;
 }
 
 @Injectable()
@@ -163,6 +187,7 @@ export class PermissionsService {
       roleName: resolved.roleName,
       dataScope: resolved.dataScope,
       permissions: resolved.permissions,
+      visibilityScope: resolved.visibilityScope,
       isActive: data.is_active !== false,
     };
     if (data.id) cache.set(data.id, { at: Date.now(), value });
@@ -178,11 +203,12 @@ export class PermissionsService {
     permissions: Record<string, boolean>;
     dataScope: 'own' | 'team' | 'all';
     roleName: string;
+    visibilityScope: Record<string, string[]>;
   }> {
     const id = normalizeRoleId(roleId);
     const { data: roleRow, error } = await this.supabase
       .from('roles')
-      .select('id, name, data_scope, permissions, is_active')
+      .select('id, name, data_scope, permissions, is_active, visibility_scope')
       .eq('id', id)
       .maybeSingle();
 
@@ -205,6 +231,7 @@ export class PermissionsService {
         ),
         dataScope: 'own',
         roleName: 'Salesperson',
+        visibilityScope: {},
       };
     }
 
@@ -230,6 +257,7 @@ export class PermissionsService {
       dataScope:
         scope === 'all' || scope === 'team' || scope === 'own' ? scope : 'own',
       roleName: roleRow.name || id,
+      visibilityScope: cleanVisibilityScope(roleRow.visibility_scope),
     };
   }
 
@@ -242,6 +270,7 @@ export class PermissionsService {
         BUILTIN_ROLE_TEMPLATES[roleId] ? roleId : 'salesperson',
       ),
       roleName: roleId,
+      visibilityScope: {},
     };
   }
 }

@@ -3,8 +3,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import axios from 'axios';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import {
   BUILTIN_ROLE_TEMPLATES,
@@ -13,7 +15,10 @@ import {
   assertKnownPermissions,
   normalizeRoleId,
 } from '../../common/acl/permissionKeys';
-import { invalidatePermissions } from './permissions.service';
+import {
+  invalidatePermissions,
+  cleanVisibilityScope,
+} from './permissions.service';
 
 const SYSTEM_ROLES = [
   {
@@ -49,10 +54,38 @@ const SYSTEM_ROLES = [
 
 @Injectable()
 export class RolesService {
+  private readonly logger = new Logger(RolesService.name);
+
   constructor(private readonly supabaseService: SupabaseService) {}
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
+  }
+
+  /** Clears the bot permission cache so WhatsApp/assistant pick up role changes. */
+  private async invalidateBotPermissionCache() {
+    const botUrl = process.env.AI_ENGINE_URL || 'http://127.0.0.1:3001';
+    const botApiKey =
+      process.env.AI_ENGINE_API_KEY ||
+      process.env.WEB_CHAT_API_KEY ||
+      'enlight_ai_engine_secret_2026_auth_key';
+    try {
+      await axios.post(
+        `${botUrl}/chat/web/permissions/invalidate`,
+        {},
+        {
+          headers: {
+            'X-Web-API-Key': botApiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Bot permission cache invalidate failed: ${err?.message || err}`,
+      );
+    }
   }
 
   catalog() {
@@ -74,6 +107,7 @@ export class RolesService {
       description?: string;
       data_scope?: string;
       permissions: Record<string, boolean>;
+      visibility_scope?: Record<string, string[]>;
     },
     actor?: any,
   ) {
@@ -92,6 +126,7 @@ export class RolesService {
         data_scope: scope,
         is_system: false,
         permissions: body.permissions,
+        visibility_scope: cleanVisibilityScope(body.visibility_scope),
         is_active: true,
         updated_at: new Date().toISOString(),
         updated_by: actor?.id || null,
@@ -111,6 +146,7 @@ export class RolesService {
       description?: string;
       data_scope?: string;
       permissions?: Record<string, boolean>;
+      visibility_scope?: Record<string, string[]>;
     },
     actor?: any,
   ) {
@@ -157,6 +193,9 @@ export class RolesService {
     if (body.description !== undefined) patch.description = body.description;
     if (body.data_scope) patch.data_scope = this.assertScope(body.data_scope);
     if (body.permissions) patch.permissions = body.permissions;
+    if (body.visibility_scope) {
+      patch.visibility_scope = cleanVisibilityScope(body.visibility_scope);
+    }
     const { data, error } = await this.supabase
       .from('roles')
       .update(patch)
@@ -164,7 +203,13 @@ export class RolesService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
+    // Drop per-person copies so everyone on this role picks up the saved matrix.
+    await this.supabase
+      .from('employees')
+      .update({ permissions: null })
+      .eq('role', id);
     invalidatePermissions();
+    await this.invalidateBotPermissionCache();
     await this.log(actor, 'role_updated', id, `Updated role ${data.name}`, {
       permissions: body.permissions || null,
     });
@@ -287,6 +332,7 @@ export class RolesService {
       is_system: true,
       is_active: true,
       permissions: BUILTIN_ROLE_TEMPLATES[role.id],
+      visibility_scope: {},
     }));
   }
 
@@ -309,6 +355,7 @@ export class RolesService {
         isSys && BUILTIN_ROLE_TEMPLATES[roleId]
           ? BUILTIN_ROLE_TEMPLATES[roleId]
           : row.permissions || {},
+      visibility_scope: cleanVisibilityScope(row.visibility_scope),
     };
   };
 

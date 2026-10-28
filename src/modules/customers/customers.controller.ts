@@ -114,6 +114,8 @@ export class CustomersController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        undefined,
+        'customers.scope_assigned',
       );
 
     return this.customersService.createCustomer(body, employee, phones);
@@ -130,6 +132,7 @@ export class CustomersController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'customers.scope_assigned',
       );
 
     return this.customersService.findAll(phones === null ? undefined : phones);
@@ -146,6 +149,7 @@ export class CustomersController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'customers.scope_assigned',
       );
 
     return this.customersService.getChurnRisk(
@@ -164,6 +168,7 @@ export class CustomersController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'customers.scope_assigned',
       );
 
     return this.customersService.getReorderQueue(
@@ -182,6 +187,7 @@ export class CustomersController {
         employee,
         salespersonPhoneOverride,
         mode,
+        'customers.scope_assigned',
       );
 
     return this.customersService.getLossAnalytics(
@@ -199,6 +205,8 @@ export class CustomersController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        undefined,
+        'customers.scope_assigned',
       );
 
     return this.customersService.findOne(
@@ -225,6 +233,8 @@ export class CustomersController {
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
+        undefined,
+        'customers.scope_assigned',
       );
 
     return this.customersService.updateCustomer(
