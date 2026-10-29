@@ -160,7 +160,7 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
     ).resolves.toEqual({ phones: ['9200000001'] });
   });
 
-  it('adds selected inquiry owners and keeps a checked visit scope own-only', async () => {
+  it('ignores the old assigned-only flag and uses the role data scope', async () => {
     const service = createService();
     const user = {
       ...employees[2],
@@ -179,7 +179,7 @@ describe('EmployeesService.getAccessibleSalespersonPhones', () => {
         undefined,
         'inquiries.scope_assigned',
       ),
-    ).resolves.toEqual({ phones: ['9200000001', '9300000003'] });
+    ).resolves.toEqual({ phones: ['9200000001'] });
 
     await expect(
       service.getAccessibleSalespersonPhones(
