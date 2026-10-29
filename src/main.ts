@@ -17,7 +17,6 @@ import { AppModule } from './app.module';
 import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './config/swagger.config';
 import { ValidationPipe } from '@nestjs/common';
-import { AccountsBoundaryInterceptor } from './common/access/accounts-boundary.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import {
   CORS_ALLOWED_HEADERS,
@@ -73,7 +72,6 @@ async function bootstrap() {
 
   // Apply global interceptors
   app.useGlobalInterceptors(
-    new AccountsBoundaryInterceptor(),
     new LoggingInterceptor(logger),
     new TransformInterceptor(),
   );

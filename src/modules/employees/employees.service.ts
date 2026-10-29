@@ -1338,7 +1338,6 @@ export class EmployeesService {
       sales_manager: 'Sales Manager',
       manager: 'Sales Manager',
       salesperson: 'Salesperson',
-      accounts: 'Accounts',
       finance: 'Finance / Accounts',
       operations: 'Operations / Logistics',
     };

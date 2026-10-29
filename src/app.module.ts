@@ -26,7 +26,6 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { ActivityLogsModule } from './modules/activity-logs/activity-logs.module';
 import { ProductsModule } from './modules/products/products.module';
 import { RolesModule } from './modules/roles/roles.module';
-import { InvoicesModule } from './modules/invoices/invoices.module';
 
 @Module({
   imports: [
@@ -55,7 +54,6 @@ import { InvoicesModule } from './modules/invoices/invoices.module';
     ActivityLogsModule,
     ProductsModule,
     RolesModule,
-    InvoicesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
