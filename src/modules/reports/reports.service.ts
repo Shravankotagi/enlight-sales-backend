@@ -5,6 +5,7 @@ import {
   getAssignedPhoneFromCustomerMap,
   buildCustomerOwnerMap,
 } from '../../utils/customerOwnerMap';
+import { displayStage } from '../inquiries/inquiry-pricing.util';
 
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
@@ -133,145 +134,7 @@ export function resolveInquiryPipelineStage(
   inq: any,
   dealsList: any[] = [],
 ): string {
-  // 1. Direct 1-to-1 match by inquiry_id
-  const directMatch = dealsList.find(
-    (d: any) => d.inquiry_id && d.inquiry_id === inq.id,
-  );
-  if (directMatch) {
-    const dealStage = (directMatch.stage || '').toLowerCase().trim();
-    if (
-      [
-        'won',
-        'closed_won',
-        'closed won',
-        'lost',
-        'closed_lost',
-        'closed lost',
-        'negotiation',
-        'negotiating',
-        'quoted',
-        'quotation_sent',
-        'on_hold',
-        'hold',
-        'qualified',
-      ].includes(dealStage)
-    ) {
-      return normalizeDealStage(dealStage);
-    }
-    // If direct deal is still at new_inquiry, check if inquiry itself has advanced
-    const directInqStage = inq?.stage
-      ? String(inq.stage).toLowerCase().trim()
-      : '';
-    if (
-      directInqStage &&
-      [
-        'won',
-        'closed_won',
-        'closed won',
-        'lost',
-        'closed_lost',
-        'closed lost',
-        'negotiation',
-        'negotiating',
-        'quoted',
-        'quotation_sent',
-        'on_hold',
-        'hold',
-        'qualified',
-      ].includes(directInqStage)
-    ) {
-      return normalizeDealStage(directInqStage);
-    }
-    return 'new_inquiry';
-  }
-
-  // 2. Direct inquiry stage if explicitly set beyond new_inquiry
-  const directInqStage = inq?.stage
-    ? String(inq.stage).toLowerCase().trim()
-    : '';
-  if (
-    directInqStage &&
-    [
-      'won',
-      'closed_won',
-      'closed won',
-      'lost',
-      'closed_lost',
-      'closed lost',
-      'negotiation',
-      'negotiating',
-      'quoted',
-      'quotation_sent',
-      'on_hold',
-      'hold',
-      'qualified',
-    ].includes(directInqStage)
-  ) {
-    return normalizeDealStage(directInqStage);
-  }
-
-  // 3. Match ONLY to an active open in-progress deal for this customer
-  const ai = inq.ai_extraction_json || {};
-  const cName = (
-    inq.customer_name ||
-    ai.companyName ||
-    ai.customer_name ||
-    inq.sender_name ||
-    ''
-  )
-    .trim()
-    .toLowerCase();
-  if (cName) {
-    const matchingDeals = dealsList.filter(
-      (d: any) => (d.customer_name || '').toLowerCase().trim() === cName,
-    );
-    const openDeal = matchingDeals.find(
-      (d: any) => !['won', 'lost'].includes((d.stage || '').toLowerCase()),
-    );
-    if (openDeal) {
-      const openDealStage = (openDeal.stage || '').toLowerCase().trim();
-      if (
-        [
-          'negotiation',
-          'negotiating',
-          'quoted',
-          'quotation_sent',
-          'on_hold',
-          'hold',
-          'qualified',
-        ].includes(openDealStage)
-      ) {
-        return normalizeDealStage(openDealStage);
-      }
-    }
-  }
-
-  const st = (inq.status || '').toLowerCase().trim();
-  const isPo =
-    inq.inquiry_type === 'purchase_order' ||
-    inq.source_channel === 'whatsapp_po' ||
-    (inq.raw_text || '').includes('[PO Document Attached');
-
-  if (isPo && (st === 'confirmed' || st === 'won' || st === 'processed'))
-    return 'won';
-  if (st === 'won') return 'won';
-  if (st === 'negotiation') return 'negotiation';
-  if (st === 'on_hold' || st === 'hold') return 'on_hold';
-  if (
-    [
-      'quoted',
-      'quotation_sent',
-      'confirmed',
-      'saved',
-      'processed',
-      'quotation_ready',
-    ].includes(st) ||
-    inq.inquiry_type === 'quotation_sent'
-  ) {
-    return 'quoted';
-  }
-  if (st === 'lost') return 'lost';
-  return 'new_inquiry';
+  return displayStage(inq, dealsList, inq?.id);
 }
 
 @Injectable()
@@ -822,6 +685,21 @@ export class ReportsService {
     }
   }
 
+  private async dealsLinkedToInquiries(inquiryIds: string[]) {
+    const ids = [...new Set(inquiryIds.filter(Boolean))];
+    if (!ids.length) return [];
+    const rows: any[] = [];
+    for (let i = 0; i < ids.length; i += 80) {
+      const { data, error } = await this.supabase
+        .from('deals')
+        .select('id, inquiry_id, stage, created_at')
+        .in('inquiry_id', ids.slice(i, i + 80));
+      if (error) throw error;
+      rows.push(...(data || []));
+    }
+    return rows;
+  }
+
   async getFunnelReport(
     month?: number,
     year?: number,
@@ -944,9 +822,20 @@ export class ReportsService {
         });
       }
 
-      // Build pipeline units directly from genuine product inquiries
+      // Stage uses every deal linked to these inquiries. A date filter on deals
+      // hides the newest quote and leaves an older won row, so Price Quote and Won drift.
+      let stageDeals = safeDeals;
+      try {
+        stageDeals = await this.dealsLinkedToInquiries(
+          safeInqs.map((inq: any) => inq.id),
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Funnel stage lookup fell back to dated deals: ${error}`,
+        );
+      }
       const pipelineUnits = safeInqs.map((inq: any) => {
-        const stage = resolveInquiryPipelineStage(inq, safeDeals);
+        const stage = resolveInquiryPipelineStage(inq, stageDeals);
         const ai = inq.ai_extraction_json || {};
         const cName = (
           inq.customer_name ||
@@ -1402,9 +1291,18 @@ export class ReportsService {
         {} as Record<string, number>,
       );
 
-      // Build pipeline units directly from genuine product inquiries
+      let stageDeals = deals;
+      try {
+        stageDeals = await this.dealsLinkedToInquiries(
+          inquiries.map((inq: any) => inq.id),
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Overview funnel stage lookup fell back to dated deals: ${error}`,
+        );
+      }
       const pipelineUnits = inquiries.map((inq: any) => {
-        const stage = resolveInquiryPipelineStage(inq, deals);
+        const stage = resolveInquiryPipelineStage(inq, stageDeals);
         const ai = inq.ai_extraction_json || {};
         const cName = (
           inq.customer_name ||
