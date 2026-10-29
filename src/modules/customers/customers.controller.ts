@@ -225,6 +225,12 @@ export class CustomersController {
     return this.customersService.findOne(
       id,
       phones === null ? undefined : phones,
+      {
+        orders: hasPermission(employee, 'orders.view'),
+        inquiries: hasPermission(employee, 'inquiries.view'),
+        visits: hasPermission(employee, 'visits.view'),
+        complaints: hasPermission(employee, 'complaints.view'),
+      },
     );
   }
 
