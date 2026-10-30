@@ -39,8 +39,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const errorResponse: ApiResponse<null> & Record<string, any> = {
       success: false,
       data: null,
-      error: errorMessage,
       ...(typeof extraData === 'object' && extraData ? extraData : {}),
+      error: errorMessage,
       timestamp: new Date().toISOString(),
       path: request.url,
     };

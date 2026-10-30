@@ -2746,6 +2746,37 @@ export class KraService {
     return updated;
   }
 
+  async deleteComplaint(id: string, accessiblePhones?: string[] | null) {
+    const { data: existing, error: fetchErr } = await this.supabase
+      .from('complaints')
+      .select('id, reported_by')
+      .eq('id', id)
+      .single();
+    if (fetchErr || !existing) {
+      throw new NotFoundException('Complaint not found');
+    }
+    if (accessiblePhones && accessiblePhones.length > 0) {
+      if (
+        !existing.reported_by ||
+        !phoneInList(existing.reported_by, accessiblePhones)
+      ) {
+        throw new ForbiddenException(
+          'Access Denied: You do not have permission to delete this complaint.',
+        );
+      }
+    }
+    await this.supabase
+      .from('complaint_attachments')
+      .delete()
+      .eq('complaint_id', id);
+    const { error } = await this.supabase
+      .from('complaints')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+    return { success: true, id };
+  }
+
   async updateComplaintStatus(
     id: string,
     status: string,
