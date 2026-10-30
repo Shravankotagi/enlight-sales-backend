@@ -219,6 +219,25 @@ export class KraController {
     return this.kraService.updateComplaint(id, body, phones);
   }
 
+  @Delete('complaints/:id')
+  async deleteComplaint(
+    @CurrentEmployee() employee: any,
+    @Param('id') id: string,
+  ) {
+    assertPermission(employee, 'complaints.delete');
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'complaints.scope_assigned',
+      );
+    return this.kraService.deleteComplaint(
+      id,
+      phones === null ? undefined : phones,
+    );
+  }
+
   @Get('visits')
   async getVisits(
     @CurrentEmployee() employee: any,
