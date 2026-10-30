@@ -15,6 +15,17 @@ import { DealsService } from './deals.service';
 import { EmployeesService } from '../employees/employees.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
+import {
+  assertPermission,
+  hasPermission,
+} from '../../common/guards/permission.guard';
+
+export function canReadDealLists(employee: any) {
+  return (
+    hasPermission(employee, 'inquiries.view') ||
+    hasPermission(employee, 'orders.view')
+  );
+}
 
 @Controller('deals')
 @UseGuards(JwtAuthGuard)
@@ -25,10 +36,19 @@ export class DealsController {
   ) {}
 
   private async rejectUnassignedCustomer(employee: any, customerName?: string) {
-    const role = String(employee?.role || '').toLowerCase();
-    if (role.includes('admin')) return;
+    if (
+      employee?.dataScope === 'all' ||
+      employee?.isInternal ||
+      employee?.role === 'admin'
+    )
+      return;
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     await this.dealsService.assertAssignedCustomer(customerName, phones || []);
   }
 
@@ -41,23 +61,35 @@ export class DealsController {
     @Query('salesperson_phone') salespersonPhoneOverride?: string,
     @Query('mode') mode?: string,
   ) {
+    const allowInquiries = hasPermission(employee, 'inquiries.view');
+    const allowOrders = hasPermission(employee, 'orders.view');
+    if (!allowInquiries && !allowOrders) return [];
+    if (stage === 'won' && !allowOrders) return [];
+    if (stage && stage !== 'won' && !allowInquiries) return [];
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
         mode,
+        'orders.scope_assigned',
       );
 
     if (Array.isArray(phones) && phones.length === 0) {
       return [];
     }
 
-    return this.dealsService.findAll({
+    const deals = await this.dealsService.findAll({
       stage,
       from,
       to,
       salesperson_phone: phones === null ? undefined : phones,
     });
+    if (allowInquiries && allowOrders) return deals;
+    const won = (deal: any) =>
+      deal?.stage === 'won' || deal?.stage === 'closed_won';
+    return (deals || []).filter((deal: any) =>
+      allowOrders ? won(deal) : !won(deal),
+    );
   }
 
   @Get('pipeline')
@@ -68,13 +100,6 @@ export class DealsController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
-    const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(
-        employee,
-        salespersonPhoneOverride,
-        mode,
-      );
-
     const stages = [
       'new_inquiry',
       'qualified',
@@ -83,6 +108,16 @@ export class DealsController {
       'won',
       'lost',
     ];
+    if (!hasPermission(employee, 'inquiries.view')) {
+      return stages.map((stage) => ({ stage, count: 0, total_value: 0 }));
+    }
+    const { phones } =
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        salespersonPhoneOverride,
+        mode,
+        'orders.scope_assigned',
+      );
 
     if (Array.isArray(phones) && phones.length === 0) {
       return stages.map((stage) => ({
@@ -124,11 +159,20 @@ export class DealsController {
     @Query('to') to?: string,
     @Query('mode') mode?: string,
   ) {
+    if (!hasPermission(employee, 'inquiries.view')) {
+      return {
+        new_inquiry: [],
+        qualified: [],
+        quoted: [],
+        negotiation: [],
+      };
+    }
     const { phones } =
       await this.employeesService.getAccessibleSalespersonPhones(
         employee,
         salespersonPhoneOverride,
         mode,
+        'orders.scope_assigned',
       );
 
     const stages = ['new_inquiry', 'qualified', 'quoted', 'negotiation'];
@@ -204,7 +248,12 @@ export class DealsController {
   @Get(':id')
   async findOne(@CurrentEmployee() employee: any, @Param('id') id: string) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.findOne(id, phones);
   }
 
@@ -225,7 +274,12 @@ export class DealsController {
     },
   ) {
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.updateStage(
       id,
       body.stage,
@@ -241,19 +295,24 @@ export class DealsController {
 
   @Post('order')
   async createOrder(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'orders.create');
     await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.createOrder(body, employee.phone);
   }
 
   @Post('process-po')
   async processPo(@CurrentEmployee() employee: any, @Body() body: any) {
+    assertPermission(employee, 'orders.attach_po');
     await this.rejectUnassignedCustomer(employee, body?.customer_name);
     return this.dealsService.processPo(body, employee.phone);
   }
 
   @Post('process-po-internal')
   async processPoInternal(@CurrentEmployee() employee: any, @Body() body: any) {
-    const isCallerAdmin = employee?.role === 'admin';
+    const isCallerAdmin =
+      employee?.dataScope === 'all' ||
+      employee?.isInternal ||
+      employee?.role === 'admin';
     const phone =
       isCallerAdmin && body.salesperson_phone
         ? body.salesperson_phone
@@ -264,8 +323,14 @@ export class DealsController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async deleteDeal(@CurrentEmployee() employee: any, @Param('id') id: string) {
+    assertPermission(employee, 'deals.delete');
     const { phones } =
-      await this.employeesService.getAccessibleSalespersonPhones(employee);
+      await this.employeesService.getAccessibleSalespersonPhones(
+        employee,
+        undefined,
+        undefined,
+        'orders.scope_assigned',
+      );
     return this.dealsService.deleteDeal(id, phones);
   }
 }

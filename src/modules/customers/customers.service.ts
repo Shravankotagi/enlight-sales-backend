@@ -359,6 +359,42 @@ function inquiryBelongsToCustomer(customer: any, inquiry: any): boolean {
   );
 }
 
+export type CustomerProfileAccess = {
+  orders?: boolean;
+  inquiries?: boolean;
+  visits?: boolean;
+  complaints?: boolean;
+};
+
+/** Drop module collections the caller cannot view. Omitted access keeps everything. */
+export function redactCustomerProfile<T extends Record<string, any>>(
+  profile: T,
+  access?: CustomerProfileAccess,
+): T {
+  const orders = access?.orders !== false;
+  const inquiries = access?.inquiries !== false;
+  const visits = access?.visits !== false;
+  const complaints = access?.complaints !== false;
+  return {
+    ...profile,
+    deals: orders ? profile.deals : [],
+    payments: orders ? profile.payments : [],
+    inquiries: inquiries ? profile.inquiries : [],
+    visits: visits ? profile.visits : [],
+    complaints: complaints ? profile.complaints : [],
+    total_orders: orders ? profile.total_orders : 0,
+    total_tonnage: orders ? profile.total_tonnage : 0,
+    last_order_date: orders ? profile.last_order_date : null,
+    days_since_order: orders ? profile.days_since_order : null,
+    lifetime_value: orders ? profile.lifetime_value : 0,
+    avg_order_value: orders ? profile.avg_order_value : 0,
+    t12m_revenue: orders ? profile.t12m_revenue : 0,
+    avg_order_frequency_days: orders ? profile.avg_order_frequency_days : 0,
+    open_complaints: complaints ? profile.open_complaints : 0,
+    total_complaints: complaints ? profile.total_complaints : 0,
+  };
+}
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
@@ -403,7 +439,11 @@ export class CustomersService {
     }
   }
 
-  async findOne(id: string, salespersonPhone?: string[] | string) {
+  async findOne(
+    id: string,
+    salespersonPhone?: string[] | string,
+    access?: CustomerProfileAccess,
+  ) {
     try {
       const decodedId = decodeURIComponent(id || '').trim();
       let customer: any = null;
@@ -706,7 +746,7 @@ export class CustomersService {
       const missingInqIds = Array.from(dealInquiryIds).filter(
         (id) => !loadedInqIds.has(id),
       );
-      if (missingInqIds.length > 0) {
+      if (access?.inquiries !== false && missingInqIds.length > 0) {
         const { data: missingInqs } = await this.supabase
           .from('inquiries')
           .select('*')
@@ -949,23 +989,45 @@ export class CustomersService {
         .filter((d) => (d.won_at || d.created_at) >= t12mCutoff)
         .reduce((sum, d) => sum + (Number(d.total_amount) || 0), 0);
 
-      // Generate dynamic AI account insights & health signals via CustomerInsightsService
+      const visible = redactCustomerProfile(
+        {
+          deals,
+          payments,
+          inquiries,
+          visits,
+          complaints,
+          total_orders: totalOrders,
+          total_tonnage: totalTonnage,
+          last_order_date: effectiveLastOrderDate,
+          days_since_order: daysSinceOrder,
+          lifetime_value: lifetimeValue,
+          avg_order_value: avgOrderValue,
+          t12m_revenue: t12mRevenue,
+          avg_order_frequency_days: cadenceDays,
+          open_complaints: openComplaints,
+          total_complaints: complaints.length,
+          churn_risk: churnRisk,
+          segment,
+        },
+        access,
+      );
+
       const healthSignals = await this.customerInsightsService.generateInsights(
         {
           customerName: customer.customer_name || 'Customer',
           segment,
           churnRisk,
-          daysSinceOrder,
-          cadenceDays,
-          totalOrders,
-          totalTonnage,
-          lifetimeValue,
-          openComplaints,
-          totalComplaints: complaints.length,
-          deals: wonDeals,
-          inquiries,
-          visits,
-          complaints,
+          daysSinceOrder: visible.days_since_order,
+          cadenceDays: visible.avg_order_frequency_days,
+          totalOrders: visible.total_orders,
+          totalTonnage: visible.total_tonnage,
+          lifetimeValue: visible.lifetime_value,
+          openComplaints: visible.open_complaints,
+          totalComplaints: visible.total_complaints,
+          deals: access?.orders === false ? [] : wonDeals,
+          inquiries: visible.inquiries,
+          visits: visible.visits,
+          complaints: visible.complaints,
           assignedSalespersonName,
         },
       );
@@ -974,24 +1036,24 @@ export class CustomersService {
         ...customer,
         customer_state: extractCustomerState(customer),
         assigned_salesperson_name: assignedSalespersonName,
-        last_order_date: effectiveLastOrderDate,
-        days_since_order: daysSinceOrder,
+        last_order_date: visible.last_order_date,
+        days_since_order: visible.days_since_order,
         churn_risk: churnRisk,
-        total_orders: totalOrders,
-        total_tonnage: totalTonnage,
-        lifetime_value: lifetimeValue,
-        avg_order_value: avgOrderValue,
-        t12m_revenue: t12mRevenue,
-        open_complaints: openComplaints,
-        total_complaints: complaints.length,
+        total_orders: visible.total_orders,
+        total_tonnage: visible.total_tonnage,
+        lifetime_value: visible.lifetime_value,
+        avg_order_value: visible.avg_order_value,
+        t12m_revenue: visible.t12m_revenue,
+        open_complaints: visible.open_complaints,
+        total_complaints: visible.total_complaints,
         segment,
-        avg_order_frequency_days: cadenceDays,
+        avg_order_frequency_days: visible.avg_order_frequency_days,
         health_signals: healthSignals,
-        deals,
-        visits,
-        payments,
-        complaints,
-        inquiries,
+        deals: visible.deals,
+        visits: visible.visits,
+        payments: visible.payments,
+        complaints: visible.complaints,
+        inquiries: visible.inquiries,
       };
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
@@ -1371,10 +1433,11 @@ export class CustomersService {
       if (coreName && dbCore && coreName === dbCore) return true;
 
       const dbPhone = cleanPhone(c.customer_phone);
-      if (phone10 && dbPhone && phone10 === dbPhone) return true;
-
       const dbGst = cleanGst(c.customer_gst);
-      if (gstClean && dbGst && gstClean === dbGst) return true;
+      const samePhone = Boolean(phone10 && dbPhone && phone10 === dbPhone);
+      const sameGst = Boolean(gstClean && dbGst && gstClean === dbGst);
+      if ((samePhone || sameGst) && areNamesCompatible(rawName, dbRaw))
+        return true;
 
       return false;
     });
@@ -1651,6 +1714,51 @@ export class CustomersService {
     if (insErr) {
       this.logger.error('Error creating recurring customer:', insErr);
       throw insErr;
+    }
+
+    const kraBase = {
+      salesperson_phone: targetPhone,
+      kra_type: 'new_customer',
+      customer_name: rawName,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+      created_at: nowIso,
+    };
+    const { error: kraError } = await this.supabase.from('kra_logs').insert([
+      {
+        ...kraBase,
+        kra_number: 2,
+        description: `New Customer Acquired: ${rawName}`,
+      },
+      {
+        ...kraBase,
+        kra_number: 6,
+        description: `Added New Customer: ${rawName}`,
+      },
+    ]);
+    if (kraError) {
+      this.logger.warn('KRA log for new customer failed', kraError.message);
+    }
+
+    const { error: logError } = await this.supabase
+      .from('activity_logs')
+      .insert({
+        timestamp: nowIso,
+        salesperson_name: employee?.name || null,
+        salesperson_phone: targetPhone,
+        description: `New customer ${rawName} added`,
+        module: 'Customers',
+        source: 'dashboard',
+        action_type: 'customer_created',
+        entity_id: created.id,
+        entity_type: 'customer',
+        customer_name: rawName,
+      });
+    if (logError) {
+      this.logger.warn(
+        'Activity log for new customer failed',
+        logError.message,
+      );
     }
 
     return {

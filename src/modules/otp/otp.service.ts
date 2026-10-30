@@ -269,6 +269,12 @@ export class OtpService {
       return;
     }
 
+    const who = [
+      payload.name,
+      payload.employee_id ? `(${payload.employee_id})` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     await this.activityLogsService.logActivity({
       module: 'Auth',
       action_type: 'logout',
@@ -276,7 +282,10 @@ export class OtpService {
       entity_id: sid,
       salesperson_phone: payload.phone,
       salesperson_name: payload.name,
-      description: reason === 'session_expired' ? 'Session expired' : 'Logout',
+      description:
+        reason === 'session_expired'
+          ? `Session expired. ${who || 'Employee'} logged out.`
+          : 'Logout',
       change_detail: {
         reason,
         employee_id: payload.employee_id || null,

@@ -9,6 +9,20 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  isProcurementManager,
+  isProcurementRole,
+} from '../../common/utils/roles';
+import { procurementScopeMode } from '../inquiries/procurement-permissions';
+import {
+  legacyDataScope,
+  normalizeRoleId,
+} from '../../common/acl/permissionKeys';
+import {
+  PermissionsService,
+  invalidatePermissions,
+} from '../roles/permissions.service';
+import { getCompanyLogoBuffer } from '../inquiries/quotation-email-html';
 
 export function normalizePhone(phone?: string): string {
   if (!phone) return '';
@@ -22,6 +36,109 @@ export function phoneMatches(phone1?: string, phone2?: string): boolean {
   return p1.length === 10 && p1 === p2;
 }
 
+const BUILTIN_ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  sales_manager: 'Sales Manager',
+  manager: 'Sales Manager',
+  salesperson: 'Salesperson',
+  procurement_manager: 'Procurement Manager',
+  procurement_person: 'Procurement Person',
+  finance: 'Finance / Accounts',
+  operations: 'Operations / Logistics',
+};
+
+/** Admin log text. Custom roles use the dashboard name, not role_…_1234. */
+function welcomeEscape(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export function welcomeEmail(input: {
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  loginUrl: string;
+}) {
+  const name = input.name.trim();
+  const email = input.email.trim();
+  const phone = input.phone.trim();
+  const role = input.role.trim();
+  const loginUrl = input.loginUrl.trim();
+  const text = [
+    `Hi ${name},`,
+    '',
+    'Welcome to Enlight Sigma',
+    '',
+    "We're pleased to have you onboard. Your account has been successfully created, and you have been granted access to the platform.",
+    '',
+    'Your Account Details',
+    '',
+    `- Name: ${name}`,
+    `- Registered Email: ${email}`,
+    `- WhatsApp Number: ${phone}`,
+    `- Assigned Role: ${role}`,
+    '',
+    'Getting Started',
+    '',
+    'You can now access Enlight Sigma using the link below:',
+    '',
+    loginUrl,
+    '',
+    'To log in, enter your registered credentials and complete the OTP verification process using your registered WhatsApp number.',
+    '',
+    'A Few Things to Remember:',
+    '- Your assigned role determines which modules and features you can access.',
+    '- Keep your login credentials and OTP confidential.',
+    '- Contact your administrator if you experience any login or access-related issues.',
+    '',
+    "We're excited to have you as part of the team and look forward to working together!",
+    '',
+    'Best Regards,',
+    'Enlight Metals Team',
+    'Enlight Sigma',
+  ].join('\n');
+  const html = `<p>Hi ${welcomeEscape(name)},</p>
+<p>Welcome to <strong>Enlight Sigma</strong></p>
+<p>We're pleased to have you onboard. Your account has been successfully created, and you have been granted access to the platform.</p>
+<p><strong>Your Account Details</strong></p>
+<ul>
+<li><strong>Name:</strong> ${welcomeEscape(name)}</li>
+<li><strong>Registered Email:</strong> ${welcomeEscape(email)}</li>
+<li><strong>WhatsApp Number:</strong> ${welcomeEscape(phone)}</li>
+<li><strong>Assigned Role:</strong> ${welcomeEscape(role)}</li>
+</ul>
+<p><strong>Getting Started</strong></p>
+<p>You can now access Enlight Sigma using the link below:</p>
+<p><a href="${welcomeEscape(loginUrl)}">Access Enlight Sigma</a></p>
+<p>To log in, enter your registered credentials and complete the OTP verification process using your registered WhatsApp number.</p>
+<p><strong>A Few Things to Remember:</strong></p>
+<ul>
+<li>Your assigned role determines which modules and features you can access.</li>
+<li>Keep your login credentials and OTP confidential.</li>
+<li>Contact your administrator if you experience any login or access-related issues.</li>
+</ul>
+<p>We're excited to have you as part of the team and look forward to working together!</p>
+<p>Best Regards,<br>Enlight Metals Team<br>Enlight Sigma</p>
+<p style="margin:16px 0 0;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>`;
+  return { subject: 'Welcome to Enlight Sigma', text, html };
+}
+
+export function logRoleName(role: string, storedName?: string | null): string {
+  const stored = String(storedName || '').trim();
+  if (stored) return stored;
+  const key = String(role || '')
+    .trim()
+    .toLowerCase();
+  if (BUILTIN_ROLE_LABELS[key]) return BUILTIN_ROLE_LABELS[key];
+  const custom = key.match(/^role_(.+)_\d{4}$/);
+  if (custom) return custom[1];
+  return role;
+}
+
 export function phoneInList(phone?: string, list?: string[] | null): boolean {
   if (!phone || !list || list.length === 0) return false;
   const target = normalizePhone(phone);
@@ -32,10 +149,25 @@ export function phoneInList(phone?: string, list?: string[] | null): boolean {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
+  private permissionsService?: PermissionsService;
+  private activityLogs?: ActivityLogsService;
+
   constructor(
     private supabaseService: SupabaseService,
-    @Optional() private activityLogs?: ActivityLogsService,
-  ) {}
+    @Optional() permissionsOrLogs?: PermissionsService | ActivityLogsService,
+    @Optional() activityLogs?: ActivityLogsService,
+  ) {
+    if (
+      permissionsOrLogs &&
+      typeof (permissionsOrLogs as any).logActivity === 'function'
+    ) {
+      this.activityLogs = permissionsOrLogs as ActivityLogsService;
+      this.permissionsService = undefined;
+    } else {
+      this.permissionsService = permissionsOrLogs as PermissionsService;
+      this.activityLogs = activityLogs;
+    }
+  }
 
   private get supabase() {
     return this.supabaseService.getAdminClient();
@@ -55,8 +187,12 @@ export class EmployeesService {
 
       const allEmployees = data || [];
 
-      // Admin callers always receive the complete employee directory across all roles
-      if (!currentEmployee || currentEmployee.role === 'admin') {
+      // Full directory for admins and anyone allowed to view staff.
+      if (
+        !currentEmployee ||
+        currentEmployee.role === 'admin' ||
+        currentEmployee.permissions?.['staff.view'] === true
+      ) {
         return allEmployees;
       }
 
@@ -89,6 +225,26 @@ export class EmployeesService {
           if (emp.manager_id && emp.manager_id === myId) {
             return true;
           }
+          if (
+            emp.manager_phone &&
+            normalizePhone(emp.manager_phone) === myPhone
+          ) {
+            return true;
+          }
+          return false;
+        });
+      }
+
+      // Procurement manager: self plus the people who report to them (assignee dropdown).
+      // Checked before the salesperson fallback. Not a sales manager.
+      if (isProcurementManager(effectiveEmp.role)) {
+        const myId = effectiveEmp.id;
+        const myPhone = normalizePhone(effectiveEmp.phone);
+        return allEmployees.filter((emp: any) => {
+          if (emp.id === myId || normalizePhone(emp.phone) === myPhone) {
+            return true;
+          }
+          if (emp.manager_id && emp.manager_id === myId) return true;
           if (
             emp.manager_phone &&
             normalizePhone(emp.manager_phone) === myPhone
@@ -134,6 +290,42 @@ export class EmployeesService {
     }
   }
 
+  async findById(id: string) {
+    try {
+      if (!id) return null;
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error || !data) return null;
+      return data;
+    } catch (error) {
+      this.logger.error(`Error in findById for id ${id}:`, error);
+      return null;
+    }
+  }
+
+  async findByEmail(email: string) {
+    try {
+      const trimmed = String(email || '').trim();
+      if (!trimmed) return null;
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, name, employee_id, email')
+        .ilike(
+          'email',
+          trimmed.replace(/[%_\\]/g, (ch) => `\\${ch}`),
+        )
+        .limit(1);
+      if (error || !data?.length) return null;
+      return data[0];
+    } catch (error) {
+      this.logger.error(`Error in findByEmail:`, error);
+      return null;
+    }
+  }
+
   async findByEmployeeId(employeeId: string) {
     try {
       const { data, error } = await this.supabase
@@ -169,6 +361,8 @@ export class EmployeesService {
 
       const normPhone = normalizePhone(managerPhone);
       return data.filter((emp: any) => {
+        // Before any manager-substring logic: procurement staff are not a sales team.
+        if (isProcurementRole(emp.role)) return false;
         if (
           emp.role === 'admin' ||
           emp.role === 'sales_manager' ||
@@ -203,15 +397,26 @@ export class EmployeesService {
     employee: any,
     requestedPhoneOverride?: string,
     mode?: string,
+    _scopeAssignedKey?: string,
   ): Promise<{
     phones: string[] | null;
     isManagerView?: boolean;
     isPersonalView?: boolean;
   }> {
+    void _scopeAssignedKey;
     const isPersonalMode =
       mode === 'personal' || mode === 'strict_self' || mode === 'self';
 
-    if (!employee || employee.role === 'admin') {
+    const scope =
+      !employee || employee.isInternal
+        ? 'all'
+        : employee.dataScope || legacyDataScope(employee.role);
+
+    if (
+      scope === 'all' ||
+      employee?.role === 'admin' ||
+      employee?.role === 'super_admin'
+    ) {
       if (requestedPhoneOverride) {
         const normOverride = normalizePhone(requestedPhoneOverride);
         const { data: allEmps } = await this.supabase
@@ -223,10 +428,8 @@ export class EmployeesService {
           (e: any) => normalizePhone(e.phone) === normOverride,
         );
 
-        if (
-          targetEmp &&
-          (targetEmp.role === 'sales_manager' || targetEmp.role === 'manager')
-        ) {
+        const targetScope = await this.scopeFor(targetEmp);
+        if (targetEmp && targetScope === 'team') {
           if (isPersonalMode) {
             return { phones: [targetEmp.phone], isPersonalView: true };
           }
@@ -257,7 +460,7 @@ export class EmployeesService {
       return { phones: null };
     }
 
-    if (employee.role === 'sales_manager' || employee.role === 'manager') {
+    if (scope === 'team') {
       const assigned = await this.getAssignedSalespersons(
         employee.id,
         employee.phone,
@@ -275,7 +478,6 @@ export class EmployeesService {
 
       if (requestedPhoneOverride) {
         const normReq = normalizePhone(requestedPhoneOverride);
-        // If manager requested their own phone, treat as personal mode
         if (normReq === normalizePhone(employee.phone)) {
           return { phones: [employee.phone], isPersonalView: true };
         }
@@ -292,8 +494,246 @@ export class EmployeesService {
       return { phones: teamPhones, isManagerView: true };
     }
 
-    // Default Salesperson: strictly own phone
-    return { phones: [employee.phone] };
+    return { phones: employee?.phone ? [employee.phone] : [] };
+  }
+
+  private async scopeFor(targetEmp: any): Promise<'own' | 'team' | 'all'> {
+    if (!targetEmp) return 'own';
+    if (this.permissionsService && targetEmp.id) {
+      try {
+        const resolved = await this.permissionsService.resolve(targetEmp.id);
+        if (resolved?.dataScope) return resolved.dataScope;
+      } catch {
+        /* use the role string */
+      }
+    }
+    return legacyDataScope(targetEmp.role);
+  }
+
+  /**
+   * employees.id values this caller may open.
+   * Admin: null, unrestricted. Salesperson: their own id.
+   * Sales manager: their own id plus the salespeople assigned to them.
+   */
+  async getAccessibleSalespersonIds(
+    employee: any,
+    _scopeAssignedKey?: string,
+  ): Promise<string[] | null> {
+    void _scopeAssignedKey;
+    if (
+      !employee ||
+      employee.role === 'admin' ||
+      employee.role === 'super_admin'
+    ) {
+      return null;
+    }
+    if (employee.role === 'sales_manager' || employee.role === 'manager') {
+      const assigned = await this.getAssignedSalespersons(
+        employee.id,
+        employee.phone,
+      );
+      const ids = assigned.map((person: any) => person.id).filter(Boolean);
+      if (employee.id) ids.push(employee.id);
+      return Array.from(new Set(ids));
+    }
+    return employee.id ? [employee.id] : [];
+  }
+
+  /**
+   * Inquiry ids a procurement user may see.
+   * Person: inquiries stamped to them.
+   * Manager: inquiries stamped to them and to the procurement people who
+   * report to them. An inquiry with no procurement owner stays out of both lists.
+   */
+  async getAccessibleProcurementIds(
+    employee: any,
+    permissions?: Record<string, boolean>,
+  ): Promise<{
+    ids: string[];
+    includeUnassignedPool: boolean;
+    salespersonPhones?: string[];
+    salespersonEmployeeIds?: string[];
+    stampedOnly?: boolean;
+  }> {
+    const ownId = employee?.id ? [employee.id] : [];
+    const mode = permissions
+      ? procurementScopeMode(permissions)
+      : !employee || !isProcurementManager(employee.role)
+        ? 'assigned'
+        : 'team';
+    if (mode === 'stamped') {
+      return {
+        ids: ownId,
+        includeUnassignedPool: false,
+        salespersonPhones: [],
+        salespersonEmployeeIds: [],
+        stampedOnly: true,
+      };
+    }
+    if (mode === 'assigned') {
+      const routed = await this.salespeopleRoutedTo(ownId);
+      return {
+        ids: ownId,
+        includeUnassignedPool: false,
+        salespersonPhones: routed.phones,
+        salespersonEmployeeIds: routed.ids,
+      };
+    }
+
+    const { data } = await this.supabase
+      .from('employees')
+      .select('id, role, manager_id, manager_phone')
+      .eq('is_active', true);
+
+    const myPhone = normalizePhone(employee.phone);
+    const teamIds = (data || [])
+      .filter((emp: any) => {
+        if (!emp?.id || emp.id === employee.id) return false;
+        const role = String(emp.role || '').toLowerCase();
+        if (
+          role === 'admin' ||
+          role === 'sales_manager' ||
+          role === 'manager' ||
+          isProcurementManager(role)
+        ) {
+          return false;
+        }
+        if (emp.manager_id && emp.manager_id === employee.id) return true;
+        if (myPhone && normalizePhone(emp.manager_phone) === myPhone) {
+          return true;
+        }
+        return false;
+      })
+      .map((emp: any) => emp.id);
+
+    const routed = await this.salespeopleRoutedTo(teamIds);
+    return {
+      ids: Array.from(new Set([...ownId, ...teamIds])),
+      includeUnassignedPool: false,
+      salespersonPhones: routed.phones,
+      salespersonEmployeeIds: routed.ids,
+    };
+  }
+
+  private async sendWelcomeEmail(input: {
+    name: string;
+    email: string;
+    phone: string;
+    role: string;
+  }): Promise<{ email_sent: boolean; email_notice: string }> {
+    const to = input.email.trim();
+    if (!to.includes('@')) {
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but no welcome email was sent because the email address is missing.`,
+      };
+    }
+    const key = process.env.RESEND_API_KEY || '';
+    if (!key) {
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but the welcome email was not sent. Email delivery is not configured.`,
+      };
+    }
+    const loginUrl =
+      process.env.FRONTEND_URL ||
+      process.env.DASHBOARD_URL ||
+      'https://app.enlightmetals.com';
+    const message = welcomeEmail({ ...input, email: to, loginUrl });
+    const logo = getCompanyLogoBuffer();
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'Enlight Metals <quotes@enlightmetals.com>',
+          to: [to],
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+          ...(logo
+            ? {
+                attachments: [
+                  {
+                    filename: 'enlight-logo.png',
+                    content: logo.toString('base64'),
+                    content_id: 'enlight-logo',
+                  },
+                ],
+              }
+            : {}),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.logger.warn(
+          `Welcome email failed: ${body?.message || res.status}`,
+        );
+        return {
+          email_sent: false,
+          email_notice: `User ${input.name} was invited, but the welcome email to ${to} could not be sent.`,
+        };
+      }
+      return {
+        email_sent: true,
+        email_notice: `Welcome email sent to ${to}.`,
+      };
+    } catch (err: any) {
+      this.logger.warn(`Welcome email failed: ${err?.message || err}`);
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but the welcome email to ${to} could not be sent.`,
+      };
+    }
+  }
+
+  private emailTakenMessage(
+    email: string,
+    existing: { name?: string; employee_id?: string },
+  ) {
+    return `Email address ${email.trim()} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their email address first.`;
+  }
+
+  private async assertEmailAvailable(email?: string | null, exceptId?: string) {
+    const trimmed = String(email || '').trim();
+    if (!trimmed) return;
+    const existing = await this.findByEmail(trimmed);
+    if (existing && existing.id !== exceptId) {
+      throw new ConflictException(this.emailTakenMessage(trimmed, existing));
+    }
+  }
+
+  private async rethrowEmailConflict(error: any, email?: string | null) {
+    const detail = String(error?.details || error?.message || '');
+    if (error?.code !== '23505' || !/email/i.test(detail)) return;
+    const trimmed = String(email || '').trim();
+    const existing = trimmed ? await this.findByEmail(trimmed) : null;
+    throw new ConflictException(
+      existing
+        ? this.emailTakenMessage(trimmed, existing)
+        : 'This email address is already registered to another employee. Please unassign or change their email address first.',
+    );
+  }
+
+  private assertManagerFitsRole(role: string, mgr: any) {
+    const mgrRole = String(mgr?.role || '').toLowerCase();
+    if (
+      role === 'salesperson' &&
+      mgrRole !== 'sales_manager' &&
+      mgrRole !== 'manager'
+    ) {
+      throw new BadRequestException(
+        'A salesperson must be assigned to a sales manager.',
+      );
+    }
+    if (role === 'procurement_person' && !isProcurementManager(mgrRole)) {
+      throw new BadRequestException(
+        'A procurement person must be assigned to a procurement manager.',
+      );
+    }
   }
 
   async create(dto: {
@@ -304,6 +744,8 @@ export class EmployeesService {
     role?: string;
     manager_id?: string | null;
     manager_phone?: string | null;
+    permissions?: Record<string, boolean> | null;
+    assigned_salesperson_ids?: string[];
   }) {
     try {
       // Check duplicate phone
@@ -313,6 +755,8 @@ export class EmployeesService {
           `Phone number ${dto.phone} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their phone number first.`,
         );
       }
+
+      await this.assertEmailAvailable(dto.email);
 
       // Check duplicate employee_id
       const existingId = await this.findByEmployeeId(dto.employee_id);
@@ -333,7 +777,14 @@ export class EmployeesService {
         created_at: new Date().toISOString(),
       };
 
-      if (role === 'salesperson' && (dto.manager_id || dto.manager_phone)) {
+      if (dto.permissions) {
+        insertPayload.permissions = dto.permissions;
+      }
+
+      if (
+        (role === 'salesperson' || role === 'procurement_person') &&
+        (dto.manager_id || dto.manager_phone)
+      ) {
         let mgr: any = null;
         if (dto.manager_id) {
           const { data } = await this.supabase
@@ -347,6 +798,7 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          this.assertManagerFitsRole(role, mgr);
           insertPayload.manager_id = mgr.id;
           insertPayload.manager_phone = mgr.phone;
           insertPayload.reports_to_employee_id = mgr.id;
@@ -361,8 +813,32 @@ export class EmployeesService {
 
       if (error) throw error;
       this.logger.log(`Employee created: ${dto.employee_id} - ${dto.name}`);
-      return data;
+      if (
+        data?.id &&
+        role === 'procurement_person' &&
+        Array.isArray(dto.assigned_salesperson_ids)
+      ) {
+        await this.syncProcurementSalespeople(
+          data.id,
+          dto.assigned_salesperson_ids,
+        );
+      }
+      const roleName = await this.roleLabel(role);
+      const mail = await this.sendWelcomeEmail({
+        name: dto.name,
+        email: dto.email || '',
+        phone: dto.phone.startsWith('+') ? dto.phone : `+${dto.phone}`,
+        role: roleName,
+      });
+      return { ...data, ...mail };
     } catch (error) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      await this.rethrowEmailConflict(error, dto.email);
       this.logger.error('Error in create employee:', error);
       throw error;
     }
@@ -379,6 +855,8 @@ export class EmployeesService {
       manager_id: string | null;
       manager_phone: string | null;
       reports_to_employee_id: string | null;
+      permissions?: Record<string, boolean> | null;
+      assigned_salesperson_ids?: string[];
     }>,
     caller?: { phone?: string; name?: string },
   ) {
@@ -397,6 +875,8 @@ export class EmployeesService {
       const oldPhone = currentEmp.phone;
       const wasActive = currentEmp.is_active;
 
+      await this.assertEmailAvailable(dto.email, id);
+
       // 2. Validate duplicate phone conflict
       if (dto.phone) {
         const existing = await this.findByPhone(dto.phone);
@@ -407,9 +887,19 @@ export class EmployeesService {
         }
       }
 
+      const assignedSalespersonIds = dto.assigned_salesperson_ids;
       const updatePayload: any = { ...dto };
+      delete updatePayload.assigned_salesperson_ids;
 
-      if (dto.role === 'sales_manager' || dto.role === 'admin') {
+      const nextRole = dto.role || currentEmp.role;
+      // Only when the saved role is one of these. A partial update such as
+      // { is_active: true } must not clear an existing manager link.
+      if (
+        dto.role === 'sales_manager' ||
+        dto.role === 'admin' ||
+        dto.role === 'manager' ||
+        isProcurementManager(dto.role)
+      ) {
         updatePayload.manager_id = null;
         updatePayload.manager_phone = null;
         updatePayload.reports_to_employee_id = null;
@@ -427,6 +917,12 @@ export class EmployeesService {
         }
 
         if (mgr) {
+          if (mgr.id === id) {
+            throw new BadRequestException(
+              'An employee cannot be assigned as their own manager.',
+            );
+          }
+          this.assertManagerFitsRole(nextRole, mgr);
           updatePayload.manager_id = mgr.id;
           updatePayload.manager_phone = mgr.phone;
           updatePayload.reports_to_employee_id = mgr.id;
@@ -447,6 +943,23 @@ export class EmployeesService {
         .select()
         .single();
       if (error) throw error;
+      invalidatePermissions(id);
+      if (
+        dto.role &&
+        normalizeRoleId(dto.role) !== normalizeRoleId(currentEmp.role)
+      ) {
+        await this.supabase.from('activity_logs').insert({
+          timestamp: new Date().toISOString(),
+          salesperson_name: currentEmp.name,
+          description: `Role changed from ${await this.roleLabel(currentEmp.role)} to ${await this.roleLabel(dto.role)}`,
+          module: 'Roles',
+          source: 'dashboard',
+          action_type: 'employee_role_changed',
+          entity_id: id,
+          entity_type: 'employee',
+          change_detail: { from: currentEmp.role, to: dto.role },
+        });
+      }
 
       if (typeof dto.is_active === 'boolean' && dto.is_active !== wasActive) {
         this.logLifecycle(
@@ -475,6 +988,13 @@ export class EmployeesService {
             to_name: toName,
           },
         });
+      }
+
+      if (Array.isArray(assignedSalespersonIds)) {
+        await this.syncProcurementSalespeople(
+          id,
+          nextRole === 'procurement_person' ? assignedSalespersonIds : [],
+        );
       }
 
       // 4. If phone changed, cascade to all related transactional records
@@ -508,9 +1028,142 @@ export class EmployeesService {
             `This phone number is already registered to another employee. Please change or unassign their phone number first.`,
           );
         }
+        await this.rethrowEmailConflict(error, dto.email);
       }
       this.logger.error(`Error in update for employee ${id}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * One salesperson routes to one procurement person. Saving the control-panel
+   * selection writes that person onto each salesperson and moves their open,
+   * still-unassigned inquiries into that person's queue.
+   */
+  private async syncProcurementSalespeople(
+    personId: string,
+    salespersonIds: string[],
+  ) {
+    const uniqueIds = Array.from(new Set(salespersonIds.filter(Boolean)));
+    let selected: any[] = [];
+    if (uniqueIds.length) {
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, role, is_active, phone')
+        .in('id', uniqueIds);
+      if (error) throw error;
+      selected = data || [];
+      const valid =
+        selected.length === uniqueIds.length &&
+        selected.every(
+          (emp) => emp.role === 'salesperson' && emp.is_active !== false,
+        );
+      if (!valid) {
+        throw new BadRequestException(
+          'Each assigned salesperson must be an active salesperson.',
+        );
+      }
+    }
+
+    const { data: current, error: currentErr } = await this.supabase
+      .from('employees')
+      .select('id')
+      .eq('assigned_procurement_employee_id', personId);
+    if (currentErr) throw currentErr;
+    const removeIds = (current || [])
+      .map((emp: any) => emp.id)
+      .filter((empId: string) => !uniqueIds.includes(empId));
+    if (removeIds.length) {
+      const { error } = await this.supabase
+        .from('employees')
+        .update({ assigned_procurement_employee_id: null })
+        .in('id', removeIds);
+      if (error) throw error;
+    }
+    if (uniqueIds.length) {
+      const { error } = await this.supabase
+        .from('employees')
+        .update({ assigned_procurement_employee_id: personId })
+        .in('id', uniqueIds);
+      if (error) throw error;
+    }
+
+    const assignedAt = new Date().toISOString();
+    const phones = new Set(
+      selected
+        .map((salesperson) => normalizePhone(salesperson.phone))
+        .filter((phone) => phone.length === 10),
+    );
+    const employeeIds = new Set(selected.map((salesperson) => salesperson.id));
+    const [{ data: openRows, error: listErr }, { data: customers }] =
+      await Promise.all([
+        this.supabase
+          .from('inquiries')
+          .select(
+            'id, salesperson_phone, sender_phone, employee_id, customer_name, ai_extraction_json, procurement_employee_id',
+          )
+          .is('procurement_employee_id', null),
+        this.supabase
+          .from('recurring_customers')
+          .select('customer_name, assigned_salesperson_phone'),
+      ]);
+    if (listErr) throw listErr;
+    const customerNames = new Set<string>();
+    for (const customer of customers || []) {
+      const phone = normalizePhone(customer.assigned_salesperson_phone);
+      const name = String(customer.customer_name || '')
+        .trim()
+        .toLowerCase();
+      if (phone.length === 10 && phones.has(phone) && name) {
+        customerNames.add(name);
+      }
+    }
+    const matchIds = (openRows || [])
+      .filter((row: any) => {
+        if (row.employee_id && employeeIds.has(row.employee_id)) return true;
+        const stored = normalizePhone(row.salesperson_phone);
+        if (stored.length === 10 && phones.has(stored)) return true;
+        const sender = normalizePhone(row.sender_phone);
+        if (sender.length === 10 && phones.has(sender)) return true;
+        const ai = row.ai_extraction_json || {};
+        const name = String(row.customer_name || ai.customer_name || '')
+          .trim()
+          .toLowerCase();
+        return Boolean(name && customerNames.has(name));
+      })
+      .map((row: any) => row.id);
+    if (matchIds.length) {
+      const { error } = await this.supabase
+        .from('inquiries')
+        .update({
+          procurement_employee_id: personId,
+          procurement_assigned_at: assignedAt,
+        })
+        .in('id', matchIds);
+      if (error) throw error;
+    }
+  }
+
+  private async salespeopleRoutedTo(personIds: string[]) {
+    if (!personIds.length)
+      return { phones: [] as string[], ids: [] as string[] };
+    try {
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, phone, role, is_active, assigned_procurement_employee_id')
+        .in('assigned_procurement_employee_id', personIds);
+      if (error) return { phones: [], ids: [] };
+      const assigned = (data || []).filter(
+        (emp: any) => emp.role === 'salesperson' && emp.is_active !== false,
+      );
+      return {
+        phones: assigned
+          .map((emp: any) => normalizePhone(emp.phone))
+          .filter((phone: string) => phone.length === 10),
+        ids: assigned.map((emp: any) => emp.id),
+      };
+    } catch {
+      return { phones: [], ids: [] };
     }
   }
 
@@ -865,21 +1518,12 @@ export class EmployeesService {
       const { data } = await this.supabase
         .from('roles')
         .select('name')
-        .eq('key', key)
+        .eq('id', key)
         .maybeSingle();
-      if (data?.name) return data.name;
+      return logRoleName(role, data?.name);
     } catch {
-      // ignore
+      return logRoleName(role);
     }
-    const builtins: Record<string, string> = {
-      admin: 'Admin',
-      sales_manager: 'Sales Manager',
-      manager: 'Sales Manager',
-      salesperson: 'Salesperson',
-      finance: 'Finance / Accounts',
-      operations: 'Operations / Logistics',
-    };
-    return builtins[key] || role;
   }
 
   // Generate next employee ID automatically

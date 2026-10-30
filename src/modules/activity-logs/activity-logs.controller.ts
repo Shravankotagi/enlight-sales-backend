@@ -3,6 +3,7 @@ import { ActivityLogsService } from './activity-logs.service';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
 import { CurrentEmployee } from '../../common/decorators/current-employee.decorator';
 import { EmployeesService } from '../employees/employees.service';
+import { hasPermission } from '../../common/guards/permission.guard';
 
 @Controller('activity-logs')
 @UseGuards(JwtAuthGuard)
@@ -31,10 +32,13 @@ export class ActivityLogsController {
         mode,
       );
 
+    const canSeeStaff =
+      hasPermission(employee, 'staff.view') || employee?.role === 'admin';
+
     return this.activityLogsService.getActivityLogs(
       { from, to, module, search, action_type: actionType, limit },
       phones,
-      { includeAuth: employee?.role === 'admin' },
+      { includeStaffModules: canSeeStaff, includeAuth: canSeeStaff },
     );
   }
 
@@ -52,8 +56,12 @@ export class ActivityLogsController {
         salespersonPhoneOverride,
         mode,
       );
+    const canSeeStaff =
+      hasPermission(employee, 'staff.view') || employee?.role === 'admin';
+
     return this.activityLogsService.countActivityLogs({ from, to }, phones, {
-      includeAuth: employee?.role === 'admin',
+      includeAuth: canSeeStaff,
+      includeStaffModules: canSeeStaff,
     });
   }
 }

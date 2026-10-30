@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import * as dns from 'dns';
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -17,6 +18,10 @@ import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './config/swagger.config';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import {
+  CORS_ALLOWED_HEADERS,
+  CORS_ALLOWED_HEADERS_VALUE,
+} from './common/http/cors';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { CustomLoggerService } from './common/services/logger.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -46,13 +51,7 @@ async function bootstrap() {
     origin: true,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Accept',
-      'Authorization',
-      'X-Requested-With',
-      'Origin',
-    ],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
     optionsSuccessStatus: 200,
   });
 
@@ -64,10 +63,7 @@ async function bootstrap() {
         'Access-Control-Allow-Methods',
         'GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS',
       );
-      res.header(
-        'Access-Control-Allow-Headers',
-        'Content-Type, Accept, Authorization, X-Requested-With, Origin',
-      );
+      res.header('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS_VALUE);
       res.header('Access-Control-Allow-Credentials', 'true');
       return res.sendStatus(200);
     }

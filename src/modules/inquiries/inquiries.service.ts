@@ -12,9 +12,21 @@ import axios from 'axios';
 
 const PDFDocument = require('pdfkit');
 import { SupabaseService } from '../../infrastructure/supabase/supabase.service';
-import { phoneInList } from '../employees/employees.service';
+import { normalizePhone, phoneInList } from '../employees/employees.service';
+import {
+  anonymizeInquiry,
+  displayStage,
+  inquiryCommercialLines,
+  linkedDealStage,
+  nextProcurementNumber,
+  preserveHistoricalPricingStatus,
+  tonnageReviewPatch,
+} from './inquiry-pricing.util';
 import { ZohoService } from '../zoho/zoho.service';
-import { ENLIGHT_LOGO_BASE64 } from '../../assets/logoBase64';
+import {
+  getCompanyLogoBuffer,
+  quotationEmailHtml,
+} from './quotation-email-html';
 
 const QUOTATION_FROM_EMAIL = 'quotes@enlightmetals.com';
 const QUOTATION_SUBJECT_PREFIX = 'Enlight Metals- ';
@@ -88,52 +100,6 @@ Thank you once again for considering ENLIGHT METALS PVT LTD.
 
 Regards,
 ENLIGHT METALS PVT LTD.`;
-}
-
-function quotationEmailHtml(text: string): string {
-  const body = text
-    .split(/\n{2,}/)
-    .map(
-      (paragraph) =>
-        `<p style="margin:0 0 16px;line-height:1.55;">${paragraph
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>')}</p>`,
-    )
-    .join('');
-  const logo =
-    '<p style="margin:0 0 16px;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>';
-  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2128;">${body}${logo}</div>`;
-}
-
-function getCompanyLogoBuffer(): Buffer | null {
-  const possiblePaths = [
-    path.join(process.cwd(), 'assets', 'logo.png'),
-    path.join(process.cwd(), 'assets', 'logo.jpg'),
-    path.join(process.cwd(), 'assets', 'logo.jpeg'),
-    path.join(process.cwd(), 'backend', 'assets', 'logo.png'),
-    path.join(process.cwd(), 'dist', 'assets', 'logo.png'),
-    path.join(__dirname, '../../../assets/logo.png'),
-    path.join(__dirname, '../../../assets/logo.jpg'),
-    path.join(__dirname, '../../../assets/logo.jpeg'),
-    path.join(__dirname, '../../assets/logo.png'),
-    path.join(__dirname, '../assets/logo.png'),
-    path.join(__dirname, 'assets/logo.png'),
-  ];
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      try {
-        return fs.readFileSync(p);
-      } catch {}
-    }
-  }
-  if (ENLIGHT_LOGO_BASE64) {
-    try {
-      return Buffer.from(ENLIGHT_LOGO_BASE64, 'base64');
-    } catch {}
-  }
-  return null;
 }
 
 function getAssetFontPath(fontFilename: string): string | null {
@@ -737,6 +703,89 @@ function resolveInquiryEntities(
   };
 }
 
+/** Statuses that create or move a deal. Procurement cannot set these. */
+export const PROCUREMENT_BLOCKED_STATUSES = [
+  'confirmed',
+  'won',
+  'lost',
+  'saved',
+  'processed',
+];
+
+export type ProcurementScope = {
+  ids: string[];
+  includeUnassignedPool: boolean;
+  unrestricted?: boolean;
+  salespersonPhones?: string[];
+  salespersonEmployeeIds?: string[];
+  stampedOnly?: boolean;
+};
+
+/** In-memory scope. An inquiry is visible only when it is stamped to one of these ids. */
+export function matchesProcurementScope(
+  item: {
+    procurement_employee_id?: string | null;
+    status?: string | null;
+    salesperson_phone?: string | null;
+    employee_id?: string | null;
+  },
+  scope?: ProcurementScope | null,
+): boolean {
+  if (!scope) return false;
+  const ids = scope.ids || [];
+  return Boolean(
+    item?.procurement_employee_id && ids.includes(item.procurement_employee_id),
+  );
+}
+
+type ProcurementRoutes = {
+  byPhone: Map<string, string>;
+  byEmployeeId: Map<string, string>;
+};
+
+function procurementRoutes(employees: any[]): ProcurementRoutes {
+  const byPhone = new Map<string, string>();
+  const byEmployeeId = new Map<string, string>();
+  for (const employee of employees || []) {
+    if (String(employee?.role || '') !== 'salesperson') continue;
+    if (employee?.is_active === false) continue;
+    const owner = employee?.assigned_procurement_employee_id;
+    if (!owner) continue;
+    if (employee.id) byEmployeeId.set(employee.id, owner);
+    const phone = normalizePhone(employee.phone);
+    if (phone.length === 10) byPhone.set(phone, owner);
+  }
+  return { byPhone, byEmployeeId };
+}
+
+/** Owner for a row that is still null. A stamped row is never moved. */
+export function routedProcurementOwner(
+  item: {
+    procurement_employee_id?: string | null;
+    employee_id?: string | null;
+    salesperson_phone?: string | null;
+    sender_phone?: string | null;
+    customer_owner_phone?: string | null;
+  },
+  routes: ProcurementRoutes,
+): string | null {
+  if (!item || item.procurement_employee_id) return null;
+  if (item.employee_id && routes.byEmployeeId.has(item.employee_id)) {
+    return routes.byEmployeeId.get(item.employee_id) || null;
+  }
+  for (const phone of [
+    item.salesperson_phone,
+    item.sender_phone,
+    item.customer_owner_phone,
+  ]) {
+    const key = normalizePhone(phone || '');
+    if (key.length === 10 && routes.byPhone.has(key)) {
+      return routes.byPhone.get(key) || null;
+    }
+  }
+  return null;
+}
+
 @Injectable()
 export class InquiriesService implements OnModuleInit {
   private readonly logger = new Logger(InquiriesService.name);
@@ -829,6 +878,7 @@ export class InquiriesService implements OnModuleInit {
     to?: string;
     salespersonPhone?: string;
     salespersonPhones?: string[] | string;
+    procurementScope?: ProcurementScope;
   }) {
     try {
       if (
@@ -839,30 +889,62 @@ export class InquiriesService implements OnModuleInit {
         return [];
       }
 
-      let query = this.supabase
-        .from('inquiries')
-        .select(
-          'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason',
-        )
-        .order('created_at', { ascending: false });
-
-      if (filters?.from) {
-        const fromDate = filters.from.includes('T')
-          ? filters.from
-          : `${filters.from}T00:00:00.000Z`;
-        query = query.gte('created_at', fromDate);
-      }
-      if (filters?.to) {
-        const toDate = filters.to.includes('T')
-          ? filters.to
-          : `${filters.to}T23:59:59.999Z`;
-        query = query.lte('created_at', toDate);
-      }
+      const inquiryColumns =
+        'id, sender_name, sender_phone, raw_text, inquiry_type, status, source_channel, overall_confidence, ai_extraction_json, created_at, salesperson_phone, employee_id, payment_terms, delivery_location, customer_name, customer_phone, stage, total_amount, po_number, reference_po_number, generated_po_number, po_source, po_status, po_generated_at, po_confirmed_at, po_date, won_at, lost_reason, procurement_employee_id, procurement_assigned_at';
+      const applyDateRange = (source: any, columns: string) => {
+        let next = source
+          .from('inquiries')
+          .select(columns)
+          .order('created_at', { ascending: false });
+        if (filters?.from) {
+          const fromDate = filters.from.includes('T')
+            ? filters.from
+            : `${filters.from}T00:00:00.000Z`;
+          next = next.gte('created_at', fromDate);
+        }
+        if (filters?.to) {
+          const toDate = filters.to.includes('T')
+            ? filters.to
+            : `${filters.to}T23:59:59.999Z`;
+          next = next.lte('created_at', toDate);
+        }
+        return next;
+      };
 
       // Note: Scoping by salesperson phone is done in Node after resolving customer owner mappings,
       // ensuring inquiries for assigned customers and sender reps are never prematurely dropped at DB layer.
 
-      const { data, error } = await query;
+      const pricingColumns =
+        'pricing_status, procurement_note, decline_sent_at, procurement_number';
+      const tonnageColumns = 'tonnage_review_open, tonnage_review';
+      let { data, error } = await applyDateRange(
+        this.supabase,
+        `${inquiryColumns}, ${pricingColumns}, ${tonnageColumns}`,
+      );
+      if (error && /tonnage_review/i.test(error.message || '')) {
+        this.logger.warn(
+          'Inquiry tonnage review columns are not available yet; listing inquiries without them.',
+        );
+        const withoutTonnage = await applyDateRange(
+          this.supabase,
+          `${inquiryColumns}, ${pricingColumns}`,
+        );
+        data = withoutTonnage.data;
+        error = withoutTonnage.error;
+      }
+      if (
+        error &&
+        /pricing_status|procurement_note|decline_sent_at|procurement_number/i.test(
+          error.message || '',
+        )
+      ) {
+        this.logger.warn(
+          'Inquiry pricing columns are not available yet; listing inquiries without them.',
+        );
+        const fallback = await applyDateRange(this.supabase, inquiryColumns);
+        data = fallback.data;
+        error = fallback.error;
+      }
       if (error) throw error;
 
       // Extract inquiry IDs to scope the deals query efficiently
@@ -874,7 +956,7 @@ export class InquiriesService implements OnModuleInit {
           ? this.supabase
               .from('deals')
               .select(
-                'inquiry_id, customer_name, customer_phone, salesperson_phone',
+                'id, inquiry_id, stage, created_at, customer_name, customer_phone, salesperson_phone',
               )
               .in('inquiry_id', inquiryIds)
           : Promise.resolve({ data: [] }),
@@ -958,6 +1040,8 @@ export class InquiriesService implements OnModuleInit {
         return {
           ...item,
           ...entities,
+          linked_deal_stage: linkedDealStage(deals, item.id),
+          display_stage: displayStage(item, deals, item.id),
           ai_extraction_json: cleanAiJson,
           has_media: hasAttachment,
           media_urls: hasAttachment ? ['attached_document'] : [],
@@ -967,7 +1051,13 @@ export class InquiriesService implements OnModuleInit {
       // Strict RBAC scope enforcement for Salesperson and Sales Manager personas
       const reqPhones = filters?.salespersonPhones || filters?.salespersonPhone;
       let scopedData = lightweightData;
-      if (reqPhones) {
+      if (filters?.procurementScope) {
+        const scope = filters.procurementScope;
+        await this.stampRoutedOwners(lightweightData);
+        scopedData = lightweightData.filter((item: any) =>
+          matchesProcurementScope(item, scope),
+        );
+      } else if (reqPhones) {
         const phoneList = Array.isArray(reqPhones) ? reqPhones : [reqPhones];
         const allowedPhoneSet = new Set(
           phoneList
@@ -1009,14 +1099,234 @@ export class InquiriesService implements OnModuleInit {
         return String(b.id || '').localeCompare(String(a.id || ''));
       });
 
-      return scopedData;
+      const preserved = scopedData.map((item: any) =>
+        preserveHistoricalPricingStatus(item),
+      );
+      return filters?.procurementScope
+        ? preserved.map((item: any) => anonymizeInquiry(item))
+        : preserved;
     } catch (error) {
       this.logger.error('Error in findAll:', error);
       throw error;
     }
   }
 
-  async findOne(id: string, accessiblePhones?: string[] | null) {
+  /**
+   * Write the routed procurement owner onto rows that are still null.
+   * One update per owner. A row that already has an owner is left alone.
+   */
+  private async stampRoutedOwners(items: any[]) {
+    const pending = (items || []).filter(
+      (item) => item?.id && !item.procurement_employee_id,
+    );
+    if (!pending.length) return;
+    const { data: employees, error } = await this.supabase
+      .from('employees')
+      .select('id, phone, role, is_active, assigned_procurement_employee_id');
+    if (error) {
+      this.logger.warn(
+        `Could not stamp routed inquiries: ${error.message || error}`,
+      );
+      return;
+    }
+    const routes = procurementRoutes(employees || []);
+    const byOwner = new Map<string, any[]>();
+    for (const item of pending) {
+      const owner = routedProcurementOwner(item, routes);
+      if (!owner) continue;
+      const group = byOwner.get(owner) || [];
+      group.push(item);
+      byOwner.set(owner, group);
+    }
+    const assignedAt = new Date().toISOString();
+    await Promise.all(
+      [...byOwner.entries()].map(async ([owner, group]) => {
+        const { error: updateError } = await this.supabase
+          .from('inquiries')
+          .update({
+            procurement_employee_id: owner,
+            procurement_assigned_at: assignedAt,
+          })
+          .in(
+            'id',
+            group.map((item) => item.id),
+          )
+          .is('procurement_employee_id', null);
+        if (updateError) {
+          this.logger.warn(
+            `Could not stamp inquiries for ${owner}: ${updateError.message || updateError}`,
+          );
+          return;
+        }
+        for (const item of group) {
+          item.procurement_employee_id = owner;
+          item.procurement_assigned_at = assignedAt;
+        }
+      }),
+    );
+  }
+
+  /** Same salesperson identity the inquiry list uses before procurement scope. */
+  private async resolvedProcurementItem(item: any) {
+    const id = item?.id;
+    const [dealsRes, employeesRes, customersRes] = await Promise.all([
+      id
+        ? this.supabase
+            .from('deals')
+            .select(
+              'inquiry_id, customer_name, customer_phone, salesperson_phone',
+            )
+            .eq('inquiry_id', id)
+        : Promise.resolve({ data: [] }),
+      this.supabase.from('employees').select('name, phone'),
+      this.supabase
+        .from('recurring_customers')
+        .select(
+          'customer_name, assigned_salesperson_phone, is_active, updated_at',
+        ),
+    ]);
+
+    const deals = dealsRes.data || [];
+    const employees = employeesRes.data || [];
+    const customers = customersRes.data || [];
+    const dealByInqId = new Map<string, string>();
+    const dealByName = new Map<string, string>();
+    deals.forEach((deal: any) => {
+      if (deal.inquiry_id && deal.customer_phone) {
+        dealByInqId.set(deal.inquiry_id, deal.customer_phone);
+      }
+      if (deal.customer_name && deal.customer_phone) {
+        dealByName.set(
+          deal.customer_name.trim().toLowerCase(),
+          deal.customer_phone,
+        );
+      }
+    });
+
+    const empPhoneMap = new Map<string, string>();
+    employees.forEach((employee: any) => {
+      if (employee.name && employee.phone) {
+        const clean = String(employee.phone).replace(/\D/g, '');
+        empPhoneMap.set(clean, employee.name);
+        empPhoneMap.set(clean.slice(-10), employee.name);
+      }
+    });
+
+    const entities = resolveInquiryEntities(
+      item,
+      dealByInqId,
+      dealByName,
+      empPhoneMap,
+      buildCustomerOwnerMap(customers, empPhoneMap),
+    );
+    return {
+      ...item,
+      salesperson_phone: entities.salesperson_phone || item.salesperson_phone,
+    };
+  }
+
+  /** employees.id values that own this inquiry. A phone is only a lookup. */
+  private async owningSalespersonIds(item: any): Promise<string[]> {
+    const ids = new Set<string>();
+    if (item?.employee_id) ids.add(String(item.employee_id));
+
+    const inquiryId = item?.id;
+    const [dealsRes, employeesRes, customersRes] = await Promise.all([
+      inquiryId
+        ? this.supabase
+            .from('deals')
+            .select(
+              'inquiry_id, employee_id, salesperson_phone, customer_name, customer_phone',
+            )
+            .eq('inquiry_id', inquiryId)
+        : Promise.resolve({ data: [] }),
+      this.supabase
+        .from('employees')
+        .select('id, name, phone, role, is_active'),
+      this.supabase
+        .from('recurring_customers')
+        .select(
+          'customer_name, assigned_salesperson_phone, is_active, updated_at',
+        ),
+    ]);
+
+    const deals = dealsRes.data || [];
+    const employees = (employeesRes.data || []).filter(
+      (employee: any) => employee?.id && employee.is_active !== false,
+    );
+    deals.forEach((deal: any) => {
+      if (deal.employee_id) ids.add(String(deal.employee_id));
+    });
+
+    const dealByInqId = new Map<string, string>();
+    const dealByName = new Map<string, string>();
+    deals.forEach((deal: any) => {
+      if (deal.inquiry_id && deal.customer_phone) {
+        dealByInqId.set(deal.inquiry_id, deal.customer_phone);
+      }
+      if (deal.customer_name && deal.customer_phone) {
+        dealByName.set(
+          deal.customer_name.trim().toLowerCase(),
+          deal.customer_phone,
+        );
+      }
+    });
+    const empPhoneMap = new Map<string, string>();
+    employees.forEach((employee: any) => {
+      if (employee.name && employee.phone) {
+        const clean = String(employee.phone).replace(/\D/g, '');
+        empPhoneMap.set(clean, employee.name);
+        empPhoneMap.set(clean.slice(-10), employee.name);
+      }
+    });
+    const entities = resolveInquiryEntities(
+      item,
+      dealByInqId,
+      dealByName,
+      empPhoneMap,
+      buildCustomerOwnerMap(customersRes.data || [], empPhoneMap),
+    );
+    const phones = [
+      item?.salesperson_phone,
+      entities.customer_owner_phone,
+      ...deals.map((deal: any) => deal.salesperson_phone),
+    ];
+    phones.forEach((phone) => {
+      const target = normalizePhone(phone || '');
+      if (target.length !== 10) return;
+      const match = employees.find(
+        (employee: any) => normalizePhone(employee.phone) === target,
+      );
+      if (match?.id) ids.add(String(match.id));
+    });
+    return Array.from(ids);
+  }
+
+  private async salespersonOwnsInquiry(item: any, accessibleIds: string[]) {
+    if (!accessibleIds.length) return false;
+    const allowed = new Set(accessibleIds.map((id) => String(id)));
+    const owners = await this.owningSalespersonIds(item);
+    return owners.some((id) => allowed.has(id));
+  }
+
+  private async assertQuotationAccess(
+    record: any,
+    accessibleEmployeeIds?: string[] | null,
+  ) {
+    if (accessibleEmployeeIds == null) return;
+    if (await this.salespersonOwnsInquiry(record, accessibleEmployeeIds))
+      return;
+    throw new ForbiddenException(
+      'Access Denied: You do not have permission to send quotations for this record.',
+    );
+  }
+
+  async findOne(
+    id: string,
+    accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
+    accessibleEmployeeIds?: string[] | null,
+  ) {
     try {
       const { data, error } = await this.supabase
         .from('inquiries')
@@ -1027,7 +1337,28 @@ export class InquiriesService implements OnModuleInit {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        const visible = await this.resolvedProcurementItem(data);
+        await this.stampRoutedOwners([visible]);
+        if (visible.procurement_employee_id) {
+          data.procurement_employee_id = visible.procurement_employee_id;
+          data.procurement_assigned_at = visible.procurement_assigned_at;
+        }
+        if (!matchesProcurementScope(visible, procurementScope)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this inquiry.',
+          );
+        }
+      } else if (accessibleEmployeeIds !== undefined) {
+        if (
+          accessibleEmployeeIds !== null &&
+          !(await this.salespersonOwnsInquiry(data, accessibleEmployeeIds))
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to view this inquiry.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(data.salesperson_phone, accessiblePhones) ||
           phoneInList(data.sender_phone, accessiblePhones);
@@ -1042,7 +1373,9 @@ export class InquiriesService implements OnModuleInit {
         const [dealsRes, employeesRes] = await Promise.all([
           this.supabase
             .from('deals')
-            .select('inquiry_id, customer_name, customer_phone')
+            .select(
+              'id, inquiry_id, stage, created_at, customer_name, customer_phone',
+            )
             .eq('inquiry_id', id),
           this.supabase.from('employees').select('name, phone'),
         ]);
@@ -1091,26 +1424,38 @@ export class InquiriesService implements OnModuleInit {
             cleanAiJson.paymentTerms = entities.payment_terms;
           }
         }
-        return {
+        const result = preserveHistoricalPricingStatus({
           ...data,
           ...entities,
+          linked_deal_stage: linkedDealStage(deals, id),
+          display_stage: displayStage(data, deals, id),
           ai_extraction_json: cleanAiJson,
-        };
+        });
+        return procurementScope ? anonymizeInquiry(result) : result;
       }
-      return data;
+      const preserved = data ? preserveHistoricalPricingStatus(data) : data;
+      return procurementScope && preserved
+        ? anonymizeInquiry(preserved)
+        : preserved;
     } catch (error) {
       this.logger.error(`Error in findOne for id ${id}:`, error);
       throw error;
     }
   }
 
-  async deleteInquiry(id: string, accessiblePhones?: string[] | null) {
+  async deleteInquiry(
+    id: string,
+    accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
+  ) {
     try {
       this.logger.log(`Deleting inquiry ${id} and associated records...`);
 
       const { data: inquiry, error: fetchErr } = await this.supabase
         .from('inquiries')
-        .select('id, sender_phone, salesperson_phone')
+        .select(
+          'id, sender_phone, salesperson_phone, procurement_employee_id, status',
+        )
         .eq('id', id)
         .single();
 
@@ -1118,7 +1463,14 @@ export class InquiriesService implements OnModuleInit {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        // Only an inquiry stamped to this procurement scope can be deleted.
+        if (!procurementScope.ids.includes(inquiry.procurement_employee_id)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to delete this inquiry.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
           phoneInList(inquiry.sender_phone, accessiblePhones);
@@ -1141,6 +1493,11 @@ export class InquiriesService implements OnModuleInit {
         }
       }
 
+      await this.supabase
+        .from('inquiry_line_pricing')
+        .delete()
+        .eq('inquiry_id', id);
+
       const { error: delErr } = await this.supabase
         .from('inquiries')
         .delete()
@@ -1159,9 +1516,14 @@ export class InquiriesService implements OnModuleInit {
     salespersonPhones?: string[] | string,
     from?: string,
     to?: string,
+    procurementScope?: ProcurementScope | null,
   ) {
     try {
-      if (Array.isArray(salespersonPhones) && salespersonPhones.length === 0) {
+      if (
+        !procurementScope &&
+        Array.isArray(salespersonPhones) &&
+        salespersonPhones.length === 0
+      ) {
         return [];
       }
 
@@ -1266,7 +1628,12 @@ export class InquiriesService implements OnModuleInit {
       });
 
       let scopedReviewList = reviewList;
-      if (salespersonPhones) {
+      if (procurementScope) {
+        await this.stampRoutedOwners(reviewList);
+        scopedReviewList = reviewList.filter((item: any) =>
+          matchesProcurementScope(item, procurementScope),
+        );
+      } else if (salespersonPhones) {
         const phoneList = Array.isArray(salespersonPhones)
           ? salespersonPhones
           : [salespersonPhones];
@@ -1317,23 +1684,140 @@ export class InquiriesService implements OnModuleInit {
     }
   }
 
+  async listTonnageReviews(scope: ProcurementScope) {
+    const columns =
+      'id, procurement_number, procurement_employee_id, salesperson_phone, employee_id, status, tonnage_review, tonnage_review_open';
+    const { data, error } = await this.supabase
+      .from('inquiries')
+      .select(columns)
+      .eq('tonnage_review_open', true);
+    if (error && /tonnage_review/i.test(error.message || '')) return [];
+    if (error) throw error;
+
+    const { data: employees } = await this.supabase
+      .from('employees')
+      .select('name, phone');
+    const namesByPhone = new Map<string, string>();
+    (employees || []).forEach((employee: any) => {
+      if (!employee?.name || !employee?.phone) return;
+      const clean = String(employee.phone).replace(/\D/g, '');
+      namesByPhone.set(clean, employee.name);
+      namesByPhone.set(clean.slice(-10), employee.name);
+    });
+
+    const visibleRows = [];
+    for (const item of data || []) {
+      visibleRows.push(await this.resolvedProcurementItem(item));
+    }
+    await this.stampRoutedOwners(visibleRows);
+
+    const rows = [];
+    for (const visible of visibleRows) {
+      if (!matchesProcurementScope(visible, scope)) continue;
+      const review = visible.tonnage_review || {};
+      const phone = String(visible.salesperson_phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      rows.push({
+        id: visible.id,
+        procurement_number: visible.procurement_number || null,
+        salesperson_name: namesByPhone.get(phone) || 'Salesperson',
+        changed_at: review.changed_at || null,
+        previous_total_mt: review.previous_total_mt ?? null,
+        next_total_mt: review.next_total_mt ?? null,
+        lines: Array.isArray(review.lines)
+          ? review.lines.map((line: any) => ({
+              sku_text: line?.sku_text || 'Material',
+              from_mt: line?.from_mt ?? 0,
+              to_mt: line?.to_mt ?? 0,
+            }))
+          : [],
+      });
+    }
+    rows.sort((a, b) =>
+      String(b.changed_at || '').localeCompare(String(a.changed_at || '')),
+    );
+    return rows;
+  }
+
+  private async loadInquiryForStatusUpdate(id: string) {
+    const base =
+      'id, salesperson_phone, sender_phone, customer_name, employee_id, ai_extraction_json, procurement_employee_id, status, pricing_status, created_at, procurement_assigned_at, procurement_number';
+    const withReview = `${base}, tonnage_review_open, tonnage_review`;
+    const first = await this.supabase
+      .from('inquiries')
+      .select(withReview)
+      .eq('id', id)
+      .single();
+    if (!first.error || !/tonnage_review/i.test(first.error?.message || '')) {
+      return { ...first, reviewColumns: !first.error };
+    }
+    const fallback = await this.supabase
+      .from('inquiries')
+      .select(base)
+      .eq('id', id)
+      .single();
+    return { ...fallback, reviewColumns: false };
+  }
+
   async updateStatus(
     id: string,
     status: string,
     details?: any,
     accessiblePhones?: string[] | null,
+    procurementScope?: ProcurementScope | null,
+    accessibleEmployeeIds?: string[] | null,
   ) {
     try {
-      const { data: existingInq, error: fetchErr } = await this.supabase
-        .from('inquiries')
-        .select('id, salesperson_phone, sender_phone, ai_extraction_json')
-        .eq('id', id)
-        .single();
+      const loaded = await this.loadInquiryForStatusUpdate(id);
+      const { data: existingInq, error: fetchErr } = loaded;
+      const reviewColumns = loaded.reviewColumns;
       if (fetchErr || !existingInq) {
         throw new NotFoundException('Inquiry not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
+      if (procurementScope) {
+        const visible = await this.resolvedProcurementItem(existingInq);
+        await this.stampRoutedOwners([visible]);
+        if (visible.procurement_employee_id) {
+          existingInq.procurement_employee_id = visible.procurement_employee_id;
+          existingInq.procurement_assigned_at = visible.procurement_assigned_at;
+        }
+        if (!matchesProcurementScope(visible, procurementScope)) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this inquiry.',
+          );
+        }
+        if (
+          PROCUREMENT_BLOCKED_STATUSES.includes(
+            String(status || '').toLowerCase(),
+          )
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: Procurement roles cannot move an inquiry to confirmed, won, or lost.',
+          );
+        }
+        if (
+          preserveHistoricalPricingStatus(existingInq).pricing_status !==
+          'awaiting_price'
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: Procurement roles can change only an awaiting price inquiry.',
+          );
+        }
+      } else if (accessibleEmployeeIds !== undefined) {
+        if (
+          accessibleEmployeeIds !== null &&
+          !(await this.salespersonOwnsInquiry(
+            existingInq,
+            accessibleEmployeeIds,
+          ))
+        ) {
+          throw new ForbiddenException(
+            'Access Denied: You do not have permission to update this inquiry.',
+          );
+        }
+      } else if (accessiblePhones && accessiblePhones.length > 0) {
         const hasAccess =
           phoneInList(existingInq.salesperson_phone, accessiblePhones) ||
           phoneInList(existingInq.sender_phone, accessiblePhones);
@@ -1390,6 +1874,26 @@ export class InquiriesService implements OnModuleInit {
       }
 
       const updatePayload: any = { status };
+      const afterLines = Array.isArray(details?.lineItems)
+        ? details.lineItems
+        : Array.isArray(details?.line_items)
+          ? details.line_items
+          : null;
+      const reviewPatch =
+        !procurementScope && reviewColumns && afterLines
+          ? tonnageReviewPatch({
+              pricingStatus: existingInq.pricing_status,
+              reviewOpen: (existingInq as any).tonnage_review_open,
+              existingReview: (existingInq as any).tonnage_review,
+              beforeLines: inquiryCommercialLines(existingInq),
+              afterLines,
+            })
+          : null;
+      if (reviewPatch) Object.assign(updatePayload, reviewPatch);
+      const reviewOpened = Boolean(reviewPatch?.tonnage_review);
+      if (reviewOpened && existingInq.status) {
+        updatePayload.status = existingInq.status;
+      }
       if (details) {
         if (details.companyName)
           updatePayload.sender_name = details.companyName;
@@ -1445,7 +1949,35 @@ export class InquiriesService implements OnModuleInit {
       } else {
         pipelineStage = details?.stage || undefined;
       }
-      await this.syncInquiryToDeal(id, pipelineStage, details, true);
+      // A tonnage review reopens pricing only. The pipeline stage stays put.
+      // Procurement edits stay on the inquiry. They must not create or move a deal.
+      if (!procurementScope) {
+        await this.syncInquiryToDeal(
+          id,
+          reviewOpened ? undefined : pipelineStage,
+          details,
+          true,
+        );
+      }
+
+      if (reviewPatch?.tonnage_review) {
+        try {
+          const review = reviewPatch.tonnage_review;
+          const procurementNumber = existingInq.procurement_number || id;
+          this.activityLogsService.logActivity({
+            module: 'Inquiries',
+            description: `Tonnage changed on ${procurementNumber} from ${review.previous_total_mt} MT to ${review.next_total_mt} MT`,
+            action_type: 'procurement_tonnage_review',
+            entity_id: id,
+            entity_type: 'inquiry',
+          });
+        } catch (reviewLogErr: any) {
+          this.logger.warn(
+            'Non-blocking tonnage review log notice:',
+            reviewLogErr?.message,
+          );
+        }
+      }
 
       // Non-blocking activity log
       try {
@@ -1459,7 +1991,11 @@ export class InquiriesService implements OnModuleInit {
           salesperson_name:
             (data as any)?.assigned_salesperson_name || 'Sales Team',
           salesperson_phone: (data as any)?.salesperson_phone || null,
-          description: inquiryStageLog(id, custName, pipelineStage || status),
+          description: inquiryStageLog(
+            id,
+            custName,
+            reviewOpened ? existingInq.status : pipelineStage || status,
+          ),
           module: 'Inquiries',
           customer_name: custName,
         });
@@ -1478,9 +2014,11 @@ export class InquiriesService implements OnModuleInit {
     salespersonPhones?: string[] | string,
     from?: string,
     to?: string,
+    procurementScope?: ProcurementScope | null,
   ) {
     try {
       if (
+        !procurementScope &&
         salespersonPhones &&
         Array.isArray(salespersonPhones) &&
         salespersonPhones.length === 0
@@ -1499,7 +2037,7 @@ export class InquiriesService implements OnModuleInit {
       let query = this.supabase
         .from('inquiries')
         .select(
-          'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json',
+          'id, raw_text, status, source_channel, created_at, salesperson_phone, sender_phone, ai_extraction_json, procurement_employee_id, procurement_assigned_at',
         );
 
       if (from) {
@@ -1540,7 +2078,27 @@ export class InquiriesService implements OnModuleInit {
       const genuineData = (data || []).filter(isGenuineInquiry);
 
       let scopedGenuine = genuineData;
-      if (salespersonPhones) {
+      if (procurementScope) {
+        const resolved = genuineData.map((item: any) => {
+          const entities = resolveInquiryEntities(
+            item,
+            undefined,
+            undefined,
+            empPhoneMap,
+            customerOwnerMap,
+          );
+          return {
+            ...item,
+            salesperson_phone:
+              entities.salesperson_phone || item.salesperson_phone,
+            customer_owner_phone: entities.customer_owner_phone,
+          };
+        });
+        await this.stampRoutedOwners(resolved);
+        scopedGenuine = resolved.filter((item: any) =>
+          matchesProcurementScope(item, procurementScope),
+        );
+      } else if (salespersonPhones) {
         const phoneList = Array.isArray(salespersonPhones)
           ? salespersonPhones
           : [salespersonPhones];
@@ -1595,6 +2153,49 @@ export class InquiriesService implements OnModuleInit {
       this.logger.error('Error in getStats:', error);
       throw error;
     }
+  }
+
+  private async lookupProcurementOwner(
+    salespersonPhone?: string | null,
+  ): Promise<string | null> {
+    const target = String(salespersonPhone || '')
+      .replace(/\D/g, '')
+      .slice(-10);
+    if (target.length !== 10) return null;
+    const { data, error } = await this.supabase.from('employees').select('*');
+    if (error) return null;
+    const match = (data || []).find((emp: any) => {
+      const phone = String(emp?.phone || '')
+        .replace(/\D/g, '')
+        .slice(-10);
+      return (
+        phone === target &&
+        emp?.role === 'salesperson' &&
+        emp?.is_active !== false &&
+        emp?.assigned_procurement_employee_id
+      );
+    });
+    return match?.assigned_procurement_employee_id || null;
+  }
+
+  private async lookupSalespersonId(
+    salespersonPhone?: string | null,
+  ): Promise<string | null> {
+    const target = normalizePhone(salespersonPhone || '');
+    if (target.length !== 10) return null;
+    const { data, error } = await this.supabase
+      .from('employees')
+      .select('id, phone, role, is_active');
+    if (error) return null;
+    const matches = (data || []).filter(
+      (emp: any) =>
+        emp?.id &&
+        emp.is_active !== false &&
+        normalizePhone(emp.phone) === target,
+    );
+    const salesperson =
+      matches.find((emp: any) => emp.role === 'salesperson') || matches[0];
+    return salesperson?.id || null;
   }
 
   async createInquiry(data: any, salespersonPhone?: string) {
@@ -1700,15 +2301,32 @@ export class InquiriesService implements OnModuleInit {
       try {
         const { data: matchedCust } = await this.supabase
           .from('recurring_customers')
-          .select('assigned_salesperson_phone')
-          .ilike('customer_name', finalCustomerName.trim())
-          .limit(1);
-        if (
-          matchedCust &&
-          matchedCust.length > 0 &&
-          matchedCust[0].assigned_salesperson_phone
-        ) {
-          effectiveSalespersonPhone = matchedCust[0].assigned_salesperson_phone;
+          .select('assigned_salesperson_phone, is_active')
+          .ilike('customer_name', finalCustomerName.trim());
+        if (matchedCust && matchedCust.length > 0) {
+          const spDigits = String(effectiveSalespersonPhone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          const currentRepMatch =
+            spDigits && spDigits !== '0000000000'
+              ? matchedCust.find((c) => {
+                  const cDigits = String(c.assigned_salesperson_phone || '')
+                    .replace(/\D/g, '')
+                    .slice(-10);
+                  return cDigits === spDigits;
+                })
+              : null;
+
+          const chosen =
+            currentRepMatch ||
+            matchedCust.find(
+              (c) => c.is_active !== false && c.assigned_salesperson_phone,
+            ) ||
+            matchedCust[0];
+
+          if (chosen?.assigned_salesperson_phone) {
+            effectiveSalespersonPhone = chosen.assigned_salesperson_phone;
+          }
         }
       } catch (custLookupErr: any) {
         this.logger.warn(
@@ -1716,6 +2334,33 @@ export class InquiriesService implements OnModuleInit {
           custLookupErr.message,
         );
       }
+    }
+
+    let procurementEmployeeId: string | null = null;
+    let salespersonEmployeeId: string | null = null;
+    try {
+      procurementEmployeeId = await this.lookupProcurementOwner(
+        effectiveSalespersonPhone,
+      );
+      salespersonEmployeeId = await this.lookupSalespersonId(
+        effectiveSalespersonPhone,
+      );
+    } catch (routeErr: any) {
+      this.logger.warn('Procurement route lookup warning:', routeErr?.message);
+    }
+    let procurementNumber = nextProcurementNumber([]);
+    try {
+      const { data: existingNumbers, error: numberErr } = await this.supabase
+        .from('inquiries')
+        .select('procurement_number');
+      if (!numberErr) {
+        procurementNumber = nextProcurementNumber(existingNumbers || []);
+      }
+    } catch (numberErr: any) {
+      this.logger.warn(
+        'Procurement number lookup warning:',
+        numberErr?.message,
+      );
     }
 
     const payload: any = {
@@ -1730,13 +2375,33 @@ export class InquiriesService implements OnModuleInit {
       ai_extraction_json: aiExtractionJson,
       overall_confidence: Number(data.overall_confidence) || 0.95,
       created_at: nowIso,
+      pricing_status: 'awaiting_price',
+      procurement_number: procurementNumber,
     };
+    if (procurementEmployeeId) {
+      payload.procurement_employee_id = procurementEmployeeId;
+      payload.procurement_assigned_at = nowIso;
+    }
+    if (salespersonEmployeeId) {
+      payload.employee_id = salespersonEmployeeId;
+    }
 
-    const { data: created, error } = await this.supabase
+    let { data: created, error } = await this.supabase
       .from('inquiries')
       .insert(payload)
       .select()
       .single();
+
+    if (error && /procurement_number/i.test(error.message || '')) {
+      delete payload.procurement_number;
+      const retry = await this.supabase
+        .from('inquiries')
+        .insert(payload)
+        .select()
+        .single();
+      created = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       this.logger.error('Error inserting inquiry into Supabase:', error);
@@ -2214,7 +2879,7 @@ export class InquiriesService implements OnModuleInit {
       }
 
       this.logger.log(
-        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${stage}' in pipeline`,
+        `Successfully synced inquiry ${inquiryId} to deal ${dealId} with stage '${targetStage}' in pipeline`,
       );
       return dealId;
     } catch (err: any) {
@@ -2465,7 +3130,7 @@ MIDC Industrial Zone, Mumbai - 400001`
     id: string,
     payload: any,
     employee: any,
-    accessiblePhones?: string[] | null,
+    accessibleEmployeeIds?: string[] | null,
   ) {
     const { data: inquiry } = await this.supabase
       .from('inquiries')
@@ -2484,16 +3149,7 @@ MIDC Industrial Zone, Mumbai - 400001`
 
     if (!record)
       throw new NotFoundException('Inquiry or Order record not found');
-    if (accessiblePhones && accessiblePhones.length > 0) {
-      const hasAccess =
-        phoneInList(record.salesperson_phone, accessiblePhones) ||
-        phoneInList(record.sender_phone, accessiblePhones);
-      if (!hasAccess) {
-        throw new ForbiddenException(
-          'Access Denied: You do not have permission to send quotations for this record.',
-        );
-      }
-    }
+    await this.assertQuotationAccess(record, accessibleEmployeeIds);
 
     const content = this.buildQuotationEmailContent(record, payload);
     const employeeEmail = await this.resolveQuotationSenderEmail(employee);
@@ -2511,7 +3167,7 @@ MIDC Industrial Zone, Mumbai - 400001`
   async sendQuotation(
     id: string,
     payload: any,
-    accessiblePhones?: string[] | null,
+    accessibleEmployeeIds?: string[] | null,
     employee?: any,
   ) {
     const senderName =
@@ -2526,6 +3182,41 @@ MIDC Industrial Zone, Mumbai - 400001`
         .eq('id', id)
         .single();
       inquiry = inqData;
+      if (inquiry && payload) {
+        try {
+          const { data: storedLines } = await this.supabase
+            .from('inquiry_line_pricing')
+            .select('*')
+            .eq('inquiry_id', inquiry.id);
+          const available = (storedLines || []).filter(
+            (line: any) =>
+              line.line_status !== 'cannot_price' &&
+              Number(line.rate_per_mt) > 0,
+          );
+          if (available.length) {
+            const details = { ...(payload.details || {}) };
+            details.lineItems = available.map((line: any) => ({
+              line_key: line.line_key,
+              sku_text: line.sku_text,
+              quantity: line.quantity,
+              unit: line.unit,
+              rate: Number(line.rate_per_mt),
+              amount: Number(line.taxable_amount || 0),
+            }));
+            details.totalAmount = available.reduce(
+              (sum: number, line: any) =>
+                sum + Number(line.taxable_amount || 0),
+              0,
+            );
+            payload = { ...payload, details };
+          }
+        } catch (pricingErr: any) {
+          this.logger.warn(
+            'Stored pricing overlay skipped:',
+            pricingErr?.message,
+          );
+        }
+      }
 
       if (!inquiry) {
         const { data: dealData } = await this.supabase
@@ -2537,6 +3228,7 @@ MIDC Industrial Zone, Mumbai - 400001`
           isDealRecord = true;
           inquiry = {
             id: dealData.id,
+            employee_id: dealData.employee_id,
             customer_name: dealData.customer_name,
             customer_phone: dealData.customer_phone,
             salesperson_phone: dealData.salesperson_phone,
@@ -2557,16 +3249,7 @@ MIDC Industrial Zone, Mumbai - 400001`
         throw new NotFoundException('Inquiry or Order record not found');
       }
 
-      if (accessiblePhones && accessiblePhones.length > 0) {
-        const hasAccess =
-          phoneInList(inquiry.salesperson_phone, accessiblePhones) ||
-          phoneInList(inquiry.sender_phone, accessiblePhones);
-        if (!hasAccess) {
-          throw new ForbiddenException(
-            'Access Denied: You do not have permission to send quotations for this record.',
-          );
-        }
-      }
+      await this.assertQuotationAccess(inquiry, accessibleEmployeeIds);
 
       const customerEmail = (
         payload.customer_email ||
