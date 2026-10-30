@@ -100,4 +100,24 @@ describe('OTP login and logout logs', () => {
       employee_id: 'EMP-1',
     });
   });
+
+  it('names the employee when the session expires', async () => {
+    const { db, service, jwt } = setup();
+    jwt.verify.mockReturnValue({
+      sid: 'sid-2',
+      phone: employee.phone,
+      name: employee.name,
+      employee_id: employee.employee_id,
+    });
+
+    await service.recordLogout('tok', 'session_expired');
+
+    const logouts = db.store.activity_logs.filter(
+      (row) => row.action_type === 'logout',
+    );
+    expect(logouts).toHaveLength(1);
+    expect(logouts[0].description).toBe(
+      'Session expired. Asha (EMP-1) logged out.',
+    );
+  });
 });

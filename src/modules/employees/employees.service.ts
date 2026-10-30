@@ -22,6 +22,7 @@ import {
   PermissionsService,
   invalidatePermissions,
 } from '../roles/permissions.service';
+import { getCompanyLogoBuffer } from '../inquiries/quotation-email-html';
 
 export function normalizePhone(phone?: string): string {
   if (!phone) return '';
@@ -33,6 +34,109 @@ export function phoneMatches(phone1?: string, phone2?: string): boolean {
   const p1 = normalizePhone(phone1);
   const p2 = normalizePhone(phone2);
   return p1.length === 10 && p1 === p2;
+}
+
+const BUILTIN_ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  sales_manager: 'Sales Manager',
+  manager: 'Sales Manager',
+  salesperson: 'Salesperson',
+  procurement_manager: 'Procurement Manager',
+  procurement_person: 'Procurement Person',
+  finance: 'Finance / Accounts',
+  operations: 'Operations / Logistics',
+};
+
+/** Admin log text. Custom roles use the dashboard name, not role_…_1234. */
+function welcomeEscape(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export function welcomeEmail(input: {
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  loginUrl: string;
+}) {
+  const name = input.name.trim();
+  const email = input.email.trim();
+  const phone = input.phone.trim();
+  const role = input.role.trim();
+  const loginUrl = input.loginUrl.trim();
+  const text = [
+    `Hi ${name},`,
+    '',
+    'Welcome to Enlight Sigma',
+    '',
+    "We're pleased to have you onboard. Your account has been successfully created, and you have been granted access to the platform.",
+    '',
+    'Your Account Details',
+    '',
+    `- Name: ${name}`,
+    `- Registered Email: ${email}`,
+    `- WhatsApp Number: ${phone}`,
+    `- Assigned Role: ${role}`,
+    '',
+    'Getting Started',
+    '',
+    'You can now access Enlight Sigma using the link below:',
+    '',
+    loginUrl,
+    '',
+    'To log in, enter your registered credentials and complete the OTP verification process using your registered WhatsApp number.',
+    '',
+    'A Few Things to Remember:',
+    '- Your assigned role determines which modules and features you can access.',
+    '- Keep your login credentials and OTP confidential.',
+    '- Contact your administrator if you experience any login or access-related issues.',
+    '',
+    "We're excited to have you as part of the team and look forward to working together!",
+    '',
+    'Best Regards,',
+    'Enlight Metals Team',
+    'Enlight Sigma',
+  ].join('\n');
+  const html = `<p>Hi ${welcomeEscape(name)},</p>
+<p>Welcome to <strong>Enlight Sigma</strong></p>
+<p>We're pleased to have you onboard. Your account has been successfully created, and you have been granted access to the platform.</p>
+<p><strong>Your Account Details</strong></p>
+<ul>
+<li><strong>Name:</strong> ${welcomeEscape(name)}</li>
+<li><strong>Registered Email:</strong> ${welcomeEscape(email)}</li>
+<li><strong>WhatsApp Number:</strong> ${welcomeEscape(phone)}</li>
+<li><strong>Assigned Role:</strong> ${welcomeEscape(role)}</li>
+</ul>
+<p><strong>Getting Started</strong></p>
+<p>You can now access Enlight Sigma using the link below:</p>
+<p><a href="${welcomeEscape(loginUrl)}">Access Enlight Sigma</a></p>
+<p>To log in, enter your registered credentials and complete the OTP verification process using your registered WhatsApp number.</p>
+<p><strong>A Few Things to Remember:</strong></p>
+<ul>
+<li>Your assigned role determines which modules and features you can access.</li>
+<li>Keep your login credentials and OTP confidential.</li>
+<li>Contact your administrator if you experience any login or access-related issues.</li>
+</ul>
+<p>We're excited to have you as part of the team and look forward to working together!</p>
+<p>Best Regards,<br>Enlight Metals Team<br>Enlight Sigma</p>
+<p style="margin:16px 0 0;"><img src="cid:enlight-logo" alt="Enlight Metals" style="max-width:220px;height:auto;" /></p>`;
+  return { subject: 'Welcome to Enlight Sigma', text, html };
+}
+
+export function logRoleName(role: string, storedName?: string | null): string {
+  const stored = String(storedName || '').trim();
+  if (stored) return stored;
+  const key = String(role || '')
+    .trim()
+    .toLowerCase();
+  if (BUILTIN_ROLE_LABELS[key]) return BUILTIN_ROLE_LABELS[key];
+  const custom = key.match(/^role_(.+)_\d{4}$/);
+  if (custom) return custom[1];
+  return role;
 }
 
 export function phoneInList(phone?: string, list?: string[] | null): boolean {
@@ -198,6 +302,26 @@ export class EmployeesService {
       return data;
     } catch (error) {
       this.logger.error(`Error in findById for id ${id}:`, error);
+      return null;
+    }
+  }
+
+  async findByEmail(email: string) {
+    try {
+      const trimmed = String(email || '').trim();
+      if (!trimmed) return null;
+      const { data, error } = await this.supabase
+        .from('employees')
+        .select('id, name, employee_id, email')
+        .ilike(
+          'email',
+          trimmed.replace(/[%_\\]/g, (ch) => `\\${ch}`),
+        )
+        .limit(1);
+      if (error || !data?.length) return null;
+      return data[0];
+    } catch (error) {
+      this.logger.error(`Error in findByEmail:`, error);
       return null;
     }
   }
@@ -491,6 +615,109 @@ export class EmployeesService {
     };
   }
 
+  private async sendWelcomeEmail(input: {
+    name: string;
+    email: string;
+    phone: string;
+    role: string;
+  }): Promise<{ email_sent: boolean; email_notice: string }> {
+    const to = input.email.trim();
+    if (!to.includes('@')) {
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but no welcome email was sent because the email address is missing.`,
+      };
+    }
+    const key = process.env.RESEND_API_KEY || '';
+    if (!key) {
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but the welcome email was not sent. Email delivery is not configured.`,
+      };
+    }
+    const loginUrl =
+      process.env.FRONTEND_URL ||
+      process.env.DASHBOARD_URL ||
+      'https://app.enlightmetals.com';
+    const message = welcomeEmail({ ...input, email: to, loginUrl });
+    const logo = getCompanyLogoBuffer();
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'Enlight Metals <quotes@enlightmetals.com>',
+          to: [to],
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+          ...(logo
+            ? {
+                attachments: [
+                  {
+                    filename: 'enlight-logo.png',
+                    content: logo.toString('base64'),
+                    content_id: 'enlight-logo',
+                  },
+                ],
+              }
+            : {}),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.logger.warn(
+          `Welcome email failed: ${body?.message || res.status}`,
+        );
+        return {
+          email_sent: false,
+          email_notice: `User ${input.name} was invited, but the welcome email to ${to} could not be sent.`,
+        };
+      }
+      return {
+        email_sent: true,
+        email_notice: `Welcome email sent to ${to}.`,
+      };
+    } catch (err: any) {
+      this.logger.warn(`Welcome email failed: ${err?.message || err}`);
+      return {
+        email_sent: false,
+        email_notice: `User ${input.name} was invited, but the welcome email to ${to} could not be sent.`,
+      };
+    }
+  }
+
+  private emailTakenMessage(
+    email: string,
+    existing: { name?: string; employee_id?: string },
+  ) {
+    return `Email address ${email.trim()} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their email address first.`;
+  }
+
+  private async assertEmailAvailable(email?: string | null, exceptId?: string) {
+    const trimmed = String(email || '').trim();
+    if (!trimmed) return;
+    const existing = await this.findByEmail(trimmed);
+    if (existing && existing.id !== exceptId) {
+      throw new ConflictException(this.emailTakenMessage(trimmed, existing));
+    }
+  }
+
+  private async rethrowEmailConflict(error: any, email?: string | null) {
+    const detail = String(error?.details || error?.message || '');
+    if (error?.code !== '23505' || !/email/i.test(detail)) return;
+    const trimmed = String(email || '').trim();
+    const existing = trimmed ? await this.findByEmail(trimmed) : null;
+    throw new ConflictException(
+      existing
+        ? this.emailTakenMessage(trimmed, existing)
+        : 'This email address is already registered to another employee. Please unassign or change their email address first.',
+    );
+  }
+
   private assertManagerFitsRole(role: string, mgr: any) {
     const mgrRole = String(mgr?.role || '').toLowerCase();
     if (
@@ -528,6 +755,8 @@ export class EmployeesService {
           `Phone number ${dto.phone} is already registered to ${existing.name} (${existing.employee_id}). Please unassign or change their phone number first.`,
         );
       }
+
+      await this.assertEmailAvailable(dto.email);
 
       // Check duplicate employee_id
       const existingId = await this.findByEmployeeId(dto.employee_id);
@@ -594,8 +823,22 @@ export class EmployeesService {
           dto.assigned_salesperson_ids,
         );
       }
-      return data;
+      const roleName = await this.roleLabel(role);
+      const mail = await this.sendWelcomeEmail({
+        name: dto.name,
+        email: dto.email || '',
+        phone: dto.phone.startsWith('+') ? dto.phone : `+${dto.phone}`,
+        role: roleName,
+      });
+      return { ...data, ...mail };
     } catch (error) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      await this.rethrowEmailConflict(error, dto.email);
       this.logger.error('Error in create employee:', error);
       throw error;
     }
@@ -631,6 +874,8 @@ export class EmployeesService {
 
       const oldPhone = currentEmp.phone;
       const wasActive = currentEmp.is_active;
+
+      await this.assertEmailAvailable(dto.email, id);
 
       // 2. Validate duplicate phone conflict
       if (dto.phone) {
@@ -706,7 +951,7 @@ export class EmployeesService {
         await this.supabase.from('activity_logs').insert({
           timestamp: new Date().toISOString(),
           salesperson_name: currentEmp.name,
-          description: `Role changed from ${currentEmp.role} to ${dto.role}`,
+          description: `Role changed from ${await this.roleLabel(currentEmp.role)} to ${await this.roleLabel(dto.role)}`,
           module: 'Roles',
           source: 'dashboard',
           action_type: 'employee_role_changed',
@@ -783,6 +1028,7 @@ export class EmployeesService {
             `This phone number is already registered to another employee. Please change or unassign their phone number first.`,
           );
         }
+        await this.rethrowEmailConflict(error, dto.email);
       }
       this.logger.error(`Error in update for employee ${id}:`, error);
       throw error;
@@ -1272,21 +1518,12 @@ export class EmployeesService {
       const { data } = await this.supabase
         .from('roles')
         .select('name')
-        .eq('key', key)
+        .eq('id', key)
         .maybeSingle();
-      if (data?.name) return data.name;
+      return logRoleName(role, data?.name);
     } catch {
-      // ignore
+      return logRoleName(role);
     }
-    const builtins: Record<string, string> = {
-      admin: 'Admin',
-      sales_manager: 'Sales Manager',
-      manager: 'Sales Manager',
-      salesperson: 'Salesperson',
-      finance: 'Finance / Accounts',
-      operations: 'Operations / Logistics',
-    };
-    return builtins[key] || role;
   }
 
   // Generate next employee ID automatically
