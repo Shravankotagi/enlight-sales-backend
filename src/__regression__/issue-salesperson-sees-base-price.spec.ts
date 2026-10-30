@@ -98,9 +98,9 @@ describe('salesperson line pricing follows employees.id', () => {
       inquiries: [inquiry({ employee_id: 'other' })],
     });
 
-    await expect(service.findOne('inq-1', null, null, caller)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.findOne('inq-1', null, null, caller),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('denies a matching phone that belongs to no employee', async () => {
@@ -114,9 +114,9 @@ describe('salesperson line pricing follows employees.id', () => {
       employees: [],
     });
 
-    await expect(service.findOne('inq-1', null, null, caller)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.findOne('inq-1', null, null, caller),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('stores the salesperson employees.id when an inquiry is created', async () => {

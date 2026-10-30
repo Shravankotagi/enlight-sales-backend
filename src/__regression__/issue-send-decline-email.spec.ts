@@ -27,7 +27,11 @@ const lines = [
   },
 ];
 
-const employee = { id: 'sales-1', email: 'sales@enlightmetals.com', phone: '919811111111' };
+const employee = {
+  id: 'sales-1',
+  email: 'sales@enlightmetals.com',
+  phone: '919811111111',
+};
 
 function serviceFor() {
   const db = createSupabaseMock({
@@ -52,14 +56,20 @@ describe('send decline email', () => {
   it('names the unavailable material and keeps the fixed CC addresses', async () => {
     const { service, db } = serviceFor();
     const preview = await service.declinePreview(inquiry, lines, employee);
-    expect(preview.subject).toBe('Enlight Metals - Quotation Update for Om Fabricators');
+    expect(preview.subject).toBe(
+      'Enlight Metals - Quotation Update for Om Fabricators',
+    );
     expect(preview.body).toContain('Om Fabricators');
     expect(preview.body).toContain('HR PLATE');
     expect(preview.body).toMatch(/not available/i);
     expect(preview.customer_email).toBe('');
     expect(preview.cc[0]).toBe('sales@enlightmetals.com');
     expect(preview.cc).toEqual(
-      expect.arrayContaining(['dj@enlightmetals.com', 'vedant@enlightmetals.com', 'sales@enlightmetals.com']),
+      expect.arrayContaining([
+        'dj@enlightmetals.com',
+        'vedant@enlightmetals.com',
+        'sales@enlightmetals.com',
+      ]),
     );
 
     await expect(
@@ -93,7 +103,9 @@ describe('send decline email', () => {
     expect(payload.html).toContain('HR PLATE');
     expect(payload.attachments?.[0]?.content_id).toBe('enlight-logo');
     const stored = db.store.inquiries.find((row) => row.id === 'inq-decline');
-    expect(stored.ai_extraction_json.customer_email).toBe('buyer@omfabricators.com');
+    expect(stored.ai_extraction_json.customer_email).toBe(
+      'buyer@omfabricators.com',
+    );
     expect(stored.decline_sent_at).toBeTruthy();
   });
 
@@ -102,11 +114,13 @@ describe('send decline email', () => {
       tables: {
         inquiries: [{ ...inquiry }],
         inquiry_line_pricing: [],
-        employees: [{
-          id: 'sales-2',
-          phone: '919811111111',
-          email: 'sales@enlightmetals.com',
-        }],
+        employees: [
+          {
+            id: 'sales-2',
+            phone: '919811111111',
+            email: 'sales@enlightmetals.com',
+          },
+        ],
       },
     });
     const service = new InquiryPricingService(asSupabaseService(db.client), {
@@ -114,11 +128,16 @@ describe('send decline email', () => {
     } as any);
     const session = { id: 'sales-2', phone: '919811111111' };
     const preview = await service.declinePreview(inquiry, lines, session);
-    expect(preview.subject).toBe('Enlight Metals - Quotation Update for Om Fabricators');
+    expect(preview.subject).toBe(
+      'Enlight Metals - Quotation Update for Om Fabricators',
+    );
     expect(preview.cc[0]).toBe('sales@enlightmetals.com');
     expect(preview.employee_email).toBe('sales@enlightmetals.com');
     expect(preview.cc).toEqual(
-      expect.arrayContaining(['dj@enlightmetals.com', 'vedant@enlightmetals.com']),
+      expect.arrayContaining([
+        'dj@enlightmetals.com',
+        'vedant@enlightmetals.com',
+      ]),
     );
 
     const fetchMock = jest.fn(async () => ({ ok: true })) as jest.Mock;
@@ -132,11 +151,18 @@ describe('send decline email', () => {
     });
     const request = fetchMock.mock.calls[0][1] as { body: string };
     const payload = JSON.parse(request.body);
-    expect(payload.subject).toBe('Enlight Metals - Quotation Update for Om Fabricators');
+    expect(payload.subject).toBe(
+      'Enlight Metals - Quotation Update for Om Fabricators',
+    );
     expect(payload.cc).toEqual(
-      expect.arrayContaining(['dj@enlightmetals.com', 'vedant@enlightmetals.com']),
+      expect.arrayContaining([
+        'dj@enlightmetals.com',
+        'vedant@enlightmetals.com',
+      ]),
     );
     expect(payload.cc).not.toContain('sales@enlightmetals.com');
-    expect(db.store.inquiries[0].ai_extraction_json.customer_email).toBe('buyer@omfabricators.com');
+    expect(db.store.inquiries[0].ai_extraction_json.customer_email).toBe(
+      'buyer@omfabricators.com',
+    );
   });
 });

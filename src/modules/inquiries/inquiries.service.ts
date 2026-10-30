@@ -1687,7 +1687,7 @@ export class InquiriesService implements OnModuleInit {
   async listTonnageReviews(scope: ProcurementScope) {
     const columns =
       'id, procurement_number, procurement_employee_id, salesperson_phone, employee_id, status, tonnage_review, tonnage_review_open';
-    let { data, error } = await this.supabase
+    const { data, error } = await this.supabase
       .from('inquiries')
       .select(columns)
       .eq('tonnage_review_open', true);
@@ -1781,8 +1781,7 @@ export class InquiriesService implements OnModuleInit {
         await this.stampRoutedOwners([visible]);
         if (visible.procurement_employee_id) {
           existingInq.procurement_employee_id = visible.procurement_employee_id;
-          existingInq.procurement_assigned_at =
-            visible.procurement_assigned_at;
+          existingInq.procurement_assigned_at = visible.procurement_assigned_at;
         }
         if (!matchesProcurementScope(visible, procurementScope)) {
           throw new ForbiddenException(

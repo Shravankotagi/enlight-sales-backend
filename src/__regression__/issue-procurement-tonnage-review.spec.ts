@@ -46,8 +46,18 @@ function serviceFor(
       inquiry_line_pricing: [],
       deals,
       employees: [
-        { id: person, name: 'Rishi Mehta', phone: '919800000001', role: 'procurement_person' },
-        { id: 'sales-1', name: 'Akruti', phone: '919811111111', role: 'salesperson' },
+        {
+          id: person,
+          name: 'Rishi Mehta',
+          phone: '919800000001',
+          role: 'procurement_person',
+        },
+        {
+          id: 'sales-1',
+          name: 'Akruti',
+          phone: '919811111111',
+          role: 'salesperson',
+        },
       ],
       recurring_customers: [],
     },
@@ -72,7 +82,14 @@ function lines(quantity: number, unit = 'MT', rate = 0) {
 describe('procurement tonnage review', () => {
   it('reopens a Price Ready inquiry when the weight changes and stores the diff', async () => {
     const { db, inquiries, logActivity } = serviceFor(readyInquiry());
-    await inquiries.updateStatus('inq-1', 'confirmed', lines(18), null, null, null);
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      lines(18),
+      null,
+      null,
+      null,
+    );
 
     const row = db.store.inquiries[0];
     expect(row.pricing_status).toBe('awaiting_price');
@@ -126,19 +143,44 @@ describe('procurement tonnage review', () => {
 
   it('keeps the original weight when the tonnage changes again before procurement saves', async () => {
     const { db, inquiries } = serviceFor(readyInquiry());
-    await inquiries.updateStatus('inq-1', 'confirmed', lines(18), null, null, null);
-    await inquiries.updateStatus('inq-1', 'confirmed', lines(20), null, null, null);
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      lines(18),
+      null,
+      null,
+      null,
+    );
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      lines(20),
+      null,
+      null,
+      null,
+    );
 
     const review = db.store.inquiries[0].tonnage_review;
     expect(db.store.inquiries[0].pricing_status).toBe('awaiting_price');
     expect(review.previous_total_mt).toBe(12);
     expect(review.next_total_mt).toBe(20);
-    expect(review.lines[0]).toEqual({ sku_text: 'HR Coil', from_mt: 12, to_mt: 20 });
+    expect(review.lines[0]).toEqual({
+      sku_text: 'HR Coil',
+      from_mt: 12,
+      to_mt: 20,
+    });
   });
 
   it('clears the review when procurement saves a base price', async () => {
     const { db, inquiries } = serviceFor(readyInquiry());
-    await inquiries.updateStatus('inq-1', 'confirmed', lines(18), null, null, null);
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      lines(18),
+      null,
+      null,
+      null,
+    );
     const pricing = new InquiryPricingService(asSupabaseService(db.client), {
       logActivity: () => undefined,
     } as any);
@@ -165,7 +207,14 @@ describe('procurement tonnage review', () => {
 
   it('shows the review only to the procurement person who can see that inquiry', async () => {
     const { db, inquiries } = serviceFor(readyInquiry());
-    await inquiries.updateStatus('inq-1', 'confirmed', lines(18), null, null, null);
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      lines(18),
+      null,
+      null,
+      null,
+    );
     db.store.inquiries.push(
       readyInquiry({
         id: 'inq-other',
@@ -238,7 +287,14 @@ describe('procurement tonnage review', () => {
         },
       ],
     };
-    await inquiries.updateStatus('inq-1', 'confirmed', edited, null, null, null);
+    await inquiries.updateStatus(
+      'inq-1',
+      'confirmed',
+      edited,
+      null,
+      null,
+      null,
+    );
 
     const row = db.store.inquiries[0];
     expect(row.status).toBe('review');

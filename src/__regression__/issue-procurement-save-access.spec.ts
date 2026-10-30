@@ -101,9 +101,9 @@ describe('procurement save access uses the list salesperson', () => {
       ],
     });
 
-    await expect(service.findOne('inq-1', null, personScope)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.findOne('inq-1', null, personScope),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('denies an inquiry whose salesperson is not routed to this person', async () => {
@@ -111,8 +111,8 @@ describe('procurement save access uses the list salesperson', () => {
       inquiries: [inquiry({ sender_phone: '919111111111' })],
     });
 
-    await expect(service.findOne('inq-1', null, personScope)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.findOne('inq-1', null, personScope),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

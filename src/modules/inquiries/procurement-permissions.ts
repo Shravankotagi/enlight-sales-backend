@@ -32,10 +32,12 @@ export const PROCUREMENT_INQUIRY_DEFAULTS: Record<
   },
 };
 
-export function resolveProcurementPermissions(employee: {
-  role?: string | null;
-  permissions?: Record<string, boolean> | null;
-} | null): Record<string, boolean> {
+export function resolveProcurementPermissions(
+  employee: {
+    role?: string | null;
+    permissions?: Record<string, boolean> | null;
+  } | null,
+): Record<string, boolean> {
   const role = String(employee?.role || '').toLowerCase();
   const defaults = {
     ...(PROCUREMENT_INQUIRY_DEFAULTS[role] || {}),
@@ -56,7 +58,9 @@ export function canViewInquiries(permissions: Record<string, boolean>) {
 }
 
 export function canEditInquiries(permissions: Record<string, boolean>) {
-  return canViewInquiries(permissions) && permissions['inquiries.edit'] === true;
+  return (
+    canViewInquiries(permissions) && permissions['inquiries.edit'] === true
+  );
 }
 
 export function canFillBasePrices(permissions: Record<string, boolean>) {

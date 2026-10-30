@@ -326,7 +326,12 @@ export class InquiryPricingService {
     };
   }
 
-  async sendDecline(inquiry: any, lines: any[], employee: any, payload: any = {}) {
+  async sendDecline(
+    inquiry: any,
+    lines: any[],
+    employee: any,
+    payload: any = {},
+  ) {
     const preview = await this.declinePreview(inquiry, lines, employee);
     const senderEmail = await this.resolveDeclineSenderEmail(employee);
     const customerEmail = String(
@@ -383,7 +388,14 @@ export class InquiryPricingService {
       entity_id: inquiry.id,
       entity_type: 'inquiry',
     });
-    return { ...preview, subject, body, customer_email: customerEmail, cc, sent };
+    return {
+      ...preview,
+      subject,
+      body,
+      customer_email: customerEmail,
+      cc,
+      sent,
+    };
   }
 
   private async upsert(

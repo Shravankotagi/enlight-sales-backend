@@ -261,7 +261,9 @@ describe('procurement pricing workflow', () => {
       { line_status: 'cannot_price' },
       { line_status: 'cannot_price' },
     ]);
-    expect(preview.subject).toBe('Enlight Metals - Quotation Update for Alpha Metals');
+    expect(preview.subject).toBe(
+      'Enlight Metals - Quotation Update for Alpha Metals',
+    );
     expect(preview.body).toContain('Alpha Metals');
     expect(preview.body).toMatch(/unable to offer/i);
   });

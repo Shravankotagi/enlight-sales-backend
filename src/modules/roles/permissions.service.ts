@@ -94,7 +94,9 @@ export class PermissionsService {
 
     const { data, error } = await this.supabase
       .from('employees')
-      .select('id, employee_id, phone, email, name, role, permissions, is_active')
+      .select(
+        'id, employee_id, phone, email, name, role, permissions, is_active',
+      )
       .eq('id', employeeId)
       .maybeSingle();
 
@@ -128,7 +130,9 @@ export class PermissionsService {
       if (digits) {
         const { data, error } = await this.supabase
           .from('employees')
-          .select('id, employee_id, phone, email, name, role, permissions, is_active')
+          .select(
+            'id, employee_id, phone, email, name, role, permissions, is_active',
+          )
           .ilike('phone', `%${digits}`)
           .limit(5);
         if (error) {
@@ -152,7 +156,9 @@ export class PermissionsService {
   private async findEmployee(column: 'employee_id', value: string) {
     const { data, error } = await this.supabase
       .from('employees')
-      .select('id, employee_id, phone, email, name, role, permissions, is_active')
+      .select(
+        'id, employee_id, phone, email, name, role, permissions, is_active',
+      )
       .eq(column, value)
       .maybeSingle();
     if (error) {

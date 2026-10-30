@@ -10,7 +10,7 @@ const valid = {
   customer_name: 'PQR Steel',
   contact_person: 'Ravi',
   customer_phone: '9876543210',
-  delivery_location: 'Pune',
+  customer_address: 'Pune',
 };
 
 function serviceWith(tables: Record<string, any[]> = {}) {
@@ -27,16 +27,24 @@ describe('CustomersService createCustomer', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('rejects an invalid GST number', async () => {
+  it('stores a GST value that is not a GSTIN', async () => {
     const { service } = serviceWith();
-    await expect(
-      service.createCustomer({ ...valid, customer_gst: 'NOTGST' }, employee),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const created = await service.createCustomer(
+      { ...valid, customer_gst: 'NOTGST' },
+      employee,
+    );
+    expect(created.customer_gst).toBe('NOTGST');
   });
 
   it('returns 409 when an active customer already has that name', async () => {
     const { service } = serviceWith({
-      recurring_customers: [{ customer_name: 'pqr steel', is_active: true }],
+      recurring_customers: [
+        {
+          customer_name: 'pqr steel',
+          is_active: true,
+          assigned_salesperson_phone: '918000000000',
+        },
+      ],
     });
     await expect(
       service.createCustomer(valid, employee),
@@ -55,9 +63,9 @@ describe('CustomersService createCustomer', () => {
     );
 
     expect(created.assigned_salesperson_phone).toBe(employee.phone);
-    expect(created.customer_phone).toBe('9876543210');
+    expect(created.customer_phone).toBe('919876543210');
     expect(created.customer_gst).toBe('29ABCDE1234F1Z5');
-    expect(created.notes).toBe('Email: a@b.co');
+    expect(created.notes).toBe('Email: a@b.co | [State: Karnataka (29)]');
     expect(db.store.kra_logs).toHaveLength(2);
     expect(db.store.activity_logs[0].description).toBe(
       'New customer PQR Steel added',

@@ -68,7 +68,9 @@ describe('procurement linked deal stage', () => {
       },
     });
 
-    const rows = await inquiriesService(db).findAll({ procurementScope: scope });
+    const rows = await inquiriesService(db).findAll({
+      procurementScope: scope,
+    });
     const row = rows.find((item: any) => item.id === 'inq-quote');
     expect(row.linked_deal_stage).toBe('won');
     expect(row.display_stage).toBe('won');
@@ -105,13 +107,15 @@ describe('procurement linked deal stage', () => {
       },
     });
 
-    const rows = await inquiriesService(db).findAll({ procurementScope: scope });
-    expect(rows.find((item: any) => item.id === 'inq-newer')?.linked_deal_stage).toBe(
-      'quoted',
-    );
-    expect(rows.find((item: any) => item.id === 'inq-newer')?.display_stage).toBe(
-      'quoted',
-    );
+    const rows = await inquiriesService(db).findAll({
+      procurementScope: scope,
+    });
+    expect(
+      rows.find((item: any) => item.id === 'inq-newer')?.linked_deal_stage,
+    ).toBe('quoted');
+    expect(
+      rows.find((item: any) => item.id === 'inq-newer')?.display_stage,
+    ).toBe('quoted');
   });
 
   it('uses one normalized status rule when no linked deal exists', async () => {
@@ -135,7 +139,9 @@ describe('procurement linked deal stage', () => {
       },
     });
 
-    const rows = await inquiriesService(db).findAll({ procurementScope: scope });
+    const rows = await inquiriesService(db).findAll({
+      procurementScope: scope,
+    });
     expect(rows.find((item: any) => item.id === 'inq-po')?.display_stage).toBe(
       'won',
     );

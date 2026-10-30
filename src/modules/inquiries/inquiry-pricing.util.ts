@@ -111,7 +111,8 @@ export interface TonnageReview {
   baseline: TonnageReviewBaseline[];
 }
 
-const roundMt = (value: number) => Math.round((Number(value) || 0) * 1000) / 1000;
+const roundMt = (value: number) =>
+  Math.round((Number(value) || 0) * 1000) / 1000;
 
 function isManualMt(item: any) {
   const flag = item?.is_manual_mt;
@@ -193,7 +194,8 @@ export function tonnageReviewPatch(input: {
   const countNow = Math.max(before.length, after.length);
   let weightChanged = before.length !== after.length;
   for (let index = 0; index < countNow; index += 1) {
-    if ((before[index]?.mt ?? 0) !== (after[index]?.mt ?? 0)) weightChanged = true;
+    if ((before[index]?.mt ?? 0) !== (after[index]?.mt ?? 0))
+      weightChanged = true;
   }
   if (!weightChanged) return null;
 
@@ -215,7 +217,8 @@ export function tonnageReviewPatch(input: {
     next += to;
     if (from !== to) {
       lines.push({
-        sku_text: after[index]?.sku_text || baseline[index]?.sku_text || 'Material',
+        sku_text:
+          after[index]?.sku_text || baseline[index]?.sku_text || 'Material',
         from_mt: from,
         to_mt: to,
       });
@@ -400,7 +403,9 @@ export function linkedDealStage(
   inquiryId?: string | null,
 ): string | null {
   if (!inquiryId) return null;
-  const matches = (deals || []).filter((deal) => deal?.inquiry_id === inquiryId);
+  const matches = (deals || []).filter(
+    (deal) => deal?.inquiry_id === inquiryId,
+  );
   if (!matches.length) return null;
   matches.sort((a, b) => {
     const timeA = new Date(a?.created_at || 0).getTime() || 0;
@@ -437,7 +442,9 @@ export function displayStage(
   inquiryId?: string | null,
 ): string {
   const normalizePipelineStage = (value: unknown): string | null => {
-    const stage = String(value || '').toLowerCase().trim();
+    const stage = String(value || '')
+      .toLowerCase()
+      .trim();
     if (stage === 'qualified') return 'quoted';
     if (stage === 'hold') return 'on_hold';
     return ['won', 'lost', 'negotiation', 'quoted', 'on_hold'].includes(stage)
@@ -451,9 +458,15 @@ export function displayStage(
   const direct = normalizePipelineStage(inquiry?.stage);
   if (direct) return direct;
 
-  const status = String(inquiry?.status || '').toLowerCase().trim();
-  const inquiryType = String(inquiry?.inquiry_type || '').toLowerCase().trim();
-  const sourceChannel = String(inquiry?.source_channel || '').toLowerCase().trim();
+  const status = String(inquiry?.status || '')
+    .toLowerCase()
+    .trim();
+  const inquiryType = String(inquiry?.inquiry_type || '')
+    .toLowerCase()
+    .trim();
+  const sourceChannel = String(inquiry?.source_channel || '')
+    .toLowerCase()
+    .trim();
 
   if (
     (inquiryType === 'purchase_order' ||

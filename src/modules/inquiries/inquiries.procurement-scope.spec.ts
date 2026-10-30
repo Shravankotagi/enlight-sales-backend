@@ -91,7 +91,10 @@ describe('InquiriesService procurement scope', () => {
   it('returns stamped team rows for a manager, without throwing on empty ids', async () => {
     const service = createService();
     const managerRows = await service.findAll({
-      procurementScope: { ids: ['mgr', 'person'], includeUnassignedPool: false },
+      procurementScope: {
+        ids: ['mgr', 'person'],
+        includeUnassignedPool: false,
+      },
     });
     expect(managerRows.map((row: any) => row.id).sort()).toEqual(
       ['mine', 'team'].sort(),

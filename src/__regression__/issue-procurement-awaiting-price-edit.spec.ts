@@ -13,7 +13,10 @@ import {
 
 const scope = { ids: ['person'], includeUnassignedPool: false };
 
-function inquiry(pricingStatus: string, createdAt = '2026-10-20T00:00:00.000Z') {
+function inquiry(
+  pricingStatus: string,
+  createdAt = '2026-10-20T00:00:00.000Z',
+) {
   return {
     id: 'inq-1',
     procurement_number: 'PR-30011',
@@ -27,7 +30,9 @@ function inquiry(pricingStatus: string, createdAt = '2026-10-20T00:00:00.000Z') 
 }
 
 function controllerFor(row: any) {
-  const saveProcurement = jest.fn(async () => ({ pricing_status: 'price_ready' }));
+  const saveProcurement = jest.fn(async () => ({
+    pricing_status: 'price_ready',
+  }));
   const inquiries = new InquiriesController(
     { findOne: async () => row } as any,
     {

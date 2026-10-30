@@ -325,7 +325,12 @@ export class InquiriesController {
     }
     const inquiry = await this.assertInquiryAccess(employee, id);
     const lines = await this.inquiryPricingService.linesFor(id);
-    return this.inquiryPricingService.sendDecline(inquiry, lines, employee, body);
+    return this.inquiryPricingService.sendDecline(
+      inquiry,
+      lines,
+      employee,
+      body,
+    );
   }
 
   private async assertInquiryAccess(employee: any, id: string) {
