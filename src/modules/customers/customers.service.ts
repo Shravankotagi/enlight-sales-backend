@@ -28,6 +28,42 @@ function extractCustomerState(customer: any): string | null {
   return resolved ? resolved.label : explicitFromNotes;
 }
 
+function extractCustomerIndustry(customer: any): string | null {
+  if (!customer) return null;
+  if (
+    customer.industry &&
+    typeof customer.industry === 'string' &&
+    customer.industry.trim()
+  ) {
+    return customer.industry.trim();
+  }
+  if (typeof customer.notes === 'string') {
+    const m = customer.notes.match(
+      /(?:\[Industry:\s*([^\]]+)\]|Industry:\s*([^|;\n\r]+))/i,
+    );
+    if (m && (m[1] || m[2])) return (m[1] || m[2]).trim();
+  }
+  return null;
+}
+
+function extractCustomerRegion(customer: any): string | null {
+  if (!customer) return null;
+  if (
+    customer.region &&
+    typeof customer.region === 'string' &&
+    customer.region.trim()
+  ) {
+    return customer.region.trim();
+  }
+  if (typeof customer.notes === 'string') {
+    const m = customer.notes.match(
+      /(?:\[Region:\s*([^\]]+)\]|Region:\s*([^|;\n\r]+))/i,
+    );
+    if (m && (m[1] || m[2])) return (m[1] || m[2]).trim();
+  }
+  return null;
+}
+
 function buildMultiFieldOrFilter(
   salespersonPhones?: string[] | string,
   fieldNames: string[] = ['salesperson_phone'],
@@ -431,6 +467,8 @@ export class CustomersService {
       if (error) throw error;
       return (data || []).map((c: any) => ({
         ...c,
+        industry: extractCustomerIndustry(c),
+        region: extractCustomerRegion(c) || extractCustomerState(c),
         customer_state: extractCustomerState(c),
       }));
     } catch (error) {
@@ -1032,8 +1070,34 @@ export class CustomersService {
         },
       );
 
+      let derivedIndustry = extractCustomerIndustry(customer);
+      if (!derivedIndustry && visible.visits && visible.visits.length > 0) {
+        const visitWithType = visible.visits.find(
+          (v: any) => v.customer_type && String(v.customer_type).trim() !== '',
+        );
+        if (visitWithType) {
+          derivedIndustry = String(visitWithType.customer_type).trim();
+        }
+      }
+
+      let derivedRegion = extractCustomerRegion(customer);
+      if (!derivedRegion && visible.visits && visible.visits.length > 0) {
+        const visitWithLoc = visible.visits.find(
+          (v: any) =>
+            v.delivery_location && String(v.delivery_location).trim() !== '',
+        );
+        if (visitWithLoc) {
+          derivedRegion = String(visitWithLoc.delivery_location).trim();
+        }
+      }
+      if (!derivedRegion) {
+        derivedRegion = extractCustomerState(customer);
+      }
+
       return {
         ...customer,
+        industry: derivedIndustry,
+        region: derivedRegion,
         customer_state: extractCustomerState(customer),
         assigned_salesperson_name: assignedSalespersonName,
         last_order_date: visible.last_order_date,
@@ -1095,13 +1159,15 @@ export class CustomersService {
       let visitsQuery = this.supabase
         .from('customer_visits')
         .select(
-          'customer_name, person_met, contact_no, visited_at, salesperson_phone',
+          'customer_name, person_met, contact_no, visited_at, salesperson_phone, customer_type, delivery_location, product_details',
         )
         .order('visited_at', { ascending: false });
 
       let inquiriesQuery = this.supabase
         .from('inquiries')
-        .select('sender_name, sender_phone, created_at, salesperson_phone')
+        .select(
+          'sender_name, sender_phone, created_at, salesperson_phone, raw_text, ai_extraction_json',
+        )
         .order('created_at', { ascending: false });
 
       let complaintsQuery = this.supabase
@@ -1349,8 +1415,81 @@ export class CustomersService {
 
         const repName = repPhone ? empMap.get(repPhone) || null : null;
 
+        let derivedIndustry = extractCustomerIndustry(customer);
+        if (!derivedIndustry && customerVisits.length > 0) {
+          const visitWithType = customerVisits.find(
+            (v: any) =>
+              v.customer_type && String(v.customer_type).trim() !== '',
+          );
+          if (visitWithType) {
+            derivedIndustry = String(visitWithType.customer_type).trim();
+          }
+        }
+
+        let derivedRegion = extractCustomerRegion(customer);
+        if (!derivedRegion && customerVisits.length > 0) {
+          const visitWithLoc = customerVisits.find(
+            (v: any) =>
+              v.delivery_location && String(v.delivery_location).trim() !== '',
+          );
+          if (visitWithLoc) {
+            derivedRegion = String(visitWithLoc.delivery_location).trim();
+          }
+        }
+        if (!derivedRegion) {
+          derivedRegion = extractCustomerState(customer);
+        }
+
+        const trackedProductsSet = new Set<string>();
+        customerWonDeals.forEach((d: any) => {
+          if (Array.isArray(d.deal_items)) {
+            d.deal_items.forEach((it: any) => {
+              const name = it.sku_text || it.product_name || it.description;
+              if (name && typeof name === 'string' && name.trim().length > 1) {
+                trackedProductsSet.add(name.trim());
+              }
+            });
+          }
+        });
+        customerInquiries.forEach((inq: any) => {
+          const lineItems = inq.ai_extraction_json?.line_items;
+          if (Array.isArray(lineItems)) {
+            lineItems.forEach((it: any) => {
+              const name =
+                it.sku_text ||
+                it.product_name ||
+                it.material_description ||
+                it.description;
+              if (name && typeof name === 'string' && name.trim().length > 1) {
+                trackedProductsSet.add(name.trim());
+              }
+            });
+          }
+          const req = inq.ai_extraction_json?.product_requirement;
+          if (
+            req &&
+            typeof req === 'string' &&
+            req.trim().length > 1 &&
+            req.length < 60
+          ) {
+            trackedProductsSet.add(req.trim());
+          }
+        });
+        customerVisits.forEach((v: any) => {
+          if (v.product_details && typeof v.product_details === 'string') {
+            const parts = v.product_details
+              .split(/[,;\n]/)
+              .map((p: string) => p.trim())
+              .filter((p: string) => p.length > 1 && p.length < 50);
+            parts.forEach((p: string) => trackedProductsSet.add(p));
+          }
+        });
+
         results.push({
           ...customer,
+          industry: derivedIndustry,
+          region: derivedRegion,
+          tracked_products: Array.from(trackedProductsSet),
           customer_state: extractCustomerState(customer),
           assigned_salesperson_name: repName,
           last_order_date: effectiveLastOrderStr,
@@ -1660,6 +1799,10 @@ export class CustomersService {
     const notesParts: string[] = [];
     if (email) notesParts.push(`Email: ${email}`);
     if (resolvedState) notesParts.push(`[State: ${resolvedState}]`);
+    if ((dto as any).industry)
+      notesParts.push(`[Industry: ${String((dto as any).industry).trim()}]`);
+    if ((dto as any).region)
+      notesParts.push(`[Region: ${String((dto as any).region).trim()}]`);
     const notes = notesParts.length > 0 ? notesParts.join(' | ') : null;
 
     if (check.existing && check.isUnassigned) {
@@ -1687,6 +1830,8 @@ export class CustomersService {
       return {
         ...updated,
         customer_state: extractCustomerState(updated),
+        industry: extractCustomerIndustry(updated),
+        region: extractCustomerRegion(updated),
       };
     }
 
@@ -1764,6 +1909,8 @@ export class CustomersService {
     return {
       ...created,
       customer_state: extractCustomerState(created),
+      industry: extractCustomerIndustry(created),
+      region: extractCustomerRegion(created),
     };
   }
 
@@ -1875,6 +2022,36 @@ export class CustomersService {
             : `[State: ${stateVal}]`
           : baseNotes || null;
       }
+      if (data.industry !== undefined) {
+        const indVal = String(data.industry ?? '').trim();
+        const baseNotes = String(
+          updatePayload.notes !== undefined
+            ? updatePayload.notes
+            : customerRecord?.notes || '',
+        )
+          .replace(/\[Industry:\s*[^\]]+\]\s*/gi, '')
+          .trim();
+        updatePayload.notes = indVal
+          ? baseNotes
+            ? `${baseNotes} [Industry: ${indVal}]`
+            : `[Industry: ${indVal}]`
+          : baseNotes || null;
+      }
+      if (data.region !== undefined) {
+        const regVal = String(data.region ?? '').trim();
+        const baseNotes = String(
+          updatePayload.notes !== undefined
+            ? updatePayload.notes
+            : customerRecord?.notes || '',
+        )
+          .replace(/\[Region:\s*[^\]]+\]\s*/gi, '')
+          .trim();
+        updatePayload.notes = regVal
+          ? baseNotes
+            ? `${baseNotes} [Region: ${regVal}]`
+            : `[Region: ${regVal}]`
+          : baseNotes || null;
+      }
       if (data.is_active !== undefined)
         updatePayload.is_active = Boolean(data.is_active);
 
@@ -1934,6 +2111,10 @@ export class CustomersService {
           }
           return {
             ...updatedUnassigned,
+            industry: extractCustomerIndustry(updatedUnassigned),
+            region:
+              extractCustomerRegion(updatedUnassigned) ||
+              extractCustomerState(updatedUnassigned),
             customer_state: extractCustomerState(updatedUnassigned),
           };
         }
@@ -1958,6 +2139,9 @@ export class CustomersService {
         }
         return {
           ...created,
+          industry: extractCustomerIndustry(created),
+          region:
+            extractCustomerRegion(created) || extractCustomerState(created),
           customer_state: extractCustomerState(created),
         };
       }
@@ -1976,6 +2160,8 @@ export class CustomersService {
       }
       return {
         ...updated,
+        industry: extractCustomerIndustry(updated),
+        region: extractCustomerRegion(updated) || extractCustomerState(updated),
         customer_state: extractCustomerState(updated),
       };
     } catch (error) {

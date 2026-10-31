@@ -3319,6 +3319,9 @@ export class KraService {
           .limit(1);
 
         if (!existing || existing.length === 0) {
+          const notes = data.customer_type
+            ? `[Industry: ${String(data.customer_type).trim()}]`
+            : null;
           await this.supabase.from('recurring_customers').insert({
             customer_name: cName,
             contact_person:
@@ -3331,6 +3334,7 @@ export class KraService {
             avg_order_frequency_days: 30,
             is_active: true,
             assigned_salesperson_phone: effectiveSalespersonPhone,
+            notes,
             created_at: visited_at,
           });
         } else {

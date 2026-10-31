@@ -45,20 +45,50 @@ export class OtpService {
 
     const clean = phone.replace(/\D/g, '');
     const to = clean.length === 10 ? `91${clean}` : clean;
+    const templateName = (
+      process.env.WHATSAPP_OTP_TEMPLATE ||
+      process.env.WHATSAPP_VISIT_OTP_TEMPLATE ||
+      ''
+    ).trim();
 
     const message = ` *Enlight Sigma*\n\nYour OTP is: *${otp}*\n\nValid for 10 minutes. Do not share with anyone.`;
 
+    const getPayload = (useTemplate: boolean) => {
+      if (useTemplate && templateName) {
+        return {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'template',
+          template: {
+            name: templateName,
+            language: { code: 'en' },
+            components: [
+              {
+                type: 'body',
+                parameters: [{ type: 'text', text: otp }],
+              },
+            ],
+          },
+        };
+      }
+      return {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'text',
+        text: { body: message },
+      };
+    };
+
+    let tryTemplateFirst = Boolean(templateName);
+
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        const payload = getPayload(tryTemplateFirst);
         await axios.post(
           `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to,
-            type: 'text',
-            text: { body: message },
-          },
+          payload,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -69,14 +99,18 @@ export class OtpService {
         );
 
         this.logger.log(
-          `OTP successfully sent to ${to} on WhatsApp (attempt ${attempt})`,
+          `OTP successfully sent to ${to} on WhatsApp via ${tryTemplateFirst ? `template (${templateName})` : 'text'} (attempt ${attempt})`,
         );
         return;
       } catch (error: any) {
         const metaError = error.response?.data || error.message;
         this.logger.error(
-          `Failed to send OTP to ${to} (attempt ${attempt}/3): ${JSON.stringify(metaError)}`,
+          `Failed to send OTP to ${to} (attempt ${attempt}/3, mode: ${tryTemplateFirst ? 'template' : 'text'}): ${JSON.stringify(metaError)}`,
         );
+        // If template sending fails, switch to standard text payload for retry
+        if (tryTemplateFirst) {
+          tryTemplateFirst = false;
+        }
         if (attempt === 3) {
           this.logger.log(`[DEV / FALLBACK] OTP for ${to}: ${otp}`);
         } else {
